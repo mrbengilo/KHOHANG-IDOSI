@@ -1,0 +1,41 @@
+{
+  "name": "khohang-idosi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Hệ thống quản lý kho và phân bổ hàng hóa IDOSI",
+  "packageManager": "npm@11.9.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "dev": "concurrently -n api,worker,web -c blue,magenta,green \"npm -w @idosi/api run dev\" \"npm -w @idosi/worker run dev\" \"npm -w @idosi/web run dev\"",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint . --max-warnings=0",
+    "test": "npm run test --workspaces --if-present",
+    "test:coverage": "npm run test:coverage --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "db:generate": "npm -w @idosi/database run generate",
+    "db:migrate": "npm -w @idosi/database run migrate",
+    "db:seed": "npm -w @idosi/database run seed",
+    "e2e": "npm -w @idosi/web run e2e",
+    "quality": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.35.0",
+    "@types/node": "^24.3.0",
+    "concurrently": "^9.2.1",
+    "eslint": "^9.35.0",
+    "globals": "^16.3.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.42.0",
+    "vitest": "^3.2.4"
+  }
+}
