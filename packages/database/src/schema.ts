@@ -892,6 +892,9 @@ export const allocationLines = pgTable(
     uniqueIndex('allocation_lines_wait_round_uidx')
       .on(table.allocationRunId, table.waitTicketId, table.roundNumber)
       .where(sql`${table.waitTicketId} IS NOT NULL`),
+    uniqueIndex('allocation_lines_priority_offer_uidx')
+      .on(table.priorityOfferId)
+      .where(sql`${table.priorityOfferId} IS NOT NULL`),
     index('allocation_lines_run_product_round_idx').on(
       table.allocationRunId,
       table.productId,

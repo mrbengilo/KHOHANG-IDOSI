@@ -109,8 +109,9 @@ describe('initial migration invariants', () => {
     expect(migration).toContain('"allocation_lines_exactly_one_source"');
     expect(migration).toContain('"allocation_lines_priority_source"');
     expect(migration).toContain('"allocation_lines_order_has_merged_order"');
+    expect(migration).toContain('"allocation_lines_priority_offer_uidx"');
     expect(migration).toContain('allocation_lines_validate_scope');
-    expect(migration).toContain('o.business_date = snapshot_business_date');
+    expect(migration).toContain('o.business_date <= snapshot_business_date');
     expect(migration).toContain("o.status = 'accepted'");
   });
 

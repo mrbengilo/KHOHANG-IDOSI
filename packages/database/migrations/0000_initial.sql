@@ -869,6 +869,7 @@ ALTER TABLE "warehouse_ledger_entries" ADD CONSTRAINT "warehouse_ledger_entries_
 ALTER TABLE "warehouse_ledger_entries" ADD CONSTRAINT "warehouse_ledger_entries_actor_user_id_users_id_fk" FOREIGN KEY ("actor_user_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "allocation_lines_request_round_uidx" ON "allocation_lines" USING btree ("allocation_run_id","order_request_item_id","round_number") WHERE "allocation_lines"."order_request_item_id" IS NOT NULL;--> statement-breakpoint
 CREATE UNIQUE INDEX "allocation_lines_wait_round_uidx" ON "allocation_lines" USING btree ("allocation_run_id","wait_ticket_id","round_number") WHERE "allocation_lines"."wait_ticket_id" IS NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "allocation_lines_priority_offer_uidx" ON "allocation_lines" USING btree ("priority_offer_id") WHERE "allocation_lines"."priority_offer_id" IS NOT NULL;--> statement-breakpoint
 CREATE INDEX "allocation_lines_run_product_round_idx" ON "allocation_lines" USING btree ("allocation_run_id","product_id","round_number","sequence_in_round");--> statement-breakpoint
 CREATE INDEX "allocation_lines_store_run_idx" ON "allocation_lines" USING btree ("store_id","allocation_run_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "allocation_runs_session_run_uidx" ON "allocation_runs" USING btree ("order_session_id","run_number");--> statement-breakpoint
@@ -1229,7 +1230,7 @@ BEGIN
           AND o.wait_ticket_id = NEW.wait_ticket_id
           AND o.store_id = NEW.store_id
           AND o.product_id = NEW.product_id
-          AND o.business_date = snapshot_business_date
+          AND o.business_date <= snapshot_business_date
           AND o.status = 'accepted'
           AND o.accepted_quantity = NEW.requested_quantity
           AND o.deleted_at IS NULL

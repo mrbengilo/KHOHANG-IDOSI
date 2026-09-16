@@ -1,5 +1,5 @@
 {
-  "id": "dd868c6a-0dff-432d-9008-31c6a27edd09",
+  "id": "0f82e12f-b19c-4655-ab9e-3ad276515067",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -177,6 +177,22 @@
           ],
           "isUnique": true,
           "where": "\"allocation_lines\".\"wait_ticket_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "allocation_lines_priority_offer_uidx": {
+          "name": "allocation_lines_priority_offer_uidx",
+          "columns": [
+            {
+              "expression": "priority_offer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"allocation_lines\".\"priority_offer_id\" IS NOT NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}

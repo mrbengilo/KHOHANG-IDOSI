@@ -77,6 +77,10 @@ export class ActiveWaitTicketExistsError extends Error {
   }
 }
 
+export function isRequestDeadlineClosed(requestDeadlineAt: Date, instant: Date): boolean {
+  return requestDeadlineAt.getTime() <= instant.getTime();
+}
+
 export async function createOrderRequest(
   tx: Transaction,
   input: CreateOrderRequestInput,
@@ -104,7 +108,7 @@ export async function createOrderRequest(
         !session ||
         session.status !== 'open' ||
         session.deletedAt !== null ||
-        session.requestDeadlineAt < now
+        isRequestDeadlineClosed(session.requestDeadlineAt, now)
       ) {
         throw new OrderSessionUnavailableError();
       }
