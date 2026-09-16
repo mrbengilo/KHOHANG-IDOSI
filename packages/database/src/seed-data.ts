@@ -15,6 +15,7 @@ export interface ProductSeed {
   readonly sku: string;
   readonly slug: string;
   readonly name: string;
+  readonly unit: 'bag';
   readonly displayOrder: number;
 }
 
@@ -41,7 +42,7 @@ export const STORE_SEEDS = [
   { code: 'DS_KVC', name: 'DS KVC', groupCode: 'DOSII_HCM', displayOrder: 14 },
 ] as const satisfies readonly StoreSeed[];
 
-export const PRODUCT_SEEDS = [
+const PRODUCT_SEED_DEFINITIONS = [
   { sku: 'DAM', slug: 'dam', name: 'Đầm', displayOrder: 1 },
   { sku: 'QUAN_JEANS', slug: 'quan-jeans', name: 'Quần jeans', displayOrder: 2 },
   { sku: 'QUAN_DAI_NU', slug: 'quan-dai-nu', name: 'Quần dài nữ', displayOrder: 3 },
@@ -105,4 +106,9 @@ export const PRODUCT_SEEDS = [
     name: 'Hàng thun tái chế',
     displayOrder: 28,
   },
-] as const satisfies readonly ProductSeed[];
+] as const satisfies readonly Omit<ProductSeed, 'unit'>[];
+
+export const PRODUCT_SEEDS = PRODUCT_SEED_DEFINITIONS.map((product) => ({
+  ...product,
+  unit: 'bag' as const,
+})) satisfies readonly ProductSeed[];

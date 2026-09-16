@@ -15,6 +15,7 @@ describe('reference seed data', () => {
     expect(PRODUCT_SEEDS).toHaveLength(28);
     expect(new Set(PRODUCT_SEEDS.map((product) => product.sku)).size).toBe(28);
     expect(new Set(PRODUCT_SEEDS.map((product) => product.slug)).size).toBe(28);
+    expect(PRODUCT_SEEDS.every((product) => product.unit === 'bag')).toBe(true);
   });
 
   it('keeps display order deterministic', () => {

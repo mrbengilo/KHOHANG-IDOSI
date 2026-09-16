@@ -1,4 +1,4 @@
-import { inArray } from 'drizzle-orm';
+import { inArray, sql } from 'drizzle-orm';
 
 import { closeDatabase, db, type Database } from './client.js';
 import { products, storeGroups, stores, warehouseBalances } from './schema.js';
@@ -67,6 +67,11 @@ export async function seedReferenceData(database: Database): Promise<void> {
             deletedAt: null,
             updatedAt: new Date(),
           },
+          setWhere: sql`${stores.name} IS DISTINCT FROM ${store.name}
+            OR ${stores.groupId} IS DISTINCT FROM ${store.groupId}
+            OR ${stores.displayOrder} IS DISTINCT FROM ${store.displayOrder}
+            OR ${stores.isActive} IS DISTINCT FROM TRUE
+            OR ${stores.deletedAt} IS NOT NULL`,
         });
     }
 
@@ -77,7 +82,7 @@ export async function seedReferenceData(database: Database): Promise<void> {
           sku: product.sku,
           slug: product.slug,
           name: product.name,
-          unit: 'item',
+          unit: product.unit,
           displayOrder: product.displayOrder,
           isActive: true,
           deletedAt: null,
@@ -87,11 +92,18 @@ export async function seedReferenceData(database: Database): Promise<void> {
           set: {
             slug: product.slug,
             name: product.name,
+            unit: product.unit,
             displayOrder: product.displayOrder,
             isActive: true,
             deletedAt: null,
             updatedAt: new Date(),
           },
+          setWhere: sql`${products.slug} IS DISTINCT FROM ${product.slug}
+            OR ${products.name} IS DISTINCT FROM ${product.name}
+            OR ${products.unit} IS DISTINCT FROM ${product.unit}
+            OR ${products.displayOrder} IS DISTINCT FROM ${product.displayOrder}
+            OR ${products.isActive} IS DISTINCT FROM TRUE
+            OR ${products.deletedAt} IS NOT NULL`,
         });
     }
 

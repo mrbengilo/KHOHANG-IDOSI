@@ -104,12 +104,40 @@ export const receiptCostTypeEnum = pgEnum('receipt_cost_type', [
   'handling',
   'other',
 ]);
+export const storeReceiptStatusEnum = pgEnum('store_receipt_status', [
+  'draft',
+  'pending_htkd',
+  'returned',
+  'finalized',
+]);
 export const storeInventoryBagStatusEnum = pgEnum('store_inventory_bag_status', [
+  'in_transit',
   'available',
   'opened',
   'depleted',
+  'quarantined',
   'returned',
   'lost',
+]);
+export const storeInventoryLedgerEventTypeEnum = pgEnum('store_inventory_ledger_event_type', [
+  'receive',
+  'consume',
+  'adjust',
+  'quarantine',
+  'release',
+]);
+export const storeOutboundStatusEnum = pgEnum('store_outbound_status', [
+  'pending',
+  'approved',
+  'rejected',
+]);
+export const storeOutboundReasonEnum = pgEnum('store_outbound_reason', [
+  'discount_sale',
+  'charity',
+  'torn',
+  'defective',
+  'dirty',
+  'other',
 ]);
 export const outboundRequestStatusEnum = pgEnum('outbound_request_status', [
   'draft',
@@ -168,6 +196,7 @@ export const stores = pgTable(
     timezone: text('timezone').notNull().default('Asia/Ho_Chi_Minh'),
     displayOrder: integer('display_order').notNull().default(0),
     isActive: boolean('is_active').notNull().default(true),
+    version: integer('version').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
@@ -177,6 +206,7 @@ export const stores = pgTable(
     check('stores_code_not_blank', sql`length(btrim(${table.code})) > 0`),
     check('stores_name_not_blank', sql`length(btrim(${table.name})) > 0`),
     check('stores_display_order_nonnegative', sql`${table.displayOrder} >= 0`),
+    check('stores_version_nonnegative', sql`${table.version} >= 0`),
   ],
 );
 
@@ -197,9 +227,15 @@ export const users = pgTable(
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
   },
   (table) => [
-    uniqueIndex('users_email_lower_uidx').on(sql`lower(${table.email})`),
+    uniqueIndex('users_email_uidx').on(table.email),
+    uniqueIndex('users_one_store_account_uidx')
+      .on(table.storeId)
+      .where(sql`${table.role} = 'store' AND ${table.deletedAt} IS NULL`),
     index('users_store_status_idx').on(table.storeId, table.status),
-    check('users_email_not_blank', sql`length(btrim(${table.email})) > 0`),
+    check(
+      'users_email_canonical',
+      sql`length(${table.email}) BETWEEN 3 AND 80 AND ${table.email} = btrim(${table.email})`,
+    ),
     check('users_password_hash_not_blank', sql`length(${table.passwordHash}) >= 20`),
     check('users_display_name_not_blank', sql`length(btrim(${table.displayName})) > 0`),
     check('users_token_version_nonnegative', sql`${table.tokenVersion} >= 0`),
@@ -278,13 +314,14 @@ export const products = pgTable(
     sku: text('sku').notNull().unique(),
     slug: text('slug').notNull().unique(),
     name: text('name').notNull(),
-    unit: productUnitEnum('unit').notNull().default('item'),
+    unit: productUnitEnum('unit').notNull().default('bag'),
     standardBagWeightKg: numeric('standard_bag_weight_kg', {
       precision: 14,
       scale: 3,
     }),
     displayOrder: integer('display_order').notNull().default(0),
     isActive: boolean('is_active').notNull().default(true),
+    version: integer('version').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
@@ -295,6 +332,7 @@ export const products = pgTable(
     check('products_slug_not_blank', sql`length(btrim(${table.slug})) > 0`),
     check('products_name_not_blank', sql`length(btrim(${table.name})) > 0`),
     check('products_display_order_nonnegative', sql`${table.displayOrder} >= 0`),
+    check('products_version_nonnegative', sql`${table.version} >= 0`),
     check(
       'products_standard_bag_weight_nonnegative',
       sql`${table.standardBagWeightKg} IS NULL OR ${table.standardBagWeightKg} >= 0`,
@@ -387,6 +425,7 @@ export const orderSessions = pgTable(
     closedAt: timestamp('closed_at', { withTimezone: true }),
     completedAt: timestamp('completed_at', { withTimezone: true }),
     policyVersion: text('policy_version').notNull(),
+    version: integer('version').notNull().default(0),
     createdByUserId: uuid('created_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
@@ -408,6 +447,7 @@ export const orderSessions = pgTable(
       'order_sessions_close_after_open',
       sql`${table.closedAt} IS NULL OR ${table.openedAt} IS NULL OR ${table.closedAt} >= ${table.openedAt}`,
     ),
+    check('order_sessions_version_nonnegative', sql`${table.version} >= 0`),
   ],
 );
 
@@ -468,6 +508,7 @@ export const orderRequestItems = pgTable(
       .notNull()
       .references(() => products.id, { onDelete: 'restrict' }),
     requestedQuantity: integer('requested_quantity').notNull(),
+    priorityLevel: priorityLevelEnum('priority_level').notNull().default('P1'),
     allocatedQuantity: integer('allocated_quantity').notNull().default(0),
     waitlistedQuantity: integer('waitlisted_quantity').notNull().default(0),
     notes: text('notes'),
@@ -481,6 +522,7 @@ export const orderRequestItems = pgTable(
     ),
     index('order_request_items_product_idx').on(table.productId),
     check('order_request_items_requested_positive', sql`${table.requestedQuantity} > 0`),
+    check('order_request_items_priority_not_p0a', sql`${table.priorityLevel} <> 'P0A'`),
     check('order_request_items_allocated_nonnegative', sql`${table.allocatedQuantity} >= 0`),
     check('order_request_items_waitlisted_nonnegative', sql`${table.waitlistedQuantity} >= 0`),
     check(
@@ -497,6 +539,9 @@ export const mergedOrders = pgTable(
     orderSessionId: uuid('order_session_id')
       .notNull()
       .references(() => orderSessions.id, { onDelete: 'restrict' }),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
     version: integer('version').notNull().default(1),
     status: mergedOrderStatusEnum('status').notNull().default('pending'),
     requestCount: integer('request_count').notNull().default(0),
@@ -512,7 +557,11 @@ export const mergedOrders = pgTable(
     }),
   },
   (table) => [
-    uniqueIndex('merged_orders_session_version_uidx').on(table.orderSessionId, table.version),
+    uniqueIndex('merged_orders_session_store_version_uidx').on(
+      table.orderSessionId,
+      table.storeId,
+      table.version,
+    ),
     index('merged_orders_session_status_idx').on(table.orderSessionId, table.status),
     check('merged_orders_version_positive', sql`${table.version} > 0`),
     check('merged_orders_request_count_nonnegative', sql`${table.requestCount} >= 0`),
@@ -530,6 +579,7 @@ export const mergedOrderItems = pgTable(
       .notNull()
       .references(() => products.id, { onDelete: 'restrict' }),
     requestedQuantity: integer('requested_quantity').notNull(),
+    priorityLevel: priorityLevelEnum('priority_level').notNull().default('P1'),
     allocatedQuantity: integer('allocated_quantity').notNull().default(0),
     waitlistedQuantity: integer('waitlisted_quantity').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -538,7 +588,8 @@ export const mergedOrderItems = pgTable(
   (table) => [
     uniqueIndex('merged_order_items_order_product_uidx').on(table.mergedOrderId, table.productId),
     index('merged_order_items_product_idx').on(table.productId),
-    check('merged_order_items_requested_nonnegative', sql`${table.requestedQuantity} >= 0`),
+    check('merged_order_items_requested_positive', sql`${table.requestedQuantity} > 0`),
+    check('merged_order_items_priority_not_p0a', sql`${table.priorityLevel} <> 'P0A'`),
     check('merged_order_items_allocated_nonnegative', sql`${table.allocatedQuantity} >= 0`),
     check('merged_order_items_waitlisted_nonnegative', sql`${table.waitlistedQuantity} >= 0`),
     check(
@@ -583,7 +634,7 @@ export const waitTickets = pgTable(
       { onDelete: 'restrict' },
     ),
     status: waitTicketStatusEnum('status').notNull().default('active'),
-    priorityLevel: priorityLevelEnum('priority_level').notNull().default('P3'),
+    priorityLevel: priorityLevelEnum('priority_level').notNull().default('P0B'),
     originalQuantity: integer('original_quantity').notNull(),
     remainingQuantity: integer('remaining_quantity').notNull(),
     fulfilledQuantity: integer('fulfilled_quantity').notNull().default(0),
@@ -694,8 +745,8 @@ export const inventorySnapshots = pgTable(
     }),
   },
   (table) => [
-    uniqueIndex('inventory_snapshots_session_type_uidx')
-      .on(table.orderSessionId, table.snapshotType)
+    uniqueIndex('inventory_snapshots_session_day_type_uidx')
+      .on(table.orderSessionId, table.businessDate, table.snapshotType)
       .where(sql`${table.orderSessionId} IS NOT NULL AND ${table.deletedAt} IS NULL`),
     index('inventory_snapshots_business_date_idx').on(
       table.businessDate,
@@ -753,9 +804,9 @@ export const allocationRuns = pgTable(
     orderSessionId: uuid('order_session_id')
       .notNull()
       .references(() => orderSessions.id, { onDelete: 'restrict' }),
-    mergedOrderId: uuid('merged_order_id')
-      .notNull()
-      .references(() => mergedOrders.id, { onDelete: 'restrict' }),
+    mergedOrderId: uuid('merged_order_id').references(() => mergedOrders.id, {
+      onDelete: 'restrict',
+    }),
     inventorySnapshotId: uuid('inventory_snapshot_id')
       .notNull()
       .references(() => inventorySnapshots.id, { onDelete: 'restrict' }),
@@ -805,6 +856,9 @@ export const allocationLines = pgTable(
     allocationRunId: uuid('allocation_run_id')
       .notNull()
       .references(() => allocationRuns.id, { onDelete: 'restrict' }),
+    mergedOrderId: uuid('merged_order_id').references(() => mergedOrders.id, {
+      onDelete: 'restrict',
+    }),
     storeId: uuid('store_id')
       .notNull()
       .references(() => stores.id, { onDelete: 'restrict' }),
@@ -846,8 +900,16 @@ export const allocationLines = pgTable(
     ),
     index('allocation_lines_store_run_idx').on(table.storeId, table.allocationRunId),
     check(
-      'allocation_lines_has_source',
-      sql`num_nonnulls(${table.orderRequestItemId}, ${table.waitTicketId}) >= 1`,
+      'allocation_lines_exactly_one_source',
+      sql`num_nonnulls(${table.orderRequestItemId}, ${table.waitTicketId}) = 1`,
+    ),
+    check(
+      'allocation_lines_priority_source',
+      sql`(${table.waitTicketId} IS NOT NULL AND ${table.priorityLevel} = 'P0A') OR (${table.orderRequestItemId} IS NOT NULL AND ${table.priorityLevel} <> 'P0A')`,
+    ),
+    check(
+      'allocation_lines_order_has_merged_order',
+      sql`${table.orderRequestItemId} IS NULL OR ${table.mergedOrderId} IS NOT NULL`,
     ),
     check('allocation_lines_round_positive', sql`${table.roundNumber} > 0`),
     check('allocation_lines_sequence_positive', sql`${table.sequenceInRound} > 0`),
@@ -892,6 +954,7 @@ export const outboundRequests = pgTable(
     approvedAt: timestamp('approved_at', { withTimezone: true }),
     dispatchedAt: timestamp('dispatched_at', { withTimezone: true }),
     receivedAt: timestamp('received_at', { withTimezone: true }),
+    version: integer('version').notNull().default(0),
     notes: text('notes'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -904,6 +967,7 @@ export const outboundRequests = pgTable(
     index('outbound_requests_store_status_idx').on(table.storeId, table.status, table.createdAt),
     index('outbound_requests_allocation_run_idx').on(table.allocationRunId),
     check('outbound_requests_number_not_blank', sql`length(btrim(${table.requestNumber})) > 0`),
+    check('outbound_requests_version_nonnegative', sql`${table.version} >= 0`),
   ],
 );
 
@@ -1002,7 +1066,7 @@ export const reservations = pgTable(
       .where(
         sql`${table.allocationLineId} IS NOT NULL AND ${table.status} = 'active' AND ${table.deletedAt} IS NULL`,
       ),
-    uniqueIndex('reservations_active_outbound_line_uidx')
+    index('reservations_active_outbound_line_idx')
       .on(table.outboundRequestLineId)
       .where(
         sql`${table.outboundRequestLineId} IS NOT NULL AND ${table.status} = 'active' AND ${table.deletedAt} IS NULL`,
@@ -1038,14 +1102,19 @@ export const receipts = pgTable(
     confirmedByUserId: uuid('confirmed_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
-    totalGoodsCostVnd: bigint('total_goods_cost_vnd', { mode: 'number' }).notNull().default(0),
-    totalShippingCostVnd: bigint('total_shipping_cost_vnd', { mode: 'number' })
+    totalGoodsCostVnd: bigint('total_goods_cost_vnd', { mode: 'bigint' })
       .notNull()
-      .default(0),
-    totalHandlingCostVnd: bigint('total_handling_cost_vnd', { mode: 'number' })
+      .default(sql`0`),
+    totalShippingCostVnd: bigint('total_shipping_cost_vnd', { mode: 'bigint' })
       .notNull()
-      .default(0),
-    totalOtherCostVnd: bigint('total_other_cost_vnd', { mode: 'number' }).notNull().default(0),
+      .default(sql`0`),
+    totalHandlingCostVnd: bigint('total_handling_cost_vnd', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    totalOtherCostVnd: bigint('total_other_cost_vnd', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    version: integer('version').notNull().default(0),
     notes: text('notes'),
     createdByUserId: uuid('created_by_user_id')
       .notNull()
@@ -1064,6 +1133,7 @@ export const receipts = pgTable(
     check('receipts_shipping_cost_nonnegative', sql`${table.totalShippingCostVnd} >= 0`),
     check('receipts_handling_cost_nonnegative', sql`${table.totalHandlingCostVnd} >= 0`),
     check('receipts_other_cost_nonnegative', sql`${table.totalOtherCostVnd} >= 0`),
+    check('receipts_version_nonnegative', sql`${table.version} >= 0`),
     check(
       'receipts_confirmation_timestamp',
       sql`${table.status} <> 'confirmed' OR (${table.confirmedAt} IS NOT NULL AND ${table.receivedAt} IS NOT NULL)`,
@@ -1084,9 +1154,11 @@ export const receiptItems = pgTable(
     quantity: integer('quantity').notNull(),
     bagCount: integer('bag_count').notNull().default(0),
     totalNetWeightKg: numeric('total_net_weight_kg', { precision: 14, scale: 3 }),
-    unitPriceVnd: bigint('unit_price_vnd', { mode: 'number' }),
-    pricePerKgVnd: bigint('price_per_kg_vnd', { mode: 'number' }),
-    goodsCostVnd: bigint('goods_cost_vnd', { mode: 'number' }).notNull().default(0),
+    unitPriceVnd: bigint('unit_price_vnd', { mode: 'bigint' }),
+    pricePerKgVnd: bigint('price_per_kg_vnd', { mode: 'bigint' }),
+    goodsCostVnd: bigint('goods_cost_vnd', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
     notes: text('notes'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -1124,8 +1196,10 @@ export const receiptBagWeights = pgTable(
     grossWeightKg: numeric('gross_weight_kg', { precision: 14, scale: 3 }).notNull(),
     tareWeightKg: numeric('tare_weight_kg', { precision: 14, scale: 3 }).notNull().default('0'),
     netWeightKg: numeric('net_weight_kg', { precision: 14, scale: 3 }).notNull(),
-    pricePerKgVnd: bigint('price_per_kg_vnd', { mode: 'number' }),
-    goodsCostVnd: bigint('goods_cost_vnd', { mode: 'number' }).notNull().default(0),
+    pricePerKgVnd: bigint('price_per_kg_vnd', { mode: 'bigint' }),
+    goodsCostVnd: bigint('goods_cost_vnd', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -1164,13 +1238,178 @@ export const receiptCosts = pgTable(
       onDelete: 'restrict',
     }),
     costType: receiptCostTypeEnum('cost_type').notNull(),
-    amountVnd: bigint('amount_vnd', { mode: 'number' }).notNull(),
+    amountVnd: bigint('amount_vnd', { mode: 'bigint' }).notNull(),
     description: text('description'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index('receipt_costs_receipt_type_idx').on(table.receiptId, table.costType),
     check('receipt_costs_amount_nonnegative', sql`${table.amountVnd} >= 0`),
+  ],
+);
+
+/** Exact source-bag lineage for a warehouse-to-store shipment line. */
+export const outboundBagPicks = pgTable(
+  'outbound_bag_picks',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    outboundRequestLineId: uuid('outbound_request_line_id')
+      .notNull()
+      .references(() => outboundRequestLines.id, { onDelete: 'restrict' }),
+    sourceReceiptBagWeightId: uuid('source_receipt_bag_weight_id')
+      .notNull()
+      .references(() => receiptBagWeights.id, { onDelete: 'restrict' }),
+    weightKg: numeric('weight_kg', { precision: 14, scale: 3 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('outbound_bag_picks_line_source_uidx').on(
+      table.outboundRequestLineId,
+      table.sourceReceiptBagWeightId,
+    ),
+    index('outbound_bag_picks_source_idx').on(table.sourceReceiptBagWeightId),
+    check('outbound_bag_picks_weight_positive', sql`${table.weightKg} > 0`),
+  ],
+);
+
+/** Store acknowledgement of a warehouse shipment; distinct from supplier receipts. */
+export const storeReceipts = pgTable(
+  'store_receipts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    receiptNumber: text('receipt_number').notNull().unique(),
+    outboundRequestId: uuid('outbound_request_id')
+      .notNull()
+      .references(() => outboundRequests.id, { onDelete: 'restrict' }),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    status: storeReceiptStatusEnum('status').notNull().default('draft'),
+    discrepancyNote: text('discrepancy_note'),
+    reviewNote: text('review_note'),
+    goodsCostVnd: bigint('goods_cost_vnd', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    freightVnd: bigint('freight_vnd', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    handlingVnd: bigint('handling_vnd', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    totalCostVnd: bigint('total_cost_vnd', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    version: integer('version').notNull().default(0),
+    declaredByUserId: uuid('declared_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    reviewedByUserId: uuid('reviewed_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }),
+    finalizedAt: timestamp('finalized_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    deletedByUserId: uuid('deleted_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+  },
+  (table) => [
+    uniqueIndex('store_receipts_outbound_uidx')
+      .on(table.outboundRequestId)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index('store_receipts_store_status_idx').on(table.storeId, table.status, table.createdAt),
+    check('store_receipts_number_not_blank', sql`length(btrim(${table.receiptNumber})) > 0`),
+    check('store_receipts_goods_cost_nonnegative', sql`${table.goodsCostVnd} >= 0`),
+    check('store_receipts_freight_nonnegative', sql`${table.freightVnd} >= 0`),
+    check('store_receipts_handling_nonnegative', sql`${table.handlingVnd} >= 0`),
+    check(
+      'store_receipts_total_cost_consistent',
+      sql`${table.totalCostVnd} = ${table.goodsCostVnd} + ${table.freightVnd} + ${table.handlingVnd}`,
+    ),
+    check('store_receipts_version_nonnegative', sql`${table.version} >= 0`),
+    check(
+      'store_receipts_submission_state',
+      sql`${table.status} = 'draft' OR (${table.declaredByUserId} IS NOT NULL AND ${table.submittedAt} IS NOT NULL)`,
+    ),
+    check(
+      'store_receipts_finalized_state',
+      sql`${table.status} <> 'finalized' OR (${table.reviewedByUserId} IS NOT NULL AND ${table.finalizedAt} IS NOT NULL)`,
+    ),
+  ],
+);
+
+export const storeReceiptLines = pgTable(
+  'store_receipt_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    storeReceiptId: uuid('store_receipt_id')
+      .notNull()
+      .references(() => storeReceipts.id, { onDelete: 'restrict' }),
+    outboundRequestLineId: uuid('outbound_request_line_id')
+      .notNull()
+      .references(() => outboundRequestLines.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    approvedQuantity: integer('approved_quantity').notNull(),
+    receivedQuantity: integer('received_quantity').notNull(),
+    pricePerKgVnd: bigint('price_per_kg_vnd', { mode: 'bigint' }),
+    goodsCostVnd: bigint('goods_cost_vnd', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    shortageReason: text('shortage_reason'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('store_receipt_lines_receipt_product_uidx').on(
+      table.storeReceiptId,
+      table.productId,
+    ),
+    uniqueIndex('store_receipt_lines_receipt_outbound_line_uidx').on(
+      table.storeReceiptId,
+      table.outboundRequestLineId,
+    ),
+    check('store_receipt_lines_approved_positive', sql`${table.approvedQuantity} > 0`),
+    check('store_receipt_lines_received_nonnegative', sql`${table.receivedQuantity} >= 0`),
+    check(
+      'store_receipt_lines_received_not_over_approved',
+      sql`${table.receivedQuantity} <= ${table.approvedQuantity}`,
+    ),
+    check(
+      'store_receipt_lines_price_nonnegative',
+      sql`${table.pricePerKgVnd} IS NULL OR ${table.pricePerKgVnd} >= 0`,
+    ),
+    check('store_receipt_lines_goods_cost_nonnegative', sql`${table.goodsCostVnd} >= 0`),
+  ],
+);
+
+export const storeReceiptBags = pgTable(
+  'store_receipt_bags',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    storeReceiptLineId: uuid('store_receipt_line_id')
+      .notNull()
+      .references(() => storeReceiptLines.id, { onDelete: 'restrict' }),
+    bagNumber: integer('bag_number').notNull(),
+    bagCode: text('bag_code').notNull().unique(),
+    weightKg: numeric('weight_kg', { precision: 14, scale: 3 }).notNull(),
+    pricePerKgVnd: bigint('price_per_kg_vnd', { mode: 'bigint' }).notNull(),
+    goodsCostVnd: bigint('goods_cost_vnd', { mode: 'bigint' }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('store_receipt_bags_line_number_uidx').on(
+      table.storeReceiptLineId,
+      table.bagNumber,
+    ),
+    check('store_receipt_bags_number_positive', sql`${table.bagNumber} > 0`),
+    check('store_receipt_bags_code_not_blank', sql`length(btrim(${table.bagCode})) > 0`),
+    check('store_receipt_bags_weight_positive', sql`${table.weightKg} > 0`),
+    check('store_receipt_bags_price_nonnegative', sql`${table.pricePerKgVnd} >= 0`),
+    check('store_receipt_bags_cost_nonnegative', sql`${table.goodsCostVnd} >= 0`),
   ],
 );
 
@@ -1185,6 +1424,9 @@ export const storeInventoryBags = pgTable(
     productId: uuid('product_id')
       .notNull()
       .references(() => products.id, { onDelete: 'restrict' }),
+    sourceStoreReceiptBagId: uuid('source_store_receipt_bag_id')
+      .notNull()
+      .references(() => storeReceiptBags.id, { onDelete: 'restrict' }),
     outboundRequestLineId: uuid('outbound_request_line_id').references(
       () => outboundRequestLines.id,
       { onDelete: 'restrict' },
@@ -1196,6 +1438,8 @@ export const storeInventoryBags = pgTable(
     status: storeInventoryBagStatusEnum('status').notNull().default('available'),
     initialWeightKg: numeric('initial_weight_kg', { precision: 14, scale: 3 }).notNull(),
     currentWeightKg: numeric('current_weight_kg', { precision: 14, scale: 3 }).notNull(),
+    costVnd: bigint('cost_vnd', { mode: 'bigint' }).notNull(),
+    version: integer('version').notNull().default(0),
     receivedAt: timestamp('received_at', { withTimezone: true }).notNull(),
     openedAt: timestamp('opened_at', { withTimezone: true }),
     depletedAt: timestamp('depleted_at', { withTimezone: true }),
@@ -1209,12 +1453,127 @@ export const storeInventoryBags = pgTable(
       table.status,
     ),
     index('store_inventory_bags_outbound_line_idx').on(table.outboundRequestLineId),
+    uniqueIndex('store_inventory_bags_store_receipt_bag_uidx').on(table.sourceStoreReceiptBagId),
     check('store_inventory_bags_code_not_blank', sql`length(btrim(${table.bagCode})) > 0`),
     check('store_inventory_bags_initial_weight_positive', sql`${table.initialWeightKg} > 0`),
     check('store_inventory_bags_current_weight_nonnegative', sql`${table.currentWeightKg} >= 0`),
+    check('store_inventory_bags_cost_nonnegative', sql`${table.costVnd} >= 0`),
+    check('store_inventory_bags_version_nonnegative', sql`${table.version} >= 0`),
     check(
       'store_inventory_bags_current_not_over_initial',
       sql`${table.currentWeightKg} <= ${table.initialWeightKg}`,
+    ),
+  ],
+);
+
+/** Append-only store inventory journal. Weight snapshots make every mutation auditable. */
+export const storeInventoryLedgerEntries = pgTable(
+  'store_inventory_ledger_entries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    storeInventoryBagId: uuid('store_inventory_bag_id')
+      .notNull()
+      .references(() => storeInventoryBags.id, { onDelete: 'restrict' }),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    eventType: storeInventoryLedgerEventTypeEnum('event_type').notNull(),
+    weightBeforeKg: numeric('weight_before_kg', { precision: 14, scale: 3 }).notNull(),
+    weightAfterKg: numeric('weight_after_kg', { precision: 14, scale: 3 }).notNull(),
+    sourceType: text('source_type').notNull(),
+    sourceId: uuid('source_id').notNull(),
+    eventSequence: smallint('event_sequence').notNull().default(1),
+    reason: text('reason').notNull(),
+    metadata: jsonb('metadata').$type<JsonObject>().notNull().default({}),
+    actorUserId: uuid('actor_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('store_inventory_ledger_source_event_uidx').on(
+      table.sourceType,
+      table.sourceId,
+      table.storeInventoryBagId,
+      table.eventSequence,
+    ),
+    index('store_inventory_ledger_bag_occurred_idx').on(
+      table.storeInventoryBagId,
+      table.occurredAt,
+    ),
+    index('store_inventory_ledger_store_product_idx').on(table.storeId, table.productId),
+    check('store_inventory_ledger_before_nonnegative', sql`${table.weightBeforeKg} >= 0`),
+    check('store_inventory_ledger_after_nonnegative', sql`${table.weightAfterKg} >= 0`),
+    check('store_inventory_ledger_event_sequence_positive', sql`${table.eventSequence} > 0`),
+    check(
+      'store_inventory_ledger_source_type_not_blank',
+      sql`length(btrim(${table.sourceType})) > 0`,
+    ),
+    check('store_inventory_ledger_reason_not_blank', sql`length(btrim(${table.reason})) > 0`),
+    check(
+      'store_inventory_ledger_weight_change',
+      sql`${table.eventType} IN ('quarantine', 'release') OR ${table.weightBeforeKg} <> ${table.weightAfterKg}`,
+    ),
+  ],
+);
+
+/** Store-side removal for discounted sale, charity, damaged or dirty goods. */
+export const storeOutbounds = pgTable(
+  'store_outbounds',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    outboundNumber: text('outbound_number').notNull().unique(),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    storeInventoryBagId: uuid('store_inventory_bag_id')
+      .notNull()
+      .references(() => storeInventoryBags.id, { onDelete: 'restrict' }),
+    weightKg: numeric('weight_kg', { precision: 14, scale: 3 }).notNull(),
+    reason: storeOutboundReasonEnum('reason').notNull(),
+    revenueVnd: bigint('revenue_vnd', { mode: 'bigint' }),
+    status: storeOutboundStatusEnum('status').notNull().default('pending'),
+    createdByUserId: uuid('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    reviewedByUserId: uuid('reviewed_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    reviewNote: text('review_note'),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+    version: integer('version').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    deletedByUserId: uuid('deleted_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+  },
+  (table) => [
+    index('store_outbounds_store_status_created_idx').on(
+      table.storeId,
+      table.status,
+      table.createdAt,
+    ),
+    index('store_outbounds_bag_status_idx').on(table.storeInventoryBagId, table.status),
+    check('store_outbounds_number_not_blank', sql`length(btrim(${table.outboundNumber})) > 0`),
+    check('store_outbounds_weight_positive', sql`${table.weightKg} > 0`),
+    check(
+      'store_outbounds_revenue_nonnegative',
+      sql`${table.revenueVnd} IS NULL OR ${table.revenueVnd} >= 0`,
+    ),
+    check('store_outbounds_version_nonnegative', sql`${table.version} >= 0`),
+    check(
+      'store_outbounds_review_state',
+      sql`${table.status} = 'pending' OR (${table.reviewedByUserId} IS NOT NULL AND ${table.reviewedAt} IS NOT NULL)`,
+    ),
+    check(
+      'store_outbounds_rejection_note',
+      sql`${table.status} <> 'rejected' OR length(btrim(${table.reviewNote})) >= 3`,
     ),
   ],
 );
@@ -1290,3 +1649,9 @@ export type OrderRequestItem = typeof orderRequestItems.$inferSelect;
 export type NewOrderRequestItem = typeof orderRequestItems.$inferInsert;
 export type WarehouseBalance = typeof warehouseBalances.$inferSelect;
 export type WarehouseLedgerEntry = typeof warehouseLedgerEntries.$inferSelect;
+export type StoreReceipt = typeof storeReceipts.$inferSelect;
+export type NewStoreReceipt = typeof storeReceipts.$inferInsert;
+export type StoreInventoryBag = typeof storeInventoryBags.$inferSelect;
+export type StoreInventoryLedgerEntry = typeof storeInventoryLedgerEntries.$inferSelect;
+export type StoreOutbound = typeof storeOutbounds.$inferSelect;
+export type NewStoreOutbound = typeof storeOutbounds.$inferInsert;

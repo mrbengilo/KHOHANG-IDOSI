@@ -13,6 +13,7 @@ export type {
 } from './idempotency.js';
 
 export {
+  ActiveWaitTicketExistsError,
   createOrderRequest,
   OrderRequestAuthorizationError,
   OrderSessionUnavailableError,
@@ -25,6 +26,28 @@ export type {
   CreateOrderRequestItemInput,
   SubmitOrderRequestInput,
 } from './order-requests.js';
+
+export {
+  calculateWeightedCostVnd,
+  finalizeStoreReceipt,
+  finalizeStoreReceiptInTransaction,
+  gramsToKilogramsExact,
+  kilogramsToGramsExact,
+  planWaitShortageMerge,
+  reviewStoreOutbound,
+  reviewStoreOutboundInTransaction,
+  StoreOperationConflictError,
+  StoreOperationValidationError,
+} from './store-operations.js';
+export type {
+  FinalizedStoreReceipt,
+  FinalizeStoreReceiptInput,
+  FinalizeStoreReceiptLineInput,
+  ReviewedStoreOutbound,
+  ReviewStoreOutboundInput,
+  WaitQuantityState,
+  WaitShortageMergePlan,
+} from './store-operations.js';
 
 export * from './schema.js';
 export { PRODUCT_SEEDS, STORE_GROUP_SEEDS, STORE_SEEDS } from './seed-data.js';

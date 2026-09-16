@@ -8,7 +8,9 @@ import {
   orderRequests,
   orderSessions,
   products,
+  stores,
   users,
+  waitTickets,
   type JsonObject,
 } from './schema.js';
 import { withAdvisoryLock, type Transaction } from './transaction.js';
@@ -64,6 +66,17 @@ export class OrderSessionUnavailableError extends Error {
   }
 }
 
+export class ActiveWaitTicketExistsError extends Error {
+  public readonly code = 'ACTIVE_WAIT_TICKET_EXISTS';
+
+  public constructor(storeId: string, productIds: readonly string[]) {
+    super(
+      `Store "${storeId}" already has an active wait ticket for product(s): ${productIds.join(', ')}.`,
+    );
+    this.name = 'ActiveWaitTicketExistsError';
+  }
+}
+
 export async function createOrderRequest(
   tx: Transaction,
   input: CreateOrderRequestInput,
@@ -102,52 +115,66 @@ export async function createOrderRequest(
         input.items.map((item) => item.productId),
       );
 
-      // The advisory lock makes slot selection atomic. The CHECK + UNIQUE constraints remain
-      // the final guard against bypasses and guarantee that a third request cannot be stored.
-      const existingRequests = await tx
-        .select({ requestNumber: orderRequests.requestNumber })
-        .from(orderRequests)
-        .where(
-          and(
-            eq(orderRequests.orderSessionId, input.orderSessionId),
-            eq(orderRequests.storeId, input.storeId),
-          ),
-        );
+      return withStoreProductWaitLocks(
+        tx,
+        input.storeId,
+        input.items.map((item) => item.productId),
+        async () => {
+          await assertNoActiveWaitTickets(
+            tx,
+            input.storeId,
+            input.items.map((item) => item.productId),
+          );
 
-      const usedSlots = new Set(existingRequests.map((request) => request.requestNumber));
-      const requestNumber = usedSlots.has(1) ? (usedSlots.has(2) ? null : 2) : 1;
+          // The advisory lock makes slot selection atomic. The CHECK + UNIQUE constraints remain
+          // the final guard against bypasses and guarantee that a third request cannot be stored.
+          const existingRequests = await tx
+            .select({ requestNumber: orderRequests.requestNumber })
+            .from(orderRequests)
+            .where(
+              and(
+                eq(orderRequests.orderSessionId, input.orderSessionId),
+                eq(orderRequests.storeId, input.storeId),
+              ),
+            );
 
-      if (requestNumber === null) {
-        throw new RequestLimitExceededError(input.orderSessionId, input.storeId);
-      }
+          const usedSlots = new Set(existingRequests.map((request) => request.requestNumber));
+          const requestNumber = usedSlots.has(1) ? (usedSlots.has(2) ? null : 2) : 1;
 
-      const [createdRequest] = await tx
-        .insert(orderRequests)
-        .values({
-          orderSessionId: input.orderSessionId,
-          storeId: input.storeId,
-          requestNumber,
-          status: 'submitted',
-          requestedByUserId: input.requestedByUserId,
-          submittedAt: now,
-          notes: input.notes ?? null,
-        })
-        .returning({ id: orderRequests.id, requestNumber: orderRequests.requestNumber });
+          if (requestNumber === null) {
+            throw new RequestLimitExceededError(input.orderSessionId, input.storeId);
+          }
 
-      if (!createdRequest) {
-        throw new Error('Order request insert returned no row.');
-      }
+          const [createdRequest] = await tx
+            .insert(orderRequests)
+            .values({
+              orderSessionId: input.orderSessionId,
+              storeId: input.storeId,
+              requestNumber,
+              status: 'submitted',
+              requestedByUserId: input.requestedByUserId,
+              submittedAt: now,
+              notes: input.notes ?? null,
+            })
+            .returning({ id: orderRequests.id, requestNumber: orderRequests.requestNumber });
 
-      await tx.insert(orderRequestItems).values(
-        input.items.map((item) => ({
-          orderRequestId: createdRequest.id,
-          productId: item.productId,
-          requestedQuantity: item.quantity,
-          notes: item.notes ?? null,
-        })),
+          if (!createdRequest) {
+            throw new Error('Order request insert returned no row.');
+          }
+
+          await tx.insert(orderRequestItems).values(
+            input.items.map((item) => ({
+              orderRequestId: createdRequest.id,
+              productId: item.productId,
+              requestedQuantity: item.quantity,
+              priorityLevel: 'P1' as const,
+              notes: item.notes ?? null,
+            })),
+          );
+
+          return createdRequest;
+        },
       );
-
-      return createdRequest;
     },
   );
 }
@@ -204,6 +231,16 @@ async function assertUserMayAccessStore(
   userId: string,
   storeId: string,
 ): Promise<void> {
+  const [store] = await tx
+    .select({ id: stores.id })
+    .from(stores)
+    .where(and(eq(stores.id, storeId), eq(stores.isActive, true), isNull(stores.deletedAt)))
+    .limit(1);
+
+  if (!store) {
+    throw new OrderRequestAuthorizationError();
+  }
+
   const [user] = await tx
     .select({ id: users.id, role: users.role, status: users.status, storeId: users.storeId })
     .from(users)
@@ -237,6 +274,53 @@ async function assertUserMayAccessStore(
   }
 
   throw new OrderRequestAuthorizationError();
+}
+
+async function withStoreProductWaitLocks<T>(
+  tx: Transaction,
+  storeId: string,
+  productIds: readonly string[],
+  operation: () => Promise<T>,
+): Promise<T> {
+  const sortedProductIds = [...new Set(productIds)].sort();
+
+  const acquire = async (index: number): Promise<T> => {
+    const productId = sortedProductIds[index];
+    if (productId === undefined) {
+      return operation();
+    }
+
+    return withAdvisoryLock(tx, 'store-product-wait', `${storeId}:${productId}`, () =>
+      acquire(index + 1),
+    );
+  };
+
+  return acquire(0);
+}
+
+async function assertNoActiveWaitTickets(
+  tx: Transaction,
+  storeId: string,
+  productIds: readonly string[],
+): Promise<void> {
+  const activeWaits = await tx
+    .select({ productId: waitTickets.productId })
+    .from(waitTickets)
+    .where(
+      and(
+        eq(waitTickets.storeId, storeId),
+        inArray(waitTickets.productId, [...productIds]),
+        eq(waitTickets.status, 'active'),
+        isNull(waitTickets.deletedAt),
+      ),
+    );
+
+  if (activeWaits.length > 0) {
+    throw new ActiveWaitTicketExistsError(
+      storeId,
+      activeWaits.map((wait) => wait.productId).sort(),
+    );
+  }
 }
 
 async function assertProductsAreActive(
