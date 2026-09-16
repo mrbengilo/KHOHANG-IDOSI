@@ -853,10 +853,13 @@ async function restoreShortageWait(
   const sourceOrderRequestItemId = allocations.find(
     (allocation) => allocation.orderRequestItemId !== null,
   )?.orderRequestItemId;
+  if (!sourceOrderRequestItemId) {
+    throw new StoreOperationValidationError('Receipt shortage has no originating order item.');
+  }
   await tx.insert(waitTickets).values({
     storeId,
     productId,
-    sourceOrderRequestItemId: sourceOrderRequestItemId ?? null,
+    sourceOrderRequestItemId,
     status: 'active',
     priorityLevel: 'P0B',
     originalQuantity: shortage,

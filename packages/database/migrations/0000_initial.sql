@@ -105,7 +105,7 @@ CREATE TABLE "daily_priority_offers" (
 	"business_date" date NOT NULL,
 	"store_id" uuid NOT NULL,
 	"product_id" uuid NOT NULL,
-	"wait_ticket_id" uuid,
+	"wait_ticket_id" uuid NOT NULL,
 	"priority_level" "priority_level" NOT NULL,
 	"round_number" integer DEFAULT 1 NOT NULL,
 	"offered_quantity" integer NOT NULL,
@@ -120,7 +120,9 @@ CREATE TABLE "daily_priority_offers" (
 	CONSTRAINT "daily_priority_offers_round_positive" CHECK ("daily_priority_offers"."round_number" > 0),
 	CONSTRAINT "daily_priority_offers_quantity_positive" CHECK ("daily_priority_offers"."offered_quantity" > 0),
 	CONSTRAINT "daily_priority_offers_accepted_nonnegative" CHECK ("daily_priority_offers"."accepted_quantity" >= 0),
-	CONSTRAINT "daily_priority_offers_accepted_not_over_offered" CHECK ("daily_priority_offers"."accepted_quantity" <= "daily_priority_offers"."offered_quantity")
+	CONSTRAINT "daily_priority_offers_accepted_not_over_offered" CHECK ("daily_priority_offers"."accepted_quantity" <= "daily_priority_offers"."offered_quantity"),
+	CONSTRAINT "daily_priority_offers_acceptance_quantity_consistent" CHECK (("daily_priority_offers"."status" = 'accepted' AND "daily_priority_offers"."accepted_quantity" = "daily_priority_offers"."offered_quantity") OR ("daily_priority_offers"."status" <> 'accepted' AND "daily_priority_offers"."accepted_quantity" = 0)),
+	CONSTRAINT "daily_priority_offers_response_timestamp" CHECK ("daily_priority_offers"."status" NOT IN ('accepted', 'declined') OR "daily_priority_offers"."responded_at" IS NOT NULL)
 );
 --> statement-breakpoint
 CREATE TABLE "htkd_assignments" (
@@ -706,7 +708,7 @@ CREATE TABLE "wait_tickets" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"store_id" uuid NOT NULL,
 	"product_id" uuid NOT NULL,
-	"source_order_request_item_id" uuid,
+	"source_order_request_item_id" uuid NOT NULL,
 	"status" "wait_ticket_status" DEFAULT 'active' NOT NULL,
 	"priority_level" "priority_level" DEFAULT 'P0B' NOT NULL,
 	"original_quantity" integer NOT NULL,
@@ -1002,6 +1004,9 @@ $$;--> statement-breakpoint
 CREATE TRIGGER warehouse_ledger_entries_immutable BEFORE UPDATE OR DELETE ON warehouse_ledger_entries FOR EACH ROW EXECUTE FUNCTION prevent_immutable_mutation();--> statement-breakpoint
 CREATE TRIGGER store_inventory_ledger_entries_immutable BEFORE UPDATE OR DELETE ON store_inventory_ledger_entries FOR EACH ROW EXECUTE FUNCTION prevent_immutable_mutation();--> statement-breakpoint
 CREATE TRIGGER audit_logs_immutable BEFORE UPDATE OR DELETE ON audit_logs FOR EACH ROW EXECUTE FUNCTION prevent_immutable_mutation();--> statement-breakpoint
+CREATE TRIGGER merged_order_items_immutable BEFORE UPDATE OR DELETE ON merged_order_items FOR EACH ROW EXECUTE FUNCTION prevent_immutable_mutation();--> statement-breakpoint
+CREATE TRIGGER merged_order_sources_immutable BEFORE UPDATE OR DELETE ON merged_order_sources FOR EACH ROW EXECUTE FUNCTION prevent_immutable_mutation();--> statement-breakpoint
+CREATE TRIGGER allocation_lines_immutable BEFORE UPDATE OR DELETE ON allocation_lines FOR EACH ROW EXECUTE FUNCTION prevent_immutable_mutation();--> statement-breakpoint
 
 -- Business documents and their auditable details are never hard-deleted.
 CREATE FUNCTION prevent_document_hard_delete() RETURNS trigger LANGUAGE plpgsql AS $$

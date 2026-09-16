@@ -850,7 +850,7 @@
           "name": "wait_ticket_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "priority_level": {
           "name": "priority_level",
@@ -1062,6 +1062,14 @@
         "daily_priority_offers_accepted_not_over_offered": {
           "name": "daily_priority_offers_accepted_not_over_offered",
           "value": "\"daily_priority_offers\".\"accepted_quantity\" <= \"daily_priority_offers\".\"offered_quantity\""
+        },
+        "daily_priority_offers_acceptance_quantity_consistent": {
+          "name": "daily_priority_offers_acceptance_quantity_consistent",
+          "value": "(\"daily_priority_offers\".\"status\" = 'accepted' AND \"daily_priority_offers\".\"accepted_quantity\" = \"daily_priority_offers\".\"offered_quantity\") OR (\"daily_priority_offers\".\"status\" <> 'accepted' AND \"daily_priority_offers\".\"accepted_quantity\" = 0)"
+        },
+        "daily_priority_offers_response_timestamp": {
+          "name": "daily_priority_offers_response_timestamp",
+          "value": "\"daily_priority_offers\".\"status\" NOT IN ('accepted', 'declined') OR \"daily_priority_offers\".\"responded_at\" IS NOT NULL"
         }
       },
       "isRLSEnabled": false
@@ -6309,7 +6317,7 @@
           "name": "source_order_request_item_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "status": {
           "name": "status",

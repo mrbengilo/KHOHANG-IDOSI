@@ -629,10 +629,9 @@ export const waitTickets = pgTable(
     productId: uuid('product_id')
       .notNull()
       .references(() => products.id, { onDelete: 'restrict' }),
-    sourceOrderRequestItemId: uuid('source_order_request_item_id').references(
-      () => orderRequestItems.id,
-      { onDelete: 'restrict' },
-    ),
+    sourceOrderRequestItemId: uuid('source_order_request_item_id')
+      .notNull()
+      .references(() => orderRequestItems.id, { onDelete: 'restrict' }),
     status: waitTicketStatusEnum('status').notNull().default('active'),
     priorityLevel: priorityLevelEnum('priority_level').notNull().default('P0B'),
     originalQuantity: integer('original_quantity').notNull(),
@@ -681,9 +680,9 @@ export const dailyPriorityOffers = pgTable(
     productId: uuid('product_id')
       .notNull()
       .references(() => products.id, { onDelete: 'restrict' }),
-    waitTicketId: uuid('wait_ticket_id').references(() => waitTickets.id, {
-      onDelete: 'restrict',
-    }),
+    waitTicketId: uuid('wait_ticket_id')
+      .notNull()
+      .references(() => waitTickets.id, { onDelete: 'restrict' }),
     priorityLevel: priorityLevelEnum('priority_level').notNull(),
     roundNumber: integer('round_number').notNull().default(1),
     offeredQuantity: integer('offered_quantity').notNull(),
@@ -717,6 +716,14 @@ export const dailyPriorityOffers = pgTable(
     check(
       'daily_priority_offers_accepted_not_over_offered',
       sql`${table.acceptedQuantity} <= ${table.offeredQuantity}`,
+    ),
+    check(
+      'daily_priority_offers_acceptance_quantity_consistent',
+      sql`(${table.status} = 'accepted' AND ${table.acceptedQuantity} = ${table.offeredQuantity}) OR (${table.status} <> 'accepted' AND ${table.acceptedQuantity} = 0)`,
+    ),
+    check(
+      'daily_priority_offers_response_timestamp',
+      sql`${table.status} NOT IN ('accepted', 'declined') OR ${table.respondedAt} IS NOT NULL`,
     ),
   ],
 );

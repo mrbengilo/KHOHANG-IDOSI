@@ -105,6 +105,30 @@ describe('initial migration invariants', () => {
     expect(storeOperationsSource).toContain("priorityLevel: 'P0B'");
   });
 
+  it('requires relational provenance for every wait ticket and daily offer', () => {
+    expect(migration).toMatch(
+      /CREATE TABLE "daily_priority_offers"[\s\S]*?"wait_ticket_id" uuid NOT NULL/,
+    );
+    expect(migration).toMatch(
+      /CREATE TABLE "wait_tickets"[\s\S]*?"source_order_request_item_id" uuid NOT NULL/,
+    );
+    expect(schemaSource).toContain(
+      "sourceOrderRequestItemId: uuid('source_order_request_item_id')",
+    );
+    expect(schemaSource).toContain("waitTicketId: uuid('wait_ticket_id')");
+  });
+
+  it('allows only full accepted offers and zero accepted quantity otherwise', () => {
+    expect(migration).toContain('"daily_priority_offers_acceptance_quantity_consistent"');
+    expect(migration).toContain(
+      `"status" = 'accepted' AND "daily_priority_offers"."accepted_quantity" = "daily_priority_offers"."offered_quantity"`,
+    );
+    expect(migration).toContain(
+      `"status" <> 'accepted' AND "daily_priority_offers"."accepted_quantity" = 0`,
+    );
+    expect(migration).toContain('"daily_priority_offers_response_timestamp"');
+  });
+
   it('binds P0A allocations to accepted wait offers and otherwise requires merged provenance', () => {
     expect(migration).toContain('"allocation_lines_exactly_one_source"');
     expect(migration).toContain('"allocation_lines_priority_source"');
@@ -189,10 +213,21 @@ describe('initial migration invariants', () => {
     expect(migration).toContain('NEW.version := OLD.version + 1');
   });
 
-  it('makes warehouse/store ledgers and audit rows immutable', () => {
-    expect(migration).toContain('warehouse_ledger_entries_immutable');
-    expect(migration).toContain('store_inventory_ledger_entries_immutable');
-    expect(migration).toContain('audit_logs_immutable');
+  it('makes ledgers, audit rows, and allocation provenance immutable', () => {
+    for (const table of [
+      'warehouse_ledger_entries',
+      'store_inventory_ledger_entries',
+      'audit_logs',
+      'merged_order_items',
+      'merged_order_sources',
+      'allocation_lines',
+    ]) {
+      expect(migration).toMatch(
+        new RegExp(
+          `CREATE TRIGGER ${table}_immutable BEFORE UPDATE OR DELETE ON ${table} FOR EACH ROW EXECUTE FUNCTION prevent_immutable_mutation\\(\\)`,
+        ),
+      );
+    }
   });
 
   it('blocks hard deletion of business documents', () => {
