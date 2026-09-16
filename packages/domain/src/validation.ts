@@ -58,10 +58,38 @@ export function safeIntegerSum(left: number, right: number, fieldName: string): 
 }
 
 export function isoTimestamp(value: string, fieldName = 'timestamp'): IsoTimestamp {
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.exec(
+      value,
+    );
   invariant(
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(value),
+    match !== null,
     'INVALID_ARGUMENT',
     `${fieldName} must be an ISO-8601 timestamp with an explicit timezone`,
+    { fieldName, value },
+  );
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const maximumDay = daysInMonth[month - 1] ?? 0;
+  invariant(
+    month >= 1 &&
+      month <= 12 &&
+      day >= 1 &&
+      day <= maximumDay &&
+      hour >= 0 &&
+      hour <= 23 &&
+      minute >= 0 &&
+      minute <= 59 &&
+      second >= 0 &&
+      second <= 59,
+    'INVALID_ARGUMENT',
+    `${fieldName} must be a valid ISO-8601 timestamp`,
     { fieldName, value },
   );
   const milliseconds = Date.parse(value);

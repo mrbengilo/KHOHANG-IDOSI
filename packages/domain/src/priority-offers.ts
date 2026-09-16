@@ -170,6 +170,12 @@ export function confirmDailyPriorityOffer(
     { offerId: offer.id, status: offer.status },
   );
   invariant(
+    compareTimestamps(confirmedAt, offer.createdAt) >= 0,
+    'INVALID_ARGUMENT',
+    'Daily priority confirmation cannot precede offer creation',
+    { offerId: offer.id, createdAt: offer.createdAt },
+  );
+  invariant(
     compareTimestamps(confirmedAt, offer.expiresAt) < 0,
     'OFFER_EXPIRED',
     'Daily priority confirmation arrived at or after its expiry',

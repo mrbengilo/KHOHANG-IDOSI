@@ -79,6 +79,18 @@ describe('store order requests', () => {
     ).toThrowError(expect.objectContaining({ code: 'REQUEST_WINDOW_CLOSED' }));
   });
 
+  it.each(['CANCELLED', 'MERGED'] as const)(
+    'does not let a new submission bypass its lifecycle with %s status',
+    (status) => {
+      expect(() =>
+        submitOrderRequest(session, [], {
+          ...requestInput(1, 1, 'P3'),
+          status,
+        }),
+      ).toThrowError(expect.objectContaining({ code: 'INVALID_ARGUMENT' }));
+    },
+  );
+
   it('keeps both requests equal by merging quantities and retaining the best explicit tier', () => {
     const first = createStoreOrderRequest(requestInput(1, 2, 'P1'));
     const second = createStoreOrderRequest(requestInput(2, 3, 'P3'));

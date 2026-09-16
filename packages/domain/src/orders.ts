@@ -236,6 +236,12 @@ export function submitOrderRequest(
 ): SubmitOrderRequestResult {
   const candidate = createStoreOrderRequest(input);
   invariant(
+    candidate.status === 'SUBMITTED',
+    'INVALID_ARGUMENT',
+    'A newly submitted order request must have SUBMITTED status',
+    { status: candidate.status },
+  );
+  invariant(
     candidate.sessionId === session.id,
     'INVALID_ARGUMENT',
     'Request session does not match the supplied order session',

@@ -152,6 +152,25 @@ describe('daily priority offer', () => {
     expect(retry.replayed).toBe(true);
     expect(consumed).toMatchObject({ status: 'CONSUMED', allocatedQuantity: 2 });
   });
+
+  it('rejects a confirmation timestamp before the offer was created', () => {
+    const ticket = initialWaitTicket();
+    const offer = createDailyPriorityOffer(ticket, [], {
+      id: 'offer-early-confirmation',
+      businessDate: '2026-09-10',
+      offeredQuantity: 1,
+      createdAt: '2026-09-10T08:00:00.000Z',
+      expiresAt: '2026-09-10T09:00:00.000Z',
+    });
+
+    expect(() =>
+      confirmDailyPriorityOffer(offer, ticket, {
+        quantity: 1,
+        confirmedAt: '2026-09-10T07:59:59.999Z',
+        idempotencyKey: 'confirmation-early',
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'INVALID_ARGUMENT' }));
+  });
 });
 
 describe('receipt reconciliation', () => {

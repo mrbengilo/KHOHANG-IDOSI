@@ -159,6 +159,25 @@ describe('allocateInventory', () => {
       expect.objectContaining({ code: 'INVALID_ARGUMENT' }),
     );
   });
+
+  it.each([
+    {
+      name: 'an empty source list',
+      value: { ...demand('A', 1), sourceIds: [] },
+    },
+    {
+      name: 'an empty confirmed-wait ticket id',
+      value: { ...demand('A', 1, 'P0A'), sourceWaitTicketId: '' },
+    },
+    {
+      name: 'a wait-ticket id on a regular order',
+      value: { ...demand('A', 1), sourceWaitTicketId: 'wait-forged' },
+    },
+  ])('rejects $name', ({ value }) => {
+    expect(() => allocateInventory(allocationInput([value], 1, 'A', ['A']))).toThrowError(
+      expect.objectContaining({ code: 'INVALID_ARGUMENT' }),
+    );
+  });
 });
 
 describe('buildAllocationDemands', () => {

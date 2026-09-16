@@ -271,13 +271,26 @@ function validateDemand(demand: AllocationDemand, input: AllocationInput): void 
     { demandId: demand.demandId, priority: demand.priority },
   );
   assertDemandSourceAllowed(demand.priority, demand.source);
-  uniqueStrings(demand.sourceIds, 'sourceIds');
-  invariant(
-    demand.source !== 'CONFIRMED_WAIT' || demand.sourceWaitTicketId !== null,
-    'INVALID_ARGUMENT',
-    'Confirmed wait demand must reference its wait ticket',
-    { demandId: demand.demandId },
-  );
+  const sourceIds = uniqueStrings(demand.sourceIds, 'sourceIds');
+  invariant(sourceIds.length > 0, 'INVALID_ARGUMENT', 'Allocation demand needs a source id', {
+    demandId: demand.demandId,
+  });
+  if (demand.source === 'CONFIRMED_WAIT') {
+    invariant(
+      demand.sourceWaitTicketId !== null,
+      'INVALID_ARGUMENT',
+      'Confirmed wait demand must reference its wait ticket',
+      { demandId: demand.demandId },
+    );
+    nonEmpty(demand.sourceWaitTicketId, 'sourceWaitTicketId');
+  } else {
+    invariant(
+      demand.sourceWaitTicketId === null,
+      'INVALID_ARGUMENT',
+      'Only confirmed wait demand may reference a wait ticket',
+      { demandId: demand.demandId },
+    );
+  }
 }
 
 function resolveStoreOrder(input: AllocationInput): readonly string[] {
