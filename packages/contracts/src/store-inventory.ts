@@ -10,11 +10,7 @@ import {
   PaginationQuerySchema,
   PositiveKilogramsDecimalSchema,
 } from './common.js';
-
-function kilogramsToGrams(value: string): bigint {
-  const [whole = '0', fraction = ''] = value.split('.');
-  return BigInt(whole) * 1_000n + BigInt(fraction.padEnd(3, '0'));
-}
+import { kilogramsToGramsForRefinement } from './refinement-values.js';
 
 export const StoreInventoryBagStatusSchema = z.enum([
   'IN_TRANSIT',
@@ -58,9 +54,12 @@ export const StoreInventoryBagSchema = z
         message: 'An available or open bag must have remaining weight',
       });
     }
-    const original = kilogramsToGrams(bag.originalWeightKg);
-    const received = kilogramsToGrams(bag.receivedWeightKg);
-    const remaining = kilogramsToGrams(bag.remainingWeightKg);
+    const original = kilogramsToGramsForRefinement(bag.originalWeightKg);
+    const received = kilogramsToGramsForRefinement(bag.receivedWeightKg);
+    const remaining = kilogramsToGramsForRefinement(bag.remainingWeightKg);
+    if (original === null || received === null || remaining === null) {
+      return;
+    }
     if (received > original) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -156,8 +155,11 @@ export const InventoryLotSchema = z
   })
   .strict()
   .superRefine((lot, context) => {
-    const initial = kilogramsToGrams(lot.initialWeightKg);
-    const remaining = kilogramsToGrams(lot.remainingWeightKg);
+    const initial = kilogramsToGramsForRefinement(lot.initialWeightKg);
+    const remaining = kilogramsToGramsForRefinement(lot.remainingWeightKg);
+    if (initial === null || remaining === null) {
+      return;
+    }
     if (remaining > initial) {
       context.addIssue({
         code: z.ZodIssueCode.custom,

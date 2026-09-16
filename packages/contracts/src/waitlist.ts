@@ -8,15 +8,18 @@ import {
   PaginationMetaSchema,
   PaginationQuerySchema,
 } from './common.js';
+import {
+  kilogramsToGramsForRefinement,
+  safeIntegerToBigIntForRefinement,
+} from './refinement-values.js';
 import { InventoryAmountSchema, PositiveInventoryAmountSchema } from './warehouse.js';
 import type { InventoryAmount } from './warehouse.js';
 
-function amountValue(amount: InventoryAmount): bigint {
+function amountValue(amount: InventoryAmount): bigint | null {
   if (amount.kind === 'UNIT') {
-    return BigInt(amount.quantity);
+    return safeIntegerToBigIntForRefinement(amount.quantity);
   }
-  const [whole = '0', fraction = ''] = amount.value.split('.');
-  return BigInt(whole) * 1_000n + BigInt(fraction.padEnd(3, '0'));
+  return kilogramsToGramsForRefinement(amount.value);
 }
 
 export const WaitTicketStatusSchema = z.enum([
@@ -53,9 +56,14 @@ export const WaitTicketSchema = z
       });
       return;
     }
+    const fulfilled = amountValue(ticket.fulfilled);
+    const remaining = amountValue(ticket.remaining);
+    const requested = amountValue(ticket.requested);
     if (
-      amountValue(ticket.fulfilled) + amountValue(ticket.remaining) !==
-      amountValue(ticket.requested)
+      fulfilled !== null &&
+      remaining !== null &&
+      requested !== null &&
+      fulfilled + remaining !== requested
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -133,15 +141,16 @@ export const PriorityOfferSchema = z
         path: ['accepted', 'kind'],
         message: 'Accepted and offered amounts must use the same measurement',
       });
-    } else if (
-      offer.accepted !== null &&
-      amountValue(offer.accepted) > amountValue(offer.offered)
-    ) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['accepted'],
-        message: 'Accepted amount cannot exceed offered amount',
-      });
+    } else if (offer.accepted !== null) {
+      const accepted = amountValue(offer.accepted);
+      const offered = amountValue(offer.offered);
+      if (accepted !== null && offered !== null && accepted > offered) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['accepted'],
+          message: 'Accepted amount cannot exceed offered amount',
+        });
+      }
     }
   });
 export type PriorityOffer = z.infer<typeof PriorityOfferSchema>;

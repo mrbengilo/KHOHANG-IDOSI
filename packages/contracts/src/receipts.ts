@@ -9,11 +9,11 @@ import {
   PaginationQuerySchema,
   PositiveKilogramsDecimalSchema,
 } from './common.js';
-
-function kilogramsToGrams(value: string): bigint {
-  const [whole = '0', fraction = ''] = value.split('.');
-  return BigInt(whole) * 1_000n + BigInt(fraction.padEnd(3, '0'));
-}
+import {
+  kilogramsToGramsForRefinement,
+  safeIntegerToBigIntForRefinement,
+  sumRefinementValues,
+} from './refinement-values.js';
 
 export const InboundReceiptStatusSchema = z.enum([
   'RECEIVED',
@@ -55,9 +55,13 @@ export const ReceiptCostConfirmationSchema = z
   })
   .strict()
   .superRefine((cost, context) => {
-    const expectedTotal =
-      BigInt(cost.goodsCostVnd) + BigInt(cost.transportationFeeVnd) + BigInt(cost.handlingFeeVnd);
-    if (BigInt(cost.totalCostVnd) !== expectedTotal) {
+    const expectedTotal = sumRefinementValues([
+      safeIntegerToBigIntForRefinement(cost.goodsCostVnd),
+      safeIntegerToBigIntForRefinement(cost.transportationFeeVnd),
+      safeIntegerToBigIntForRefinement(cost.handlingFeeVnd),
+    ]);
+    const declaredTotal = safeIntegerToBigIntForRefinement(cost.totalCostVnd);
+    if (expectedTotal !== null && declaredTotal !== null && declaredTotal !== expectedTotal) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['totalCostVnd'],
@@ -107,11 +111,11 @@ export const InboundReceiptSchema = z
         message: 'Bag codes must be unique within a receipt',
       });
     }
-    const bagsTotal = receipt.bags.reduce(
-      (total, bag) => total + kilogramsToGrams(bag.weightKg),
-      0n,
+    const bagsTotal = sumRefinementValues(
+      receipt.bags.map((bag) => kilogramsToGramsForRefinement(bag.weightKg)),
     );
-    if (bagsTotal !== kilogramsToGrams(receipt.totalWeightKg)) {
+    const declaredTotal = kilogramsToGramsForRefinement(receipt.totalWeightKg);
+    if (bagsTotal !== null && declaredTotal !== null && bagsTotal !== declaredTotal) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['totalWeightKg'],

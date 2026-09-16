@@ -11,16 +11,18 @@ import {
   PositiveGramsSchema,
   PositiveKilogramsDecimalSchema,
 } from './common.js';
+import {
+  kilogramsToGramsForRefinement,
+  safeIntegerToBigIntForRefinement,
+  sumRefinementValues,
+} from './refinement-values.js';
 import { InventoryAmountSchema, PositiveInventoryAmountSchema } from './warehouse.js';
 import type { InventoryAmount } from './warehouse.js';
 
-function kilogramsToGrams(value: string): bigint {
-  const [whole = '0', fraction = ''] = value.split('.');
-  return BigInt(whole) * 1_000n + BigInt(fraction.padEnd(3, '0'));
-}
-
-function amountValue(amount: InventoryAmount): bigint {
-  return amount.kind === 'UNIT' ? BigInt(amount.quantity) : kilogramsToGrams(amount.value);
+function amountValue(amount: InventoryAmount): bigint | null {
+  return amount.kind === 'UNIT'
+    ? safeIntegerToBigIntForRefinement(amount.quantity)
+    : kilogramsToGramsForRefinement(amount.value);
 }
 
 export const OutboundOrderStatusSchema = z.enum([
@@ -65,11 +67,11 @@ export const CreateOutboundLineSchema = z
       });
     }
     if (line.amount.kind === 'WEIGHT') {
-      const pickedGrams = line.bagPicks.reduce(
-        (total, pick) => total + BigInt(pick.weightGrams),
-        0n,
+      const pickedGrams = sumRefinementValues(
+        line.bagPicks.map((pick) => safeIntegerToBigIntForRefinement(pick.weightGrams)),
       );
-      if (pickedGrams !== kilogramsToGrams(line.amount.value)) {
+      const requestedGrams = kilogramsToGramsForRefinement(line.amount.value);
+      if (pickedGrams !== null && requestedGrams !== null && pickedGrams !== requestedGrams) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['bagPicks'],
@@ -98,11 +100,11 @@ export const OutboundLineSchema = z
       });
     }
     if (line.amount.kind === 'WEIGHT') {
-      const pickedGrams = line.bagPicks.reduce(
-        (total, pick) => total + BigInt(pick.weightGrams),
-        0n,
+      const pickedGrams = sumRefinementValues(
+        line.bagPicks.map((pick) => safeIntegerToBigIntForRefinement(pick.weightGrams)),
       );
-      if (pickedGrams !== kilogramsToGrams(line.amount.value)) {
+      const requestedGrams = kilogramsToGramsForRefinement(line.amount.value);
+      if (pickedGrams !== null && requestedGrams !== null && pickedGrams !== requestedGrams) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['bagPicks'],
@@ -137,6 +139,9 @@ export const OutboundReceiptDeclarationLineSchema = z
 
     const expected = amountValue(line.expected);
     const actual = amountValue(line.actual);
+    if (expected === null || actual === null) {
+      return;
+    }
     if (line.declaration === 'FULL' && actual !== expected) {
       context.addIssue({
         code: z.ZodIssueCode.custom,

@@ -8,15 +8,18 @@ import {
   PaginationMetaSchema,
   PaginationQuerySchema,
 } from './common.js';
+import {
+  kilogramsToGramsForRefinement,
+  safeIntegerToBigIntForRefinement,
+} from './refinement-values.js';
 import { InventoryAmountSchema, PositiveInventoryAmountSchema } from './warehouse.js';
 import type { InventoryAmount } from './warehouse.js';
 
-function amountValue(amount: InventoryAmount): bigint {
+function amountValue(amount: InventoryAmount): bigint | null {
   if (amount.kind === 'UNIT') {
-    return BigInt(amount.quantity);
+    return safeIntegerToBigIntForRefinement(amount.quantity);
   }
-  const [whole = '0', fraction = ''] = amount.value.split('.');
-  return BigInt(whole) * 1_000n + BigInt(fraction.padEnd(3, '0'));
+  return kilogramsToGramsForRefinement(amount.value);
 }
 
 export const AllocationBatchStatusSchema = z.enum(['DRAFT', 'COMMITTED', 'CANCELLED']);
@@ -55,9 +58,14 @@ export const AllocationLineSchema = z
       });
       return;
     }
+    const allocated = amountValue(line.allocated);
+    const unfulfilled = amountValue(line.unfulfilled);
+    const requested = amountValue(line.requested);
     if (
-      amountValue(line.allocated) + amountValue(line.unfulfilled) !==
-      amountValue(line.requested)
+      allocated !== null &&
+      unfulfilled !== null &&
+      requested !== null &&
+      allocated + unfulfilled !== requested
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
