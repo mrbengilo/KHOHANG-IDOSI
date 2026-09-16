@@ -289,7 +289,7 @@ CREATE TABLE "order_sessions" (
 	"deleted_by_user_id" uuid,
 	CONSTRAINT "order_sessions_code_unique" UNIQUE("code"),
 	CONSTRAINT "order_sessions_code_not_blank" CHECK (length(btrim("order_sessions"."code")) > 0),
-	CONSTRAINT "order_sessions_deadline_order" CHECK ("order_sessions"."request_deadline_at" > "order_sessions"."inventory_snapshot_due_at"),
+	CONSTRAINT "order_sessions_deadline_order" CHECK ("order_sessions"."request_deadline_at" >= "order_sessions"."inventory_snapshot_due_at"),
 	CONSTRAINT "order_sessions_close_after_open" CHECK ("order_sessions"."closed_at" IS NULL OR "order_sessions"."opened_at" IS NULL OR "order_sessions"."closed_at" >= "order_sessions"."opened_at"),
 	CONSTRAINT "order_sessions_version_nonnegative" CHECK ("order_sessions"."version" >= 0)
 );

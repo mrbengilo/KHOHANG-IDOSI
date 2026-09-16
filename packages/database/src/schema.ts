@@ -441,7 +441,7 @@ export const orderSessions = pgTable(
     check('order_sessions_code_not_blank', sql`length(btrim(${table.code})) > 0`),
     check(
       'order_sessions_deadline_order',
-      sql`${table.requestDeadlineAt} > ${table.inventorySnapshotDueAt}`,
+      sql`${table.requestDeadlineAt} >= ${table.inventorySnapshotDueAt}`,
     ),
     check(
       'order_sessions_close_after_open',

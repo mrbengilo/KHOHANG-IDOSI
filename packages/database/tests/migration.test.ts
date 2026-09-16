@@ -122,6 +122,15 @@ describe('initial migration invariants', () => {
     expect(migration).not.toContain('inventory_snapshots_session_type_uidx');
   });
 
+  it('allows the half-open request cutoff to equal the 08:00 snapshot instant', () => {
+    expect(migration).toContain(
+      '"order_sessions_deadline_order" CHECK ("order_sessions"."request_deadline_at" >= "order_sessions"."inventory_snapshot_due_at")',
+    );
+    expect(schemaSource).toContain(
+      'sql`${table.requestDeadlineAt} >= ${table.inventorySnapshotDueAt}`',
+    );
+  });
+
   it('uses exact database and Drizzle types for VND and gram-precision weights', () => {
     const vndColumns = [...migration.matchAll(/"[a-z_]+_vnd" bigint\b/gi)];
     const weightColumns = [...migration.matchAll(/"[a-z_]*weight_kg" numeric\(14, 3\)/gi)];

@@ -2698,7 +2698,7 @@
         },
         "order_sessions_deadline_order": {
           "name": "order_sessions_deadline_order",
-          "value": "\"order_sessions\".\"request_deadline_at\" > \"order_sessions\".\"inventory_snapshot_due_at\""
+          "value": "\"order_sessions\".\"request_deadline_at\" >= \"order_sessions\".\"inventory_snapshot_due_at\""
         },
         "order_sessions_close_after_open": {
           "name": "order_sessions_close_after_open",
