@@ -1,0 +1,55 @@
+# syntax=docker/dockerfile:1.7
+
+ARG NODE_IMAGE=node:24-bookworm-slim
+
+FROM ${NODE_IMAGE} AS dependencies
+WORKDIR /app
+
+ENV NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_UPDATE_NOTIFIER=false
+
+COPY package.json package-lock.json ./
+COPY apps/api/package.json ./apps/api/package.json
+COPY apps/web/package.json ./apps/web/package.json
+COPY apps/worker/package.json ./apps/worker/package.json
+COPY packages/contracts/package.json ./packages/contracts/package.json
+COPY packages/database/package.json ./packages/database/package.json
+COPY packages/domain/package.json ./packages/domain/package.json
+COPY packages/ui/package.json ./packages/ui/package.json
+
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npm ci
+
+FROM dependencies AS build
+
+ARG VITE_API_BASE_URL=/api/v1
+ARG VITE_ENABLE_MOCK_FALLBACK=false
+
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL} \
+    VITE_ENABLE_MOCK_FALLBACK=${VITE_ENABLE_MOCK_FALLBACK}
+
+COPY tsconfig.base.json ./tsconfig.base.json
+COPY apps/web ./apps/web
+COPY packages/contracts ./packages/contracts
+COPY packages/domain ./packages/domain
+COPY packages/ui ./packages/ui
+
+RUN test "${VITE_ENABLE_MOCK_FALLBACK}" = "false" \
+    && npm -w @idosi/web run build
+
+FROM ${NODE_IMAGE} AS runtime
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    WEB_HOST=0.0.0.0 \
+    WEB_PORT=8080 \
+    WEB_ROOT=/app/public
+
+COPY --from=build --chown=node:node /app/apps/web/dist ./public
+COPY --chown=node:node infra/web-server.mjs ./server.mjs
+
+USER node
+EXPOSE 8080
+
+CMD ["node", "server.mjs"]

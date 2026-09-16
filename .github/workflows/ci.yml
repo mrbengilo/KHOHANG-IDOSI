@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - 'feat/**'
+      - 'fix/**'
+      - 'chore/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Node 24 / PostgreSQL 17
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:17.6-bookworm
+        env:
+          POSTGRES_DB: idosi_ci
+          POSTGRES_PASSWORD: idosi_ci_password
+          POSTGRES_USER: idosi_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U idosi_ci -d idosi_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      API_HOST: 127.0.0.1
+      API_PORT: 3000
+      CI: 'true'
+      DATABASE_URL: postgresql://idosi_ci:idosi_ci_password@127.0.0.1:5432/idosi_ci
+      NODE_ENV: test
+      SESSION_SECRET: ci-only-session-secret-at-least-32-characters
+      RUN_POSTGRES_TESTS: '1'
+      TZ: Asia/Ho_Chi_Minh
+      VITE_API_BASE_URL: /api/v1
+      VITE_ENABLE_MOCK_FALLBACK: 'false'
+      WEB_ORIGIN: http://127.0.0.1:5173
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Report toolchain
+        run: |
+          node --version
+          npm --version
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck all workspaces
+        run: npm run typecheck
+
+      - name: Apply migrations to a fresh PostgreSQL database
+        run: node infra/scripts/run-migrations.mjs
+
+      - name: Verify migrations are repeatable
+        run: node infra/scripts/run-migrations.mjs
+
+      - name: Run all workspace tests
+        run: npm run test
+
+      - name: Build all workspaces
+        run: npm run build
+
+      - name: Install Playwright Chromium
+        run: ./node_modules/.bin/playwright install --with-deps chromium
+
+      - name: Run responsive browser smoke tests
+        run: npm run e2e
+
+      - name: Validate infrastructure sources
+        env:
+          APP_DOMAIN: localhost
+          IMAGE_PREFIX: local/khohang-idosi
+          IMAGE_TAG: 0000000000000000000000000000000000000000
+          POSTGRES_PASSWORD: idosi_ci_password
+        run: |
+          bash -n infra/scripts/backup-db.sh
+          bash -n infra/scripts/restore-db.sh
+          bash -n infra/scripts/rollback.sh
+          node --check infra/scripts/run-migrations.mjs
+          node --check infra/web-server.mjs
+          docker compose --file docker-compose.yml config --quiet
+          docker run --rm \
+            --env APP_DOMAIN=localhost \
+            --volume "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.10.2-alpine \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+      - name: Build production container targets
+        env:
+          APP_DOMAIN: localhost
+          IMAGE_PREFIX: local/khohang-idosi
+          IMAGE_TAG: 0000000000000000000000000000000000000000
+          POSTGRES_PASSWORD: idosi_ci_password
+        run: docker compose --file docker-compose.yml build api migrate worker web

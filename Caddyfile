@@ -1,0 +1,47 @@
+{
+	admin off
+	http_port 8080
+	https_port 8443
+}
+
+http://127.0.0.1:2019 {
+	respond /healthz "ok" 200
+	log {
+		output discard
+	}
+}
+
+{$APP_DOMAIN} {
+	encode zstd gzip
+
+	# Operational endpoints and OpenAPI UI live outside /api/v1 in Fastify, so
+	# route them explicitly instead of allowing the SPA fallback to return a
+	# misleading HTTP 200 response for an unhealthy or missing API.
+	@api path /api /api/* /health /ready /docs /docs/*
+	handle @api {
+		reverse_proxy api:3000 {
+			health_uri /ready
+			health_interval 10s
+			health_timeout 3s
+		}
+	}
+
+	handle {
+		header Content-Security-Policy "default-src 'self'; base-uri 'self'; connect-src 'self'; font-src 'self' https://fonts.gstatic.com data:; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com"
+		reverse_proxy web:8080
+	}
+
+	header {
+		-Server
+		Permissions-Policy "camera=(), geolocation=(), microphone=()"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
