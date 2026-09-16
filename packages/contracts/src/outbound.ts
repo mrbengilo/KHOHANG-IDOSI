@@ -1,0 +1,357 @@
+import { z } from 'zod';
+
+import {
+  AuditReasonSchema,
+  EntityIdSchema,
+  GramsSchema,
+  IsoDateTimeSchema,
+  MoneyVndSchema,
+  PaginationMetaSchema,
+  PaginationQuerySchema,
+  PositiveGramsSchema,
+  PositiveKilogramsDecimalSchema,
+} from './common.js';
+import { InventoryAmountSchema, PositiveInventoryAmountSchema } from './warehouse.js';
+import type { InventoryAmount } from './warehouse.js';
+
+function kilogramsToGrams(value: string): bigint {
+  const [whole = '0', fraction = ''] = value.split('.');
+  return BigInt(whole) * 1_000n + BigInt(fraction.padEnd(3, '0'));
+}
+
+function amountValue(amount: InventoryAmount): bigint {
+  return amount.kind === 'UNIT' ? BigInt(amount.quantity) : kilogramsToGrams(amount.value);
+}
+
+export const OutboundOrderStatusSchema = z.enum([
+  'DRAFT',
+  'CONFIRMED',
+  'DISPATCHED',
+  'RECEIPT_DECLARED',
+  'CANCELLED',
+]);
+export type OutboundOrderStatus = z.infer<typeof OutboundOrderStatusSchema>;
+
+export const OutboundBagPickSchema = z
+  .object({
+    sourceReceiptBagId: EntityIdSchema,
+    weightGrams: PositiveGramsSchema,
+  })
+  .strict();
+export type OutboundBagPick = z.infer<typeof OutboundBagPickSchema>;
+
+const OutboundBagPicksSchema = z
+  .array(OutboundBagPickSchema)
+  .max(2_000)
+  .refine(
+    (picks) => new Set(picks.map((pick) => pick.sourceReceiptBagId)).size === picks.length,
+    'A source bag may appear only once per outbound line',
+  );
+
+export const CreateOutboundLineSchema = z
+  .object({
+    allocationLineId: EntityIdSchema,
+    productId: EntityIdSchema,
+    amount: PositiveInventoryAmountSchema,
+    bagPicks: OutboundBagPicksSchema.default([]),
+  })
+  .strict()
+  .superRefine((line, context) => {
+    if (line.amount.kind === 'UNIT' && line.bagPicks.length > 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['bagPicks'],
+        message: 'Unit-counted products cannot have weight bag picks',
+      });
+    }
+    if (line.amount.kind === 'WEIGHT') {
+      const pickedGrams = line.bagPicks.reduce(
+        (total, pick) => total + BigInt(pick.weightGrams),
+        0n,
+      );
+      if (pickedGrams !== kilogramsToGrams(line.amount.value)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['bagPicks'],
+          message: 'Bag pick grams must equal the outbound weight',
+        });
+      }
+    }
+  });
+export type CreateOutboundLine = z.infer<typeof CreateOutboundLineSchema>;
+
+export const OutboundLineSchema = z
+  .object({
+    id: EntityIdSchema,
+    allocationLineId: EntityIdSchema,
+    productId: EntityIdSchema,
+    amount: PositiveInventoryAmountSchema,
+    bagPicks: OutboundBagPicksSchema,
+  })
+  .strict()
+  .superRefine((line, context) => {
+    if (line.amount.kind === 'UNIT' && line.bagPicks.length > 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['bagPicks'],
+        message: 'Unit-counted products cannot have weight bag picks',
+      });
+    }
+    if (line.amount.kind === 'WEIGHT') {
+      const pickedGrams = line.bagPicks.reduce(
+        (total, pick) => total + BigInt(pick.weightGrams),
+        0n,
+      );
+      if (pickedGrams !== kilogramsToGrams(line.amount.value)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['bagPicks'],
+          message: 'Bag pick grams must equal the outbound weight',
+        });
+      }
+    }
+  });
+export type OutboundLine = z.infer<typeof OutboundLineSchema>;
+
+export const OutboundReceiptDeclarationTypeSchema = z.enum(['FULL', 'SHORT']);
+export type OutboundReceiptDeclarationType = z.infer<typeof OutboundReceiptDeclarationTypeSchema>;
+
+export const OutboundReceiptDeclarationLineSchema = z
+  .object({
+    outboundLineId: EntityIdSchema,
+    expected: PositiveInventoryAmountSchema,
+    actual: InventoryAmountSchema,
+    declaration: OutboundReceiptDeclarationTypeSchema,
+    shortageReason: AuditReasonSchema.optional(),
+  })
+  .strict()
+  .superRefine((line, context) => {
+    if (line.expected.kind !== line.actual.kind) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['actual', 'kind'],
+        message: 'Expected and actual amounts must use the same measurement',
+      });
+      return;
+    }
+
+    const expected = amountValue(line.expected);
+    const actual = amountValue(line.actual);
+    if (line.declaration === 'FULL' && actual !== expected) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['actual'],
+        message: 'A full receipt must declare the expected amount',
+      });
+    }
+    if (line.declaration === 'SHORT' && actual >= expected) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['actual'],
+        message: 'A short receipt must declare less than the expected amount',
+      });
+    }
+    if (line.declaration === 'SHORT' && line.shortageReason === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['shortageReason'],
+        message: 'A shortage reason is required for a short receipt',
+      });
+    }
+  });
+export type OutboundReceiptDeclarationLine = z.infer<typeof OutboundReceiptDeclarationLineSchema>;
+
+export const OutboundReceiptDeclarationSchema = z
+  .object({
+    id: EntityIdSchema,
+    outboundOrderId: EntityIdSchema,
+    lines: z.array(OutboundReceiptDeclarationLineSchema).min(1),
+    declaredByAccountId: EntityIdSchema,
+    declaredAt: IsoDateTimeSchema,
+  })
+  .strict();
+export type OutboundReceiptDeclaration = z.infer<typeof OutboundReceiptDeclarationSchema>;
+
+export const OutboundOrderSchema = z
+  .object({
+    id: EntityIdSchema,
+    code: z.string().trim().min(1).max(100),
+    allocationBatchId: EntityIdSchema,
+    storeId: EntityIdSchema,
+    status: OutboundOrderStatusSchema,
+    lines: z.array(OutboundLineSchema).min(1),
+    version: z.number().int().nonnegative(),
+    confirmedAt: IsoDateTimeSchema.nullable(),
+    dispatchedAt: IsoDateTimeSchema.nullable(),
+    receiptDeclaration: OutboundReceiptDeclarationSchema.nullable(),
+    createdByAccountId: EntityIdSchema,
+    createdAt: IsoDateTimeSchema,
+    updatedAt: IsoDateTimeSchema,
+  })
+  .strict()
+  .superRefine((order, context) => {
+    if (order.status === 'RECEIPT_DECLARED' && order.receiptDeclaration === null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['receiptDeclaration'],
+        message: 'A receipt-declared outbound order must include its declaration',
+      });
+    }
+  });
+export type OutboundOrder = z.infer<typeof OutboundOrderSchema>;
+
+export const CreateOutboundOrderRequestSchema = z
+  .object({
+    allocationBatchId: EntityIdSchema,
+    storeId: EntityIdSchema,
+    lines: z
+      .array(CreateOutboundLineSchema)
+      .min(1)
+      .max(500)
+      .refine(
+        (lines) => new Set(lines.map((line) => line.allocationLineId)).size === lines.length,
+        'An allocation line may appear only once in an outbound order',
+      ),
+  })
+  .strict();
+export type CreateOutboundOrderRequest = z.infer<typeof CreateOutboundOrderRequestSchema>;
+
+export const OutboundOrderParamsSchema = z.object({ outboundOrderId: EntityIdSchema }).strict();
+export type OutboundOrderParams = z.infer<typeof OutboundOrderParamsSchema>;
+
+export const ConfirmOutboundOrderRequestSchema = z
+  .object({ expectedVersion: z.number().int().nonnegative() })
+  .strict();
+export type ConfirmOutboundOrderRequest = z.infer<typeof ConfirmOutboundOrderRequestSchema>;
+
+export const DispatchOutboundOrderRequestSchema = z
+  .object({
+    expectedVersion: z.number().int().nonnegative(),
+    dispatchNote: z.string().trim().min(1).max(500).optional(),
+  })
+  .strict();
+export type DispatchOutboundOrderRequest = z.infer<typeof DispatchOutboundOrderRequestSchema>;
+
+export const DeclareOutboundReceiptRequestSchema = z
+  .object({
+    expectedVersion: z.number().int().nonnegative(),
+    lines: z
+      .array(OutboundReceiptDeclarationLineSchema)
+      .min(1)
+      .max(500)
+      .refine(
+        (lines) => new Set(lines.map((line) => line.outboundLineId)).size === lines.length,
+        'An outbound line may be declared only once',
+      ),
+  })
+  .strict();
+export type DeclareOutboundReceiptRequest = z.infer<typeof DeclareOutboundReceiptRequestSchema>;
+
+export const CancelOutboundOrderRequestSchema = z.object({ reason: AuditReasonSchema }).strict();
+export type CancelOutboundOrderRequest = z.infer<typeof CancelOutboundOrderRequestSchema>;
+
+export const OutboundOrderResponseSchema = z.object({ data: OutboundOrderSchema }).strict();
+export type OutboundOrderResponse = z.infer<typeof OutboundOrderResponseSchema>;
+
+export const ListOutboundOrdersQuerySchema = PaginationQuerySchema.extend({
+  storeId: EntityIdSchema.optional(),
+  status: OutboundOrderStatusSchema.optional(),
+  dispatchedFrom: IsoDateTimeSchema.optional(),
+  dispatchedTo: IsoDateTimeSchema.optional(),
+}).strict();
+export type ListOutboundOrdersQuery = z.infer<typeof ListOutboundOrdersQuerySchema>;
+
+export const ListOutboundOrdersResponseSchema = z
+  .object({ data: z.array(OutboundOrderSchema), pagination: PaginationMetaSchema })
+  .strict();
+export type ListOutboundOrdersResponse = z.infer<typeof ListOutboundOrdersResponseSchema>;
+
+/** Lightweight aggregate for reconciliation endpoints. */
+export const OutboundReceiptTotalsSchema = z
+  .object({ expectedGrams: GramsSchema, actualGrams: GramsSchema, shortageGrams: GramsSchema })
+  .strict();
+export type OutboundReceiptTotals = z.infer<typeof OutboundReceiptTotalsSchema>;
+
+export const OutboundReasonSchema = z.enum([
+  'DISCOUNT_SALE',
+  'CHARITY',
+  'TORN',
+  'DEFECTIVE',
+  'DIRTY',
+  'OTHER',
+]);
+export type OutboundReason = z.infer<typeof OutboundReasonSchema>;
+
+export const StoreOutboundStatusSchema = z.enum(['PENDING', 'APPROVED', 'REJECTED']);
+export type StoreOutboundStatus = z.infer<typeof StoreOutboundStatusSchema>;
+
+/** Store-side stock removal from one inventory bag/lot. */
+export const StoreOutboundSchema = z
+  .object({
+    id: EntityIdSchema,
+    storeId: EntityIdSchema,
+    inventoryLotId: EntityIdSchema,
+    weightKg: PositiveKilogramsDecimalSchema,
+    reason: OutboundReasonSchema,
+    revenueVnd: MoneyVndSchema.nullable(),
+    status: StoreOutboundStatusSchema,
+    createdByAccountId: EntityIdSchema,
+    reviewedByAccountId: EntityIdSchema.nullable(),
+    reviewNote: z.string().trim().min(3).max(500).nullable(),
+    version: z.number().int().nonnegative(),
+    createdAt: IsoDateTimeSchema,
+    updatedAt: IsoDateTimeSchema,
+  })
+  .strict()
+  .superRefine((outbound, context) => {
+    if (outbound.status !== 'PENDING' && outbound.reviewedByAccountId === null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['reviewedByAccountId'],
+        message: 'A reviewed outbound must record its reviewer',
+      });
+    }
+  });
+export type StoreOutbound = z.infer<typeof StoreOutboundSchema>;
+
+export const CreateStoreOutboundRequestSchema = z
+  .object({
+    storeId: EntityIdSchema,
+    inventoryLotId: EntityIdSchema,
+    weightKg: PositiveKilogramsDecimalSchema,
+    reason: OutboundReasonSchema,
+    revenueVnd: MoneyVndSchema.nullable().default(null),
+  })
+  .strict();
+export type CreateStoreOutboundRequest = z.infer<typeof CreateStoreOutboundRequestSchema>;
+
+export const ReviewStoreOutboundRequestSchema = z
+  .object({
+    decision: z.enum(['APPROVE', 'REJECT']),
+    note: z.string().trim().min(3).max(500).nullable().default(null),
+    expectedVersion: z.number().int().nonnegative(),
+  })
+  .strict();
+export type ReviewStoreOutboundRequest = z.infer<typeof ReviewStoreOutboundRequestSchema>;
+
+export const StoreOutboundParamsSchema = z.object({ outboundId: EntityIdSchema }).strict();
+export type StoreOutboundParams = z.infer<typeof StoreOutboundParamsSchema>;
+
+export const StoreOutboundResponseSchema = z.object({ data: StoreOutboundSchema }).strict();
+export type StoreOutboundResponse = z.infer<typeof StoreOutboundResponseSchema>;
+
+export const ListStoreOutboundsQuerySchema = PaginationQuerySchema.extend({
+  storeId: EntityIdSchema.optional(),
+  inventoryLotId: EntityIdSchema.optional(),
+  status: StoreOutboundStatusSchema.optional(),
+  reason: OutboundReasonSchema.optional(),
+}).strict();
+export type ListStoreOutboundsQuery = z.infer<typeof ListStoreOutboundsQuerySchema>;
+
+export const ListStoreOutboundsResponseSchema = z
+  .object({ data: z.array(StoreOutboundSchema), pagination: PaginationMetaSchema })
+  .strict();
+export type ListStoreOutboundsResponse = z.infer<typeof ListStoreOutboundsResponseSchema>;
+
+export const OutboundSchema = StoreOutboundSchema;
+export type Outbound = z.infer<typeof OutboundSchema>;
