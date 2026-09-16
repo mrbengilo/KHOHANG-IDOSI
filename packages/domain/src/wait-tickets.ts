@@ -163,6 +163,13 @@ export function assertValidWaitTicket(ticket: WaitTicket): void {
     'Wait ticket reservation idempotency keys must be unique',
     { ticketId: ticket.id },
   );
+  invariant(
+    new Set(ticket.reservations.map((reservation) => reservation.allocationId)).size ===
+      ticket.reservations.length,
+    'INVALID_STATE',
+    'A wait ticket may have only one reservation per allocation',
+    { ticketId: ticket.id },
+  );
 }
 
 export function createWaitTicket(
@@ -309,12 +316,13 @@ export function reserveWaitTicket(
     ticketId: ticket.id,
   });
   const idempotencyKey = nonEmpty(input.idempotencyKey, 'idempotencyKey');
+  const allocationId = nonEmpty(input.allocationId, 'allocationId');
   const quantity = positiveInteger(input.quantity, 'quantity');
   const replay = ticket.reservations.find(
     (reservation) => reservation.idempotencyKey === idempotencyKey,
   );
   if (replay !== undefined) {
-    if (replay.allocationId !== input.allocationId || replay.quantity !== quantity) {
+    if (replay.allocationId !== allocationId || replay.quantity !== quantity) {
       throw new DomainError(
         'IDEMPOTENCY_CONFLICT',
         'The wait reservation idempotency key was already used with another payload',
@@ -322,6 +330,17 @@ export function reserveWaitTicket(
       );
     }
     return Object.freeze({ ticket, replayed: true });
+  }
+
+  const existingAllocation = ticket.reservations.find(
+    (reservation) => reservation.allocationId === allocationId,
+  );
+  if (existingAllocation !== undefined) {
+    throw new DomainError(
+      'IDEMPOTENCY_CONFLICT',
+      'The allocation already has a wait reservation under another idempotency key',
+      { allocationId },
+    );
   }
 
   invariant(
@@ -332,7 +351,7 @@ export function reserveWaitTicket(
   );
   const reservation: WaitTicketReservation = Object.freeze({
     idempotencyKey,
-    allocationId: nonEmpty(input.allocationId, 'allocationId'),
+    allocationId,
     quantity,
     reservedAt: isoTimestamp(input.reservedAt, 'reservedAt'),
     settledByReceiptId: null,

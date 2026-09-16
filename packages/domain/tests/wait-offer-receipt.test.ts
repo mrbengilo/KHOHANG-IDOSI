@@ -1,3 +1,4 @@
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -11,6 +12,7 @@ import {
   reserveWaitTicket,
   settleWaitTicketReceipt,
   upsertActiveWaitTicket,
+  type ReceiptReconciliation,
 } from '../src/index.js';
 
 function initialWaitTicket() {
@@ -79,6 +81,26 @@ describe('wait ticket invariants', () => {
         recordedAt: '2026-09-04T09:00:00.000Z',
       }),
     ).toThrowError(expect.objectContaining({ code: 'ACTIVE_WAIT_TICKET_EXISTS' }));
+  });
+
+  it('rejects a second reservation for the same allocation under another key', () => {
+    const first = reserveWaitTicket(initialWaitTicket(), {
+      allocationId: 'allocation-1',
+      quantity: 2,
+      idempotencyKey: 'reservation-1',
+      reservedAt: '2026-09-10T09:01:00.000Z',
+    }).ticket;
+
+    expect(() =>
+      reserveWaitTicket(first, {
+        allocationId: 'allocation-1',
+        quantity: 1,
+        idempotencyKey: 'reservation-2',
+        reservedAt: '2026-09-10T09:02:00.000Z',
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'IDEMPOTENCY_CONFLICT' }));
+    expect(first.reservedQuantity).toBe(2);
+    expect(first.reservations).toHaveLength(1);
   });
 });
 
@@ -220,5 +242,41 @@ describe('receipt reconciliation', () => {
         confirmedAt: '2026-09-10T12:00:00.000Z',
       }),
     ).toThrowError(expect.objectContaining({ code: 'RECEIPT_QUANTITY_EXCEEDED' }));
+  });
+
+  it('rejects every forged negative receipt before changing a wait ticket', () => {
+    const ticket = reserveWaitTicket(initialWaitTicket(), {
+      allocationId: 'allocation-forged',
+      quantity: 3,
+      idempotencyKey: 'reservation-forged',
+      reservedAt: '2026-09-10T09:01:00.000Z',
+    }).ticket;
+    const valid = createReceiptReconciliation({
+      id: 'receipt-forged',
+      idempotencyKey: 'receipt-forged-key',
+      allocationId: 'allocation-forged',
+      storeId: ticket.storeId,
+      productId: ticket.productId,
+      sourceWaitTicketId: ticket.id,
+      expectedQuantity: 3,
+      receivedQuantity: 0,
+      confirmedAt: '2026-09-10T12:00:00.000Z',
+    });
+
+    fc.assert(
+      fc.property(fc.integer({ min: -10_000, max: -1 }), (receivedQuantity) => {
+        const forged = {
+          ...valid,
+          receivedQuantity,
+          inventoryCreditQuantity: receivedQuantity,
+          shortageQuantity: valid.expectedQuantity - receivedQuantity,
+        } as ReceiptReconciliation;
+
+        expect(() => settleWaitTicketReceipt(ticket, forged)).toThrowError(
+          expect.objectContaining({ code: 'INVALID_ARGUMENT' }),
+        );
+        expect(ticket).toMatchObject({ openQuantity: 5, reservedQuantity: 3 });
+      }),
+    );
   });
 });

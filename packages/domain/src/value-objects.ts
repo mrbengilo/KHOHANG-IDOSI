@@ -13,7 +13,12 @@ export type Weight = Readonly<{
 
 export type WeightUnit = 'g' | 'kg';
 
-const FRACTION_DIGITS: Readonly<Record<WeightUnit, number>> = {
+const MAX_INPUT_FRACTION_DIGITS: Readonly<Record<WeightUnit, number>> = {
+  g: 3,
+  kg: 3,
+};
+
+const MILLIGRAM_FRACTION_DIGITS: Readonly<Record<WeightUnit, number>> = {
   g: 3,
   kg: 6,
 };
@@ -38,7 +43,7 @@ export function multiplyVnd(unitPrice: Vnd, quantity: number): Vnd {
 }
 
 export function weight(value: string, unit: WeightUnit): Weight {
-  const fractionDigits = FRACTION_DIGITS[unit];
+  const maxFractionDigits = MAX_INPUT_FRACTION_DIGITS[unit];
   const match = /^(0|[1-9]\d*)(?:\.(\d+))?$/.exec(value);
   invariant(match !== null, 'INVALID_ARGUMENT', 'Weight must be an unsigned plain decimal string', {
     unit,
@@ -48,14 +53,15 @@ export function weight(value: string, unit: WeightUnit): Weight {
   const whole = match[1] ?? '0';
   const fraction = match[2] ?? '';
   invariant(
-    fraction.length <= fractionDigits,
+    fraction.length <= maxFractionDigits,
     'INVALID_ARGUMENT',
-    `Weight in ${unit} supports at most ${fractionDigits} fractional digits`,
+    `Weight in ${unit} supports at most ${maxFractionDigits} fractional digits`,
     { unit, value },
   );
 
-  const scale = 10n ** BigInt(fractionDigits);
-  const fractionPadded = fraction.padEnd(fractionDigits, '0');
+  const milligramFractionDigits = MILLIGRAM_FRACTION_DIGITS[unit];
+  const scale = 10n ** BigInt(milligramFractionDigits);
+  const fractionPadded = fraction.padEnd(milligramFractionDigits, '0');
   const milligrams = BigInt(whole) * scale + BigInt(fractionPadded || '0');
   return { milligrams } as Weight;
 }
@@ -79,7 +85,7 @@ export function subtractWeight(left: Weight, right: Weight): Weight {
 }
 
 export function formatWeight(value: Weight, unit: WeightUnit): string {
-  const fractionDigits = FRACTION_DIGITS[unit];
+  const fractionDigits = MILLIGRAM_FRACTION_DIGITS[unit];
   const scale = 10n ** BigInt(fractionDigits);
   const whole = value.milligrams / scale;
   const fraction = (value.milligrams % scale).toString().padStart(fractionDigits, '0');

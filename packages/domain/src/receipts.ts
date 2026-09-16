@@ -62,7 +62,7 @@ export function createReceiptReconciliation(
       ? null
       : nonEmpty(input.sourceWaitTicketId, 'sourceWaitTicketId');
 
-  return Object.freeze({
+  const reconciliation: ReceiptReconciliation = Object.freeze({
     id: nonEmpty(input.id, 'receiptReconciliationId'),
     idempotencyKey: nonEmpty(input.idempotencyKey, 'idempotencyKey'),
     allocationId: nonEmpty(input.allocationId, 'allocationId'),
@@ -77,6 +77,57 @@ export function createReceiptReconciliation(
     status: shortageQuantity === 0 ? 'FULL' : 'SHORT',
     confirmedAt: isoTimestamp(input.confirmedAt, 'confirmedAt'),
   });
+  assertValidReceiptReconciliation(reconciliation);
+  return reconciliation;
+}
+
+export function assertValidReceiptReconciliation(reconciliation: ReceiptReconciliation): void {
+  nonEmpty(reconciliation.id, 'receiptReconciliationId');
+  nonEmpty(reconciliation.idempotencyKey, 'idempotencyKey');
+  nonEmpty(reconciliation.allocationId, 'allocationId');
+  nonEmpty(reconciliation.storeId, 'storeId');
+  nonEmpty(reconciliation.productId, 'productId');
+  if (reconciliation.sourceWaitTicketId !== null) {
+    nonEmpty(reconciliation.sourceWaitTicketId, 'sourceWaitTicketId');
+  }
+
+  const expectedQuantity = positiveInteger(reconciliation.expectedQuantity, 'expectedQuantity');
+  const receivedQuantity = nonNegativeInteger(reconciliation.receivedQuantity, 'receivedQuantity');
+  invariant(
+    receivedQuantity <= expectedQuantity,
+    'RECEIPT_QUANTITY_EXCEEDED',
+    'Received quantity cannot exceed the expected shipment quantity',
+    { expectedQuantity, receivedQuantity },
+  );
+
+  const shortageQuantity = expectedQuantity - receivedQuantity;
+  invariant(
+    reconciliation.shortageQuantity === shortageQuantity,
+    'INVALID_STATE',
+    'Receipt shortage quantity does not reconcile with expected and received quantities',
+    { reconciliationId: reconciliation.id },
+  );
+  invariant(
+    reconciliation.inventoryCreditQuantity === receivedQuantity,
+    'INVALID_STATE',
+    'Receipt inventory credit must equal the physically received quantity',
+    { reconciliationId: reconciliation.id },
+  );
+  const waitQuantityToAdd = reconciliation.sourceWaitTicketId === null ? shortageQuantity : 0;
+  invariant(
+    reconciliation.waitQuantityToAdd === waitQuantityToAdd,
+    'INVALID_STATE',
+    'Receipt wait quantity does not match its shortage source',
+    { reconciliationId: reconciliation.id },
+  );
+  invariant(
+    RECEIPT_RECONCILIATION_STATUSES.includes(reconciliation.status) &&
+      reconciliation.status === (shortageQuantity === 0 ? 'FULL' : 'SHORT'),
+    'INVALID_STATE',
+    'Receipt status does not match its shortage quantity',
+    { reconciliationId: reconciliation.id, status: reconciliation.status },
+  );
+  isoTimestamp(reconciliation.confirmedAt, 'confirmedAt');
 }
 
 function sameReceiptPayload(left: ReceiptReconciliation, right: ReceiptReconciliation): boolean {
@@ -101,6 +152,9 @@ export function reconcileReceipt(
   input: ReceiptReconciliationInput,
 ): ReconcileReceiptResult {
   const candidate = createReceiptReconciliation(input);
+  for (const reconciliation of existing) {
+    assertValidReceiptReconciliation(reconciliation);
+  }
   const replay = existing.find(
     (reconciliation) => reconciliation.idempotencyKey === candidate.idempotencyKey,
   );
@@ -144,6 +198,7 @@ export function settleWaitTicketReceipt(
   reconciliation: ReceiptReconciliation,
 ): SettleWaitTicketReceiptResult {
   assertValidWaitTicket(ticket);
+  assertValidReceiptReconciliation(reconciliation);
   invariant(
     reconciliation.sourceWaitTicketId === ticket.id &&
       reconciliation.storeId === ticket.storeId &&

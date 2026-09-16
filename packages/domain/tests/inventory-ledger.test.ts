@@ -1,10 +1,13 @@
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import {
   appendInventoryLedgerEntry,
+  assertInventoryLedgerValid,
   createInventoryLedger,
   inventoryLedgerBalance,
   reconcileInventoryLedger,
+  type InventoryLedger,
 } from '../src/index.js';
 
 describe('inventory ledger', () => {
@@ -97,5 +100,45 @@ describe('inventory ledger', () => {
         reason: 'shipment',
       }),
     ).toThrowError(expect.objectContaining({ code: 'INSUFFICIENT_INVENTORY' }));
+  });
+
+  it('rejects a rehydrated ledger whose internally consistent history crosses below zero', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 0, max: 10_000 }),
+        fc.integer({ min: 1, max: 10_000 }),
+        (openingBalance, deficit) => {
+          const ledger = createInventoryLedger({
+            id: 'ledger-corrupted',
+            locationId: 'warehouse-main',
+            productId: 'product-1',
+            openingBalance,
+            openedAt: '2026-09-10T00:00:00.000Z',
+          });
+          const corrupted = {
+            ...ledger,
+            entries: [
+              {
+                id: 'entry-corrupted',
+                idempotencyKey: 'ledger-command-corrupted',
+                type: 'SHIPMENT',
+                referenceId: 'shipment-corrupted',
+                quantityDelta: -(openingBalance + deficit),
+                balanceAfter: -deficit,
+                occurredAt: ledger.openedAt,
+                reason: 'corrupted persisted history',
+              },
+            ],
+          } as const satisfies InventoryLedger;
+
+          expect(() => assertInventoryLedgerValid(corrupted)).toThrowError(
+            expect.objectContaining({ code: 'LEDGER_CORRUPTED' }),
+          );
+          expect(() => reconcileInventoryLedger(corrupted)).toThrowError(
+            expect.objectContaining({ code: 'LEDGER_CORRUPTED' }),
+          );
+        },
+      ),
+    );
   });
 });

@@ -169,6 +169,12 @@ export function reconcileInventoryLedger(
       'calculated ledger balance',
     );
     invariant(
+      calculatedBalance >= 0,
+      'LEDGER_CORRUPTED',
+      'Inventory ledger history makes the balance negative',
+      { ledgerId: ledger.id, entryId: entry.id, calculatedBalance },
+    );
+    invariant(
       calculatedBalance === entry.balanceAfter,
       'LEDGER_CORRUPTED',
       'Inventory ledger balanceAfter does not match entry replay',

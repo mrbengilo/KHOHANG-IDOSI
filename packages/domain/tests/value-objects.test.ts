@@ -33,13 +33,14 @@ describe('weight', () => {
   });
 
   it('converts kg and grams through an exact milligram scale', () => {
-    const value = weight('1.234567', 'kg');
+    const value = weight('1.234', 'kg');
 
-    expect(formatWeight(value, 'g')).toBe('1234.567');
-    expect(formatWeight(value, 'kg')).toBe('1.234567');
+    expect(formatWeight(value, 'g')).toBe('1234');
+    expect(formatWeight(value, 'kg')).toBe('1.234');
+    expect(serializeWeight(value)).toEqual({ milligrams: '1234000' });
   });
 
-  it('rejects scientific notation and precision below one milligram', () => {
+  it('rejects scientific notation, sub-milligram precision, and sub-gram kg precision', () => {
     expect(() => weight('1e3', 'g')).toThrowError(
       expect.objectContaining({ code: 'INVALID_ARGUMENT' }),
     );
@@ -47,6 +48,9 @@ describe('weight', () => {
       expect.objectContaining({ code: 'INVALID_ARGUMENT' }),
     );
     expect(() => weight('-1', 'kg')).toThrowError(
+      expect.objectContaining({ code: 'INVALID_ARGUMENT' }),
+    );
+    expect(() => weight('1.2345', 'kg')).toThrowError(
       expect.objectContaining({ code: 'INVALID_ARGUMENT' }),
     );
   });
