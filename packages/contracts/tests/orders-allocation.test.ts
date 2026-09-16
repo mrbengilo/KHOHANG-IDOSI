@@ -6,6 +6,7 @@ import {
   CreateStoreOrderRequestSchema,
   CreateWarehouseAdjustmentRequestSchema,
   PriorityOfferSchema,
+  StoreOrderRequestSchema,
   WarehouseBalanceSchema,
 } from '../src/index.js';
 
@@ -40,53 +41,73 @@ describe('order, allocation and wait-list contracts', () => {
     ).toBe(false);
   });
 
-  it('models at most two requests per store and rejects duplicate product lines', () => {
+  it('accepts only server-neutral fields when creating an order request', () => {
     const request = {
-      sessionId: IDS.session,
+      businessSessionId: IDS.session,
       storeId: IDS.store,
-      requestSequence: 2,
-      lines: [
+      items: [
         {
           productId: IDS.product,
-          requested: { kind: 'UNIT', quantity: 3 },
-          priority: 'P1',
+          quantity: 3,
         },
       ],
     };
     expect(CreateStoreOrderRequestSchema.safeParse(request).success).toBe(true);
     expect(
-      CreateStoreOrderRequestSchema.safeParse({ ...request, requestSequence: 3 }).success,
+      CreateStoreOrderRequestSchema.safeParse({ ...request, requestSequence: 1 }).success,
     ).toBe(false);
     expect(
       CreateStoreOrderRequestSchema.safeParse({
         ...request,
-        lines: [request.lines[0], request.lines[0]],
+        items: [{ ...request.items[0], priority: 'P1' }],
       }).success,
     ).toBe(false);
     expect(
       CreateStoreOrderRequestSchema.safeParse({
         ...request,
+        items: [request.items[0], request.items[0]],
+      }).success,
+    ).toBe(false);
+    expect(
+      CreateStoreOrderRequestSchema.safeParse({
+        ...request,
+        items: [{ productId: IDS.product, quantity: 0 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      CreateStoreOrderRequestSchema.safeParse({
+        ...request,
+        items: [{ productId: IDS.product, quantity: 1.5 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      CreateStoreOrderRequestSchema.safeParse({
+        ...request,
+        items: [{ productId: IDS.product, quantity: 100_001 }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('retains server-assigned request sequence and priority in responses', () => {
+    expect(
+      StoreOrderRequestSchema.safeParse({
+        id: IDS.order,
+        sessionId: IDS.session,
+        storeId: IDS.store,
+        requestSequence: 1,
+        status: 'SUBMITTED',
         lines: [
           {
             productId: IDS.product,
-            requested: { kind: 'UNIT', quantity: 0 },
+            requested: { kind: 'UNIT', quantity: 3 },
             priority: 'P1',
           },
         ],
+        submittedByAccountId: IDS.line,
+        submittedAt: '2026-09-10T08:30:00Z',
+        cancelledAt: null,
       }).success,
-    ).toBe(false);
-    expect(
-      CreateStoreOrderRequestSchema.safeParse({
-        ...request,
-        lines: [
-          {
-            productId: IDS.product,
-            requested: { kind: 'UNIT', quantity: 1 },
-            priority: 'P0A',
-          },
-        ],
-      }).success,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('rejects mixed measurement balances and duplicate adjustment products', () => {

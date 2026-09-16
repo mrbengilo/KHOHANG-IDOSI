@@ -8,6 +8,7 @@ import {
   IsoDateTimeSchema,
   PaginationMetaSchema,
   PaginationQuerySchema,
+  PositiveUnitQuantitySchema,
 } from './common.js';
 import { InventoryAmountSchema, PositiveInventoryAmountSchema } from './warehouse.js';
 
@@ -137,6 +138,24 @@ const StoreOrderRequestLinesSchema = z
     'A product may appear only once in an order request',
   );
 
+/** Client input for a new request. Sequence and allocation priority are assigned by the server. */
+export const CreateStoreOrderRequestItemSchema = z
+  .object({
+    productId: EntityIdSchema,
+    quantity: PositiveUnitQuantitySchema.max(100_000),
+  })
+  .strict();
+export type CreateStoreOrderRequestItem = z.infer<typeof CreateStoreOrderRequestItemSchema>;
+
+const CreateStoreOrderRequestItemsSchema = z
+  .array(CreateStoreOrderRequestItemSchema)
+  .min(1)
+  .max(500)
+  .refine(
+    (items) => new Set(items.map((item) => item.productId)).size === items.length,
+    'A product may appear only once in an order request',
+  );
+
 export const StoreOrderRequestSchema = z
   .object({
     id: EntityIdSchema,
@@ -154,10 +173,9 @@ export type StoreOrderRequest = z.infer<typeof StoreOrderRequestSchema>;
 
 export const CreateStoreOrderRequestSchema = z
   .object({
-    sessionId: EntityIdSchema,
+    businessSessionId: EntityIdSchema,
     storeId: EntityIdSchema,
-    requestSequence: RequestSequenceSchema,
-    lines: StoreOrderRequestLinesSchema,
+    items: CreateStoreOrderRequestItemsSchema,
   })
   .strict();
 export type CreateStoreOrderRequest = z.infer<typeof CreateStoreOrderRequestSchema>;
