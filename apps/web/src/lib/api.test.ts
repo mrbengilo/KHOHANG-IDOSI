@@ -7,6 +7,7 @@ import {
   getMonthlyOperationalReport,
   getStoreReceipt,
   getWaitTicketHistory,
+  listAllocationResults,
   listCatalog,
   listOpenOrderSessions,
   listOrderSessions,
@@ -194,6 +195,52 @@ describe('API projections', () => {
         url: expect.stringContaining(`/order-sessions/${sessionId}/transition`),
       }),
     ]);
+  });
+
+  it('loads one server-paginated allocation result page with scoped filters', async () => {
+    const sessionId = '10000000-0000-4000-8000-000000000001';
+    const storeId = '20000000-0000-4000-8000-000000000001';
+    const productId = '40000000-0000-4000-8000-000000000001';
+    const allocation = {
+      allocatedQuantity: 3,
+      allocationRunId: '30000000-0000-4000-8000-000000000001',
+      createdAt: '2026-09-17T02:00:00.000Z',
+      id: '50000000-0000-4000-8000-000000000001',
+      mergedOrderId: '60000000-0000-4000-8000-000000000001',
+      priority: 'P1',
+      productId,
+      reasonCode: 'PARTIAL_SNAPSHOT_STOCK',
+      requestedQuantity: 5,
+      roundNumber: 2,
+      sequenceInRound: 4,
+      sessionId,
+      status: 'PARTIAL',
+      storeId,
+      waitlistedQuantity: 2,
+    };
+    const fetchMock = vi.fn((_input: string | URL | Request, _init?: RequestInit) =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            data: [allocation],
+            pagination: { page: 2, pageSize: 20, totalItems: 21, totalPages: 2 },
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      listAllocationResults({ page: 2, pageSize: 20, sessionId, status: 'PARTIAL', storeId }),
+    ).resolves.toEqual({
+      data: [allocation],
+      pagination: { page: 2, pageSize: 20, totalItems: 21, totalPages: 2 },
+    });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      `/allocations?page=2&pageSize=20&sessionId=${sessionId}&status=PARTIAL&storeId=${storeId}`,
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ credentials: 'include' });
   });
 
   it('loads receipt detail and sends every receipt transition with idempotency', async () => {

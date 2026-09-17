@@ -2,6 +2,7 @@ import {
   ErrorEnvelopeSchema,
   CancelWaitTicketRequestSchema,
   CreateOrderSessionRequestSchema,
+  ListAllocationsResponseSchema,
   ListReceiptsResponseSchema,
   ListPriorityOffersResponseSchema,
   GetSessionResponseSchema,
@@ -25,6 +26,7 @@ import {
   WaitTicketHistoryResponseSchema,
   WaitTicketResponseSchema,
   type CancelWaitTicketRequest,
+  type AllocationResultStatus,
   type CreateOrderSessionRequest,
   type DeclareStoreReceiptRequest,
   type FinalizeReceiptRequest,
@@ -33,6 +35,7 @@ import {
   type LoginRequest,
   type MonthlyOperationalReport,
   type MonthlyOperationalReportQuery,
+  type ListAllocationsResponse,
   type OrderSession,
   type PriorityOffer,
   type PriorityOfferStatus,
@@ -315,6 +318,28 @@ export async function listOrderSessions(): Promise<OrderSession[]> {
   return listAllPages('/order-sessions', new URLSearchParams(), (payload) =>
     ListOrderSessionsResponseSchema.parse(payload),
   );
+}
+
+export interface AllocationResultFilters {
+  readonly page?: number;
+  readonly pageSize?: number;
+  readonly sessionId?: string;
+  readonly status?: AllocationResultStatus;
+  readonly storeId?: string;
+}
+
+export async function listAllocationResults(
+  filters: AllocationResultFilters = {},
+): Promise<ListAllocationsResponse> {
+  const query = new URLSearchParams({
+    page: String(filters.page ?? 1),
+    pageSize: String(filters.pageSize ?? 20),
+  });
+  if (filters.sessionId) query.set('sessionId', filters.sessionId);
+  if (filters.status) query.set('status', filters.status);
+  if (filters.storeId) query.set('storeId', filters.storeId);
+  const payload = await request(`/allocations?${query.toString()}`);
+  return ListAllocationsResponseSchema.parse(payload);
 }
 
 export async function createOrderSession(

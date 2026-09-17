@@ -848,6 +848,9 @@ td small {
 .text-success {
   color: var(--success);
 }
+.text-danger {
+  color: var(--danger);
+}
 
 .priority-offer {
   display: grid;
@@ -1161,6 +1164,52 @@ td small {
 
 .allocation-context-loading {
   margin-bottom: 18px;
+}
+
+.allocation-results-console {
+  margin-bottom: 18px;
+}
+
+.allocation-result-filters {
+  margin-bottom: 16px;
+  border-radius: 10px;
+  background: #f8fafc;
+  box-shadow: none;
+}
+
+.allocation-result-filters .button {
+  flex: 0 0 auto;
+}
+
+.allocation-result-refreshing {
+  color: var(--muted);
+  font-size: 10px;
+  margin: 0 0 10px;
+}
+
+.allocation-result-decision {
+  max-width: 240px;
+}
+
+.allocation-result-decision small {
+  overflow-wrap: anywhere;
+}
+
+.allocation-result-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.allocation-result-pagination > div {
+  display: flex;
+  gap: 8px;
 }
 
 .inline-select {
@@ -2714,6 +2763,31 @@ td small {
     grid-template-columns: 1fr;
   }
   .allocation-session-form__actions .button {
+    width: 100%;
+  }
+  .allocation-result-filters {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .allocation-result-filters label {
+    width: 100%;
+    min-width: 0;
+  }
+  .allocation-result-filters select {
+    min-height: 44px;
+  }
+  .allocation-result-filters .button {
+    width: 100%;
+  }
+  .allocation-result-pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .allocation-result-pagination > div {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .allocation-result-pagination .button {
     width: 100%;
   }
   .mini-kpis {
