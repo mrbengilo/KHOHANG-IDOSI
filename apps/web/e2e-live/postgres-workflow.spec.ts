@@ -192,7 +192,7 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   await expect(
     page.getByRole('heading', { exact: true, name: 'Đặt hàng & kết quả' }),
   ).toBeVisible();
-  const lineNote = `Live PostgreSQL note ${runSuffix}-${testInfo.retry}`;
+  const lineNote = `REF-${runSuffix}-${testInfo.retry}-${'X'.repeat(180)}`;
   await page.getByLabel('Số bao').fill('2');
   await page.getByLabel('Ghi chú mặt hàng').fill(lineNote);
   await page.getByRole('button', { name: 'Thêm mặt hàng' }).click();
@@ -218,15 +218,28 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   await expect(orderCard).toHaveCount(1);
   await orderCard.locator('summary').click();
   await expect(orderCard.getByText(lineNote)).toBeVisible();
-  await orderCard.getByRole('button', { name: 'Hủy yêu cầu' }).click();
+  await page.setViewportSize({ height: 844, width: 390 });
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
+    .toBe(true);
+  const cancellationTrigger = orderCard.getByRole('button', { name: 'Hủy yêu cầu' });
+  expect((await cancellationTrigger.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+  await cancellationTrigger.click();
   const cancellationReason = `Live cancellation ${runSuffix}-${testInfo.retry}`;
   await orderCard.getByLabel('Lý do hủy').fill(cancellationReason);
+  const confirmCancellation = orderCard.getByRole('button', { name: 'Xác nhận hủy' });
+  expect(
+    await confirmCancellation.evaluate((button) => {
+      const label = button.querySelector<HTMLElement>('.button__content');
+      return label ? getComputedStyle(label).color === getComputedStyle(button).color : false;
+    }),
+  ).toBe(true);
   const cancelOrderResponsePromise = page.waitForResponse(
     (response) =>
       response.url() === `${apiOrigin}/api/v1/order-requests/${orderPayload.data.id}/cancel` &&
       response.request().method() === 'POST',
   );
-  await orderCard.getByRole('button', { name: 'Xác nhận hủy' }).click();
+  await confirmCancellation.click();
   expect((await cancelOrderResponsePromise).status()).toBe(200);
   await expect(orderCard.getByText('Đã hủy')).toBeVisible();
   await expect(page.getByText('Đã hủy yêu cầu đặt hàng.')).toBeVisible();
