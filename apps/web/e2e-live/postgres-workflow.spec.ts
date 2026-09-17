@@ -169,7 +169,9 @@ test('production allocation results remain usable at 390px', async ({ page }) =>
   );
   await allocationResults.getByLabel('Lọc kết quả theo trạng thái').selectOption('ALLOCATED');
   expect((await filteredResultsPromise).status()).toBe(200);
-  await expect(allocationResults.locator('.badge').filter({ hasText: 'Đã cấp đủ' })).toBeVisible();
+  await expect(
+    allocationResults.locator('.badge').filter({ hasText: 'Đã cấp đủ' }).first(),
+  ).toBeVisible();
   await expect
     .poll(() => page.evaluate(() => document.body.scrollWidth <= window.innerWidth))
     .toBe(true);
