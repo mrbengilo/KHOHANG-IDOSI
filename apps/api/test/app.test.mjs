@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 import { createApi } from '../dist/app.js';
 import { sanitizeAuditObject } from '../dist/audit-sanitization.js';
 import { MEMORY_SEED_IDS, MemoryWarehouseRepository } from '../dist/memory-repository.js';
+import { RETAIL_STORE_OPERATION_FORBIDDEN_MESSAGE } from '../dist/repository.js';
 import { hashPassword, verifyPassword } from '../dist/security.js';
 import { asiaHoChiMinhDateRange } from '../dist/time.js';
 
@@ -454,6 +455,141 @@ describe('KHOHANG-IDOSI API', () => {
         .data.map((store) => store.code)
         .sort(),
       ['DS_BD', 'DS_NVT'],
+    );
+  });
+
+  test('blocks wholesale and inactive STORE accounts from protected retail workflow actions', async () => {
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const products = await app.inject({
+      method: 'GET',
+      url: '/api/v1/products?pageSize=100',
+      headers: { cookie: storeCookie },
+    });
+    const [firstProduct, secondProduct] = products.json().data;
+    assert.ok(firstProduct);
+    assert.ok(secondProduct);
+
+    repository.setStoreOperationEligibility(MEMORY_SEED_IDS.nvtStore, { kind: 'WHOLESALE' });
+    const unknownTransferId = '10000000-0000-4000-8000-999999999998';
+
+    const attempts = [
+      () => submitOrder(storeCookie, 'wholesale-order-request', orderPayload(firstProduct.id, 1)),
+      () =>
+        mutateReceipt(storeCookie, 'POST', '/api/v1/store-receipts', 'wholesale-receipt-declare', {
+          storeId: MEMORY_SEED_IDS.nvtStore,
+          outboundRequestId: MEMORY_SEED_IDS.secondOutboundRequest,
+          lines: [{ productId: secondProduct.id, approvedUnits: 2, receivedUnits: 2 }],
+          discrepancyNote: null,
+        }),
+      () =>
+        mutateReceipt(
+          storeCookie,
+          'POST',
+          `/api/v1/store-receipts/${MEMORY_SEED_IDS.storeReceipt}/submit`,
+          'wholesale-receipt-submit',
+          {
+            lines: [{ productId: firstProduct.id, approvedUnits: 5, receivedUnits: 4 }],
+            discrepancyNote: 'Thiếu một bao khi giao nhận',
+            expectedVersion: 0,
+          },
+        ),
+      () =>
+        mutateInventory(
+          storeCookie,
+          `/api/v1/store-inventory-bags/${MEMORY_SEED_IDS.inventoryBag}/open`,
+          'wholesale-inventory-open',
+          { expectedVersion: 0 },
+        ),
+      () =>
+        mutateInventory(storeCookie, '/api/v1/store-outbounds', 'wholesale-outbound-create', {
+          storeId: MEMORY_SEED_IDS.nvtStore,
+          inventoryLotId: MEMORY_SEED_IDS.inventoryBag,
+          expectedInventoryVersion: 0,
+          weightKg: '1.000',
+          reason: 'DISCOUNT_SALE',
+          revenueVnd: 10_000,
+        }),
+      () =>
+        mutateWait(
+          storeCookie,
+          `/api/v1/wait-tickets/${MEMORY_SEED_IDS.cancellableWaitTicket}/cancel`,
+          'wholesale-wait-cancel',
+          { reason: 'Cửa hàng không còn nhu cầu nhận mặt hàng này' },
+        ),
+      () =>
+        mutateWait(
+          storeCookie,
+          `/api/v1/priority-offers/${MEMORY_SEED_IDS.priorityOffer}/respond`,
+          'wholesale-offer-response',
+          { action: 'ACCEPT', accepted: { kind: 'UNIT', quantity: 3 } },
+        ),
+      () =>
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/store-transfers/destinations',
+          headers: { cookie: storeCookie },
+        }),
+      () =>
+        mutateTransfer(storeCookie, '/api/v1/store-transfers', 'wholesale-transfer-create', {
+          sourceStoreId: MEMORY_SEED_IDS.nvtStore,
+          destinationStoreId: MEMORY_SEED_IDS.bdStore,
+          sourceInventoryBagId: MEMORY_SEED_IDS.inventoryBag,
+          weightKg: '1.000',
+          expectedSourceBagVersion: 0,
+          note: 'Bổ sung tồn kho cửa hàng Bình Dương',
+        }),
+      () =>
+        mutateTransfer(
+          storeCookie,
+          `/api/v1/store-transfers/${unknownTransferId}/dispatch`,
+          'wholesale-transfer-dispatch',
+          { expectedVersion: 0, expectedSourceBagVersion: 0 },
+        ),
+      () =>
+        mutateTransfer(
+          storeCookie,
+          `/api/v1/store-transfers/${unknownTransferId}/receive`,
+          'wholesale-transfer-receive',
+          { expectedVersion: 0 },
+        ),
+      () =>
+        mutateTransfer(
+          storeCookie,
+          `/api/v1/store-transfers/${unknownTransferId}/cancel`,
+          'wholesale-transfer-cancel',
+          { expectedVersion: 0, reason: 'Cửa hàng không còn nhu cầu điều chuyển' },
+        ),
+    ];
+
+    for (const attempt of attempts) {
+      const response = await attempt();
+      assert.equal(response.statusCode, 403);
+      assert.equal(response.json().error.code, 'FORBIDDEN');
+      assert.equal(response.json().error.message, RETAIL_STORE_OPERATION_FORBIDDEN_MESSAGE);
+    }
+
+    repository.setStoreOperationEligibility(MEMORY_SEED_IDS.nvtStore, {
+      kind: 'RETAIL',
+      status: 'INACTIVE',
+    });
+    const inactive = await submitOrder(
+      storeCookie,
+      'inactive-store-order-request',
+      orderPayload(firstProduct.id, 1),
+    );
+    assert.equal(inactive.statusCode, 403);
+    assert.equal(inactive.json().error.code, 'FORBIDDEN');
+    assert.equal(inactive.json().error.message, RETAIL_STORE_OPERATION_FORBIDDEN_MESSAGE);
+    const inactiveTransferDestinations = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-transfers/destinations',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(inactiveTransferDestinations.statusCode, 403);
+    assert.equal(inactiveTransferDestinations.json().error.code, 'FORBIDDEN');
+    assert.equal(
+      inactiveTransferDestinations.json().error.message,
+      RETAIL_STORE_OPERATION_FORBIDDEN_MESSAGE,
     );
   });
 

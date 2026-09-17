@@ -77,6 +77,8 @@ import type {
   UpdateOperationalSettingsRequest,
 } from '@idosi/contracts';
 
+import { forbidden } from './errors.js';
+
 export interface RequestContext {
   readonly requestId: string;
   readonly ipAddress: string | null;
@@ -142,6 +144,26 @@ export interface OrderStatistics {
   readonly generatedAt: string;
 }
 
+export const RETAIL_STORE_OPERATION_FORBIDDEN_MESSAGE =
+  'Nghiệp vụ này chỉ dành cho cửa hàng bán lẻ đang hoạt động';
+
+export interface StoreOperationEligibility {
+  readonly kind: Store['kind'];
+  readonly status: Store['status'];
+}
+
+/**
+ * Keeps the public API response identical across repository implementations.
+ * Callers must load the current store row instead of trusting session claims.
+ */
+export function assertActiveRetailStore(
+  store: StoreOperationEligibility | null,
+): asserts store is StoreOperationEligibility & { kind: 'RETAIL'; status: 'ACTIVE' } {
+  if (store?.kind !== 'RETAIL' || store.status !== 'ACTIVE') {
+    throw forbidden(RETAIL_STORE_OPERATION_FORBIDDEN_MESSAGE);
+  }
+}
+
 export interface OperationalSettingsState {
   readonly current: OperationalSettingsVersion;
   readonly history: readonly OperationalSettingsVersion[];
@@ -171,6 +193,9 @@ export interface WarehouseRepository {
   ): Promise<Session>;
   resolveSession(token: string): Promise<Session>;
   revokeSession(token: string, reason: string): Promise<boolean>;
+
+  /** Revalidates the STORE principal against the current store kind and status. */
+  authorizeRetailStoreOperation(actor: AuthenticatedPrincipal): Promise<void>;
 
   listAccounts(actor: AuthenticatedPrincipal, query: ListAccountsQuery): Promise<Page<Account>>;
   createAccount(
