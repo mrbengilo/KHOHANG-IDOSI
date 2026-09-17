@@ -4,11 +4,13 @@ import type {
   CreateProductRequest,
   CreateStoreOrderRequest,
   CreateStoreRequest,
+  ListOrderSessionsQuery,
   ListProductsQuery,
   ListProductConversionsQuery,
   ListStoreOrderRequestsQuery,
   ListStoresQuery,
   PaginationMeta,
+  OrderSession,
   Product,
   ProductConversion,
   Session,
@@ -92,6 +94,8 @@ export interface WarehouseRepository {
   ): Promise<Session>;
   resolveSession(token: string): Promise<Session>;
   revokeSession(token: string, reason: string): Promise<boolean>;
+
+  listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>>;
 
   listProducts(query: ListProductsQuery): Promise<Page<Product>>;
   createProduct(

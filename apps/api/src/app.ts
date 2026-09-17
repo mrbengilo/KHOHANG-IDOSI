@@ -7,6 +7,7 @@ import {
   CreateStoreRequestSchema,
   IdempotencyHeadersSchema,
   IsoDateSchema,
+  ListOrderSessionsQuerySchema,
   ListProductsQuerySchema,
   ListProductConversionsQuerySchema,
   ListStoreOrderRequestsQuerySchema,
@@ -205,6 +206,12 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     await authenticate(request, repository);
     const query = ListProductsQuerySchema.parse(request.query);
     return repository.listProducts(query);
+  });
+
+  app.get('/api/v1/order-sessions', async (request) => {
+    await authenticate(request, repository);
+    const query = ListOrderSessionsQuerySchema.parse(request.query);
+    return repository.listOrderSessions(query);
   });
 
   app.post('/api/v1/products', async (request, reply) => {
@@ -545,6 +552,12 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: { '201': { description: 'Submitted or replayed request' } },
+        },
+      },
+      '/api/v1/order-sessions': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Paginated order sessions' } },
         },
       },
       '/api/v1/integrations/warehouse/v1/order-statistics': {

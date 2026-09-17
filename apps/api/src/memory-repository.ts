@@ -6,12 +6,14 @@ import type {
   CreateProductRequest,
   CreateStoreOrderRequest,
   CreateStoreRequest,
+  ListOrderSessionsQuery,
   ListProductsQuery,
   ListProductConversionsQuery,
   ListStoreOrderRequestsQuery,
   ListStoresQuery,
   Product,
   ProductConversion,
+  OrderSession,
   Session,
   Store,
   StoreOrderRequest,
@@ -92,6 +94,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly accounts = new Map<string, MutableAccount>();
   private readonly sessions = new Map<string, StoredSession>();
   private readonly stores = new Map<string, Store>();
+  private readonly orderSessions = new Map<string, OrderSession>();
   private readonly products = new Map<string, Product>();
   private readonly productConversions = new Map<string, ProductConversion>();
   private readonly orderRequests = new Map<string, StoreOrderRequest>();
@@ -167,6 +170,18 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (!stored || stored.revokedAt !== null) return false;
     stored.revokedAt = this.now();
     return true;
+  }
+
+  public async listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>> {
+    const values = [...this.orderSessions.values()]
+      .filter((session) => query.status === undefined || session.status === query.status)
+      .filter((session) => query.dateFrom === undefined || session.businessDate >= query.dateFrom)
+      .filter((session) => query.dateTo === undefined || session.businessDate <= query.dateTo)
+      .sort((left, right) => right.businessDate.localeCompare(left.businessDate));
+    return {
+      data: slicePage(values, query.page, query.pageSize),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
   }
 
   public async listProducts(query: ListProductsQuery): Promise<Page<Product>> {
@@ -482,6 +497,14 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (!canAccessStore(actor, input.storeId))
       throw forbidden('Không có quyền gửi cho cửa hàng này');
     if (!this.stores.has(input.storeId)) throw notFound('Không tìm thấy cửa hàng');
+    const session = this.orderSessions.get(input.businessSessionId);
+    if (
+      !session ||
+      session.status !== 'OPEN' ||
+      Date.parse(session.requestClosesAt) <= this.now().getTime()
+    ) {
+      throw new ApiError('SESSION_NOT_OPEN', 'Phiên đặt hàng chưa mở hoặc đã đóng', 409);
+    }
     for (const item of input.items) {
       const product = this.products.get(item.productId);
       if (!product || product.status !== 'ACTIVE')
@@ -569,6 +592,19 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private async seed(password: string): Promise<void> {
     const passwordHash = await hashPassword(password);
     const now = this.now().toISOString();
+    const sessionOpen = new Date(this.now().getTime() - 60 * 60 * 1_000);
+    const sessionClose = new Date(this.now().getTime() + 60 * 60 * 1_000);
+    const allocationStart = new Date(this.now().getTime() + 2 * 60 * 60 * 1_000);
+    this.orderSessions.set(MEMORY_SEED_IDS.orderSession, {
+      id: MEMORY_SEED_IDS.orderSession,
+      businessDate: now.slice(0, 10),
+      status: 'OPEN',
+      requestOpensAt: sessionOpen.toISOString(),
+      requestClosesAt: sessionClose.toISOString(),
+      allocationStartsAt: allocationStart.toISOString(),
+      createdAt: now,
+      updatedAt: now,
+    });
     const groupIdByCode = new Map<string, string>();
     const groupKindByCode = new Map<string, 'RETAIL' | 'WHOLESALE'>();
     STORE_GROUP_SEEDS.forEach((group, index) => {

@@ -4,12 +4,14 @@ import type {
   CreateProductRequest,
   CreateStoreOrderRequest,
   CreateStoreRequest,
+  ListOrderSessionsQuery,
   ListProductsQuery,
   ListProductConversionsQuery,
   ListStoreOrderRequestsQuery,
   ListStoresQuery,
   Product,
   ProductConversion,
+  OrderSession,
   Session,
   Store,
   StoreOrderRequest,
@@ -27,6 +29,7 @@ import {
   IdempotencyInProgressError,
   orderRequestItems,
   orderRequests,
+  orderSessions,
   OrderRequestAuthorizationError,
   OrderSessionUnavailableError,
   pool,
@@ -44,7 +47,7 @@ import {
   withSerializableTransaction,
   type JsonObject,
 } from '@idosi/database';
-import { and, asc, eq, gte, isNull, lt } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, isNull, lt, lte } from 'drizzle-orm';
 
 import { ApiError, conflict, forbidden, notFound, unauthenticated } from './errors.js';
 import type {
@@ -142,6 +145,32 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       .where(and(eq(sessions.tokenHash, hashSessionToken(token)), isNull(sessions.revokedAt)))
       .returning({ id: sessions.id });
     return revoked.length > 0;
+  }
+
+  public async listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>> {
+    const predicates = [isNull(orderSessions.deletedAt)];
+    if (query.status !== undefined) {
+      predicates.push(eq(orderSessions.status, databaseOrderSessionStatus(query.status)));
+    }
+    if (query.dateFrom !== undefined) {
+      predicates.push(gte(orderSessions.businessDate, query.dateFrom));
+    }
+    if (query.dateTo !== undefined) {
+      predicates.push(lte(orderSessions.businessDate, query.dateTo));
+    }
+    const where = and(...predicates);
+    const [totalRow] = await db.select({ value: count() }).from(orderSessions).where(where);
+    const rows = await db
+      .select()
+      .from(orderSessions)
+      .where(where)
+      .orderBy(desc(orderSessions.businessDate), desc(orderSessions.createdAt))
+      .limit(query.pageSize)
+      .offset((query.page - 1) * query.pageSize);
+    return {
+      data: rows.map(orderSessionDto),
+      pagination: pagination(query.page, query.pageSize, totalRow?.value ?? 0),
+    };
   }
 
   public async listProducts(query: ListProductsQuery): Promise<Page<Product>> {
@@ -905,6 +934,57 @@ function orderStatus(
   if (status === 'cancelled') return 'CANCELLED';
   if (status === 'draft' || status === 'submitted') return 'SUBMITTED';
   return 'MERGED';
+}
+
+function databaseOrderSessionStatus(
+  status: OrderSession['status'],
+): typeof orderSessions.$inferSelect.status {
+  switch (status) {
+    case 'SCHEDULED':
+      return 'draft';
+    case 'OPEN':
+      return 'open';
+    case 'CLOSED':
+      return 'closed';
+    case 'ALLOCATING':
+      return 'allocating';
+    case 'ALLOCATED':
+      return 'completed';
+    case 'CANCELLED':
+      return 'cancelled';
+  }
+}
+
+function orderSessionStatus(
+  status: typeof orderSessions.$inferSelect.status,
+): OrderSession['status'] {
+  switch (status) {
+    case 'draft':
+      return 'SCHEDULED';
+    case 'open':
+      return 'OPEN';
+    case 'closed':
+      return 'CLOSED';
+    case 'allocating':
+      return 'ALLOCATING';
+    case 'completed':
+      return 'ALLOCATED';
+    case 'cancelled':
+      return 'CANCELLED';
+  }
+}
+
+function orderSessionDto(row: typeof orderSessions.$inferSelect): OrderSession {
+  return {
+    id: row.id,
+    businessDate: row.businessDate,
+    status: orderSessionStatus(row.status),
+    requestOpensAt: (row.openedAt ?? row.createdAt).toISOString(),
+    requestClosesAt: row.inventorySnapshotDueAt.toISOString(),
+    allocationStartsAt: row.requestDeadlineAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
 }
 
 function slugify(value: string): string {

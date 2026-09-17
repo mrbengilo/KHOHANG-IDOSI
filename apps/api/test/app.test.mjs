@@ -175,6 +175,26 @@ describe('KHOHANG-IDOSI API', () => {
     );
   });
 
+  test('lists the open order session and rejects an unknown session', async () => {
+    const cookie = cookieOf(await login('ds_nvt'));
+    const sessions = await app.inject({
+      method: 'GET',
+      url: '/api/v1/order-sessions?status=OPEN&page=1&pageSize=10',
+      headers: { cookie },
+    });
+    assert.equal(sessions.statusCode, 200);
+    assert.equal(sessions.json().data.length, 1);
+    assert.equal(sessions.json().data[0].id, MEMORY_SEED_IDS.orderSession);
+
+    const productId = await firstProductId(cookie);
+    const rejected = await submitOrder(cookie, 'unknown-session-key', {
+      ...orderPayload(productId, 1),
+      businessSessionId: '10000000-0000-4000-8000-999999999999',
+    });
+    assert.equal(rejected.statusCode, 409);
+    assert.equal(rejected.json().error.code, 'SESSION_NOT_OPEN');
+  });
+
   test('replays the same idempotency key and rejects reuse with another payload', async () => {
     const cookie = cookieOf(await login('ds_nvt'));
     const productId = await firstProductId(cookie);
