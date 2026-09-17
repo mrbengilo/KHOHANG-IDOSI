@@ -176,14 +176,19 @@ export async function transitionOrderSession(
         }
 
         const transitionedAt = input.transitionedAt ?? new Date();
+        const closedAt =
+          input.targetStatus === 'closed'
+            ? transitionedAt
+            : input.targetStatus === 'cancelled'
+              ? transitionedAt >= (current.openedAt ?? current.createdAt)
+                ? transitionedAt
+                : null
+              : current.closedAt;
         const [updated] = await tx
           .update(orderSessions)
           .set({
             status: input.targetStatus,
-            closedAt:
-              input.targetStatus === 'closed' || input.targetStatus === 'cancelled'
-                ? transitionedAt
-                : current.closedAt,
+            closedAt,
             version: current.version + 1,
             updatedAt: transitionedAt,
           })
