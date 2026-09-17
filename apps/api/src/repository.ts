@@ -43,6 +43,7 @@ import type {
   RespondPriorityOfferRequest,
   ReturnReceiptForCorrectionRequest,
   ResetPasswordRequest,
+  ReplaceHtkdAssignmentsRequest,
   Session,
   Store,
   StoreGroup,
@@ -65,6 +66,7 @@ import type {
   IdosiStatisticsAttempt,
   IdosiStatisticsScope,
   IdosiStatisticsSnapshot,
+  HtkdAssignment,
   InboundReceipt,
   OperationalSettingsVersion,
   WaitTicket,
@@ -177,6 +179,12 @@ export interface OperationalSettingsState {
   readonly history: readonly OperationalSettingsVersion[];
 }
 
+export interface HtkdAssignmentsState {
+  readonly htkdAccountId: string;
+  readonly sessionVersion: number;
+  readonly assignments: readonly HtkdAssignment[];
+}
+
 export interface IdosiStatisticsTarget {
   readonly storeId: string;
   readonly storeCode: string;
@@ -227,6 +235,16 @@ export interface WarehouseRepository {
     readonly sessionsRevoked: number;
     readonly sessionVersion: number;
   }>;
+  listHtkdAssignments(
+    actor: AuthenticatedPrincipal,
+    htkdAccountId: string,
+  ): Promise<HtkdAssignmentsState>;
+  replaceHtkdAssignments(
+    actor: AuthenticatedPrincipal,
+    htkdAccountId: string,
+    input: ReplaceHtkdAssignmentsRequest,
+    context: RequestContext,
+  ): Promise<HtkdAssignmentsState>;
   listAuditLogs(
     actor: AuthenticatedPrincipal,
     query: ListAuditLogsQuery,

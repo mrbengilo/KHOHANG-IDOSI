@@ -21,6 +21,7 @@ import {
   fetchIdosiOrderStatistics,
   GetIdosiStatisticsQuerySchema,
   GetOperationalSettingsQuerySchema,
+  HtkdAssignmentParamsSchema,
   IdempotencyHeadersSchema,
   IsoDateSchema,
   InboundReceiptParamsSchema,
@@ -52,6 +53,7 @@ import {
   PriorityOfferParamsSchema,
   ReceiptParamsSchema,
   ResetPasswordRequestSchema,
+  ReplaceHtkdAssignmentsRequestSchema,
   ReviewStoreOutboundRequestSchema,
   ReturnReceiptForCorrectionRequestSchema,
   RespondPriorityOfferRequestSchema,
@@ -323,6 +325,30 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     const result = await repository.resetAccountPassword(
       session.principal,
       accountId,
+      input,
+      requestContext(request),
+    );
+    reply.header('cache-control', 'no-store');
+    return { data: result };
+  });
+
+  app.get('/api/v1/admin/accounts/:htkdAccountId/assignments', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const { htkdAccountId } = HtkdAssignmentParamsSchema.parse(request.params);
+    const result = await repository.listHtkdAssignments(session.principal, htkdAccountId);
+    reply.header('cache-control', 'no-store');
+    return { data: result };
+  });
+
+  app.put('/api/v1/admin/accounts/:htkdAccountId/assignments', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const { htkdAccountId } = HtkdAssignmentParamsSchema.parse(request.params);
+    const input = ReplaceHtkdAssignmentsRequestSchema.parse(request.body);
+    const result = await repository.replaceHtkdAssignments(
+      session.principal,
+      htkdAccountId,
       input,
       requestContext(request),
     );
@@ -1346,6 +1372,19 @@ function openApiDocument(): Record<string, unknown> {
         post: {
           security: cookieSecurity,
           responses: { '200': { description: 'Password reset and sessions revoked' } },
+        },
+      },
+      '/api/v1/admin/accounts/{htkdAccountId}/assignments': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Active HTKD retail-store assignments' } },
+        },
+        put: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'Atomically replaced audited HTKD assignments' },
+            '409': { description: 'Optimistic account version conflict' },
+          },
         },
       },
       '/api/v1/admin/audit-logs': {

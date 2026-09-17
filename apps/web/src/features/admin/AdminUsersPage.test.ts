@@ -5,6 +5,9 @@ import {
   accountQueryFromFilters,
   accountStatusRequest,
   createAccountInputFromDraft,
+  htkdAssignmentRequestFromDraft,
+  sameStoreSelection,
+  updateStorePageSelection,
   validatePasswordReset,
 } from './AdminUsersPage';
 
@@ -62,5 +65,46 @@ describe('admin account UI helpers', () => {
       expectedSessionVersion: 7,
       status: 'LOCKED',
     });
+  });
+
+  it('builds an audited HTKD replacement and allows revoking every store', () => {
+    expect(htkdAssignmentRequestFromDraft([], '  Thu hồi toàn bộ địa bàn  ', 4)).toEqual({
+      error: null,
+      input: {
+        expectedSessionVersion: 4,
+        reason: 'Thu hồi toàn bộ địa bàn',
+        storeIds: [],
+      },
+    });
+    expect(htkdAssignmentRequestFromDraft([], 'x', 4).error).toContain('ít nhất 3');
+  });
+
+  it('compares assignment selections independent of order and duplicate UI values', () => {
+    const firstStoreId = '22222222-2222-4222-8222-222222222222';
+    const secondStoreId = '33333333-3333-4333-8333-333333333333';
+    expect(
+      sameStoreSelection(
+        [firstStoreId, secondStoreId],
+        [secondStoreId, firstStoreId, secondStoreId],
+      ),
+    ).toBe(true);
+    expect(sameStoreSelection([firstStoreId], [secondStoreId])).toBe(false);
+  });
+
+  it('updates one visible store page without losing selections from other pages', () => {
+    const firstStoreId = '22222222-2222-4222-8222-222222222222';
+    const secondStoreId = '33333333-3333-4333-8333-333333333333';
+    const offPageStoreId = '44444444-4444-4444-8444-444444444444';
+    const selected = updateStorePageSelection(
+      new Set([offPageStoreId]),
+      [firstStoreId, secondStoreId],
+      true,
+    );
+    expect([...selected].toSorted()).toEqual(
+      [firstStoreId, secondStoreId, offPageStoreId].toSorted(),
+    );
+    expect(
+      [...updateStorePageSelection(selected, [firstStoreId, secondStoreId], false)].toSorted(),
+    ).toEqual([offPageStoreId]);
   });
 });
