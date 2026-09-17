@@ -13,11 +13,8 @@ export interface ReceiptSourceFilters {
   readonly storeId?: string;
 }
 
-/** Source-backed only: this endpoint intentionally has no local or mock fallback. */
-export async function listStoreReceiptSources(
-  filters: ReceiptSourceFilters = {},
-): Promise<StoreReceiptSource[]> {
-  const query = new URLSearchParams({ page: '1', pageSize: '100' });
+async function loadReceiptSourcePage(filters: ReceiptSourceFilters, page: number) {
+  const query = new URLSearchParams({ page: String(page), pageSize: '100' });
   if (filters.storeId) query.set('storeId', filters.storeId);
 
   let response: Response;
@@ -48,5 +45,19 @@ export async function listStoreReceiptSources(
     throw new ApiClientError(`Không thể tải lệnh xuất (${response.status}).`, response.status);
   }
 
-  return ListStoreReceiptSourcesResponseSchema.parse(payload).data;
+  return ListStoreReceiptSourcesResponseSchema.parse(payload);
+}
+
+/** Source-backed only: this endpoint intentionally has no local or mock fallback. */
+export async function listStoreReceiptSources(
+  filters: ReceiptSourceFilters = {},
+): Promise<StoreReceiptSource[]> {
+  const first = await loadReceiptSourcePage(filters, 1);
+  if (first.pagination.totalPages <= 1) return first.data;
+  const remaining = await Promise.all(
+    Array.from({ length: first.pagination.totalPages - 1 }, async (_, index) =>
+      loadReceiptSourcePage(filters, index + 2),
+    ),
+  );
+  return [first, ...remaining].flatMap((page) => page.data);
 }

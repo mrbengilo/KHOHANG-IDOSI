@@ -93,20 +93,41 @@ export interface DashboardSnapshotInput {
   readonly year: number;
 }
 
-function paginatedPath(path: string, scope: DashboardScope): string {
+interface ParsedPage<T> {
+  readonly data: T[];
+  readonly pagination: { readonly totalPages: number };
+}
+
+function paginatedQuery(scope: DashboardScope | null, page: number): string {
   const query = new URLSearchParams({ page: '1', pageSize: '100' });
-  if (scope.kind === 'STORE') query.set('storeId', scope.storeId);
-  return `${path}?${query.toString()}`;
+  query.set('page', String(page));
+  if (scope?.kind === 'STORE') query.set('storeId', scope.storeId);
+  return query.toString();
+}
+
+async function loadAllPages<T>(
+  path: string,
+  scope: DashboardScope | null,
+  parse: (payload: unknown) => ParsedPage<T>,
+): Promise<T[]> {
+  const first = parse(await request(`${path}?${paginatedQuery(scope, 1)}`));
+  if (first.pagination.totalPages <= 1) return first.data;
+  const remaining = await Promise.all(
+    Array.from({ length: first.pagination.totalPages - 1 }, async (_, index) =>
+      parse(await request(`${path}?${paginatedQuery(scope, index + 2)}`)),
+    ),
+  );
+  return [first, ...remaining].flatMap((page) => page.data);
 }
 
 export async function loadDashboardBootstrap(): Promise<DashboardBootstrap> {
-  const [sessionPayload, storesPayload] = await Promise.all([
+  const [sessionPayload, stores] = await Promise.all([
     request('/auth/session'),
-    request('/stores?page=1&pageSize=100'),
+    loadAllPages('/stores', null, (payload) => ListStoresResponseSchema.parse(payload)),
   ]);
   return {
     session: GetSessionResponseSchema.parse(sessionPayload).data,
-    stores: ListStoresResponseSchema.parse(storesPayload).data,
+    stores,
   };
 }
 
@@ -120,28 +141,32 @@ export async function loadDashboardSnapshot(
   });
   if (input.scope.kind === 'STORE') reportQuery.set('scopeId', input.scope.storeId);
 
-  const [
-    reportPayload,
-    receiptsPayload,
-    waitTicketsPayload,
-    priorityOffersPayload,
-    orderSessionsPayload,
-    orderRequestsPayload,
-  ] = await Promise.all([
-    request(`/reports/monthly?${reportQuery.toString()}`),
-    request(paginatedPath('/store-receipts', input.scope)),
-    request(paginatedPath('/wait-tickets', input.scope)),
-    request(paginatedPath('/priority-offers', input.scope)),
-    request('/order-sessions?page=1&pageSize=100'),
-    request(paginatedPath('/order-requests', input.scope)),
-  ]);
+  const [reportPayload, receipts, waitTickets, priorityOffers, orderSessions, orderRequests] =
+    await Promise.all([
+      request(`/reports/monthly?${reportQuery.toString()}`),
+      loadAllPages('/store-receipts', input.scope, (payload) =>
+        ListReceiptsResponseSchema.parse(payload),
+      ),
+      loadAllPages('/wait-tickets', input.scope, (payload) =>
+        ListWaitTicketsResponseSchema.parse(payload),
+      ),
+      loadAllPages('/priority-offers', input.scope, (payload) =>
+        ListPriorityOffersResponseSchema.parse(payload),
+      ),
+      loadAllPages('/order-sessions', null, (payload) =>
+        ListOrderSessionsResponseSchema.parse(payload),
+      ),
+      loadAllPages('/order-requests', input.scope, (payload) =>
+        ListStoreOrderRequestsResponseSchema.parse(payload),
+      ),
+    ]);
 
   return {
-    orderRequests: ListStoreOrderRequestsResponseSchema.parse(orderRequestsPayload).data,
-    orderSessions: ListOrderSessionsResponseSchema.parse(orderSessionsPayload).data,
-    priorityOffers: ListPriorityOffersResponseSchema.parse(priorityOffersPayload).data,
-    receipts: ListReceiptsResponseSchema.parse(receiptsPayload).data,
+    orderRequests,
+    orderSessions,
+    priorityOffers,
+    receipts,
     report: MonthlyOperationalReportResponseSchema.parse(reportPayload).data,
-    waitTickets: ListWaitTicketsResponseSchema.parse(waitTicketsPayload).data,
+    waitTickets,
   };
 }

@@ -473,6 +473,43 @@ describe('API projections', () => {
     );
   });
 
+  it('loads every wait-ticket page instead of silently capping operational state', async () => {
+    const baseTicket = {
+      createdAt: '2026-09-17T00:00:00.000Z',
+      fulfilled: { kind: 'UNIT' as const, quantity: 0 },
+      id: '70000000-0000-4000-8000-000000000001',
+      mergedOrderId: null,
+      priority: 'P1' as const,
+      productId: '40000000-0000-4000-8000-000000000001',
+      remaining: { kind: 'UNIT' as const, quantity: 1 },
+      requested: { kind: 'UNIT' as const, quantity: 1 },
+      sessionId: '10000000-0000-4000-8000-000000000001',
+      status: 'WAITING' as const,
+      storeId: '20000000-0000-4000-8000-000000000001',
+      updatedAt: '2026-09-17T00:05:00.000Z',
+    };
+    const secondTicket = {
+      ...baseTicket,
+      id: '70000000-0000-4000-8000-000000000002',
+    };
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const page = String(input).includes('page=2') ? 2 : 1;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            data: [page === 1 ? baseTicket : secondTicket],
+            pagination: { page, pageSize: 100, totalItems: 101, totalPages: 2 },
+          }),
+          { status: 200 },
+        ),
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(listWaitTickets()).resolves.toEqual([baseTicket, secondTicket]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('rejects malformed waitlist responses instead of rendering invented state', async () => {
     vi.stubGlobal(
       'fetch',
