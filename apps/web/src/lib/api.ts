@@ -1,0 +1,223 @@
+import {
+  ErrorEnvelopeSchema,
+  GetSessionResponseSchema,
+  ListProductConversionsResponseSchema,
+  ListProductsResponseSchema,
+  ListStoresResponseSchema,
+  LoginResponseSchema,
+  LogoutResponseSchema,
+  ProductConversionResponseSchema,
+  ProductResponseSchema,
+  type CreateProductConversionRequest,
+  type LoginRequest,
+  type Session,
+  type UpdateProductConversionRequest,
+  type StoreKind,
+} from '@idosi/contracts';
+import { businessDate } from './business-time';
+import { shouldEnableMockMode } from './runtime-mode';
+import type { ProductConversion as CatalogProduct } from './types';
+
+const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
+const apiBaseUrl = (configuredBaseUrl || '/api/v1').replace(/\/$/, '');
+
+export const mockModeEnabled = shouldEnableMockMode(
+  import.meta.env.DEV,
+  import.meta.env.MODE,
+  import.meta.env.VITE_ENABLE_MOCK_FALLBACK,
+);
+
+export class ApiClientError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly requestId: string | undefined;
+
+  constructor(message: string, status: number, code = 'HTTP_ERROR', requestId?: string) {
+    super(message);
+    this.name = 'ApiClientError';
+    this.status = status;
+    this.code = code;
+    this.requestId = requestId;
+  }
+}
+
+async function request(path: string, init?: RequestInit): Promise<unknown> {
+  const headers = new Headers(init?.headers);
+  headers.set('Accept', 'application/json');
+  if (init?.body !== undefined && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl}${path}`, {
+      ...init,
+      credentials: 'include',
+      headers,
+    });
+  } catch {
+    throw new ApiClientError(
+      'Không thể kết nối máy chủ. Vui lòng kiểm tra mạng và thử lại.',
+      0,
+      'NETWORK_ERROR',
+    );
+  }
+
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const parsed = ErrorEnvelopeSchema.safeParse(payload);
+    if (parsed.success) {
+      throw new ApiClientError(
+        parsed.data.error.message,
+        response.status,
+        parsed.data.error.code,
+        parsed.data.error.requestId,
+      );
+    }
+    throw new ApiClientError(`Yêu cầu thất bại (${response.status}).`, response.status);
+  }
+  return payload;
+}
+
+export async function getSession(): Promise<Session | null> {
+  try {
+    const payload = await request('/auth/session');
+    return GetSessionResponseSchema.parse(payload).data;
+  } catch (error) {
+    if (error instanceof ApiClientError && error.status === 401) return null;
+    throw error;
+  }
+}
+
+export async function login(credentials: LoginRequest): Promise<Session> {
+  const payload = await request('/auth/login', {
+    body: JSON.stringify(credentials),
+    method: 'POST',
+  });
+  return LoginResponseSchema.parse(payload).data;
+}
+
+export async function logout(): Promise<void> {
+  const payload = await request('/auth/logout', { method: 'POST' });
+  LogoutResponseSchema.parse(payload);
+}
+
+export async function listCatalog(): Promise<CatalogProduct[]> {
+  const effectiveAt = businessDate();
+  const [productsPayload, conversionsPayload] = await Promise.all([
+    request('/products?page=1&pageSize=100'),
+    request(
+      `/product-conversions?page=1&pageSize=100&includeRetired=false&effectiveAt=${effectiveAt}`,
+    ),
+  ]);
+  const products = ListProductsResponseSchema.parse(productsPayload).data;
+  const conversions = ListProductConversionsResponseSchema.parse(conversionsPayload).data;
+
+  return products.map((product) => {
+    const conversion = conversions
+      .filter((candidate) => candidate.productId === product.id)
+      .toSorted((left, right) => right.version - left.version)[0];
+    return {
+      id: product.id,
+      sku: product.sku,
+      name: product.name,
+      itemQuantity: conversion?.itemQuantity ?? null,
+      weightKilograms: conversion?.weightKilograms ?? null,
+      ...(conversion
+        ? {
+            conversionId: conversion.id,
+            conversionVersion: conversion.version,
+            effectiveDate: conversion.effectiveFrom,
+          }
+        : { conversionMissing: true, effectiveDate: '' }),
+      status: product.status,
+    } satisfies CatalogProduct;
+  });
+}
+
+interface SaveCatalogProductInput {
+  name: string;
+  itemQuantity: number;
+  weightKilograms: string;
+  effectiveFrom: string;
+}
+
+function catalogSku(name: string): string {
+  const slug = name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/gi, 'd')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 56);
+  return `WEB-${slug || 'ITEM'}-${Date.now().toString(36).toUpperCase()}`;
+}
+
+export async function saveCatalogProduct(
+  input: SaveCatalogProductInput,
+  current?: CatalogProduct,
+): Promise<void> {
+  let productId = current?.id;
+  if (current) {
+    const productPayload = await request(`/products/${encodeURIComponent(current.id)}`, {
+      body: JSON.stringify({ name: input.name }),
+      method: 'PATCH',
+    });
+    ProductResponseSchema.parse(productPayload);
+  } else {
+    const productPayload = await request('/products', {
+      body: JSON.stringify({
+        measurement: 'UNIT',
+        name: input.name,
+        sku: catalogSku(input.name),
+        unitLabel: 'cái',
+      }),
+      method: 'POST',
+    });
+    productId = ProductResponseSchema.parse(productPayload).data.id;
+  }
+
+  if (!productId) throw new ApiClientError('Không xác định được mặt hàng vừa lưu.', 0);
+  const conversionInput: CreateProductConversionRequest = {
+    effectiveFrom: input.effectiveFrom,
+    effectiveTo: null,
+    itemQuantity: input.itemQuantity,
+    reason: current ? 'Cập nhật tỷ lệ quy đổi từ giao diện' : 'Tạo tỷ lệ quy đổi từ giao diện',
+    weightKilograms: input.weightKilograms,
+  };
+  const path = current?.conversionId
+    ? `/products/${encodeURIComponent(productId)}/conversions/${encodeURIComponent(current.conversionId)}`
+    : `/products/${encodeURIComponent(productId)}/conversions`;
+  const conversionPayload = await request(path, {
+    body: JSON.stringify(
+      current?.conversionId
+        ? ({
+            ...conversionInput,
+            expectedVersion: current.conversionVersion ?? 1,
+          } satisfies UpdateProductConversionRequest)
+        : conversionInput,
+    ),
+    method: current?.conversionId ? 'PATCH' : 'POST',
+  });
+  ProductConversionResponseSchema.parse(conversionPayload);
+}
+
+export async function setCatalogProductStatus(
+  productId: string,
+  status: 'ACTIVE' | 'INACTIVE',
+): Promise<void> {
+  const payload = await request(`/products/${encodeURIComponent(productId)}`, {
+    body: JSON.stringify({ status }),
+    method: 'PATCH',
+  });
+  ProductResponseSchema.parse(payload);
+}
+
+export async function getStoreKind(storeId: string): Promise<StoreKind> {
+  const payload = await request('/stores?page=1&pageSize=100');
+  const stores = ListStoresResponseSchema.parse(payload).data;
+  const store = stores.find((candidate) => candidate.id === storeId);
+  if (!store) throw new ApiClientError('Không tìm thấy cửa hàng của tài khoản.', 404, 'NOT_FOUND');
+  return store.kind;
+}
