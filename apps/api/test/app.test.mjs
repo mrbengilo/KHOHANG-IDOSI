@@ -33,6 +33,7 @@ describe('KHOHANG-IDOSI API', () => {
     assert.ok(specification.json().paths['/api/v1/store-inventory-bags']);
     assert.ok(specification.json().paths['/api/v1/store-outbounds/{outboundId}/review']);
     assert.ok(specification.json().paths['/api/v1/order-sessions/{sessionId}/transition']);
+    assert.ok(specification.json().paths['/api/v1/allocations']);
     assert.ok(specification.json().paths['/api/v1/outbound-requests/{outboundRequestId}/dispatch']);
     assert.ok(specification.json().paths['/api/v1/store-transfers/destinations']);
     assert.ok(specification.json().paths['/api/v1/store-transfers/{transferId}/receive']);
@@ -456,6 +457,96 @@ describe('KHOHANG-IDOSI API', () => {
         .sort(),
       ['DS_BD', 'DS_NVT'],
     );
+  });
+
+  test('lists allocation results with role scope, filters and pagination', async () => {
+    const unauthenticated = await app.inject({ method: 'GET', url: '/api/v1/allocations' });
+    assert.equal(unauthenticated.statusCode, 401);
+
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const ownResults = await app.inject({
+      method: 'GET',
+      url: '/api/v1/allocations?page=1&pageSize=100',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(ownResults.statusCode, 200);
+    assert.equal(ownResults.headers['cache-control'], 'no-store');
+    assert.equal(ownResults.json().pagination.totalItems, 1);
+    assert.deepEqual(
+      ownResults.json().data.map((result) => result.storeId),
+      [MEMORY_SEED_IDS.nvtStore],
+    );
+    assert.deepEqual(ownResults.json().data[0], {
+      id: MEMORY_SEED_IDS.allocationLine,
+      allocationRunId: MEMORY_SEED_IDS.allocationRun,
+      sessionId: MEMORY_SEED_IDS.orderSession,
+      mergedOrderId: '11000000-0000-4000-8000-400000000001',
+      storeId: MEMORY_SEED_IDS.nvtStore,
+      productId: ownResults.json().data[0].productId,
+      priority: 'P1',
+      roundNumber: 1,
+      sequenceInRound: 1,
+      requestedQuantity: 5,
+      allocatedQuantity: 5,
+      waitlistedQuantity: 0,
+      status: 'ALLOCATED',
+      reasonCode: 'ALLOCATED_BY_PRIORITY_ROUND_ROBIN',
+      createdAt: ownResults.json().data[0].createdAt,
+    });
+
+    const denied = await app.inject({
+      method: 'GET',
+      url: `/api/v1/allocations?storeId=${MEMORY_SEED_IDS.bdStore}`,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(denied.statusCode, 403);
+
+    const htkdCookie = cookieOf(await login('htkd'));
+    const assignedResults = await app.inject({
+      method: 'GET',
+      url: '/api/v1/allocations?pageSize=100',
+      headers: { cookie: htkdCookie },
+    });
+    assert.equal(assignedResults.statusCode, 200);
+    assert.equal(assignedResults.json().pagination.totalItems, 2);
+    assert.deepEqual(
+      [...new Set(assignedResults.json().data.map((result) => result.storeId))].sort(),
+      [MEMORY_SEED_IDS.bdStore, MEMORY_SEED_IDS.nvtStore].sort(),
+    );
+
+    const adminCookie = cookieOf(await login('admin'));
+    const filtered = await app.inject({
+      method: 'GET',
+      url:
+        `/api/v1/allocations?sessionId=${MEMORY_SEED_IDS.orderSession}` +
+        `&storeId=${MEMORY_SEED_IDS.bdStore}&status=PARTIAL&priority=P2`,
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(filtered.statusCode, 200);
+    assert.deepEqual(
+      filtered.json().data.map((result) => result.id),
+      [MEMORY_SEED_IDS.bdAllocationLine],
+    );
+
+    const page = await app.inject({
+      method: 'GET',
+      url: '/api/v1/allocations?page=2&pageSize=1',
+      headers: { cookie: adminCookie },
+    });
+    assert.deepEqual(page.json().pagination, {
+      page: 2,
+      pageSize: 1,
+      totalItems: 3,
+      totalPages: 3,
+    });
+    assert.equal(page.json().data.length, 1);
+
+    const invalidStatus = await app.inject({
+      method: 'GET',
+      url: '/api/v1/allocations?status=RESERVED',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(invalidStatus.statusCode, 400);
   });
 
   test('blocks wholesale and inactive STORE accounts from protected retail workflow actions', async () => {
