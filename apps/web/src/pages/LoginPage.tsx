@@ -4,7 +4,7 @@ import { type FormEvent, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '../components/Button';
 import { ApiClientError, login, mockModeEnabled } from '../lib/api';
-import { sessionQueryKey, useSession } from '../lib/auth';
+import { installAuthenticatedSession, useSession } from '../lib/auth';
 import { safeReturnPath } from '../lib/navigation';
 
 export function LoginPage() {
@@ -33,7 +33,7 @@ export function LoginPage() {
         return;
       }
       const session = await login({ username, password });
-      queryClient.setQueryData(sessionQueryKey, session);
+      installAuthenticatedSession(queryClient, session);
       navigate(returnPath, { replace: true });
     } catch (cause) {
       setError(

@@ -36,9 +36,6 @@ const TransfersPage = lazy(() =>
 const ReportsPage = lazy(() =>
   import('./pages/ReportsPage').then((module) => ({ default: module.ReportsPage })),
 );
-const CostPage = lazy(() =>
-  import('./pages/OperationsPages').then((module) => ({ default: module.CostPage })),
-);
 const UsersPage = lazy(() =>
   import('./features/admin/AdminUsersPage').then((module) => ({
     default: module.AdminUsersPage,
@@ -79,7 +76,7 @@ export const router = createBrowserRouter([
       { path: 'sorting', element: suspense(<SortingPage />) },
       { path: 'transfers', element: suspense(<TransfersPage />) },
       { path: 'catalog', element: suspense(<CatalogPage />) },
-      { path: 'costs', element: suspense(<CostPage />) },
+      { path: 'costs', element: suspense(<ReceivePage />) },
       { path: 'reports', element: suspense(<ReportsPage />) },
       { path: 'users', element: suspense(<UsersPage />) },
       { path: 'audit', element: suspense(<AuditPage />) },
