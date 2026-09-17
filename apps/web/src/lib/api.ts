@@ -53,6 +53,7 @@ import {
 } from '@idosi/contracts';
 import { businessDate } from './business-time';
 import { shouldEnableMockMode } from './runtime-mode';
+import { reportUnauthorizedResponse } from './session-expiry';
 import type { ProductConversion as CatalogProduct } from './types';
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
@@ -100,6 +101,7 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
     );
   }
 
+  reportUnauthorizedResponse(response.status, path);
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const parsed = ErrorEnvelopeSchema.safeParse(payload);
