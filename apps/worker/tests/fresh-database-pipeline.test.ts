@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  allocationLines,
   applyWarehouseMovement,
   createDatabase,
   createOrderSession,
   dispatchWarehouseOutboundRequest,
   listStoreReceiptSources,
   listWarehouseOutboundRequests,
+  mergedOrderItems,
   products,
   reservations,
   stores,
@@ -130,6 +132,44 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
       );
       expect(snapshot.replayed).toBe(false);
       expect(allocation.replayed).toBe(false);
+
+      const [allocationLine] = await client.db
+        .select({
+          mergedOrderId: allocationLines.mergedOrderId,
+          requestedQuantity: allocationLines.requestedQuantity,
+          allocatedQuantity: allocationLines.allocatedQuantity,
+          waitlistedQuantity: allocationLines.waitlistedQuantity,
+        })
+        .from(allocationLines)
+        .where(eq(allocationLines.allocationRunId, allocation.resourceId))
+        .limit(1);
+      expect(allocationLine).toMatchObject({
+        requestedQuantity: 3,
+        allocatedQuantity: 3,
+        waitlistedQuantity: 0,
+      });
+      if (!allocationLine?.mergedOrderId) {
+        throw new Error('Fresh allocation did not preserve merged-order provenance.');
+      }
+      const [mergedItem] = await client.db
+        .select({
+          requestedQuantity: mergedOrderItems.requestedQuantity,
+          allocatedQuantity: mergedOrderItems.allocatedQuantity,
+          waitlistedQuantity: mergedOrderItems.waitlistedQuantity,
+        })
+        .from(mergedOrderItems)
+        .where(
+          and(
+            eq(mergedOrderItems.mergedOrderId, allocationLine.mergedOrderId),
+            eq(mergedOrderItems.productId, product.id),
+          ),
+        )
+        .limit(1);
+      expect(mergedItem).toEqual({
+        requestedQuantity: 3,
+        allocatedQuantity: 3,
+        waitlistedQuantity: 0,
+      });
 
       const outbounds = await listWarehouseOutboundRequests(client.db, {
         page: 1,

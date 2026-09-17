@@ -70,6 +70,11 @@ interface PersistedMergedDemand {
   readonly mergedOrderItemId: string;
 }
 
+interface MergedDemandResolution {
+  readonly allocatedQuantity: number;
+  readonly waitlistedQuantity: number;
+}
+
 /** PostgreSQL adapter. Every scheduled job is one serializable, advisory-locked transaction. */
 export class PostgresAllocationJobRepository implements AllocationJobRepository {
   readonly #client: DatabaseClient;
@@ -376,13 +381,6 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
     const persistedRunId = existingRun[0]?.id ?? runId;
     const persistedRunNumber = existingRun[0]?.runNumber ?? runNumber;
 
-    const persistedMerged = await persistMergedDemands(
-      tx,
-      session,
-      mergedDemands,
-      persistedRunNumber,
-      processedAt,
-    );
     if (existingRun.length === 0) {
       await tx.insert(allocationRuns).values({
         id: runId,
@@ -424,6 +422,41 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
     const storeOrder = await loadStoreOrder(tx, mergedDemands, domainTickets);
     const cursorByProduct = await loadPreviousCursors(tx);
 
+    const plannedAllocations = snapshotItems.map((item) => ({
+      item,
+      result: planProductAllocation({
+        allocationId: persistedRunId,
+        idempotencyKey: `${idempotencyKey}:${item.productId}`,
+        sessionId: session.id,
+        policyVersion: session.policyVersion,
+        allocatedAt: session.finalDueAt.toISOString(),
+        snapshot: snapshotItemPlan(snapshot, item),
+        mergedRequests: mergedDemands,
+        waitTickets: domainTickets,
+        priorityOffers: offers,
+        storeOrder,
+        startCursor: cursorByProduct[item.productId] ?? null,
+      }),
+    }));
+    const mergedResolutionByDemandId = new Map<string, MergedDemandResolution>();
+    for (const { result } of plannedAllocations) {
+      for (const remainder of result.remainders) {
+        if (remainder.source === 'CONFIRMED_WAIT') continue;
+        mergedResolutionByDemandId.set(remainder.demandId, {
+          allocatedQuantity: remainder.allocatedQuantity,
+          waitlistedQuantity: remainder.remainingQuantity,
+        });
+      }
+    }
+    const persistedMerged = await persistMergedDemands(
+      tx,
+      session,
+      mergedDemands,
+      mergedResolutionByDemandId,
+      persistedRunNumber,
+      processedAt,
+    );
+
     const demandById = new Map(mergedDemands.map((demand) => [demand.demandId, demand]));
     const offerByTicketId = new Map(acceptedRows.map((offer) => [offer.waitTicketId, offer]));
     const mergedByDemandId = new Map(persistedMerged.map((item) => [item.demand.demandId, item]));
@@ -438,20 +471,7 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
     const waitlistedByRequestItem = new Map<string, number>();
     const waitRemainders: AllocationRemainder[] = [];
 
-    for (const item of snapshotItems) {
-      const result = planProductAllocation({
-        allocationId: persistedRunId,
-        idempotencyKey: `${idempotencyKey}:${item.productId}`,
-        sessionId: session.id,
-        policyVersion: session.policyVersion,
-        allocatedAt: session.finalDueAt.toISOString(),
-        snapshot: snapshotItemPlan(snapshot, item),
-        mergedRequests: mergedDemands,
-        waitTickets: domainTickets,
-        priorityOffers: offers,
-        storeOrder,
-        startCursor: cursorByProduct[item.productId] ?? null,
-      });
+    for (const { item, result } of plannedAllocations) {
       nextCursorByProduct[item.productId] = result.nextCursor;
       requestedQuantity += result.remainders.reduce(
         (total, remainder) => total + remainder.requestedQuantity,
@@ -580,14 +600,6 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
           throw new Error(`Allocation ${remainder.demandId} did not reconcile to its sources.`);
         }
         if (remainder.remainingQuantity > 0) waitRemainders.push(remainder);
-        await tx
-          .update(mergedOrderItems)
-          .set({
-            allocatedQuantity: remainder.allocatedQuantity,
-            waitlistedQuantity: remainder.remainingQuantity,
-            updatedAt: processedAt,
-          })
-          .where(eq(mergedOrderItems.id, persisted.mergedOrderItemId));
       }
 
       if (result.allocatedQuantity > 0) {
@@ -1116,6 +1128,7 @@ async function persistMergedDemands(
   tx: Transaction,
   session: ScheduledAllocationSession,
   demands: readonly MergedDemand[],
+  resolutionByDemandId: ReadonlyMap<string, MergedDemandResolution>,
   version: number,
   now: Date,
 ): Promise<PersistedMergedDemand[]> {
@@ -1142,6 +1155,10 @@ async function persistMergedDemands(
       updatedAt: now,
     });
     for (const demand of storeDemands) {
+      const resolution = resolutionByDemandId.get(demand.demandId);
+      if (!resolution) {
+        throw new Error(`Merged demand ${demand.demandId} has no allocation resolution.`);
+      }
       const mergedOrderItemId = deterministicUuid(
         `merged-order-item:${mergedOrderId}:${demand.productId}`,
       );
@@ -1151,8 +1168,8 @@ async function persistMergedDemands(
         productId: demand.productId,
         requestedQuantity: demand.requestedQuantity,
         priorityLevel: demand.priority,
-        allocatedQuantity: 0,
-        waitlistedQuantity: 0,
+        allocatedQuantity: resolution.allocatedQuantity,
+        waitlistedQuantity: resolution.waitlistedQuantity,
         createdAt: now,
         updatedAt: now,
       });
