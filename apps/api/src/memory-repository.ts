@@ -1636,7 +1636,9 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (actor.role === 'STORE') await this.authorizeRetailStoreOperation(actor);
     if (!canAccessStore(actor, input.storeId))
       throw forbidden('Không có quyền gửi cho cửa hàng này');
-    if (!this.stores.has(input.storeId)) throw notFound('Không tìm thấy cửa hàng');
+    const targetStore = this.stores.get(input.storeId);
+    if (!targetStore) throw notFound('Không tìm thấy cửa hàng');
+    if (targetStore.status !== 'ACTIVE') throw forbidden();
     const session = this.orderSessions.get(input.businessSessionId);
     if (
       !session ||
