@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   cancelWaitTicket,
+  createOrderSession,
   declareStoreReceipt,
   finalizeStoreReceipt,
   getMonthlyOperationalReport,
@@ -8,6 +9,7 @@ import {
   getWaitTicketHistory,
   listCatalog,
   listOpenOrderSessions,
+  listOrderSessions,
   listPriorityOffers,
   listStoreReceipts,
   listWaitTickets,
@@ -15,6 +17,7 @@ import {
   returnStoreReceiptForCorrection,
   submitStoreOrderRequest,
   submitStoreReceipt,
+  transitionOrderSession,
 } from './api';
 
 const pagination = { page: 1, pageSize: 100, totalItems: 1, totalPages: 1 };
@@ -129,6 +132,68 @@ describe('API projections', () => {
         'request-key-2026',
       ),
     ).resolves.toEqual(expect.objectContaining({ requestSequence: 1, status: 'SUBMITTED' }));
+  });
+
+  it('lists and operates order sessions with validated versioned idempotent requests', async () => {
+    const sessionId = '10000000-0000-4000-8000-000000000001';
+    const input = {
+      allocationStartsAt: '2026-09-18T02:00:00.000Z',
+      businessDate: '2026-09-18',
+      policyVersion: 'idosi-round-robin-p0a-p3-v1',
+      requestClosesAt: '2026-09-18T01:00:00.000Z',
+      requestOpensAt: '2026-09-17T17:00:00.000Z',
+    };
+    const scheduled = {
+      ...input,
+      createdAt: '2026-09-17T10:00:00.000Z',
+      id: sessionId,
+      status: 'SCHEDULED' as const,
+      updatedAt: '2026-09-17T10:00:00.000Z',
+      version: 0,
+    };
+    const calls: Array<{ body: unknown; key: string | null; method: string; url: string }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((requestInput: string | URL | Request, init?: RequestInit) => {
+        const url = String(requestInput);
+        calls.push({
+          body: init?.body ? JSON.parse(String(init.body)) : null,
+          key: new Headers(init?.headers).get('idempotency-key'),
+          method: init?.method ?? 'GET',
+          url,
+        });
+        if ((init?.method ?? 'GET') === 'GET') {
+          return Promise.resolve(
+            new Response(JSON.stringify({ data: [scheduled], pagination }), { status: 200 }),
+          );
+        }
+        if (url.endsWith('/transition')) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ data: { ...scheduled, status: 'OPEN', version: 1 } }), {
+              status: 200,
+            }),
+          );
+        }
+        return Promise.resolve(new Response(JSON.stringify({ data: scheduled }), { status: 201 }));
+      }),
+    );
+
+    await expect(listOrderSessions()).resolves.toEqual([scheduled]);
+    await expect(createOrderSession(input, 'create-session-key')).resolves.toEqual(scheduled);
+    await expect(
+      transitionOrderSession(sessionId, { expectedVersion: 0, status: 'OPEN' }, 'open-session-key'),
+    ).resolves.toEqual(expect.objectContaining({ status: 'OPEN', version: 1 }));
+
+    expect(calls).toEqual([
+      expect.objectContaining({ method: 'GET', url: expect.stringContaining('/order-sessions?') }),
+      expect.objectContaining({ body: input, key: 'create-session-key', method: 'POST' }),
+      expect.objectContaining({
+        body: { expectedVersion: 0, status: 'OPEN' },
+        key: 'open-session-key',
+        method: 'POST',
+        url: expect.stringContaining(`/order-sessions/${sessionId}/transition`),
+      }),
+    ]);
   });
 
   it('loads receipt detail and sends every receipt transition with idempotency', async () => {

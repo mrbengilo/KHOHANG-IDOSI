@@ -1,6 +1,7 @@
 import {
   ErrorEnvelopeSchema,
   CancelWaitTicketRequestSchema,
+  CreateOrderSessionRequestSchema,
   ListReceiptsResponseSchema,
   ListPriorityOffersResponseSchema,
   GetSessionResponseSchema,
@@ -13,15 +14,18 @@ import {
   LoginResponseSchema,
   LogoutResponseSchema,
   MonthlyOperationalReportResponseSchema,
+  OrderSessionResponseSchema,
   ProductConversionResponseSchema,
   ProductResponseSchema,
   RespondPriorityOfferRequestSchema,
   RespondPriorityOfferResponseSchema,
   ReceiptResponseSchema,
   StoreOrderRequestResponseSchema,
+  TransitionOrderSessionRequestSchema,
   WaitTicketHistoryResponseSchema,
   WaitTicketResponseSchema,
   type CancelWaitTicketRequest,
+  type CreateOrderSessionRequest,
   type DeclareStoreReceiptRequest,
   type FinalizeReceiptRequest,
   type CreateProductConversionRequest,
@@ -40,6 +44,7 @@ import {
   type Store,
   type StoreOrderRequest,
   type SubmitStoreReceiptRequest,
+  type TransitionOrderSessionRequest,
   type UpdateProductConversionRequest,
   type StoreKind,
   type WaitTicket,
@@ -302,6 +307,39 @@ export async function listOpenOrderSessions(): Promise<OrderSession[]> {
   return listAllPages('/order-sessions', new URLSearchParams({ status: 'OPEN' }), (payload) =>
     ListOrderSessionsResponseSchema.parse(payload),
   );
+}
+
+export async function listOrderSessions(): Promise<OrderSession[]> {
+  return listAllPages('/order-sessions', new URLSearchParams(), (payload) =>
+    ListOrderSessionsResponseSchema.parse(payload),
+  );
+}
+
+export async function createOrderSession(
+  input: CreateOrderSessionRequest,
+  idempotencyKey: string,
+): Promise<OrderSession> {
+  const validated = CreateOrderSessionRequestSchema.parse(input);
+  const payload = await request('/order-sessions', {
+    body: JSON.stringify(validated),
+    headers: { 'idempotency-key': idempotencyKey },
+    method: 'POST',
+  });
+  return OrderSessionResponseSchema.parse(payload).data;
+}
+
+export async function transitionOrderSession(
+  sessionId: string,
+  input: TransitionOrderSessionRequest,
+  idempotencyKey: string,
+): Promise<OrderSession> {
+  const validated = TransitionOrderSessionRequestSchema.parse(input);
+  const payload = await request(`/order-sessions/${encodeURIComponent(sessionId)}/transition`, {
+    body: JSON.stringify(validated),
+    headers: { 'idempotency-key': idempotencyKey },
+    method: 'POST',
+  });
+  return OrderSessionResponseSchema.parse(payload).data;
 }
 
 export async function listStoreOrderRequests(
