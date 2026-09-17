@@ -98,7 +98,8 @@ export function nextConversionDate(effectiveFrom: string, currentDate = today): 
 }
 
 function csvCell(value: string): string {
-  return `"${value.replaceAll('"', '""')}"`;
+  const safeValue = /^[\t\r ]*[=+\-@]/u.test(value) ? `'${value}` : value;
+  return `"${safeValue.replaceAll('"', '""')}"`;
 }
 
 export function buildCatalogCsv(entries: readonly CatalogEntry[], effectiveAt: string): string {
@@ -250,7 +251,7 @@ export function CatalogPage() {
     setNotice(null);
     setDraft({
       baseConversion: base,
-      effectiveFrom: base ? nextConversionDate(base.effectiveFrom) : today,
+      effectiveFrom: base ? nextConversionDate(base.effectiveTo ?? base.effectiveFrom) : today,
       itemQuantity: base ? String(base.itemQuantity) : '',
       mode: base ? 'NEXT_VERSION' : 'INITIAL_CONVERSION',
       name: entry.product.name,
@@ -283,11 +284,14 @@ export function CatalogPage() {
     if (
       draft.mode === 'NEXT_VERSION' &&
       draft.baseConversion &&
-      draft.effectiveFrom <= draft.baseConversion.effectiveFrom
+      draft.effectiveFrom <=
+        (draft.baseConversion.effectiveTo ?? draft.baseConversion.effectiveFrom)
     ) {
       setNotice({
         kind: 'error',
-        message: `Ngày hiệu lực phải từ ${formatDate(addOneDay(draft.baseConversion.effectiveFrom))}.`,
+        message: `Ngày hiệu lực phải từ ${formatDate(
+          addOneDay(draft.baseConversion.effectiveTo ?? draft.baseConversion.effectiveFrom),
+        )}.`,
       });
       return;
     }
@@ -381,14 +385,25 @@ export function CatalogPage() {
           weightKilograms,
         });
       } else if (draft.product && draft.baseConversion) {
-        await createNextConversionVersion(draft.product.id, draft.baseConversion.id, {
-          effectiveFrom: draft.effectiveFrom,
-          effectiveTo: null,
-          expectedVersion: draft.baseConversion.version,
-          itemQuantity,
-          reason: draft.reason.trim(),
-          weightKilograms,
-        });
+        if (draft.baseConversion.retiredAt) {
+          await createInitialConversion(draft.product.id, {
+            effectiveFrom: draft.effectiveFrom,
+            effectiveTo: null,
+            expectedVersion: draft.baseConversion.version,
+            itemQuantity,
+            reason: draft.reason.trim(),
+            weightKilograms,
+          });
+        } else {
+          await createNextConversionVersion(draft.product.id, draft.baseConversion.id, {
+            effectiveFrom: draft.effectiveFrom,
+            effectiveTo: null,
+            expectedVersion: draft.baseConversion.version,
+            itemQuantity,
+            reason: draft.reason.trim(),
+            weightKilograms,
+          });
+        }
       }
       await refresh();
       setDraft(null);
@@ -739,11 +754,14 @@ export function CatalogPage() {
                               <History aria-hidden="true" size={15} /> Lịch sử ({entry.historyCount}
                               )
                             </button>
-                            {browsingCurrentDate &&
-                            (entry.historyCount === 0 || hasActiveLatest) ? (
+                            {browsingCurrentDate && entry.latestConversion ? (
                               <button onClick={() => startConversion(entry)} type="button">
                                 <Pencil aria-hidden="true" size={15} />{' '}
-                                {entry.historyCount === 0 ? 'Thêm hệ số' : 'Tạo phiên bản'}
+                                {hasActiveLatest ? 'Tạo phiên bản' : 'Khôi phục hệ số'}
+                              </button>
+                            ) : browsingCurrentDate && entry.historyCount === 0 ? (
+                              <button onClick={() => startConversion(entry)} type="button">
+                                <Pencil aria-hidden="true" size={15} /> Thêm hệ số
                               </button>
                             ) : null}
                             {browsingCurrentDate && hasActiveLatest ? (
@@ -856,7 +874,9 @@ function ConversionDialog({ busy, draft, onChange, onClose, onSubmit }: Conversi
       ? 'Thêm mặt hàng và hệ số'
       : draft.mode === 'INITIAL_CONVERSION'
         ? 'Bổ sung hệ số ban đầu'
-        : 'Tạo phiên bản quy đổi mới';
+        : draft.baseConversion?.retiredAt
+          ? 'Khôi phục bằng phiên bản mới'
+          : 'Tạo phiên bản quy đổi mới';
 
   return (
     <div className="dialog-backdrop">

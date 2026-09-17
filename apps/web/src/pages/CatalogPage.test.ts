@@ -1,6 +1,7 @@
 import type { Product, ProductConversion } from '@idosi/contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  createInitialConversion,
   createNextConversionVersion,
   createProductWithConversion,
   loadCatalogSnapshot,
@@ -74,6 +75,21 @@ describe('catalog exact ratio and export helpers', () => {
     expect(csv).toContain(`"${conversionId}"`);
     expect(csv).toContain('"2026-09-17"');
     expect(csv).toContain('"CHAN_GA_BAO_GOI_NEM_GON"');
+  });
+
+  it('neutralizes spreadsheet formulas in database-backed CSV fields', () => {
+    const csv = buildCatalogCsv(
+      [
+        {
+          ...entry,
+          product: { ...product, name: ' +SUM(1,1)', sku: '=HYPERLINK("bad")' },
+        },
+      ],
+      '2026-09-17',
+    );
+
+    expect(csv).toContain('"\'=HYPERLINK(""bad"")"');
+    expect(csv).toContain('"\' +SUM(1,1)"');
   });
 });
 
@@ -191,6 +207,33 @@ describe('catalog API integration', () => {
       reason: 'Ngừng hệ số cũ',
     });
     expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({ status: 'INACTIVE' });
+  });
+
+  it('resumes a retired conversion history through compare-and-append POST', async () => {
+    const resumed = {
+      ...conversion,
+      effectiveFrom: '2026-09-19',
+      id: replacementId,
+      version: 2,
+    } satisfies ProductConversion;
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ data: resumed }, 201));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      createInitialConversion(productId, {
+        effectiveFrom: resumed.effectiveFrom,
+        effectiveTo: null,
+        expectedVersion: 1,
+        itemQuantity: resumed.itemQuantity,
+        reason: 'Khôi phục hệ số đã ngừng',
+        weightKilograms: resumed.weightKilograms,
+      }),
+    ).resolves.toEqual(resumed);
+
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      expectedVersion: 1,
+    });
   });
 
   it('surfaces a network error and never substitutes demo rows in production API helpers', async () => {
