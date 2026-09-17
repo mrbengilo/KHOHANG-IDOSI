@@ -12,6 +12,59 @@ import {
 } from './common.js';
 import { InventoryAmountSchema, PositiveInventoryAmountSchema } from './warehouse.js';
 
+export const DEFAULT_ALLOCATION_POLICY_VERSION = 'idosi-round-robin-p0a-p3-v1';
+
+const HO_CHI_MINH_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  day: '2-digit',
+  month: '2-digit',
+  timeZone: 'Asia/Ho_Chi_Minh',
+  year: 'numeric',
+});
+
+function hoChiMinhBusinessDate(isoDateTime: string): string | null {
+  const date = new Date(isoDateTime);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = HO_CHI_MINH_DATE_FORMATTER.formatToParts(date);
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  return year && month && day ? `${year}-${month}-${day}` : null;
+}
+
+function validateOrderSessionWindow(
+  value: {
+    readonly businessDate: string;
+    readonly requestOpensAt: string;
+    readonly requestClosesAt: string;
+    readonly allocationStartsAt: string;
+  },
+  context: z.RefinementCtx,
+): void {
+  if (Date.parse(value.requestOpensAt) >= Date.parse(value.requestClosesAt)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['requestClosesAt'],
+      message: 'Request close time must be after request open time',
+    });
+  }
+  if (Date.parse(value.requestClosesAt) > Date.parse(value.allocationStartsAt)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['allocationStartsAt'],
+      message: 'Allocation cannot start before the request window closes',
+    });
+  }
+  for (const field of ['requestOpensAt', 'requestClosesAt', 'allocationStartsAt'] as const) {
+    if (hoChiMinhBusinessDate(value[field]) !== value.businessDate) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [field],
+        message: 'Schedule must fall on the business date in Asia/Ho_Chi_Minh',
+      });
+    }
+  }
+}
+
 export const OrderSessionStatusSchema = z.enum([
   'SCHEDULED',
   'OPEN',
@@ -30,26 +83,13 @@ export const OrderSessionSchema = z
     requestOpensAt: IsoDateTimeSchema,
     requestClosesAt: IsoDateTimeSchema,
     allocationStartsAt: IsoDateTimeSchema,
+    policyVersion: z.string().trim().min(1).max(80),
+    version: z.number().int().nonnegative(),
     createdAt: IsoDateTimeSchema,
     updatedAt: IsoDateTimeSchema,
   })
   .strict()
-  .superRefine((session, context) => {
-    if (Date.parse(session.requestOpensAt) >= Date.parse(session.requestClosesAt)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['requestClosesAt'],
-        message: 'Request close time must be after request open time',
-      });
-    }
-    if (Date.parse(session.requestClosesAt) > Date.parse(session.allocationStartsAt)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['allocationStartsAt'],
-        message: 'Allocation cannot start before the request window closes',
-      });
-    }
-  });
+  .superRefine(validateOrderSessionWindow);
 export type OrderSession = z.infer<typeof OrderSessionSchema>;
 
 export const OrderSessionParamsSchema = z.object({ sessionId: EntityIdSchema }).strict();
@@ -61,29 +101,16 @@ export const CreateOrderSessionRequestSchema = z
     requestOpensAt: IsoDateTimeSchema,
     requestClosesAt: IsoDateTimeSchema,
     allocationStartsAt: IsoDateTimeSchema,
+    policyVersion: z.string().trim().min(1).max(80).default(DEFAULT_ALLOCATION_POLICY_VERSION),
   })
   .strict()
-  .superRefine((request, context) => {
-    if (Date.parse(request.requestOpensAt) >= Date.parse(request.requestClosesAt)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['requestClosesAt'],
-        message: 'Request close time must be after request open time',
-      });
-    }
-    if (Date.parse(request.requestClosesAt) > Date.parse(request.allocationStartsAt)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['allocationStartsAt'],
-        message: 'Allocation cannot start before the request window closes',
-      });
-    }
-  });
+  .superRefine(validateOrderSessionWindow);
 export type CreateOrderSessionRequest = z.infer<typeof CreateOrderSessionRequestSchema>;
 
 export const TransitionOrderSessionRequestSchema = z
   .object({
     status: z.enum(['OPEN', 'CLOSED', 'CANCELLED']),
+    expectedVersion: z.number().int().nonnegative(),
     reason: AuditReasonSchema.optional(),
   })
   .strict()

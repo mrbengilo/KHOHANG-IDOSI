@@ -3,6 +3,7 @@ import type {
   AdminAuditLog,
   AuthenticatedPrincipal,
   CancelWaitTicketRequest,
+  CreateOrderSessionRequest,
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
@@ -40,6 +41,7 @@ import type {
   StoreOutbound,
   StoreReceiptSource,
   SubmitStoreReceiptRequest,
+  TransitionOrderSessionRequest,
   UpdateProductRequest,
   UpdateAccountRequest,
   UpdateProductConversionRequest,
@@ -161,6 +163,21 @@ export interface WarehouseRepository {
   ): Promise<Page<AdminAuditLog>>;
 
   listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>>;
+  createOrderSession(
+    actor: AuthenticatedPrincipal,
+    input: CreateOrderSessionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<OrderSession>>;
+  transitionOrderSession(
+    actor: AuthenticatedPrincipal,
+    sessionId: string,
+    input: TransitionOrderSessionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<OrderSession>>;
 
   listProducts(query: ListProductsQuery): Promise<Page<Product>>;
   createProduct(

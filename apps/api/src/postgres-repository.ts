@@ -3,6 +3,7 @@ import type {
   AdminAuditLog,
   AuthenticatedPrincipal,
   CancelWaitTicketRequest,
+  CreateOrderSessionRequest,
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
@@ -45,6 +46,7 @@ import type {
   StoreOutbound,
   StoreReceiptSource,
   SubmitStoreReceiptRequest,
+  TransitionOrderSessionRequest,
   UpdateProductRequest,
   UpdateAccountRequest,
   UpdateProductConversionRequest,
@@ -57,6 +59,7 @@ import {
   auditLogs,
   cancelWaitTicket as cancelDatabaseWaitTicket,
   closeDatabase,
+  createOrderSession as createDatabaseOrderSession,
   createStoreOutbound as createDatabaseStoreOutbound,
   dailyPriorityOffers,
   declareStoreReceipt as declareDatabaseStoreReceipt,
@@ -79,7 +82,11 @@ import {
   orderSessions,
   outboundRequestLines,
   OrderRequestAuthorizationError,
+  OrderSessionAuthorizationError,
+  OrderSessionConflictError,
+  OrderSessionNotFoundError,
   OrderSessionUnavailableError,
+  OrderSessionValidationError,
   pool,
   productConversions,
   products,
@@ -99,6 +106,7 @@ import {
   storeOutbounds,
   stores,
   submitOrderRequest as submitDatabaseOrderRequest,
+  transitionOrderSession as transitionDatabaseOrderSession,
   submitStoreReceipt as submitDatabaseStoreReceipt,
   users,
   returnStoreReceiptForCorrection as returnDatabaseStoreReceiptForCorrection,
@@ -504,6 +512,62 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       data: rows.map(orderSessionDto),
       pagination: pagination(query.page, query.pageSize, totalRow?.value ?? 0),
     };
+  }
+
+  public async createOrderSession(
+    actor: AuthenticatedPrincipal,
+    input: CreateOrderSessionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<OrderSession>> {
+    return withOrderSessionErrors(async () => {
+      const result = await createDatabaseOrderSession(db, {
+        businessDate: input.businessDate,
+        requestOpensAt: new Date(input.requestOpensAt),
+        requestClosesAt: new Date(input.requestClosesAt),
+        allocationStartsAt: new Date(input.allocationStartsAt),
+        policyVersion: input.policyVersion,
+        createdByUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.id;
+      if (!resourceId) throw new Error('Idempotent order session creation has no resource id');
+      return {
+        data: await this.orderSessionById(resourceId),
+        replayed: result.replayed,
+      };
+    });
+  }
+
+  public async transitionOrderSession(
+    actor: AuthenticatedPrincipal,
+    sessionId: string,
+    input: TransitionOrderSessionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<OrderSession>> {
+    return withOrderSessionErrors(async () => {
+      const result = await transitionDatabaseOrderSession(db, {
+        orderSessionId: sessionId,
+        targetStatus: input.status.toLocaleLowerCase('en-US') as 'open' | 'closed' | 'cancelled',
+        expectedVersion: input.expectedVersion,
+        reason: input.reason ?? null,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.id;
+      if (!resourceId) throw new Error('Idempotent order session transition has no resource id');
+      return {
+        data: await this.orderSessionById(resourceId),
+        replayed: result.replayed,
+      };
+    });
   }
 
   public async listProducts(query: ListProductsQuery): Promise<Page<Product>> {
@@ -1672,6 +1736,16 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     };
   }
 
+  private async orderSessionById(sessionId: string): Promise<OrderSession> {
+    const [row] = await db
+      .select()
+      .from(orderSessions)
+      .where(and(eq(orderSessions.id, sessionId), isNull(orderSessions.deletedAt)))
+      .limit(1);
+    if (!row) throw notFound('Không tìm thấy phiên đặt hàng');
+    return orderSessionDto(row);
+  }
+
   private async credentialsFromRow(
     account: typeof users.$inferSelect,
   ): Promise<AccountCredentials> {
@@ -2327,6 +2401,8 @@ function orderSessionDto(row: typeof orderSessions.$inferSelect): OrderSession {
     requestOpensAt: (row.openedAt ?? row.createdAt).toISOString(),
     requestClosesAt: row.inventorySnapshotDueAt.toISOString(),
     allocationStartsAt: row.requestDeadlineAt.toISOString(),
+    policyVersion: row.policyVersion,
+    version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -2454,6 +2530,34 @@ function databasePriorityOfferResponse(
     action: 'decline',
     ...(input.reason === undefined ? {} : { reason: input.reason }),
   };
+}
+
+async function withOrderSessionErrors<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error: unknown) {
+    if (error instanceof OrderSessionAuthorizationError) throw forbidden();
+    if (error instanceof OrderSessionNotFoundError) {
+      throw notFound('Không tìm thấy phiên đặt hàng');
+    }
+    if (error instanceof OrderSessionValidationError) {
+      throw new ApiError('VALIDATION_ERROR', error.message, 400);
+    }
+    if (error instanceof OrderSessionConflictError) {
+      throw new ApiError('VERSION_CONFLICT', error.message, 409);
+    }
+    if (error instanceof IdempotencyConflictError) {
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    }
+    if (error instanceof IdempotencyInProgressError) {
+      throw conflict('Yêu cầu cùng khóa idempotency đang được xử lý');
+    }
+    throw error;
+  }
 }
 
 async function withWaitErrors<T>(operation: () => Promise<T>): Promise<T> {

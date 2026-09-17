@@ -51,6 +51,20 @@ export type {
 } from './order-requests.js';
 
 export {
+  createOrderSession,
+  OrderSessionAuthorizationError,
+  OrderSessionConflictError,
+  OrderSessionNotFoundError,
+  OrderSessionValidationError,
+  transitionOrderSession,
+} from './order-sessions.js';
+export type {
+  CreateOrderSessionInput,
+  OrderSessionRecord,
+  TransitionOrderSessionInput,
+} from './order-sessions.js';
+
+export {
   calculateWeightedCostVnd,
   finalizeStoreReceipt,
   finalizeStoreReceiptInTransaction,

@@ -4,6 +4,7 @@ import {
   AccountParamsSchema,
   CancelWaitTicketRequestSchema,
   CreateAccountRequestSchema,
+  CreateOrderSessionRequestSchema,
   CreateProductRequestSchema,
   CreateProductConversionRequestSchema,
   CreateStoreOrderRequestSchema,
@@ -30,6 +31,7 @@ import {
   LoginRequestSchema,
   MonthlyOperationalReportQuerySchema,
   OpenStoreInventoryBagRequestSchema,
+  OrderSessionParamsSchema,
   ProductParamsSchema,
   ProductConversionParamsSchema,
   PriorityOfferParamsSchema,
@@ -47,6 +49,7 @@ import {
   UpdateProductConversionRequestSchema,
   UpdateProductRequestSchema,
   UpdateAccountRequestSchema,
+  TransitionOrderSessionRequestSchema,
   type ApiErrorCode,
   type AuthenticatedPrincipal,
   type Session,
@@ -300,6 +303,40 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     await authenticate(request, repository);
     const query = ListOrderSessionsQuerySchema.parse(request.query);
     return repository.listOrderSessions(query);
+  });
+
+  app.post('/api/v1/order-sessions', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = CreateOrderSessionRequestSchema.parse(request.body);
+    const result = await repository.createOrderSession(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CREATE_ORDER_SESSION', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
+  });
+
+  app.post('/api/v1/order-sessions/:sessionId/transition', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { sessionId } = OrderSessionParamsSchema.parse(request.params);
+    const input = TransitionOrderSessionRequestSchema.parse(request.body);
+    const result = await repository.transitionOrderSession(
+      session.principal,
+      sessionId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'TRANSITION_ORDER_SESSION', sessionId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
   });
 
   app.post('/api/v1/products', async (request, reply) => {
@@ -921,6 +958,22 @@ function openApiDocument(): Record<string, unknown> {
         get: {
           security: cookieSecurity,
           responses: { '200': { description: 'Paginated order sessions' } },
+        },
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '201': { description: 'Created or replayed order session (ADMIN only)' } },
+        },
+      },
+      '/api/v1/order-sessions/{sessionId}/transition': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Versioned order session transition' } },
         },
       },
       '/api/v1/store-receipts': {

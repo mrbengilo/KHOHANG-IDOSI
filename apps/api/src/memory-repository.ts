@@ -5,6 +5,7 @@ import type {
   AdminAuditLog,
   AuthenticatedPrincipal,
   CancelWaitTicketRequest,
+  CreateOrderSessionRequest,
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
@@ -47,6 +48,7 @@ import type {
   StoreOutbound,
   StoreReceiptSource,
   SubmitStoreReceiptRequest,
+  TransitionOrderSessionRequest,
   UpdateProductRequest,
   UpdateAccountRequest,
   UpdateProductConversionRequest,
@@ -126,6 +128,11 @@ interface IdempotencyRecord {
   readonly response: StoreOrderRequest;
 }
 
+interface SessionMutationIdempotencyRecord {
+  readonly requestHash: string;
+  readonly response: OrderSession;
+}
+
 interface ReceiptIdempotencyRecord {
   readonly requestHash: string;
   readonly response: Receipt;
@@ -189,6 +196,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly priorityOffers = new Map<string, PriorityOffer>();
   private readonly dispatchedOutbounds = new Map<string, MemoryDispatchedOutbound>();
   private readonly idempotency = new Map<string, IdempotencyRecord>();
+  private readonly sessionMutationIdempotency = new Map<string, SessionMutationIdempotencyRecord>();
   private readonly receiptIdempotency = new Map<string, ReceiptIdempotencyRecord>();
   private readonly waitMutationIdempotency = new Map<string, WaitMutationIdempotencyRecord>();
   private readonly inventoryMutationIdempotency = new Map<
@@ -438,6 +446,115 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       data: slicePage(values, query.page, query.pageSize),
       pagination: pagination(query.page, query.pageSize, values.length),
     };
+  }
+
+  public async createOrderSession(
+    actor: AuthenticatedPrincipal,
+    input: CreateOrderSessionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<OrderSession>> {
+    requireMemoryAdmin(actor);
+    const scopedKey = `${actor.accountId}:order-session:create:${idempotencyKey}`;
+    const replay = this.replaySessionMutation(scopedKey, requestHash);
+    if (replay) return { data: replay, replayed: true };
+    if (
+      [...this.orderSessions.values()].some(
+        (session) => session.businessDate === input.businessDate && session.status !== 'CANCELLED',
+      )
+    ) {
+      throw conflict('Ngày nghiệp vụ đã có một phiên đặt hàng đang hoạt động');
+    }
+    const now = this.now().toISOString();
+    const created: OrderSession = {
+      id: randomUUID(),
+      businessDate: input.businessDate,
+      status: 'SCHEDULED',
+      requestOpensAt: input.requestOpensAt,
+      requestClosesAt: input.requestClosesAt,
+      allocationStartsAt: input.allocationStartsAt,
+      policyVersion: input.policyVersion,
+      version: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.orderSessions.set(created.id, created);
+    this.rememberSessionMutation(scopedKey, requestHash, created);
+    this.appendAudit(
+      actor,
+      context,
+      'ORDER_SESSION_CREATED',
+      'order_session',
+      created.id,
+      null,
+      created,
+    );
+    return { data: structuredClone(created), replayed: false };
+  }
+
+  public async transitionOrderSession(
+    actor: AuthenticatedPrincipal,
+    sessionId: string,
+    input: TransitionOrderSessionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<OrderSession>> {
+    requireMemoryAdmin(actor);
+    const scopedKey = `${actor.accountId}:order-session:transition:${sessionId}:${idempotencyKey}`;
+    const replay = this.replaySessionMutation(scopedKey, requestHash);
+    if (replay) return { data: replay, replayed: true };
+    const current = this.orderSessions.get(sessionId);
+    if (!current) throw notFound('Không tìm thấy phiên đặt hàng');
+    if (current.version !== input.expectedVersion) throw versionConflict();
+    const allowed =
+      (current.status === 'SCHEDULED' && ['OPEN', 'CANCELLED'].includes(input.status)) ||
+      (current.status === 'OPEN' && ['OPEN', 'CLOSED', 'CANCELLED'].includes(input.status)) ||
+      (current.status === 'CLOSED' && ['CLOSED', 'CANCELLED'].includes(input.status));
+    if (!allowed) {
+      throw new ApiError(
+        'INVALID_STATE_TRANSITION',
+        `Không thể chuyển phiên từ ${current.status} sang ${input.status}`,
+        409,
+      );
+    }
+    const now = this.now();
+    if (
+      input.status === 'OPEN' &&
+      (now.getTime() < Date.parse(current.requestOpensAt) ||
+        now.getTime() >= Date.parse(current.requestClosesAt))
+    ) {
+      throw new ApiError(
+        'INVALID_STATE_TRANSITION',
+        'Phiên nằm ngoài thời gian nhận yêu cầu đã cấu hình',
+        409,
+      );
+    }
+    const updated: OrderSession =
+      current.status === input.status
+        ? current
+        : {
+            ...current,
+            status: input.status,
+            version: current.version + 1,
+            updatedAt: now.toISOString(),
+          };
+    this.orderSessions.set(updated.id, updated);
+    this.rememberSessionMutation(scopedKey, requestHash, updated);
+    if (updated !== current) {
+      this.appendAudit(
+        actor,
+        context,
+        `ORDER_SESSION_${input.status}`,
+        'order_session',
+        updated.id,
+        current,
+        updated,
+        input.reason ? { reason: input.reason } : {},
+      );
+    }
+    return { data: structuredClone(updated), replayed: false };
   }
 
   public async listProducts(query: ListProductsQuery): Promise<Page<Product>> {
@@ -1645,6 +1762,30 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     return structuredClone(previous.response);
   }
 
+  private replaySessionMutation(scopedKey: string, requestHash: string): OrderSession | null {
+    const previous = this.sessionMutationIdempotency.get(scopedKey);
+    if (!previous) return null;
+    if (previous.requestHash !== requestHash) {
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    }
+    return structuredClone(previous.response);
+  }
+
+  private rememberSessionMutation(
+    scopedKey: string,
+    requestHash: string,
+    response: OrderSession,
+  ): void {
+    this.sessionMutationIdempotency.set(scopedKey, {
+      requestHash,
+      response: structuredClone(response),
+    });
+  }
+
   private rememberReceipt(scopedKey: string, requestHash: string, receipt: Receipt): void {
     this.receiptIdempotency.set(scopedKey, {
       requestHash,
@@ -1726,6 +1867,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       requestOpensAt: sessionOpen.toISOString(),
       requestClosesAt: sessionClose.toISOString(),
       allocationStartsAt: allocationStart.toISOString(),
+      policyVersion: 'idosi-round-robin-p0a-p3-v1',
+      version: 0,
       createdAt: now,
       updatedAt: now,
     });

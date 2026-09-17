@@ -7,6 +7,7 @@ import {
   CreateWarehouseAdjustmentRequestSchema,
   PriorityOfferSchema,
   StoreOrderRequestSchema,
+  TransitionOrderSessionRequestSchema,
   WarehouseBalanceSchema,
 } from '../src/index.js';
 
@@ -39,6 +40,42 @@ describe('order, allocation and wait-list contracts', () => {
         allocationStartsAt: '2026-09-10T09:00:00+07:00',
       }).success,
     ).toBe(false);
+    expect(
+      CreateOrderSessionRequestSchema.safeParse({
+        businessDate: '2026-09-10',
+        requestOpensAt: '2026-09-09T16:59:59Z',
+        requestClosesAt: '2026-09-10T08:00:00+07:00',
+        allocationStartsAt: '2026-09-10T09:00:00+07:00',
+      }).success,
+    ).toBe(false);
+    expect(
+      CreateOrderSessionRequestSchema.parse({
+        businessDate: '2026-09-10',
+        requestOpensAt: '2026-09-10T07:00:00+07:00',
+        requestClosesAt: '2026-09-10T08:00:00+07:00',
+        allocationStartsAt: '2026-09-10T09:00:00+07:00',
+      }).policyVersion,
+    ).toBe('idosi-round-robin-p0a-p3-v1');
+  });
+
+  it('requires optimistic locking and an audit reason for session cancellation', () => {
+    expect(
+      TransitionOrderSessionRequestSchema.safeParse({ status: 'OPEN', expectedVersion: 0 }).success,
+    ).toBe(true);
+    expect(TransitionOrderSessionRequestSchema.safeParse({ status: 'OPEN' }).success).toBe(false);
+    expect(
+      TransitionOrderSessionRequestSchema.safeParse({
+        status: 'CANCELLED',
+        expectedVersion: 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      TransitionOrderSessionRequestSchema.safeParse({
+        status: 'CANCELLED',
+        expectedVersion: 1,
+        reason: 'Phiên được tạo nhầm ngày',
+      }).success,
+    ).toBe(true);
   });
 
   it('accepts only server-neutral fields when creating an order request', () => {
