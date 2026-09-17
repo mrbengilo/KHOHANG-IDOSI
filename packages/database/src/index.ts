@@ -65,6 +65,24 @@ export type {
 } from './order-sessions.js';
 
 export {
+  dispatchWarehouseOutboundRequest,
+  getWarehouseOutboundRequest,
+  listWarehouseOutboundRequests,
+  WarehouseOutboundAuthorizationError,
+  WarehouseOutboundConflictError,
+  WarehouseOutboundNotFoundError,
+  WarehouseOutboundValidationError,
+} from './outbound-requests.js';
+export type {
+  DispatchWarehouseOutboundRequestInput,
+  ListWarehouseOutboundRequestsInput,
+  WarehouseOutboundDatabaseStatus,
+  WarehouseOutboundRequestLineRecord,
+  WarehouseOutboundRequestPage,
+  WarehouseOutboundRequestRecord,
+} from './outbound-requests.js';
+
+export {
   calculateWeightedCostVnd,
   finalizeStoreReceipt,
   finalizeStoreReceiptInTransaction,

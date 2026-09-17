@@ -11,6 +11,7 @@ import type {
   CreateStoreRequest,
   CreateAccountRequest,
   DeclareStoreReceiptRequest,
+  DispatchWarehouseOutboundRequest,
   FinalizeReceiptRequest,
   ListOrderSessionsQuery,
   ListAccountsQuery,
@@ -26,6 +27,7 @@ import type {
   ListStoreOrderRequestsQuery,
   ListStoresQuery,
   ListWaitTicketsQuery,
+  ListWarehouseOutboundRequestsQuery,
   MonthlyOperationalReport,
   MonthlyOperationalReportQuery,
   OpenStoreInventoryBagRequest,
@@ -53,6 +55,7 @@ import type {
   DeleteProductConversionRequest,
   WaitTicket,
   WaitTicketHistory,
+  WarehouseOutboundRequest,
 } from '@idosi/contracts';
 import {
   ActiveWaitTicketExistsError,
@@ -68,6 +71,8 @@ import {
   IdempotencyConflictError,
   IdempotencyInProgressError,
   finalizeStoreReceipt as finalizeDatabaseStoreReceipt,
+  dispatchWarehouseOutboundRequest as dispatchDatabaseWarehouseOutboundRequest,
+  getWarehouseOutboundRequest as getDatabaseWarehouseOutboundRequest,
   getWaitTicketHistory as getDatabaseWaitTicketHistory,
   listPriorityOffers as listDatabasePriorityOffers,
   listStoreInventoryBags as listDatabaseStoreInventoryBags,
@@ -75,6 +80,7 @@ import {
   listStoreOutbounds as listDatabaseStoreOutbounds,
   listStoreReceiptSources as listDatabaseStoreReceiptSources,
   listWaitTickets as listDatabaseWaitTickets,
+  listWarehouseOutboundRequests as listDatabaseWarehouseOutboundRequests,
   loadMonthlyOperationalReport,
   openStoreInventoryBag as openDatabaseStoreInventoryBag,
   orderRequestItems,
@@ -116,6 +122,10 @@ import {
   WaitTicketConflictError,
   WaitTicketNotFoundError,
   WaitTicketValidationError,
+  WarehouseOutboundAuthorizationError,
+  WarehouseOutboundConflictError,
+  WarehouseOutboundNotFoundError,
+  WarehouseOutboundValidationError,
   withAdvisoryLock,
   withSerializableTransaction,
   type JsonObject,
@@ -127,6 +137,8 @@ import {
   type WaitTicketDatabaseStatus,
   type WaitTicketEffectiveStatus,
   type WaitTicketRecord,
+  type WarehouseOutboundDatabaseStatus,
+  type WarehouseOutboundRequestRecord,
 } from '@idosi/database';
 import {
   and,
@@ -1108,6 +1120,70 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       }
       throw error;
     }
+  }
+
+  public async listWarehouseOutboundRequests(
+    actor: AuthenticatedPrincipal,
+    query: ListWarehouseOutboundRequestsQuery,
+  ): Promise<Page<WarehouseOutboundRequest>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const storeIds =
+      actor.role === 'ADMIN'
+        ? query.storeId === undefined
+          ? undefined
+          : [query.storeId]
+        : actor.role === 'STORE'
+          ? actor.storeId === null
+            ? []
+            : [actor.storeId]
+          : query.storeId === undefined
+            ? actor.assignedStoreIds
+            : [query.storeId];
+    const result = await listDatabaseWarehouseOutboundRequests(db, {
+      page: query.page,
+      pageSize: query.pageSize,
+      ...(storeIds === undefined ? {} : { storeIds }),
+      ...(query.status === undefined
+        ? {}
+        : { status: databaseWarehouseOutboundStatus(query.status) }),
+      ...(query.allocationRunId === undefined ? {} : { allocationRunId: query.allocationRunId }),
+    });
+    return {
+      data: result.data.map(warehouseOutboundRequestDto),
+      pagination: result.pagination,
+    };
+  }
+
+  public async dispatchWarehouseOutboundRequest(
+    actor: AuthenticatedPrincipal,
+    outboundRequestId: string,
+    input: DispatchWarehouseOutboundRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<WarehouseOutboundRequest>> {
+    if (actor.role === 'STORE') throw forbidden();
+    return withWarehouseOutboundErrors(async () => {
+      const current = await getDatabaseWarehouseOutboundRequest(db, outboundRequestId);
+      if (!canAccessStore(actor, current.storeId)) throw forbidden();
+      const result = await dispatchDatabaseWarehouseOutboundRequest(db, {
+        outboundRequestId,
+        expectedVersion: input.expectedVersion,
+        dispatchedByUserId: actor.accountId,
+        dispatchNote: input.dispatchNote ?? null,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.id;
+      if (!resourceId) throw new Error('Idempotent warehouse dispatch has no resource id');
+      return {
+        data: warehouseOutboundRequestDto(
+          await getDatabaseWarehouseOutboundRequest(db, resourceId),
+        ),
+        replayed: result.replayed,
+      };
+    });
   }
 
   public async listReceipts(
@@ -2408,6 +2484,55 @@ function orderSessionDto(row: typeof orderSessions.$inferSelect): OrderSession {
   };
 }
 
+function databaseWarehouseOutboundStatus(
+  status: WarehouseOutboundRequest['status'],
+): WarehouseOutboundDatabaseStatus {
+  switch (status) {
+    case 'RESERVED':
+      return 'reserved';
+    case 'DISPATCHED':
+      return 'dispatched';
+    case 'PARTIALLY_RECEIVED':
+      return 'partially_received';
+    case 'RECEIVED':
+      return 'received';
+    case 'COMPLETED':
+      return 'completed';
+    case 'CANCELLED':
+      return 'cancelled';
+  }
+}
+
+function warehouseOutboundRequestDto(
+  record: WarehouseOutboundRequestRecord,
+): WarehouseOutboundRequest {
+  return {
+    id: record.id,
+    requestNumber: record.requestNumber,
+    storeId: record.storeId,
+    orderSessionId: record.orderSessionId,
+    allocationRunId: record.allocationRunId,
+    status: record.status.toUpperCase() as WarehouseOutboundRequest['status'],
+    requestedByAccountId: record.requestedByUserId,
+    dispatchedByAccountId: record.dispatchedByUserId,
+    lines: record.lines.map((line) => ({
+      id: line.id,
+      allocationLineId: line.allocationLineId,
+      productId: line.productId,
+      requestedUnits: line.requestedQuantity,
+      approvedUnits: line.approvedQuantity,
+      reservedUnits: line.reservedQuantity,
+      dispatchedUnits: line.dispatchedQuantity,
+      receivedUnits: line.receivedQuantity,
+    })),
+    version: record.version,
+    notes: record.notes,
+    dispatchedAt: record.dispatchedAt?.toISOString() ?? null,
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+  };
+}
+
 function databaseReceiptStatus(
   status: Receipt['status'],
 ): typeof storeReceipts.$inferSelect.status {
@@ -2544,6 +2669,34 @@ async function withOrderSessionErrors<T>(operation: () => Promise<T>): Promise<T
       throw new ApiError('VALIDATION_ERROR', error.message, 400);
     }
     if (error instanceof OrderSessionConflictError) {
+      throw new ApiError('VERSION_CONFLICT', error.message, 409);
+    }
+    if (error instanceof IdempotencyConflictError) {
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    }
+    if (error instanceof IdempotencyInProgressError) {
+      throw conflict('Yêu cầu cùng khóa idempotency đang được xử lý');
+    }
+    throw error;
+  }
+}
+
+async function withWarehouseOutboundErrors<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error: unknown) {
+    if (error instanceof WarehouseOutboundAuthorizationError) throw forbidden();
+    if (error instanceof WarehouseOutboundNotFoundError) {
+      throw notFound('Không tìm thấy lệnh xuất kho');
+    }
+    if (error instanceof WarehouseOutboundValidationError) {
+      throw new ApiError('INVALID_STATE_TRANSITION', error.message, 409);
+    }
+    if (error instanceof WarehouseOutboundConflictError) {
       throw new ApiError('VERSION_CONFLICT', error.message, 409);
     }
     if (error instanceof IdempotencyConflictError) {

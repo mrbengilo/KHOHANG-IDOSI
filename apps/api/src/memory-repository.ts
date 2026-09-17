@@ -13,6 +13,7 @@ import type {
   CreateStoreRequest,
   CreateAccountRequest,
   DeclareStoreReceiptRequest,
+  DispatchWarehouseOutboundRequest,
   FinalizeReceiptRequest,
   ListOrderSessionsQuery,
   ListAccountsQuery,
@@ -28,6 +29,7 @@ import type {
   ListStoreOrderRequestsQuery,
   ListStoresQuery,
   ListWaitTicketsQuery,
+  ListWarehouseOutboundRequestsQuery,
   MonthlyOperationalReport,
   MonthlyOperationalReportQuery,
   OpenStoreInventoryBagRequest,
@@ -55,6 +57,7 @@ import type {
   DeleteProductConversionRequest,
   WaitTicket,
   WaitTicketHistory,
+  WarehouseOutboundRequest,
 } from '@idosi/contracts';
 import {
   PRODUCT_CONVERSION_SEEDS,
@@ -92,6 +95,7 @@ export const MEMORY_SEED_IDS = {
   orderSession: '10000000-0000-4000-8000-000000000001',
   outboundRequest: '11000000-0000-4000-8000-000000000001',
   secondOutboundRequest: '11000000-0000-4000-8000-000000000002',
+  reservedOutboundRequest: '11000000-0000-4000-8000-000000000003',
   storeReceipt: '12000000-0000-4000-8000-000000000001',
   waitTicket: '13000000-0000-4000-8000-000000000001',
   cancellableWaitTicket: '13000000-0000-4000-8000-000000000002',
@@ -150,15 +154,9 @@ interface InventoryMutationIdempotencyRecord {
   readonly response: StoreInventoryBag | StoreOutbound;
 }
 
-interface MemoryDispatchedOutbound {
-  readonly storeId: string;
-  readonly requestNumber: string;
-  readonly dispatchedAt: string;
-  readonly lines: readonly {
-    readonly productId: string;
-    readonly approvedUnits: number;
-    readonly dispatchedUnits: number;
-  }[];
+interface WarehouseOutboundMutationIdempotencyRecord {
+  readonly requestHash: string;
+  readonly response: WarehouseOutboundRequest;
 }
 
 interface AuditRecord {
@@ -194,7 +192,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly receipts = new Map<string, Receipt>();
   private readonly waitTickets = new Map<string, WaitTicket>();
   private readonly priorityOffers = new Map<string, PriorityOffer>();
-  private readonly dispatchedOutbounds = new Map<string, MemoryDispatchedOutbound>();
+  private readonly dispatchedOutbounds = new Map<string, WarehouseOutboundRequest>();
   private readonly idempotency = new Map<string, IdempotencyRecord>();
   private readonly sessionMutationIdempotency = new Map<string, SessionMutationIdempotencyRecord>();
   private readonly receiptIdempotency = new Map<string, ReceiptIdempotencyRecord>();
@@ -202,6 +200,10 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly inventoryMutationIdempotency = new Map<
     string,
     InventoryMutationIdempotencyRecord
+  >();
+  private readonly warehouseOutboundMutationIdempotency = new Map<
+    string,
+    WarehouseOutboundMutationIdempotencyRecord
   >();
   private readonly inventoryBags = new Map<string, StoreInventoryBag>();
   private readonly inventoryLedger = new Map<string, StoreInventoryBagLedgerEntry>();
@@ -942,6 +944,91 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     return { data: request, replayed: false };
   }
 
+  public async listWarehouseOutboundRequests(
+    actor: AuthenticatedPrincipal,
+    query: ListWarehouseOutboundRequestsQuery,
+  ): Promise<Page<WarehouseOutboundRequest>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const values = [...this.dispatchedOutbounds.values()]
+      .filter((outbound) => canAccessStore(actor, outbound.storeId))
+      .filter((outbound) => query.storeId === undefined || outbound.storeId === query.storeId)
+      .filter((outbound) => query.status === undefined || outbound.status === query.status)
+      .filter(
+        (outbound) =>
+          query.allocationRunId === undefined || outbound.allocationRunId === query.allocationRunId,
+      )
+      .sort(
+        (left, right) =>
+          right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
+      )
+      .map((outbound) => structuredClone(outbound));
+    return {
+      data: slicePage(values, query.page, query.pageSize),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
+  }
+
+  public async dispatchWarehouseOutboundRequest(
+    actor: AuthenticatedPrincipal,
+    outboundRequestId: string,
+    input: DispatchWarehouseOutboundRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<WarehouseOutboundRequest>> {
+    if (actor.role === 'STORE') throw forbidden();
+    const scopedKey = `${actor.accountId}:warehouse-outbound:dispatch:${outboundRequestId}:${idempotencyKey}`;
+    const replay = this.replayWarehouseOutboundMutation(scopedKey, requestHash);
+    if (replay) return { data: replay, replayed: true };
+    const current = this.dispatchedOutbounds.get(outboundRequestId);
+    if (!current) throw notFound('Không tìm thấy lệnh xuất kho');
+    if (!canAccessStore(actor, current.storeId)) throw forbidden();
+    if (current.status !== 'RESERVED' || current.version !== input.expectedVersion) {
+      throw versionConflict();
+    }
+    if (
+      current.lines.some(
+        (line) =>
+          line.approvedUnits <= 0 ||
+          line.reservedUnits !== line.approvedUnits ||
+          line.dispatchedUnits !== 0,
+      )
+    ) {
+      throw new ApiError(
+        'INVALID_STATE_TRANSITION',
+        'Lệnh xuất chưa được giữ đủ hàng để giao',
+        409,
+      );
+    }
+    const now = this.now().toISOString();
+    const updated: WarehouseOutboundRequest = {
+      ...current,
+      status: 'DISPATCHED',
+      dispatchedByAccountId: actor.accountId,
+      lines: current.lines.map((line) => ({
+        ...line,
+        dispatchedUnits: line.approvedUnits,
+      })),
+      version: current.version + 1,
+      notes: input.dispatchNote ?? current.notes,
+      dispatchedAt: now,
+      updatedAt: now,
+    };
+    this.dispatchedOutbounds.set(updated.id, updated);
+    this.rememberWarehouseOutboundMutation(scopedKey, requestHash, updated);
+    this.appendAudit(
+      actor,
+      context,
+      'OUTBOUND_REQUEST_DISPATCHED',
+      'outbound_request',
+      updated.id,
+      current,
+      updated,
+      input.dispatchNote ? { dispatchNote: input.dispatchNote } : {},
+    );
+    return { data: structuredClone(updated), replayed: false };
+  }
+
   public async listStoreReceiptSources(
     actor: AuthenticatedPrincipal,
     query: ListStoreReceiptSourcesQuery,
@@ -952,18 +1039,24 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     );
     const values = [...this.dispatchedOutbounds.entries()]
       .filter(([outboundRequestId]) => !declaredOutboundIds.has(outboundRequestId))
+      .filter(([, outbound]) => outbound.status === 'DISPATCHED')
       .filter(([, outbound]) => canAccessStore(actor, outbound.storeId))
       .filter(([, outbound]) => query.storeId === undefined || outbound.storeId === query.storeId)
       .sort(
         ([leftId, left], [rightId, right]) =>
-          right.dispatchedAt.localeCompare(left.dispatchedAt) || rightId.localeCompare(leftId),
+          (right.dispatchedAt ?? '').localeCompare(left.dispatchedAt ?? '') ||
+          rightId.localeCompare(leftId),
       )
       .map(([id, outbound]): StoreReceiptSource => ({
         id,
         requestNumber: outbound.requestNumber,
         storeId: outbound.storeId,
-        dispatchedAt: outbound.dispatchedAt,
-        lines: outbound.lines.map((line) => ({ ...line })),
+        dispatchedAt: outbound.dispatchedAt!,
+        lines: outbound.lines.map((line) => ({
+          productId: line.productId,
+          approvedUnits: line.approvedUnits,
+          dispatchedUnits: line.dispatchedUnits,
+        })),
       }));
     return {
       data: slicePage(values, query.page, query.pageSize),
@@ -1775,6 +1868,33 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     return structuredClone(previous.response);
   }
 
+  private replayWarehouseOutboundMutation(
+    scopedKey: string,
+    requestHash: string,
+  ): WarehouseOutboundRequest | null {
+    const previous = this.warehouseOutboundMutationIdempotency.get(scopedKey);
+    if (!previous) return null;
+    if (previous.requestHash !== requestHash) {
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    }
+    return structuredClone(previous.response);
+  }
+
+  private rememberWarehouseOutboundMutation(
+    scopedKey: string,
+    requestHash: string,
+    response: WarehouseOutboundRequest,
+  ): void {
+    this.warehouseOutboundMutationIdempotency.set(scopedKey, {
+      requestHash,
+      response: structuredClone(response),
+    });
+  }
+
   private rememberSessionMutation(
     scopedKey: string,
     requestHash: string,
@@ -1946,16 +2066,85 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const secondProduct = seededProducts[1];
     if (!firstProduct || !secondProduct) throw new Error('Memory catalog requires two products');
     this.dispatchedOutbounds.set(MEMORY_SEED_IDS.outboundRequest, {
+      id: MEMORY_SEED_IDS.outboundRequest,
       storeId: nvtId,
       requestNumber: 'OUT-MEMORY-001',
+      orderSessionId: MEMORY_SEED_IDS.orderSession,
+      allocationRunId: '11000000-0000-4000-8000-100000000001',
+      status: 'DISPATCHED',
+      requestedByAccountId: MEMORY_SEED_IDS.storeAccount,
+      dispatchedByAccountId: MEMORY_SEED_IDS.htkdAccount,
       dispatchedAt: now,
-      lines: [{ productId: firstProduct.id, approvedUnits: 5, dispatchedUnits: 5 }],
+      lines: [
+        {
+          id: '11000000-0000-4000-8000-200000000001',
+          allocationLineId: '11000000-0000-4000-8000-300000000001',
+          productId: firstProduct.id,
+          requestedUnits: 5,
+          approvedUnits: 5,
+          reservedUnits: 5,
+          dispatchedUnits: 5,
+          receivedUnits: 0,
+        },
+      ],
+      version: 1,
+      notes: null,
+      createdAt: now,
+      updatedAt: now,
     });
     this.dispatchedOutbounds.set(MEMORY_SEED_IDS.secondOutboundRequest, {
+      id: MEMORY_SEED_IDS.secondOutboundRequest,
       storeId: nvtId,
       requestNumber: 'OUT-MEMORY-002',
+      orderSessionId: MEMORY_SEED_IDS.orderSession,
+      allocationRunId: '11000000-0000-4000-8000-100000000001',
+      status: 'DISPATCHED',
+      requestedByAccountId: MEMORY_SEED_IDS.storeAccount,
+      dispatchedByAccountId: MEMORY_SEED_IDS.htkdAccount,
       dispatchedAt: now,
-      lines: [{ productId: secondProduct.id, approvedUnits: 2, dispatchedUnits: 2 }],
+      lines: [
+        {
+          id: '11000000-0000-4000-8000-200000000002',
+          allocationLineId: '11000000-0000-4000-8000-300000000002',
+          productId: secondProduct.id,
+          requestedUnits: 2,
+          approvedUnits: 2,
+          reservedUnits: 2,
+          dispatchedUnits: 2,
+          receivedUnits: 0,
+        },
+      ],
+      version: 1,
+      notes: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    this.dispatchedOutbounds.set(MEMORY_SEED_IDS.reservedOutboundRequest, {
+      id: MEMORY_SEED_IDS.reservedOutboundRequest,
+      storeId: nvtId,
+      requestNumber: 'OUT-MEMORY-003',
+      orderSessionId: MEMORY_SEED_IDS.orderSession,
+      allocationRunId: '11000000-0000-4000-8000-100000000001',
+      status: 'RESERVED',
+      requestedByAccountId: MEMORY_SEED_IDS.storeAccount,
+      dispatchedByAccountId: null,
+      dispatchedAt: null,
+      lines: [
+        {
+          id: '11000000-0000-4000-8000-200000000003',
+          allocationLineId: '11000000-0000-4000-8000-300000000003',
+          productId: secondProduct.id,
+          requestedUnits: 3,
+          approvedUnits: 3,
+          reservedUnits: 3,
+          dispatchedUnits: 0,
+          receivedUnits: 0,
+        },
+      ],
+      version: 0,
+      notes: 'Materialized from allocation',
+      createdAt: now,
+      updatedAt: now,
     });
     this.receipts.set(MEMORY_SEED_IDS.storeReceipt, {
       id: MEMORY_SEED_IDS.storeReceipt,

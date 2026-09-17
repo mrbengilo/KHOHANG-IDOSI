@@ -32,6 +32,7 @@ describe('KHOHANG-IDOSI API', () => {
     assert.ok(specification.json().paths['/api/v1/store-inventory-bags']);
     assert.ok(specification.json().paths['/api/v1/store-outbounds/{outboundId}/review']);
     assert.ok(specification.json().paths['/api/v1/order-sessions/{sessionId}/transition']);
+    assert.ok(specification.json().paths['/api/v1/outbound-requests/{outboundRequestId}/dispatch']);
   });
 
   test('uses scrypt and issues an opaque HttpOnly session without exposing secrets', async () => {
@@ -531,6 +532,76 @@ describe('KHOHANG-IDOSI API', () => {
     });
     assert.equal(invalidPagination.statusCode, 400);
     assert.equal(invalidPagination.json().error.code, 'VALIDATION_ERROR');
+  });
+
+  test('dispatches an allocation-backed outbound once and exposes it as a receipt source', async () => {
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const htkdCookie = cookieOf(await login('htkd'));
+    const reserved = await app.inject({
+      method: 'GET',
+      url: '/api/v1/outbound-requests?status=RESERVED&pageSize=10',
+      headers: { cookie: htkdCookie },
+    });
+    assert.equal(reserved.statusCode, 200);
+    assert.equal(reserved.json().pagination.totalItems, 1);
+    assert.equal(reserved.json().data[0].id, MEMORY_SEED_IDS.reservedOutboundRequest);
+    assert.equal(reserved.json().data[0].lines[0].dispatchedUnits, 0);
+
+    const sourcesBeforeDispatch = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-receipt-sources?pageSize=100',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(sourcesBeforeDispatch.statusCode, 200);
+    assert.equal(
+      sourcesBeforeDispatch
+        .json()
+        .data.some((source) => source.id === MEMORY_SEED_IDS.reservedOutboundRequest),
+      false,
+    );
+
+    const storeDenied = await app.inject({
+      method: 'POST',
+      url: `/api/v1/outbound-requests/${MEMORY_SEED_IDS.reservedOutboundRequest}/dispatch`,
+      headers: { cookie: storeCookie, 'idempotency-key': 'store-cannot-dispatch' },
+      payload: { expectedVersion: 0 },
+    });
+    assert.equal(storeDenied.statusCode, 403);
+
+    const dispatched = await app.inject({
+      method: 'POST',
+      url: `/api/v1/outbound-requests/${MEMORY_SEED_IDS.reservedOutboundRequest}/dispatch`,
+      headers: { cookie: htkdCookie, 'idempotency-key': 'dispatch-outbound-0001' },
+      payload: { expectedVersion: 0, dispatchNote: 'Đã bàn giao đủ hàng cho đơn vị vận chuyển' },
+    });
+    assert.equal(dispatched.statusCode, 200);
+    assert.equal(dispatched.json().data.status, 'DISPATCHED');
+    assert.equal(dispatched.json().data.version, 1);
+    assert.equal(dispatched.json().data.lines[0].dispatchedUnits, 3);
+    assert.equal(dispatched.json().data.lines[0].reservedUnits, 3);
+
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/api/v1/outbound-requests/${MEMORY_SEED_IDS.reservedOutboundRequest}/dispatch`,
+      headers: { cookie: htkdCookie, 'idempotency-key': 'dispatch-outbound-0001' },
+      payload: { expectedVersion: 0, dispatchNote: 'Đã bàn giao đủ hàng cho đơn vị vận chuyển' },
+    });
+    assert.equal(replay.statusCode, 200);
+    assert.equal(replay.headers['idempotency-replayed'], 'true');
+    assert.equal(replay.json().data.version, 1);
+
+    const receiptSources = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-receipt-sources?pageSize=100',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(receiptSources.statusCode, 200);
+    assert.equal(
+      receiptSources
+        .json()
+        .data.some((source) => source.id === MEMORY_SEED_IDS.reservedOutboundRequest),
+      true,
+    );
   });
 
   test('runs the auditable store receipt lifecycle with scopes, versions and idempotency', async () => {

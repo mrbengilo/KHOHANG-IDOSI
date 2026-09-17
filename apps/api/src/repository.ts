@@ -10,6 +10,7 @@ import type {
   CreateStoreRequest,
   CreateAccountRequest,
   DeclareStoreReceiptRequest,
+  DispatchWarehouseOutboundRequest,
   FinalizeReceiptRequest,
   ListOrderSessionsQuery,
   ListAccountsQuery,
@@ -47,10 +48,12 @@ import type {
   UpdateProductConversionRequest,
   DeleteProductConversionRequest,
   ListWaitTicketsQuery,
+  ListWarehouseOutboundRequestsQuery,
   MonthlyOperationalReport,
   MonthlyOperationalReportQuery,
   WaitTicket,
   WaitTicketHistory,
+  WarehouseOutboundRequest,
   OpenStoreInventoryBagRequest,
   CreateStoreOutboundRequest,
   ReviewStoreOutboundRequest,
@@ -235,6 +238,19 @@ export interface WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<SubmittedOrderRequest>;
+
+  listWarehouseOutboundRequests(
+    actor: AuthenticatedPrincipal,
+    query: ListWarehouseOutboundRequestsQuery,
+  ): Promise<Page<WarehouseOutboundRequest>>;
+  dispatchWarehouseOutboundRequest(
+    actor: AuthenticatedPrincipal,
+    outboundRequestId: string,
+    input: DispatchWarehouseOutboundRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<WarehouseOutboundRequest>>;
 
   listReceipts(actor: AuthenticatedPrincipal, query: ListReceiptsQuery): Promise<Page<Receipt>>;
   listStoreReceiptSources(
