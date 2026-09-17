@@ -52,12 +52,14 @@ import type {
   MonthlyOperationalReport,
   MonthlyOperationalReportQuery,
   InboundReceipt,
+  OperationalSettingsVersion,
   WaitTicket,
   WaitTicketHistory,
   OpenStoreInventoryBagRequest,
   CreateStoreOutboundRequest,
   ReviewStoreOutboundRequest,
   WarehouseBalancesResponse,
+  UpdateOperationalSettingsRequest,
 } from '@idosi/contracts';
 
 export interface RequestContext {
@@ -125,6 +127,11 @@ export interface OrderStatistics {
   readonly generatedAt: string;
 }
 
+export interface OperationalSettingsState {
+  readonly current: OperationalSettingsVersion;
+  readonly history: readonly OperationalSettingsVersion[];
+}
+
 export interface WarehouseRepository {
   ready(): Promise<boolean>;
   close(): Promise<void>;
@@ -165,6 +172,15 @@ export interface WarehouseRepository {
     actor: AuthenticatedPrincipal,
     query: ListAuditLogsQuery,
   ): Promise<Page<AdminAuditLog>>;
+  getOperationalSettings(
+    actor: AuthenticatedPrincipal,
+    historyLimit: number,
+  ): Promise<OperationalSettingsState>;
+  updateOperationalSettings(
+    actor: AuthenticatedPrincipal,
+    input: UpdateOperationalSettingsRequest,
+    context: RequestContext,
+  ): Promise<OperationalSettingsVersion>;
 
   listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>>;
 
@@ -215,6 +231,7 @@ export interface WarehouseRepository {
     query: ListProductConversionsQuery,
   ): Promise<Page<ProductConversion>>;
   listAllProductConversions(query: ListProductConversionsQuery): Promise<Page<ProductConversion>>;
+  /** Creates v1, or atomically appends after the latest version has been explicitly retired. */
   createProductConversion(
     actor: AuthenticatedPrincipal,
     productId: string,

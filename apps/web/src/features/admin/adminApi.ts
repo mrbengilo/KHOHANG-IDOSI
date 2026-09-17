@@ -5,6 +5,7 @@ import {
   ListAccountsResponseSchema,
   ListAuditLogsResponseSchema,
   ListStoresResponseSchema,
+  OperationalSettingsOverviewResponseSchema,
   ResetPasswordResponseSchema,
   UpdateAccountResponseSchema,
   type Account,
@@ -13,10 +14,12 @@ import {
   type ListAccountsQuery,
   type ListAuditLogsQuery,
   type PaginationMeta,
+  type OperationalSettingsOverview,
   type ResetPasswordRequest,
   type Session,
   type Store,
   type UpdateAccountRequest,
+  type UpdateOperationalSettingsRequest,
 } from '@idosi/contracts';
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
@@ -133,6 +136,25 @@ export async function listAdminAuditLogs(
 ): Promise<AdminPage<AdminAuditLog>> {
   const payload = await requestAdminApi(`/admin/audit-logs?${queryString(query)}`);
   return ListAuditLogsResponseSchema.parse(payload);
+}
+
+export async function getAdminOperationalSettings(
+  historyLimit = 10,
+): Promise<OperationalSettingsOverview> {
+  const payload = await requestAdminApi(
+    `/admin/operational-settings?${queryString({ historyLimit })}`,
+  );
+  return OperationalSettingsOverviewResponseSchema.parse(payload).data;
+}
+
+export async function updateAdminOperationalSettings(
+  input: UpdateOperationalSettingsRequest,
+): Promise<OperationalSettingsOverview> {
+  const payload = await requestAdminApi('/admin/operational-settings', {
+    body: JSON.stringify(input),
+    method: 'PUT',
+  });
+  return OperationalSettingsOverviewResponseSchema.parse(payload).data;
 }
 
 export async function listActiveStoresForAccounts(): Promise<readonly Store[]> {
