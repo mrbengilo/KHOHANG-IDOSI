@@ -2,6 +2,11 @@ import { createDatabase } from '@idosi/database';
 
 import { loadConfig } from './config.js';
 import { startHealthServer } from './health-server.js';
+import {
+  IdosiStatisticsSyncWorker,
+  PostgresScheduledIdosiSyncRepository,
+  startIdosiSyncPolling,
+} from './idosi-sync.js';
 import { createLogger } from './logger.js';
 import { PostgresAllocationJobRepository } from './postgres-repository.js';
 import { AllocationWorker, startPolling } from './worker.js';
@@ -27,6 +32,16 @@ const health = await startHealthServer(worker, {
   port: config.healthPort,
 });
 const polling = startPolling(worker, config.pollMs);
+const idosiSyncWorker = config.idosiIntegrationSecret
+  ? new IdosiStatisticsSyncWorker(new PostgresScheduledIdosiSyncRepository(client.db), {
+      endpoint: config.idosiIntegrationEndpoint,
+      secret: config.idosiIntegrationSecret,
+      timeZone: config.timeZone,
+      maxStoresPerTick: config.maxSessionsPerTick,
+      logger,
+    })
+  : null;
+const idosiPolling = idosiSyncWorker ? startIdosiSyncPolling(idosiSyncWorker, config.pollMs) : null;
 let shuttingDown: Promise<void> | null = null;
 
 logger.info(
@@ -36,9 +51,16 @@ logger.info(
     healthPort: health.port,
     pollMs: config.pollMs,
     timeZone: config.timeZone,
+    idosiSchedulerEnabled: idosiPolling !== null,
   },
   'allocation worker started',
 );
+if (!idosiPolling) {
+  logger.warn(
+    { integration: 'idosi-statistics' },
+    'scheduled IDOSI statistics sync disabled because its server secret is not configured',
+  );
+}
 
 const shutdown = (signal: NodeJS.Signals): Promise<void> => {
   if (shuttingDown) return shuttingDown;
@@ -51,7 +73,7 @@ const shutdown = (signal: NodeJS.Signals): Promise<void> => {
     timeout.unref();
     try {
       await health.close();
-      await polling.stop();
+      await Promise.all([polling.stop(), idosiPolling?.stop()]);
       logger.info({ signal }, 'allocation worker stopped');
     } catch (error) {
       logger.error(

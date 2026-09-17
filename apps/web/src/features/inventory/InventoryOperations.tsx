@@ -27,6 +27,7 @@ import { StatCard } from '../../components/StatCard';
 import { ApiClientError, listAccessibleStores, listCatalog } from '../../lib/api';
 import { useSession } from '../../lib/auth';
 import { formatVnd } from '../../lib/format';
+import { IdosiStatisticsPanel } from '../idosi/IdosiStatisticsPanel';
 import {
   createStoreOutbound,
   listInventoryBags,
@@ -860,6 +861,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
               </label>
             </section>
           )}
+          {mode === 'SALE' ? <IdosiStatisticsPanel storeId={effectiveStoreId} /> : null}
           <section className="panel table-panel">
             <div className="section-heading section-heading--compact">
               <div>

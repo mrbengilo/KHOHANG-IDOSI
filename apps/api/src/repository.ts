@@ -55,6 +55,10 @@ import type {
   ListWarehouseOutboundRequestsQuery,
   MonthlyOperationalReport,
   MonthlyOperationalReportQuery,
+  IdosiOrderStatisticsPayload,
+  IdosiStatisticsAttempt,
+  IdosiStatisticsScope,
+  IdosiStatisticsSnapshot,
   InboundReceipt,
   OperationalSettingsVersion,
   WaitTicket,
@@ -165,6 +169,17 @@ export interface OperationalSettingsState {
   readonly history: readonly OperationalSettingsVersion[];
 }
 
+export interface IdosiStatisticsTarget {
+  readonly storeId: string;
+  readonly storeCode: string;
+  readonly storeName: string;
+}
+
+export interface PersistedIdosiStatisticsState {
+  readonly snapshot: IdosiStatisticsSnapshot | null;
+  readonly latestAttempt: IdosiStatisticsAttempt | null;
+}
+
 export interface WarehouseRepository {
   ready(): Promise<boolean>;
   close(): Promise<void>;
@@ -217,6 +232,32 @@ export interface WarehouseRepository {
     input: UpdateOperationalSettingsRequest,
     context: RequestContext,
   ): Promise<OperationalSettingsVersion>;
+
+  resolveIdosiStatisticsTarget(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+  ): Promise<IdosiStatisticsTarget>;
+  getIdosiStatisticsState(
+    actor: AuthenticatedPrincipal,
+    scope: IdosiStatisticsScope,
+  ): Promise<PersistedIdosiStatisticsState>;
+  recordIdosiStatisticsSuccess(
+    actor: AuthenticatedPrincipal,
+    scope: IdosiStatisticsScope,
+    payload: IdosiOrderStatisticsPayload,
+    startedAt: Date,
+    completedAt: Date,
+    context: RequestContext,
+  ): Promise<void>;
+  recordIdosiStatisticsFailure(
+    actor: AuthenticatedPrincipal,
+    scope: IdosiStatisticsScope,
+    errorCode: string,
+    errorMessage: string,
+    startedAt: Date,
+    completedAt: Date,
+    context: RequestContext,
+  ): Promise<void>;
 
   listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>>;
   createOrderSession(

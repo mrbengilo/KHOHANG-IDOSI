@@ -13,6 +13,23 @@ export type {
 } from './idempotency.js';
 
 export {
+  idosiStatisticsScopeKey,
+  listDueIdosiStatisticsTargets,
+  loadIdosiStatisticsState,
+  recordIdosiStatisticsFailure,
+  recordIdosiStatisticsSuccess,
+} from './idosi-statistics.js';
+export type {
+  DueIdosiStatisticsTarget,
+  IdosiStatisticsAuditActor,
+  IdosiStatisticsAuditContext,
+  IdosiStatisticsTarget,
+  RecordIdosiStatisticsFailureInput,
+  RecordIdosiStatisticsSuccessInput,
+  StoredIdosiStatisticsState,
+} from './idosi-statistics.js';
+
+export {
   kilogramsToGramsForReport,
   loadMonthlyOperationalReport,
   mergeScopedInboundRows,
