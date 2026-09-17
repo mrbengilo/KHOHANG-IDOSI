@@ -145,6 +145,7 @@
 
   .page-header__actions:has(.store-lifecycle-add-group) .button {
     width: 100%;
+    min-height: 45px;
   }
 
   .page-header__actions .store-lifecycle-add-group {
