@@ -1,7 +1,7 @@
-import { and, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lte } from 'drizzle-orm';
 
 import type { Database } from './client.js';
-import { warehouseBalances, warehouseLedgerEntries, type JsonObject } from './schema.js';
+import { products, warehouseBalances, warehouseLedgerEntries, type JsonObject } from './schema.js';
 import { withAdvisoryLock, withSerializableTransaction, type Transaction } from './transaction.js';
 
 export interface WarehouseMovementInput {
@@ -23,6 +23,13 @@ export interface WarehouseMovementResult {
   readonly onHandQuantity: number;
   readonly reservedQuantity: number;
   readonly replayed: boolean;
+}
+
+export interface HistoricalWarehouseBalance {
+  readonly productId: string;
+  readonly onHand: number;
+  readonly reserved: number;
+  readonly version: number;
 }
 
 export class WarehouseBalanceViolationError extends Error {
@@ -151,6 +158,85 @@ export async function recordWarehouseMovement(
   input: WarehouseMovementInput,
 ): Promise<WarehouseMovementResult> {
   return withSerializableTransaction(database, (tx) => applyWarehouseMovement(tx, input));
+}
+
+/** Canonical historical projection used by the 08:00 snapshot and reconciliation tests. */
+export async function loadWarehouseBalancesAt(
+  tx: Transaction,
+  cutoff: Date,
+): Promise<readonly HistoricalWarehouseBalance[]> {
+  const productRows = await tx
+    .select({ id: products.id })
+    .from(products)
+    .orderBy(asc(products.displayOrder), asc(products.id));
+  if (productRows.length === 0) return [];
+
+  const productIds = productRows.map((row) => row.id);
+  const ledgerRows = await tx
+    .select({
+      id: warehouseLedgerEntries.id,
+      productId: warehouseLedgerEntries.productId,
+      onHand: warehouseLedgerEntries.onHandAfter,
+      reserved: warehouseLedgerEntries.reservedAfter,
+      occurredAt: warehouseLedgerEntries.occurredAt,
+      createdAt: warehouseLedgerEntries.createdAt,
+    })
+    .from(warehouseLedgerEntries)
+    .where(
+      and(
+        inArray(warehouseLedgerEntries.productId, productIds),
+        lte(warehouseLedgerEntries.occurredAt, cutoff),
+      ),
+    )
+    .orderBy(
+      asc(warehouseLedgerEntries.productId),
+      desc(warehouseLedgerEntries.occurredAt),
+      desc(warehouseLedgerEntries.createdAt),
+      desc(warehouseLedgerEntries.id),
+    );
+  const ledgerPresenceRows = await tx
+    .select({ productId: warehouseLedgerEntries.productId })
+    .from(warehouseLedgerEntries)
+    .where(inArray(warehouseLedgerEntries.productId, productIds))
+    .groupBy(warehouseLedgerEntries.productId);
+  const balanceRows = await tx
+    .select()
+    .from(warehouseBalances)
+    .where(inArray(warehouseBalances.productId, productIds));
+  const currentByProduct = new Map(balanceRows.map((row) => [row.productId, row]));
+  const productsWithLedger = new Set(ledgerPresenceRows.map((row) => row.productId));
+  const latestByProduct = new Map<string, (typeof ledgerRows)[number]>();
+  const ledgerCountByProduct = new Map<string, number>();
+  for (const row of ledgerRows) {
+    ledgerCountByProduct.set(row.productId, (ledgerCountByProduct.get(row.productId) ?? 0) + 1);
+    if (!latestByProduct.has(row.productId)) latestByProduct.set(row.productId, row);
+  }
+
+  return productRows.map(({ id: productId }) => {
+    const historical = latestByProduct.get(productId);
+    const current = currentByProduct.get(productId);
+    if (historical) {
+      return {
+        productId,
+        onHand: historical.onHand,
+        reserved: historical.reserved,
+        version: ledgerCountByProduct.get(productId) ?? 0,
+      };
+    }
+    if (
+      current &&
+      !productsWithLedger.has(productId) &&
+      current.updatedAt.getTime() <= cutoff.getTime()
+    ) {
+      return {
+        productId,
+        onHand: current.onHandQuantity,
+        reserved: current.reservedQuantity,
+        version: current.version,
+      };
+    }
+    return { productId, onHand: 0, reserved: 0, version: 0 };
+  });
 }
 
 function validateMovement(input: WarehouseMovementInput): void {

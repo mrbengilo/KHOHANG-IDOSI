@@ -2,23 +2,28 @@ import { randomUUID } from 'node:crypto';
 
 import {
   AccountParamsSchema,
+  CancelInboundReceiptRequestSchema,
   CancelWaitTicketRequestSchema,
   CreateAccountRequestSchema,
+  CreateInboundReceiptRequestSchema,
   CreateProductRequestSchema,
   CreateProductConversionRequestSchema,
   CreateStoreOrderRequestSchema,
   CreateStoreOutboundRequestSchema,
   CreateStoreRequestSchema,
   DeclareStoreReceiptRequestSchema,
+  ConfirmReceiptCostsRequestSchema,
   FinalizeReceiptRequestSchema,
   fetchIdosiOrderStatistics,
   GetIdosiStatisticsQuerySchema,
   GetOperationalSettingsQuerySchema,
   IdempotencyHeadersSchema,
   IsoDateSchema,
+  InboundReceiptParamsSchema,
   ListOrderSessionsQuerySchema,
   ListAccountsQuerySchema,
   ListAuditLogsQuerySchema,
+  ListInboundReceiptsQuerySchema,
   ListPriorityOffersQuerySchema,
   ListProductsQuerySchema,
   ListProductConversionsQuerySchema,
@@ -51,6 +56,12 @@ import {
   UpdateProductConversionRequestSchema,
   UpdateProductRequestSchema,
   UpdateAccountRequestSchema,
+  ListStoreTransfersQuerySchema,
+  CreateStoreTransferRequestSchema,
+  DispatchStoreTransferRequestSchema,
+  ReceiveStoreTransferRequestSchema,
+  CancelStoreTransferRequestSchema,
+  StoreTransferParamsSchema,
   UpdateOperationalSettingsRequestSchema,
   type ApiErrorCode,
   type AuthenticatedPrincipal,
@@ -487,6 +498,93 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     };
   });
 
+  app.get('/api/v1/warehouse-balances', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    return repository.listWarehouseBalances(session.principal);
+  });
+
+  app.get('/api/v1/inbound-receipts', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const query = ListInboundReceiptsQuerySchema.parse(request.query);
+    return repository.listInboundReceipts(session.principal, query);
+  });
+
+  app.get('/api/v1/inbound-receipts/:receiptId', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const { receiptId } = InboundReceiptParamsSchema.parse(request.params);
+    return { data: await repository.getInboundReceipt(session.principal, receiptId) };
+  });
+
+  app.post('/api/v1/inbound-receipts', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = CreateInboundReceiptRequestSchema.parse(request.body);
+    const result = await repository.receiveSupplierInbound(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({
+        action: 'RECEIVE_SUPPLIER_INBOUND',
+        ...input,
+        bags: [...input.bags].sort(
+          (left, right) =>
+            left.productId.localeCompare(right.productId) ||
+            left.bagCode.localeCompare(right.bagCode),
+        ),
+      }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
+  });
+
+  app.post('/api/v1/inbound-receipts/:receiptId/confirm-costs', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { receiptId } = InboundReceiptParamsSchema.parse(request.params);
+    const input = ConfirmReceiptCostsRequestSchema.parse(request.body);
+    const result = await repository.confirmSupplierInboundCosts(
+      session.principal,
+      receiptId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({
+        action: 'CONFIRM_SUPPLIER_INBOUND_COSTS',
+        receiptId,
+        ...input,
+        productCosts: [...input.productCosts].sort((left, right) =>
+          left.productId.localeCompare(right.productId),
+        ),
+      }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.post('/api/v1/inbound-receipts/:receiptId/cancel', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { receiptId } = InboundReceiptParamsSchema.parse(request.params);
+    const input = CancelInboundReceiptRequestSchema.parse(request.body);
+    const result = await repository.cancelSupplierInbound(
+      session.principal,
+      receiptId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CANCEL_SUPPLIER_INBOUND', receiptId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
   app.get('/api/v1/stores', async (request) => {
     const session = await authenticate(request, repository);
     const query = ListStoresQuerySchema.parse(request.query);
@@ -703,6 +801,88 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
       input,
       headers['idempotency-key'],
       hashCanonicalRequest({ action: 'REVIEW_STORE_OUTBOUND', outboundId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.get('/api/v1/store-transfers', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = ListStoreTransfersQuerySchema.parse(request.query);
+    return repository.listStoreTransfers(session.principal, query);
+  });
+
+  app.get('/api/v1/store-transfers/destinations', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    return { data: await repository.listStoreTransferDestinations(session.principal) };
+  });
+
+  app.post('/api/v1/store-transfers', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = CreateStoreTransferRequestSchema.parse(request.body);
+    const result = await repository.createStoreTransfer(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CREATE_STORE_TRANSFER', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
+  });
+
+  app.post('/api/v1/store-transfers/:transferId/dispatch', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { transferId } = StoreTransferParamsSchema.parse(request.params);
+    const input = DispatchStoreTransferRequestSchema.parse(request.body);
+    const result = await repository.dispatchStoreTransfer(
+      session.principal,
+      transferId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'DISPATCH_STORE_TRANSFER', transferId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.post('/api/v1/store-transfers/:transferId/receive', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { transferId } = StoreTransferParamsSchema.parse(request.params);
+    const input = ReceiveStoreTransferRequestSchema.parse(request.body);
+    const result = await repository.receiveStoreTransfer(
+      session.principal,
+      transferId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'RECEIVE_STORE_TRANSFER', transferId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.post('/api/v1/store-transfers/:transferId/cancel', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { transferId } = StoreTransferParamsSchema.parse(request.params);
+    const input = CancelStoreTransferRequestSchema.parse(request.body);
+    const result = await repository.cancelStoreTransfer(
+      session.principal,
+      transferId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CANCEL_STORE_TRANSFER', transferId, ...input }),
       requestContext(request),
     );
     reply.header('idempotency-replayed', String(result.replayed));
@@ -1086,6 +1266,51 @@ function openApiDocument(): Record<string, unknown> {
           responses: { '200': { description: 'Paginated order sessions' } },
         },
       },
+      '/api/v1/warehouse-balances': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Current warehouse balances (ADMIN/HTKD)' } },
+        },
+      },
+      '/api/v1/inbound-receipts': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Paginated supplier inbound receipts' } },
+        },
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '201': { description: 'Received supplier bags and increased warehouse stock' },
+          },
+        },
+      },
+      '/api/v1/inbound-receipts/{receiptId}': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Supplier inbound receipt detail' } },
+        },
+      },
+      '/api/v1/inbound-receipts/{receiptId}/confirm-costs': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Confirmed exact supplier receipt costs' } },
+        },
+      },
+      '/api/v1/inbound-receipts/{receiptId}/cancel': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Cancelled pending supplier stock receipt' } },
+        },
+      },
       '/api/v1/store-receipts': {
         get: {
           security: cookieSecurity,
@@ -1172,6 +1397,52 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: { '200': { description: 'Approved, rejected or replayed store outbound' } },
+        },
+      },
+      '/api/v1/store-transfers': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Transfers visible to the caller store scope' } },
+        },
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '201': { description: 'Created or replayed draft store transfer' } },
+        },
+      },
+      '/api/v1/store-transfers/destinations': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Active retail transfer destinations' } },
+        },
+      },
+      '/api/v1/store-transfers/{transferId}/dispatch': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Dispatched transfer and deducted source stock' } },
+        },
+      },
+      '/api/v1/store-transfers/{transferId}/receive': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Received transfer and created destination lot' } },
+        },
+      },
+      '/api/v1/store-transfers/{transferId}/cancel': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Cancelled an undispatched draft transfer' } },
         },
       },
       '/api/v1/wait-tickets': {

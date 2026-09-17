@@ -2,6 +2,11 @@ import { sql } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 
+const RETRYABLE_TRANSACTION_SQLSTATES = new Set(['40001', '40P01']);
+const RETRY_BASE_DELAY_MS = 5;
+const RETRY_MAX_DELAY_MS = 50;
+const MAX_ERROR_CAUSE_DEPTH = 8;
+
 type TransactionCallback = Parameters<Database['transaction']>[0];
 export type Transaction = Parameters<TransactionCallback>[0];
 
@@ -53,6 +58,7 @@ export async function withSerializableTransaction<T>(
       if (attempt >= maxAttempts || !isRetryableTransactionError(error)) {
         throw error;
       }
+      await waitBeforeTransactionRetry(attempt);
     }
   }
 
@@ -75,10 +81,36 @@ export async function withAdvisoryLock<T>(
 }
 
 function isRetryableTransactionError(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null || !('code' in error)) {
-    return false;
+  let current = error;
+  const visited = new Set<object>();
+
+  for (let depth = 0; depth < MAX_ERROR_CAUSE_DEPTH; depth += 1) {
+    if (typeof current !== 'object' || current === null || visited.has(current)) {
+      return false;
+    }
+    visited.add(current);
+
+    try {
+      const code = Reflect.get(current, 'code');
+      if (typeof code === 'string' && RETRYABLE_TRANSACTION_SQLSTATES.has(code)) {
+        return true;
+      }
+      current = Reflect.get(current, 'cause');
+    } catch {
+      return false;
+    }
   }
 
-  const code = Reflect.get(error, 'code');
-  return code === '40001' || code === '40P01';
+  return false;
+}
+
+async function waitBeforeTransactionRetry(failedAttempt: number): Promise<void> {
+  const exponentialDelay = Math.min(
+    RETRY_MAX_DELAY_MS,
+    RETRY_BASE_DELAY_MS * 2 ** Math.max(0, failedAttempt - 1),
+  );
+  const jitter = Math.floor(Math.random() * RETRY_BASE_DELAY_MS);
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, Math.min(RETRY_MAX_DELAY_MS, exponentialDelay + jitter));
+  });
 }

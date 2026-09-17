@@ -68,6 +68,30 @@ export type {
 } from './order-requests.js';
 
 export {
+  cancelSupplierInbound,
+  cancelSupplierInboundInTransaction,
+  confirmSupplierInboundCosts,
+  confirmSupplierInboundCostsInTransaction,
+  receiveSupplierInbound,
+  receiveSupplierInboundInTransaction,
+  SupplierInboundAuthorizationError,
+  SupplierInboundConflictError,
+  SupplierInboundNotFoundError,
+  SupplierInboundValidationError,
+} from './supplier-inbound.js';
+export type {
+  CancelledSupplierInbound,
+  CancelSupplierInboundInput,
+  ConfirmedSupplierInboundCosts,
+  ConfirmSupplierInboundCostsInput,
+  ReceivedSupplierInbound,
+  ReceiveSupplierInboundInput,
+  SupplierInboundBagInput,
+  SupplierInboundRequestContext,
+  SupplierProductCostInput,
+} from './supplier-inbound.js';
+
+export {
   calculateWeightedCostVnd,
   finalizeStoreReceipt,
   finalizeStoreReceiptInTransaction,
@@ -124,6 +148,26 @@ export {
   openStoreInventoryBag,
   StoreInventoryAuthorizationError,
 } from './store-inventory-operations.js';
+
+export {
+  allocateTransferCostVnd,
+  cancelStoreTransfer,
+  createStoreTransfer,
+  dispatchStoreTransfer,
+  listStoreTransfers,
+  receiveStoreTransfer,
+  StoreTransferAuthorizationError,
+  StoreTransferNotFoundError,
+} from './store-transfer-operations.js';
+export type {
+  CancelStoreTransferInput,
+  CreateStoreTransferInput,
+  DispatchStoreTransferInput,
+  ReceiveStoreTransferInput,
+  StoreTransferMutationResult,
+  StoreTransferPage,
+  StoreTransferPageInput,
+} from './store-transfer-operations.js';
 export type {
   CreatedStoreOutbound,
   CreateStoreOutboundInput,
@@ -155,11 +199,16 @@ export type {
 
 export {
   applyWarehouseMovement,
+  loadWarehouseBalancesAt,
   recordWarehouseMovement,
   WarehouseBalanceViolationError,
   WarehouseMovementConflictError,
 } from './warehouse.js';
-export type { WarehouseMovementInput, WarehouseMovementResult } from './warehouse.js';
+export type {
+  HistoricalWarehouseBalance,
+  WarehouseMovementInput,
+  WarehouseMovementResult,
+} from './warehouse.js';
 
 export {
   cancelWaitTicket,
