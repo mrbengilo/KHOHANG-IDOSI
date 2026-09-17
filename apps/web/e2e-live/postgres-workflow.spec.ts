@@ -27,6 +27,131 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   await expect(page.getByRole('heading', { name: 'Tổng quan điều hành' })).toBeVisible();
   await expect(page.getByLabel('Chế độ kiểm thử vai trò')).toHaveCount(0);
 
+  await page.getByRole('link', { name: 'Cửa hàng & nhóm' }).click();
+  await expect(page.getByRole('heading', { name: 'Cửa hàng & nhóm' })).toBeVisible();
+  const lifecycleToken = `${runSuffix}-${testInfo.retry}-${Date.now().toString(36)}`
+    .replace(/[^A-Za-z0-9]/gu, '')
+    .slice(-16)
+    .toUpperCase();
+  const groupCode = `E2E_G_${lifecycleToken}`;
+  const storeCode = `E2E_S_${lifecycleToken}`;
+  const groupName = `Nhóm live ${lifecycleToken}`;
+  const updatedGroupName = `${groupName} mới`;
+  const storeName = `Cửa hàng live ${lifecycleToken}`;
+  const updatedStoreName = `${storeName} mới`;
+  const addGroupButton = page.getByRole('button', { name: 'Thêm nhóm' });
+  expect(
+    await addGroupButton.evaluate((element) => getComputedStyle(element).transitionProperty),
+  ).toContain('transform');
+  await addGroupButton.click();
+  const groupEditor = page.locator('#store-group-editor');
+  await groupEditor.getByLabel('Mã nhóm').fill(groupCode);
+  await groupEditor.getByLabel('Tên nhóm').fill(groupName);
+  const createGroupResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/store-groups' &&
+      response.request().method() === 'POST',
+  );
+  await groupEditor.getByRole('button', { name: 'Tạo nhóm' }).click();
+  expect((await createGroupResponse).status()).toBe(201);
+  await expect(page.getByText(`Đã tạo nhóm ${groupCode}.`)).toBeVisible();
+
+  let groupRow = page.getByRole('row').filter({ hasText: groupCode });
+  await groupRow.getByRole('button', { name: `Chỉnh sửa nhóm ${groupCode}` }).click();
+  await page.locator('#store-group-editor').getByLabel('Tên nhóm').fill(updatedGroupName);
+  const updateGroupResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.startsWith('/api/v1/store-groups/') &&
+      response.request().method() === 'PATCH',
+  );
+  await page.locator('#store-group-editor').getByRole('button', { name: 'Lưu thay đổi' }).click();
+  expect((await updateGroupResponse).status()).toBe(200);
+  await expect(page.getByText(`Đã cập nhật nhóm ${groupCode} lên phiên bản 1.`)).toBeVisible();
+
+  await page.getByRole('button', { name: 'Thêm cửa hàng' }).click();
+  const storeEditor = page.locator('#store-editor');
+  await storeEditor.getByLabel('Mã cửa hàng').fill(storeCode);
+  await storeEditor.getByLabel('Tên cửa hàng').fill(storeName);
+  await storeEditor.getByLabel('Nhóm cửa hàng').selectOption({
+    label: `${groupCode} · ${updatedGroupName}`,
+  });
+  await storeEditor.getByLabel('Địa chỉ').fill('390 Responsive Street');
+  const createStoreResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/stores' &&
+      response.request().method() === 'POST',
+  );
+  await storeEditor.getByRole('button', { name: 'Tạo cửa hàng' }).click();
+  expect((await createStoreResponse).status()).toBe(201);
+  await expect(page.getByText(`Đã tạo cửa hàng ${storeCode}.`)).toBeVisible();
+
+  let storeRow = page.getByRole('row').filter({ hasText: storeCode });
+  await storeRow.getByRole('button', { name: `Chỉnh sửa cửa hàng ${storeCode}` }).click();
+  await page.locator('#store-editor').getByLabel('Tên cửa hàng').fill(updatedStoreName);
+  const updateStoreResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.startsWith('/api/v1/stores/') &&
+      response.request().method() === 'PATCH',
+  );
+  await page.locator('#store-editor').getByRole('button', { name: 'Lưu thay đổi' }).click();
+  expect((await updateStoreResponse).status()).toBe(200);
+  await expect(page.getByText(`Đã cập nhật cửa hàng ${storeCode} lên phiên bản 1.`)).toBeVisible();
+
+  storeRow = page.getByRole('row').filter({ hasText: storeCode });
+  const disableStoreResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.startsWith('/api/v1/stores/') &&
+      response.request().method() === 'PATCH',
+  );
+  await storeRow.getByRole('button', { name: 'Ngừng cửa hàng' }).click();
+  expect((await disableStoreResponse).status()).toBe(200);
+  await expect(page.getByText(`Cửa hàng ${storeCode}: ngừng hoạt động.`)).toBeVisible();
+
+  groupRow = page.getByRole('row').filter({ hasText: groupCode });
+  const disableGroupResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.startsWith('/api/v1/store-groups/') &&
+      response.request().method() === 'PATCH',
+  );
+  await groupRow.getByRole('button', { name: 'Ngừng nhóm' }).click();
+  expect((await disableGroupResponse).status()).toBe(200);
+  await expect(page.getByText(`Nhóm ${groupCode}: ngừng hoạt động.`)).toBeVisible();
+
+  const persistedGroupsResponse = await page
+    .context()
+    .request.get(
+      `${apiOrigin}/api/v1/store-groups?page=1&pageSize=20&search=${encodeURIComponent(groupCode)}`,
+    );
+  expect(persistedGroupsResponse.status()).toBe(200);
+  const persistedGroups = (await persistedGroupsResponse.json()) as {
+    data: Array<{ code: string; name: string; status: string; version: number }>;
+  };
+  expect(persistedGroups.data).toContainEqual(
+    expect.objectContaining({
+      code: groupCode,
+      name: updatedGroupName,
+      status: 'INACTIVE',
+      version: 2,
+    }),
+  );
+  const persistedStoresResponse = await page
+    .context()
+    .request.get(
+      `${apiOrigin}/api/v1/stores?page=1&pageSize=20&search=${encodeURIComponent(storeCode)}`,
+    );
+  expect(persistedStoresResponse.status()).toBe(200);
+  const persistedStores = (await persistedStoresResponse.json()) as {
+    data: Array<{ code: string; name: string; status: string; version: number }>;
+  };
+  expect(persistedStores.data).toContainEqual(
+    expect.objectContaining({
+      code: storeCode,
+      name: updatedStoreName,
+      status: 'INACTIVE',
+      version: 2,
+    }),
+  );
+
   await page.getByRole('link', { name: 'Phân bổ hàng hóa' }).click();
   await expect(page.getByRole('heading', { name: 'Giám sát phân bổ hàng hóa' })).toBeVisible();
   const createSessionButton = page.getByRole('button', { name: 'Tạo phiên mới' });
