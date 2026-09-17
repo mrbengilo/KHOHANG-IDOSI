@@ -20,6 +20,65 @@ async function login(page: Page, username: string, password: string) {
   expect(response.status()).toBe(200);
 }
 
+function hoChiMinhBusinessDate(): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    day: '2-digit',
+    month: '2-digit',
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+  }).formatToParts(new Date());
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  if (!year || !month || !day) throw new Error('Unable to resolve the Ho Chi Minh business date');
+  return `${year}-${month}-${day}`;
+}
+
+async function ensureOpenOrderSession(page: Page): Promise<string> {
+  const businessDate = hoChiMinhBusinessDate();
+  const existingResponse = await page
+    .context()
+    .request.get(
+      `${apiOrigin}/api/v1/order-sessions?dateFrom=${businessDate}&dateTo=${businessDate}&page=1&pageSize=20`,
+    );
+  expect(existingResponse.status()).toBe(200);
+  const existing = (await existingResponse.json()) as {
+    data: Array<{ id: string; status: string; version: number }>;
+  };
+  const openSession = existing.data.find((session) => session.status === 'OPEN');
+  if (openSession) return openSession.id;
+
+  let targetSession = existing.data.find((session) => session.status === 'SCHEDULED');
+  if (!targetSession) {
+    const createResponse = await page.context().request.post(`${apiOrigin}/api/v1/order-sessions`, {
+      data: {
+        allocationStartsAt: `${businessDate}T23:59:59+07:00`,
+        businessDate,
+        requestClosesAt: `${businessDate}T23:59:58+07:00`,
+        requestOpensAt: `${businessDate}T00:00:00+07:00`,
+      },
+      headers: { 'idempotency-key': `live-open-session-${runSuffix}` },
+    });
+    expect([200, 201]).toContain(createResponse.status());
+    const created = (await createResponse.json()) as {
+      data: { id: string; status: string; version: number };
+    };
+    if (created.data.status === 'OPEN') return created.data.id;
+    targetSession = created.data;
+  }
+
+  const openResponse = await page
+    .context()
+    .request.post(`${apiOrigin}/api/v1/order-sessions/${targetSession.id}/transition`, {
+      data: { expectedVersion: targetSession.version, status: 'OPEN' },
+      headers: { 'idempotency-key': `live-open-session-transition-${runSuffix}` },
+    });
+  expect(openResponse.status()).toBe(200);
+  const opened = (await openResponse.json()) as { data: { id: string; status: string } };
+  expect(opened.data.status).toBe('OPEN');
+  return opened.data.id;
+}
+
 test('production UI persists operations in PostgreSQL and enforces the store role', async ({
   page,
 }, testInfo) => {
@@ -102,6 +161,7 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   await accountForm.getByRole('button', { exact: true, name: 'Tạo tài khoản' }).click();
   expect((await accountResponsePromise).status()).toBe(201);
   await expect(page.getByText(`Đã tạo tài khoản ${storeUsername}.`)).toBeVisible();
+  const openSessionId = await ensureOpenOrderSession(page);
 
   const logoutResponsePromise = page.waitForResponse(
     (response) =>
@@ -113,6 +173,72 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   await login(page, storeUsername, storePassword);
   await expect(page.getByRole('heading', { name: 'Tổng quan cửa hàng' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Tài khoản' })).toHaveCount(0);
+
+  await page.getByRole('link', { name: 'Đặt hàng' }).click();
+  await expect(
+    page.getByRole('heading', { exact: true, name: 'Đặt hàng & kết quả' }),
+  ).toBeVisible();
+  const lineNote = `Live PostgreSQL note ${runSuffix}-${testInfo.retry}`;
+  await page.getByLabel('Số bao').fill('2');
+  await page.getByLabel('Ghi chú mặt hàng').fill(lineNote);
+  await page.getByRole('button', { name: 'Thêm mặt hàng' }).click();
+  await expect(page.getByText(`2 bao • ${lineNote}`)).toBeVisible();
+
+  const orderResponsePromise = page.waitForResponse(
+    (response) =>
+      response.url() === `${apiOrigin}/api/v1/order-requests` &&
+      response.request().method() === 'POST',
+  );
+  await page.getByRole('button', { name: 'Gửi yêu cầu đặt hàng' }).click();
+  const orderResponse = await orderResponsePromise;
+  expect(orderResponse.status()).toBe(201);
+  const orderPayload = (await orderResponse.json()) as {
+    data: { id: string; lines: Array<{ note?: string }>; storeId: string };
+  };
+  expect(orderPayload.data.lines).toContainEqual(expect.objectContaining({ note: lineNote }));
+  await expect(
+    page.getByText('Đã gửi yêu cầu. Kho chỉ giữ hàng sau khi chạy phân bổ.'),
+  ).toBeVisible();
+
+  const orderCard = page.locator('.request-history-card').filter({ hasText: lineNote });
+  await expect(orderCard).toHaveCount(1);
+  await orderCard.locator('summary').click();
+  await expect(orderCard.getByText(lineNote)).toBeVisible();
+  await orderCard.getByRole('button', { name: 'Hủy yêu cầu' }).click();
+  const cancellationReason = `Live cancellation ${runSuffix}-${testInfo.retry}`;
+  await orderCard.getByLabel('Lý do hủy').fill(cancellationReason);
+  const cancelOrderResponsePromise = page.waitForResponse(
+    (response) =>
+      response.url() === `${apiOrigin}/api/v1/order-requests/${orderPayload.data.id}/cancel` &&
+      response.request().method() === 'POST',
+  );
+  await orderCard.getByRole('button', { name: 'Xác nhận hủy' }).click();
+  expect((await cancelOrderResponsePromise).status()).toBe(200);
+  await expect(orderCard.getByText('Đã hủy')).toBeVisible();
+  await expect(page.getByText('Đã hủy yêu cầu đặt hàng.')).toBeVisible();
+
+  const persistedOrders = await page
+    .context()
+    .request.get(
+      `${apiOrigin}/api/v1/order-requests?storeId=${orderPayload.data.storeId}&sessionId=${openSessionId}&page=1&pageSize=20`,
+    );
+  expect(persistedOrders.status()).toBe(200);
+  const persistedOrderPayload = (await persistedOrders.json()) as {
+    data: Array<{
+      cancellationReason?: string | null;
+      id: string;
+      lines: Array<{ note?: string }>;
+      status: string;
+    }>;
+  };
+  expect(persistedOrderPayload.data).toContainEqual(
+    expect.objectContaining({
+      cancellationReason,
+      id: orderPayload.data.id,
+      lines: expect.arrayContaining([expect.objectContaining({ note: lineNote })]),
+      status: 'CANCELLED',
+    }),
+  );
 
   const forbiddenAdminApi = await page
     .context()
