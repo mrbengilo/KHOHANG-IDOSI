@@ -24,7 +24,7 @@ import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-route
 import { DashboardSkeleton } from './Skeleton';
 import { ApiClientError, getStoreKind, logout, mockModeEnabled } from '../lib/api';
 import { canAccessRoute } from '../lib/access';
-import { sessionQueryKey, useSession } from '../lib/auth';
+import { clearAuthenticatedSession, useSession } from '../lib/auth';
 import type { DemoMode, Role, StoreKind } from '../lib/types';
 
 interface NavEntry {
@@ -153,7 +153,7 @@ export function AppShell() {
     try {
       if (!mockModeEnabled) {
         await logout();
-        queryClient.setQueryData(sessionQueryKey, null);
+        clearAuthenticatedSession(queryClient);
       }
       navigate('/login', { replace: true });
     } catch (cause) {
