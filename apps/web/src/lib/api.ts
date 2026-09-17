@@ -3,14 +3,21 @@ import {
   GetSessionResponseSchema,
   ListProductConversionsResponseSchema,
   ListProductsResponseSchema,
+  ListOrderSessionsResponseSchema,
+  ListStoreOrderRequestsResponseSchema,
   ListStoresResponseSchema,
   LoginResponseSchema,
   LogoutResponseSchema,
   ProductConversionResponseSchema,
   ProductResponseSchema,
+  StoreOrderRequestResponseSchema,
   type CreateProductConversionRequest,
+  type CreateStoreOrderRequest,
   type LoginRequest,
+  type OrderSession,
   type Session,
+  type Store,
+  type StoreOrderRequest,
   type UpdateProductConversionRequest,
   type StoreKind,
 } from '@idosi/contracts';
@@ -220,4 +227,40 @@ export async function getStoreKind(storeId: string): Promise<StoreKind> {
   const store = stores.find((candidate) => candidate.id === storeId);
   if (!store) throw new ApiClientError('Không tìm thấy cửa hàng của tài khoản.', 404, 'NOT_FOUND');
   return store.kind;
+}
+
+export async function listAccessibleStores(): Promise<Store[]> {
+  const payload = await request('/stores?page=1&pageSize=100');
+  return ListStoresResponseSchema.parse(payload).data;
+}
+
+export async function listOpenOrderSessions(): Promise<OrderSession[]> {
+  const payload = await request('/order-sessions?status=OPEN&page=1&pageSize=100');
+  return ListOrderSessionsResponseSchema.parse(payload).data;
+}
+
+export async function listStoreOrderRequests(
+  storeId: string,
+  sessionId: string,
+): Promise<StoreOrderRequest[]> {
+  const query = new URLSearchParams({
+    page: '1',
+    pageSize: '100',
+    sessionId,
+    storeId,
+  });
+  const payload = await request(`/order-requests?${query.toString()}`);
+  return ListStoreOrderRequestsResponseSchema.parse(payload).data;
+}
+
+export async function submitStoreOrderRequest(
+  input: CreateStoreOrderRequest,
+  idempotencyKey: string,
+): Promise<StoreOrderRequest> {
+  const payload = await request('/order-requests', {
+    body: JSON.stringify(input),
+    headers: { 'idempotency-key': idempotencyKey },
+    method: 'POST',
+  });
+  return StoreOrderRequestResponseSchema.parse(payload).data;
 }

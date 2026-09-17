@@ -1,12 +1,21 @@
 import { Clock3, Plus, Send, Trash2 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useMemo, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import type { AppOutletContext } from '../components/AppShell';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { PageHeader } from '../components/PageHeader';
-import { UnavailableFeature } from '../components/UnavailableFeature';
-import { mockModeEnabled } from '../lib/api';
+import {
+  ApiClientError,
+  listAccessibleStores,
+  listCatalog,
+  listOpenOrderSessions,
+  listStoreOrderRequests,
+  mockModeEnabled,
+  submitStoreOrderRequest,
+} from '../lib/api';
+import { useSession } from '../lib/auth';
 import { productConversions } from '../lib/data';
 
 interface RequestDraft {
@@ -38,7 +47,9 @@ export function RequestsPage() {
     [requests],
   );
 
-  if (!mockModeEnabled) return <UnavailableFeature title="Đặt hàng & kết quả" />;
+  if (!mockModeEnabled) {
+    return <ProductionRequestsPage role={role} storeKind={storeKind} />;
+  }
 
   const add = () => {
     if (remaining === 0) return;
@@ -181,6 +192,312 @@ export function RequestsPage() {
             Xem lịch sử
           </button>
         </article>
+      </section>
+    </>
+  );
+}
+
+interface ProductionDraftLine {
+  readonly productId: string;
+  readonly quantity: number;
+}
+
+function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
+  const sessionQuery = useSession();
+  const storesQuery = useQuery({
+    queryFn: listAccessibleStores,
+    queryKey: ['stores', 'accessible'],
+    retry: false,
+  });
+  const catalogQuery = useQuery({ queryFn: listCatalog, queryKey: ['catalog'], retry: false });
+  const sessionsQuery = useQuery({
+    queryFn: listOpenOrderSessions,
+    queryKey: ['order-sessions', 'open'],
+    retry: false,
+  });
+  const [selectedStoreId, setSelectedStoreId] = useState('');
+  const [selectedProductId, setSelectedProductId] = useState('');
+  const [quantity, setQuantity] = useState(1);
+  const [draftLines, setDraftLines] = useState<ProductionDraftLine[]>([]);
+  const [notice, setNotice] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const idempotencyKey = useRef<string | null>(null);
+
+  const stores = storesQuery.data ?? [];
+  const activeProducts = (catalogQuery.data ?? []).filter((product) => product.status === 'ACTIVE');
+  const activeSession = sessionsQuery.data?.[0];
+  const principalStoreId = sessionQuery.data?.principal.storeId ?? '';
+  const effectiveStoreId =
+    role === 'STORE' ? principalStoreId : selectedStoreId || stores[0]?.id || '';
+  const selectedStore = stores.find((store) => store.id === effectiveStoreId);
+  const requestsQuery = useQuery({
+    enabled: Boolean(effectiveStoreId && activeSession),
+    queryFn: () => {
+      if (!effectiveStoreId || !activeSession) throw new Error('Missing order scope');
+      return listStoreOrderRequests(effectiveStoreId, activeSession.id);
+    },
+    queryKey: ['order-requests', effectiveStoreId, activeSession?.id],
+    retry: false,
+  });
+  const submittedRequests = requestsQuery.data ?? [];
+  const usedSlots = submittedRequests.filter((request) => request.status !== 'CANCELLED').length;
+  const remainingSlots = Math.max(0, 2 - usedSlots);
+  const productNameById = useMemo(
+    () => new Map(activeProducts.map((product) => [product.id, product.name])),
+    [activeProducts],
+  );
+  const isWholesale = role === 'STORE' && storeKind === 'WHOLESALE';
+
+  const resetMutationKey = () => {
+    idempotencyKey.current = null;
+    setNotice('');
+  };
+
+  const addLine = () => {
+    const productId = selectedProductId || activeProducts[0]?.id;
+    if (!productId || !Number.isSafeInteger(quantity) || quantity <= 0) return;
+    setDraftLines((current) => {
+      const existing = current.find((line) => line.productId === productId);
+      if (existing) {
+        return current.map((line) =>
+          line.productId === productId ? { ...line, quantity: line.quantity + quantity } : line,
+        );
+      }
+      return [...current, { productId, quantity }];
+    });
+    setQuantity(1);
+    resetMutationKey();
+  };
+
+  const submit = async () => {
+    if (!activeSession || !effectiveStoreId || draftLines.length === 0 || remainingSlots === 0) {
+      return;
+    }
+    setSubmitting(true);
+    setNotice('');
+    idempotencyKey.current ??= crypto.randomUUID();
+    try {
+      await submitStoreOrderRequest(
+        {
+          businessSessionId: activeSession.id,
+          items: draftLines.map((line) => ({
+            productId: line.productId,
+            quantity: line.quantity,
+          })),
+          storeId: effectiveStoreId,
+        },
+        idempotencyKey.current,
+      );
+      setDraftLines([]);
+      idempotencyKey.current = null;
+      setNotice('Đã gửi yêu cầu. Kho chỉ giữ hàng sau khi chạy phân bổ.');
+      await requestsQuery.refetch();
+    } catch (cause) {
+      setNotice(
+        cause instanceof ApiClientError
+          ? cause.message
+          : 'Không thể gửi yêu cầu vì phản hồi máy chủ không hợp lệ.',
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const loading =
+    sessionQuery.isPending ||
+    storesQuery.isPending ||
+    catalogQuery.isPending ||
+    sessionsQuery.isPending;
+  const loadError =
+    sessionQuery.error ?? storesQuery.error ?? catalogQuery.error ?? sessionsQuery.error;
+
+  return (
+    <>
+      <PageHeader
+        description={
+          activeSession
+            ? `${selectedStore?.name ?? 'Phạm vi cửa hàng'} • nhận yêu cầu đến ${new Date(activeSession.requestClosesAt).toLocaleString('vi-VN')}`
+            : 'Chưa có phiên đặt hàng đang mở'
+        }
+        title={isWholesale ? 'Đặt hàng khách sỉ' : 'Đặt hàng & kết quả'}
+      />
+
+      {loadError ? (
+        <section className="panel form-error" role="alert">
+          Không thể tải phiên đặt hàng. Vui lòng thử lại.
+        </section>
+      ) : null}
+      {loading ? <section className="panel">Đang tải dữ liệu đặt hàng…</section> : null}
+
+      {!loading && role !== 'STORE' ? (
+        <section className="panel">
+          <label>
+            Cửa hàng
+            <select
+              onChange={(event) => {
+                setSelectedStoreId(event.target.value);
+                setDraftLines([]);
+                resetMutationKey();
+              }}
+              value={effectiveStoreId}
+            >
+              {stores.map((store) => (
+                <option key={store.id} value={store.id}>
+                  {store.code} • {store.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </section>
+      ) : null}
+
+      <section className="quota-card">
+        <div>
+          <strong>{usedSlots} / 2 phiếu</strong>
+          <span>Còn {remainingSlots} yêu cầu mới trong phiên hiện tại</span>
+        </div>
+        <progress max="2" value={usedSlots} />
+        <Badge tone={remainingSlots > 0 ? 'info' : 'warning'}>
+          {remainingSlots > 0 ? 'Còn lượt' : 'Đã đủ giới hạn'}
+        </Badge>
+      </section>
+
+      {isWholesale ? (
+        <section className="permission-card">
+          <strong>Quyền hạn khách sỉ</strong>
+          <span>Đặt hàng • xem phân bổ • phiếu chờ</span>
+          <small>Không nhận / khui / bán / tồn / điều chuyển</small>
+        </section>
+      ) : null}
+
+      <div className="request-layout">
+        <section className="panel request-form-panel">
+          <div className="section-heading section-heading--compact">
+            <div>
+              <h2>Tạo yêu cầu</h2>
+              <p>Một phiếu có thể gồm nhiều mặt hàng; tối đa hai phiếu trong mỗi phiên.</p>
+            </div>
+          </div>
+          <div className="form-grid">
+            <label>
+              Mặt hàng
+              <select
+                disabled={!activeSession || remainingSlots === 0}
+                onChange={(event) => {
+                  setSelectedProductId(event.target.value);
+                  resetMutationKey();
+                }}
+                value={selectedProductId || activeProducts[0]?.id || ''}
+              >
+                {activeProducts.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Số bao
+              <input
+                disabled={!activeSession || remainingSlots === 0}
+                max="100000"
+                min="1"
+                onChange={(event) => {
+                  setQuantity(event.target.valueAsNumber || 1);
+                  resetMutationKey();
+                }}
+                type="number"
+                value={quantity}
+              />
+            </label>
+          </div>
+          <Button
+            disabled={!activeSession || remainingSlots === 0 || activeProducts.length === 0}
+            onClick={addLine}
+          >
+            <Plus aria-hidden="true" size={16} /> Thêm mặt hàng
+          </Button>
+        </section>
+
+        <section className="panel request-summary">
+          <div className="section-heading section-heading--compact">
+            <div>
+              <h2>Phiếu đang soạn</h2>
+              <p>Hệ thống chưa kiểm tồn và chưa giữ hàng lúc gửi.</p>
+            </div>
+          </div>
+          {draftLines.length === 0 ? <p>Chưa có mặt hàng.</p> : null}
+          {draftLines.map((line) => (
+            <article className="request-line" key={line.productId}>
+              <div>
+                <strong>{productNameById.get(line.productId) ?? line.productId}</strong>
+                <span>{line.quantity} bao</span>
+              </div>
+              <button
+                aria-label={`Xóa ${productNameById.get(line.productId) ?? 'mặt hàng'}`}
+                onClick={() => {
+                  setDraftLines((current) =>
+                    current.filter((candidate) => candidate.productId !== line.productId),
+                  );
+                  resetMutationKey();
+                }}
+                type="button"
+              >
+                <Trash2 size={17} />
+              </button>
+            </article>
+          ))}
+          {notice ? (
+            <div className="form-error" role="status">
+              {notice}
+            </div>
+          ) : null}
+          <Button
+            busy={submitting}
+            disabled={
+              !activeSession || !effectiveStoreId || draftLines.length === 0 || remainingSlots === 0
+            }
+            onClick={() => void submit()}
+          >
+            <Send aria-hidden="true" size={16} /> Gửi yêu cầu đặt hàng
+          </Button>
+        </section>
+      </div>
+
+      <section className="panel history-list">
+        <div className="section-heading section-heading--compact">
+          <div>
+            <h2>Yêu cầu trong phiên</h2>
+            <p>Dữ liệu trực tiếp từ máy chủ; ưu tiên do hệ thống phân bổ gán.</p>
+          </div>
+        </div>
+        {submittedRequests.length === 0 ? <p>Chưa có yêu cầu đã gửi.</p> : null}
+        {submittedRequests.map((request) => (
+          <article key={request.id}>
+            <div>
+              <strong>Phiếu {request.requestSequence}</strong>
+              <span>
+                <Clock3 size={14} />{' '}
+                {request.lines
+                  .map((line) => {
+                    const quantity =
+                      line.requested.kind === 'UNIT'
+                        ? `${line.requested.quantity} bao`
+                        : `${line.requested.value} kg`;
+                    return `${productNameById.get(line.productId) ?? line.productId}: ${quantity}`;
+                  })
+                  .join(' • ')}
+              </span>
+            </div>
+            <Badge tone={request.status === 'CANCELLED' ? 'neutral' : 'warning'}>
+              {request.status === 'CANCELLED'
+                ? 'Đã hủy'
+                : request.status === 'MERGED'
+                  ? 'Đã gộp'
+                  : 'Đã gửi'}
+            </Badge>
+          </article>
+        ))}
       </section>
     </>
   );
