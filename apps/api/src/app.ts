@@ -47,6 +47,12 @@ import {
   UpdateProductConversionRequestSchema,
   UpdateProductRequestSchema,
   UpdateAccountRequestSchema,
+  ListStoreTransfersQuerySchema,
+  CreateStoreTransferRequestSchema,
+  DispatchStoreTransferRequestSchema,
+  ReceiveStoreTransferRequestSchema,
+  CancelStoreTransferRequestSchema,
+  StoreTransferParamsSchema,
   type ApiErrorCode,
   type AuthenticatedPrincipal,
   type Session,
@@ -610,6 +616,82 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return reply.send({ data: result.data });
   });
 
+  app.get('/api/v1/store-transfers', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = ListStoreTransfersQuerySchema.parse(request.query);
+    return repository.listStoreTransfers(session.principal, query);
+  });
+
+  app.post('/api/v1/store-transfers', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = CreateStoreTransferRequestSchema.parse(request.body);
+    const result = await repository.createStoreTransfer(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CREATE_STORE_TRANSFER', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
+  });
+
+  app.post('/api/v1/store-transfers/:transferId/dispatch', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { transferId } = StoreTransferParamsSchema.parse(request.params);
+    const input = DispatchStoreTransferRequestSchema.parse(request.body);
+    const result = await repository.dispatchStoreTransfer(
+      session.principal,
+      transferId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'DISPATCH_STORE_TRANSFER', transferId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.post('/api/v1/store-transfers/:transferId/receive', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { transferId } = StoreTransferParamsSchema.parse(request.params);
+    const input = ReceiveStoreTransferRequestSchema.parse(request.body);
+    const result = await repository.receiveStoreTransfer(
+      session.principal,
+      transferId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'RECEIVE_STORE_TRANSFER', transferId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.post('/api/v1/store-transfers/:transferId/cancel', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { transferId } = StoreTransferParamsSchema.parse(request.params);
+    const input = CancelStoreTransferRequestSchema.parse(request.body);
+    const result = await repository.cancelStoreTransfer(
+      session.principal,
+      transferId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CANCEL_STORE_TRANSFER', transferId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
   app.get('/api/v1/wait-tickets', async (request) => {
     const session = await authenticate(request, repository);
     const query = ListWaitTicketsQuerySchema.parse(request.query);
@@ -1009,6 +1091,46 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: { '200': { description: 'Approved, rejected or replayed store outbound' } },
+        },
+      },
+      '/api/v1/store-transfers': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Transfers visible to the caller store scope' } },
+        },
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '201': { description: 'Created or replayed draft store transfer' } },
+        },
+      },
+      '/api/v1/store-transfers/{transferId}/dispatch': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Dispatched transfer and deducted source stock' } },
+        },
+      },
+      '/api/v1/store-transfers/{transferId}/receive': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Received transfer and created destination lot' } },
+        },
+      },
+      '/api/v1/store-transfers/{transferId}/cancel': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Cancelled an undispatched draft transfer' } },
         },
       },
       '/api/v1/wait-tickets': {
