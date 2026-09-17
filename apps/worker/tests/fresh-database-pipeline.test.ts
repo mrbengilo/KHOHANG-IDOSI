@@ -53,8 +53,11 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
         throw new Error('Reference seed and administrator bootstrap must run before this test.');
       }
 
-      const now = new Date();
-      const businessDate = hoChiMinhDate(now);
+      // Keep this integration fixture outside the live E2E business date. The
+      // worker intentionally completes the session and PostgreSQL persists it
+      // for the remainder of the CI job.
+      const businessDate = '2000-01-01';
+      const now = new Date(`${businessDate}T12:00:00+07:00`);
       const requestOpensAt = new Date(`${businessDate}T00:00:00+07:00`);
       const requestClosesAt = new Date(`${businessDate}T23:59:58+07:00`);
       const allocationStartsAt = new Date(`${businessDate}T23:59:59+07:00`);
@@ -229,17 +232,3 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
     }
   }, 30_000);
 });
-
-function hoChiMinhDate(instant: Date): string {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    day: '2-digit',
-    month: '2-digit',
-    timeZone: 'Asia/Ho_Chi_Minh',
-    year: 'numeric',
-  }).formatToParts(instant);
-  const year = parts.find((part) => part.type === 'year')?.value;
-  const month = parts.find((part) => part.type === 'month')?.value;
-  const day = parts.find((part) => part.type === 'day')?.value;
-  if (!year || !month || !day) throw new Error('Unable to resolve the Ho Chi Minh business date.');
-  return `${year}-${month}-${day}`;
-}
