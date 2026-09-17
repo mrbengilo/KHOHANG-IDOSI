@@ -13,6 +13,7 @@ import {
   pgTable,
   smallint,
   text,
+  time,
   timestamp,
   uniqueIndex,
   uuid,
@@ -139,6 +140,12 @@ export const storeOutboundReasonEnum = pgEnum('store_outbound_reason', [
   'defective',
   'dirty',
   'other',
+]);
+export const storeTransferStatusEnum = pgEnum('store_transfer_status', [
+  'draft',
+  'in_transit',
+  'received',
+  'cancelled',
 ]);
 export const outboundRequestStatusEnum = pgEnum('outbound_request_status', [
   'draft',
@@ -1494,9 +1501,16 @@ export const storeInventoryBags = pgTable(
     productId: uuid('product_id')
       .notNull()
       .references(() => products.id, { onDelete: 'restrict' }),
-    sourceStoreReceiptBagId: uuid('source_store_receipt_bag_id')
-      .notNull()
-      .references(() => storeReceiptBags.id, { onDelete: 'restrict' }),
+    sourceStoreReceiptBagId: uuid('source_store_receipt_bag_id').references(
+      () => storeReceiptBags.id,
+      { onDelete: 'restrict' },
+    ),
+    /** Set only for stock created by a received store-to-store transfer. */
+    sourceTransferId: uuid('source_transfer_id'),
+    /** Physical parent bag retained for transfer provenance. */
+    // The migration enforces the self-reference FK. Keeping this as a plain UUID avoids a
+    // circular TypeScript initializer while retaining the database-level constraint.
+    sourceInventoryBagId: uuid('source_inventory_bag_id'),
     outboundRequestLineId: uuid('outbound_request_line_id').references(
       () => outboundRequestLines.id,
       { onDelete: 'restrict' },
@@ -1523,7 +1537,10 @@ export const storeInventoryBags = pgTable(
       table.status,
     ),
     index('store_inventory_bags_outbound_line_idx').on(table.outboundRequestLineId),
+    index('store_inventory_bags_source_transfer_idx').on(table.sourceTransferId),
+    index('store_inventory_bags_source_inventory_bag_idx').on(table.sourceInventoryBagId),
     uniqueIndex('store_inventory_bags_store_receipt_bag_uidx').on(table.sourceStoreReceiptBagId),
+    uniqueIndex('store_inventory_bags_source_transfer_uidx').on(table.sourceTransferId),
     check('store_inventory_bags_code_not_blank', sql`length(btrim(${table.bagCode})) > 0`),
     check('store_inventory_bags_initial_weight_positive', sql`${table.initialWeightKg} > 0`),
     check('store_inventory_bags_current_weight_nonnegative', sql`${table.currentWeightKg} >= 0`),
@@ -1532,6 +1549,95 @@ export const storeInventoryBags = pgTable(
     check(
       'store_inventory_bags_current_not_over_initial',
       sql`${table.currentWeightKg} <= ${table.initialWeightKg}`,
+    ),
+    check(
+      'store_inventory_bags_exactly_one_provenance',
+      sql`((${table.sourceStoreReceiptBagId} IS NOT NULL)::integer + (${table.sourceTransferId} IS NOT NULL)::integer) = 1`,
+    ),
+    check(
+      'store_inventory_bags_transfer_parent',
+      sql`${table.sourceTransferId} IS NULL OR ${table.sourceInventoryBagId} IS NOT NULL`,
+    ),
+  ],
+);
+
+/** Store-to-store movement; destination inventory is materialized only on receipt confirmation. */
+export const storeTransfers = pgTable(
+  'store_transfers',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    transferNumber: text('transfer_number').notNull().unique(),
+    sourceStoreId: uuid('source_store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    destinationStoreId: uuid('destination_store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    sourceInventoryBagId: uuid('source_inventory_bag_id')
+      .notNull()
+      .references(() => storeInventoryBags.id, { onDelete: 'restrict' }),
+    destinationInventoryBagId: uuid('destination_inventory_bag_id').references(
+      () => storeInventoryBags.id,
+      { onDelete: 'restrict' },
+    ),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    weightKg: numeric('weight_kg', { precision: 14, scale: 3 }).notNull(),
+    costVnd: bigint('cost_vnd', { mode: 'bigint' }),
+    status: storeTransferStatusEnum('status').notNull().default('draft'),
+    note: text('note'),
+    cancellationReason: text('cancellation_reason'),
+    version: integer('version').notNull().default(0),
+    createdByUserId: uuid('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    dispatchedByUserId: uuid('dispatched_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    receivedByUserId: uuid('received_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    dispatchedAt: timestamp('dispatched_at', { withTimezone: true }),
+    receivedAt: timestamp('received_at', { withTimezone: true }),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('store_transfers_source_status_created_idx').on(
+      table.sourceStoreId,
+      table.status,
+      table.createdAt,
+    ),
+    index('store_transfers_destination_status_created_idx').on(
+      table.destinationStoreId,
+      table.status,
+      table.createdAt,
+    ),
+    index('store_transfers_product_created_idx').on(table.productId, table.createdAt),
+    check('store_transfers_number_not_blank', sql`length(btrim(${table.transferNumber})) > 0`),
+    check(
+      'store_transfers_distinct_stores',
+      sql`${table.sourceStoreId} <> ${table.destinationStoreId}`,
+    ),
+    check('store_transfers_weight_positive', sql`${table.weightKg} > 0`),
+    check(
+      'store_transfers_cost_nonnegative',
+      sql`${table.costVnd} IS NULL OR ${table.costVnd} >= 0`,
+    ),
+    check('store_transfers_version_nonnegative', sql`${table.version} >= 0`),
+    check(
+      'store_transfers_dispatch_state',
+      sql`${table.status} = 'draft' OR ${table.status} = 'cancelled' OR (${table.costVnd} IS NOT NULL AND ${table.dispatchedByUserId} IS NOT NULL AND ${table.dispatchedAt} IS NOT NULL)`,
+    ),
+    check(
+      'store_transfers_receive_state',
+      sql`${table.status} <> 'received' OR (${table.destinationInventoryBagId} IS NOT NULL AND ${table.receivedByUserId} IS NOT NULL AND ${table.receivedAt} IS NOT NULL)`,
+    ),
+    check(
+      'store_transfers_cancel_state',
+      sql`${table.status} <> 'cancelled' OR (${table.cancelledAt} IS NOT NULL AND length(btrim(${table.cancellationReason})) >= 3)`,
     ),
   ],
 );
@@ -1648,6 +1754,55 @@ export const storeOutbounds = pgTable(
   ],
 );
 
+/** Append-only operational policy snapshots. The highest version is current. */
+export const operationalSettingsVersions = pgTable(
+  'operational_settings_versions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    version: integer('version').notNull(),
+    timezone: text('timezone').notNull(),
+    snapshotTime: time('snapshot_time', { precision: 0 }).notNull(),
+    cutoffTime: time('cutoff_time', { precision: 0 }).notNull(),
+    maxRequestsPerStore: integer('max_requests_per_store').notNull(),
+    policyVersion: text('policy_version').notNull(),
+    idosiSyncIntervalMinutes: integer('idosi_sync_interval_minutes').notNull(),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    requestId: text('request_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('operational_settings_versions_version_uidx').on(table.version),
+    index('operational_settings_versions_created_idx').on(table.createdAt),
+    check('operational_settings_versions_version_positive', sql`${table.version} > 0`),
+    check(
+      'operational_settings_versions_timezone_supported',
+      sql`${table.timezone} = 'Asia/Ho_Chi_Minh'`,
+    ),
+    check(
+      'operational_settings_versions_cutoff_after_snapshot',
+      sql`${table.cutoffTime} > ${table.snapshotTime}`,
+    ),
+    check(
+      'operational_settings_versions_request_limit',
+      sql`${table.maxRequestsPerStore} BETWEEN 1 AND 10`,
+    ),
+    check(
+      'operational_settings_versions_policy_not_blank',
+      sql`length(btrim(${table.policyVersion})) BETWEEN 3 AND 64`,
+    ),
+    check(
+      'operational_settings_versions_sync_interval',
+      sql`${table.idosiSyncIntervalMinutes} IN (15, 30)`,
+    ),
+    check(
+      'operational_settings_versions_request_id_not_blank',
+      sql`length(btrim(${table.requestId})) BETWEEN 1 AND 128`,
+    ),
+  ],
+);
+
 export const auditLogs = pgTable(
   'audit_logs',
   {
@@ -1725,3 +1880,5 @@ export type StoreInventoryBag = typeof storeInventoryBags.$inferSelect;
 export type StoreInventoryLedgerEntry = typeof storeInventoryLedgerEntries.$inferSelect;
 export type StoreOutbound = typeof storeOutbounds.$inferSelect;
 export type NewStoreOutbound = typeof storeOutbounds.$inferInsert;
+export type StoreTransfer = typeof storeTransfers.$inferSelect;
+export type NewStoreTransfer = typeof storeTransfers.$inferInsert;

@@ -2,18 +2,24 @@ import type {
   Account,
   AdminAuditLog,
   AuthenticatedPrincipal,
+  CancelInboundReceiptRequest,
   CancelWaitTicketRequest,
+  CreateOrderSessionRequest,
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
   CreateStoreOutboundRequest,
   CreateStoreRequest,
   CreateAccountRequest,
+  CreateInboundReceiptRequest,
   DeclareStoreReceiptRequest,
+  DispatchWarehouseOutboundRequest,
+  ConfirmReceiptCostsRequest,
   FinalizeReceiptRequest,
   ListOrderSessionsQuery,
   ListAccountsQuery,
   ListAuditLogsQuery,
+  ListInboundReceiptsQuery,
   ListPriorityOffersQuery,
   ListProductsQuery,
   ListReceiptsQuery,
@@ -25,8 +31,11 @@ import type {
   ListStoreOrderRequestsQuery,
   ListStoresQuery,
   ListWaitTicketsQuery,
+  ListWarehouseOutboundRequestsQuery,
   MonthlyOperationalReport,
   MonthlyOperationalReportQuery,
+  InboundReceipt,
+  OperationalSettingsVersion,
   OpenStoreInventoryBagRequest,
   Product,
   ProductConversion,
@@ -45,18 +54,31 @@ import type {
   StoreOutbound,
   StoreReceiptSource,
   SubmitStoreReceiptRequest,
+  TransitionOrderSessionRequest,
   UpdateProductRequest,
   UpdateAccountRequest,
   UpdateProductConversionRequest,
+  UpdateOperationalSettingsRequest,
   DeleteProductConversionRequest,
   WaitTicket,
   WaitTicketHistory,
+  WarehouseOutboundRequest,
+  StoreTransfer,
+  ListStoreTransfersQuery,
+  CreateStoreTransferRequest,
+  DispatchStoreTransferRequest,
+  ReceiveStoreTransferRequest,
+  CancelStoreTransferRequest,
+  WarehouseBalancesResponse,
 } from '@idosi/contracts';
 import {
   ActiveWaitTicketExistsError,
   auditLogs,
   cancelWaitTicket as cancelDatabaseWaitTicket,
+  cancelSupplierInbound as cancelDatabaseSupplierInbound,
   closeDatabase,
+  createOrderSession as createDatabaseOrderSession,
+  confirmSupplierInboundCosts as confirmDatabaseSupplierInboundCosts,
   createStoreOutbound as createDatabaseStoreOutbound,
   dailyPriorityOffers,
   declareStoreReceipt as declareDatabaseStoreReceipt,
@@ -65,6 +87,10 @@ import {
   IdempotencyConflictError,
   IdempotencyInProgressError,
   finalizeStoreReceipt as finalizeDatabaseStoreReceipt,
+  dispatchWarehouseOutboundRequest as dispatchDatabaseWarehouseOutboundRequest,
+  getWarehouseOutboundRequest as getDatabaseWarehouseOutboundRequest,
+  gramsToKilogramsExact,
+  kilogramsToGramsExact,
   getWaitTicketHistory as getDatabaseWaitTicketHistory,
   listPriorityOffers as listDatabasePriorityOffers,
   listStoreInventoryBags as listDatabaseStoreInventoryBags,
@@ -72,17 +98,27 @@ import {
   listStoreOutbounds as listDatabaseStoreOutbounds,
   listStoreReceiptSources as listDatabaseStoreReceiptSources,
   listWaitTickets as listDatabaseWaitTickets,
+  listWarehouseOutboundRequests as listDatabaseWarehouseOutboundRequests,
   loadMonthlyOperationalReport,
   openStoreInventoryBag as openDatabaseStoreInventoryBag,
   orderRequestItems,
   orderRequests,
   orderSessions,
+  operationalSettingsVersions,
   outboundRequestLines,
   OrderRequestAuthorizationError,
+  OrderSessionAuthorizationError,
+  OrderSessionConflictError,
+  OrderSessionNotFoundError,
   OrderSessionUnavailableError,
+  OrderSessionValidationError,
   pool,
   productConversions,
   products,
+  receiptBagWeights,
+  receiptItems,
+  receipts,
+  receiveSupplierInbound as receiveDatabaseSupplierInbound,
   RequestLimitExceededError,
   respondPriorityOffer as respondDatabasePriorityOffer,
   reviewStoreOutbound as reviewDatabaseStoreOutbound,
@@ -91,6 +127,10 @@ import {
   StoreInventoryAuthorizationError,
   StoreOperationValidationError,
   StoreReceiptAuthorizationError,
+  SupplierInboundAuthorizationError,
+  SupplierInboundConflictError,
+  SupplierInboundNotFoundError,
+  SupplierInboundValidationError,
   storeReceiptBags,
   storeReceiptLines,
   storeReceipts,
@@ -99,8 +139,10 @@ import {
   storeOutbounds,
   stores,
   submitOrderRequest as submitDatabaseOrderRequest,
+  transitionOrderSession as transitionDatabaseOrderSession,
   submitStoreReceipt as submitDatabaseStoreReceipt,
   users,
+  warehouseBalances,
   returnStoreReceiptForCorrection as returnDatabaseStoreReceiptForCorrection,
   PriorityOfferConflictError,
   PriorityOfferNotFoundError,
@@ -108,6 +150,18 @@ import {
   WaitTicketConflictError,
   WaitTicketNotFoundError,
   WaitTicketValidationError,
+  WarehouseOutboundAuthorizationError,
+  WarehouseOutboundConflictError,
+  WarehouseOutboundNotFoundError,
+  WarehouseOutboundValidationError,
+  cancelStoreTransfer as cancelDatabaseStoreTransfer,
+  createStoreTransfer as createDatabaseStoreTransfer,
+  dispatchStoreTransfer as dispatchDatabaseStoreTransfer,
+  listStoreTransfers as listDatabaseStoreTransfers,
+  receiveStoreTransfer as receiveDatabaseStoreTransfer,
+  StoreTransferAuthorizationError,
+  StoreTransferNotFoundError,
+  storeTransfers,
   withAdvisoryLock,
   withSerializableTransaction,
   type JsonObject,
@@ -119,6 +173,8 @@ import {
   type WaitTicketDatabaseStatus,
   type WaitTicketEffectiveStatus,
   type WaitTicketRecord,
+  type WarehouseOutboundDatabaseStatus,
+  type WarehouseOutboundRequestRecord,
 } from '@idosi/database';
 import {
   and,
@@ -129,9 +185,11 @@ import {
   gte,
   ilike,
   inArray,
+  isNotNull,
   isNull,
   lt,
   lte,
+  ne,
   or,
   type SQL,
 } from 'drizzle-orm';
@@ -499,6 +557,79 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     };
   }
 
+  public async getOperationalSettings(
+    actor: AuthenticatedPrincipal,
+    historyLimit: number,
+  ): Promise<{
+    readonly current: OperationalSettingsVersion;
+    readonly history: readonly OperationalSettingsVersion[];
+  }> {
+    requirePostgresAdmin(actor);
+    const rows = await db
+      .select()
+      .from(operationalSettingsVersions)
+      .orderBy(desc(operationalSettingsVersions.version))
+      .limit(historyLimit);
+    const history = rows.map(operationalSettingsDto);
+    const current = history[0];
+    if (!current) throw new Error('Operational settings have not been initialized');
+    return { current, history };
+  }
+
+  public async updateOperationalSettings(
+    actor: AuthenticatedPrincipal,
+    input: UpdateOperationalSettingsRequest,
+    context: RequestContext,
+  ): Promise<OperationalSettingsVersion> {
+    requirePostgresAdmin(actor);
+    return db.transaction((tx) =>
+      withAdvisoryLock(tx, 'operational-settings', 'current', async () => {
+        const [currentRow] = await tx
+          .select()
+          .from(operationalSettingsVersions)
+          .orderBy(desc(operationalSettingsVersions.version))
+          .limit(1);
+        if (!currentRow) throw new Error('Operational settings have not been initialized');
+        if (currentRow.version !== input.expectedVersion) {
+          throw operationalSettingsVersionConflict();
+        }
+
+        const [createdRow] = await tx
+          .insert(operationalSettingsVersions)
+          .values({
+            version: currentRow.version + 1,
+            timezone: input.timezone,
+            snapshotTime: input.snapshotTime,
+            cutoffTime: input.cutoffTime,
+            maxRequestsPerStore: input.maxRequestsPerStore,
+            policyVersion: input.policyVersion,
+            idosiSyncIntervalMinutes: input.idosiSyncIntervalMinutes,
+            createdByUserId: actor.accountId,
+            requestId: context.requestId,
+          })
+          .returning();
+        if (!createdRow) throw new Error('Operational settings insert did not return a row');
+
+        const current = operationalSettingsDto(currentRow);
+        const created = operationalSettingsDto(createdRow);
+        await tx
+          .insert(auditLogs)
+          .values(
+            auditValue(
+              actor,
+              context,
+              'OPERATIONAL_SETTINGS_VERSION_CREATED',
+              'operational_settings_version',
+              created.id,
+              operationalSettingsJson(current),
+              operationalSettingsJson(created),
+            ),
+          );
+        return created;
+      }),
+    );
+  }
+
   public async listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>> {
     const predicates = [isNull(orderSessions.deletedAt)];
     if (query.status !== undefined) {
@@ -523,6 +654,230 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       data: rows.map(orderSessionDto),
       pagination: pagination(query.page, query.pageSize, totalRow?.value ?? 0),
     };
+  }
+
+  public async createOrderSession(
+    actor: AuthenticatedPrincipal,
+    input: CreateOrderSessionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<OrderSession>> {
+    return withOrderSessionErrors(async () => {
+      const result = await createDatabaseOrderSession(db, {
+        businessDate: input.businessDate,
+        requestOpensAt: new Date(input.requestOpensAt),
+        requestClosesAt: new Date(input.requestClosesAt),
+        allocationStartsAt: new Date(input.allocationStartsAt),
+        policyVersion: input.policyVersion,
+        createdByUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.id;
+      if (!resourceId) throw new Error('Idempotent order session creation has no resource id');
+      return {
+        data: await this.orderSessionById(resourceId),
+        replayed: result.replayed,
+      };
+    });
+  }
+
+  public async transitionOrderSession(
+    actor: AuthenticatedPrincipal,
+    sessionId: string,
+    input: TransitionOrderSessionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<OrderSession>> {
+    return withOrderSessionErrors(async () => {
+      const result = await transitionDatabaseOrderSession(db, {
+        orderSessionId: sessionId,
+        targetStatus: input.status.toLocaleLowerCase('en-US') as 'open' | 'closed' | 'cancelled',
+        expectedVersion: input.expectedVersion,
+        reason: input.reason ?? null,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.id;
+      if (!resourceId) throw new Error('Idempotent order session transition has no resource id');
+      return {
+        data: await this.orderSessionById(resourceId),
+        replayed: result.replayed,
+      };
+    });
+  }
+
+  public async listWarehouseBalances(
+    actor: AuthenticatedPrincipal,
+  ): Promise<WarehouseBalancesResponse> {
+    requireWarehouseActor(actor);
+    const asOf = new Date();
+    const rows = await db
+      .select({
+        productId: products.id,
+        onHandQuantity: warehouseBalances.onHandQuantity,
+        reservedQuantity: warehouseBalances.reservedQuantity,
+        version: warehouseBalances.version,
+        updatedAt: warehouseBalances.updatedAt,
+      })
+      .from(products)
+      .leftJoin(warehouseBalances, eq(warehouseBalances.productId, products.id))
+      .where(isNull(products.deletedAt))
+      .orderBy(asc(products.displayOrder), asc(products.sku));
+    return {
+      data: rows.map((row) => ({
+        productId: row.productId,
+        available: {
+          kind: 'UNIT',
+          quantity: (row.onHandQuantity ?? 0) - (row.reservedQuantity ?? 0),
+        },
+        reserved: { kind: 'UNIT', quantity: row.reservedQuantity ?? 0 },
+        version: row.version ?? 0,
+        updatedAt: (row.updatedAt ?? asOf).toISOString(),
+      })),
+      asOf: asOf.toISOString(),
+    };
+  }
+
+  public async listInboundReceipts(
+    actor: AuthenticatedPrincipal,
+    query: ListInboundReceiptsQuery,
+  ): Promise<Page<InboundReceipt>> {
+    requireWarehouseActor(actor);
+    const conditions: SQL[] = [
+      isNull(receipts.deletedAt),
+      isNotNull(receipts.supplierName),
+      isNotNull(receipts.receivedAt),
+    ];
+    if (query.status !== undefined) {
+      conditions.push(eq(receipts.status, databaseInboundReceiptStatus(query.status)));
+    }
+    if (query.receivedFrom !== undefined) {
+      conditions.push(gte(receipts.receivedAt, new Date(query.receivedFrom)));
+    }
+    if (query.receivedTo !== undefined) {
+      conditions.push(lte(receipts.receivedAt, new Date(query.receivedTo)));
+    }
+    if (query.supplier !== undefined) {
+      const supplier = `%${query.supplier.replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
+      conditions.push(ilike(receipts.supplierName, supplier));
+    }
+    const where = and(...conditions);
+    const [totalRow] = await db.select({ value: count() }).from(receipts).where(where);
+    const rows = await db
+      .select({ id: receipts.id })
+      .from(receipts)
+      .where(where)
+      .orderBy(desc(receipts.receivedAt), desc(receipts.createdAt), desc(receipts.id))
+      .limit(query.pageSize)
+      .offset((query.page - 1) * query.pageSize);
+    return {
+      data: await Promise.all(rows.map((row) => this.inboundReceiptDto(row.id))),
+      pagination: pagination(query.page, query.pageSize, totalRow?.value ?? 0),
+    };
+  }
+
+  public async getInboundReceipt(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+  ): Promise<InboundReceipt> {
+    requireWarehouseActor(actor);
+    return this.inboundReceiptDto(receiptId);
+  }
+
+  public async receiveSupplierInbound(
+    actor: AuthenticatedPrincipal,
+    input: CreateInboundReceiptRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<InboundReceipt>> {
+    requireWarehouseActor(actor);
+    return withSupplierInboundErrors(async () => {
+      const result = await receiveDatabaseSupplierInbound(db, {
+        referenceCode: input.referenceCode,
+        supplierName: input.supplierName,
+        receivedAt: new Date(input.receivedAt),
+        bags: input.bags,
+        receivedByUserId: actor.accountId,
+        actorRole: databaseWarehouseActorRole(actor),
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.receiptId;
+      if (!resourceId) throw new Error('Idempotent supplier receipt has no resource id.');
+      return { data: await this.inboundReceiptDto(resourceId), replayed: result.replayed };
+    });
+  }
+
+  public async confirmSupplierInboundCosts(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: ConfirmReceiptCostsRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<InboundReceipt>> {
+    requireWarehouseActor(actor);
+    return withSupplierInboundErrors(async () => {
+      const result = await confirmDatabaseSupplierInboundCosts(db, {
+        receiptId,
+        expectedVersion: input.expectedVersion,
+        productCosts: input.productCosts.map((cost) => ({
+          productId: cost.productId,
+          priceVndPerKg: BigInt(cost.priceVndPerKg),
+        })),
+        transportationFeeVnd: BigInt(input.transportationFeeVnd),
+        handlingFeeVnd: BigInt(input.handlingFeeVnd),
+        confirmedByUserId: actor.accountId,
+        actorRole: databaseWarehouseActorRole(actor),
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.receiptId;
+      if (!resourceId) throw new Error('Idempotent supplier cost confirmation has no resource id.');
+      return { data: await this.inboundReceiptDto(resourceId), replayed: result.replayed };
+    });
+  }
+
+  public async cancelSupplierInbound(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: CancelInboundReceiptRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<InboundReceipt>> {
+    requireWarehouseActor(actor);
+    return withSupplierInboundErrors(async () => {
+      const result = await cancelDatabaseSupplierInbound(db, {
+        receiptId,
+        expectedVersion: input.expectedVersion,
+        reason: input.reason,
+        cancelledByUserId: actor.accountId,
+        actorRole: databaseWarehouseActorRole(actor),
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.receiptId;
+      if (!resourceId)
+        throw new Error('Idempotent supplier receipt cancellation has no resource id.');
+      return { data: await this.inboundReceiptDto(resourceId), replayed: result.replayed };
+    });
   }
 
   public async listProducts(query: ListProductsQuery): Promise<Page<Product>> {
@@ -708,19 +1063,40 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
           .where(and(eq(products.id, productId), isNull(products.deletedAt)))
           .limit(1);
         if (!product) throw notFound('Không tìm thấy mặt hàng');
-        const [existing] = await tx
-          .select({ id: productConversions.id })
+        const [latest] = await tx
+          .select()
           .from(productConversions)
           .where(eq(productConversions.productId, productId))
+          .orderBy(desc(productConversions.version))
           .limit(1);
-        if (existing) {
-          throw conflict('Mặt hàng đã có lịch sử quy đổi; hãy tạo phiên bản kế tiếp bằng PATCH');
+        if (!latest && input.expectedVersion !== undefined && input.expectedVersion !== 0) {
+          throw new ApiError('VERSION_CONFLICT', 'Phiên bản tỷ lệ quy đổi đã thay đổi', 409);
+        }
+        if (latest) {
+          if (input.expectedVersion !== latest.version) {
+            throw new ApiError('VERSION_CONFLICT', 'Phiên bản tỷ lệ quy đổi đã thay đổi', 409);
+          }
+          if (latest.retiredAt === null) {
+            throw conflict(
+              'Tỷ lệ quy đổi hiện tại vẫn hoạt động; hãy tạo phiên bản kế tiếp bằng PATCH',
+            );
+          }
+          if (
+            input.effectiveFrom <= latest.effectiveFrom ||
+            (latest.effectiveTo !== null && input.effectiveFrom < latest.effectiveTo)
+          ) {
+            throw new ApiError(
+              'VALIDATION_ERROR',
+              'Ngày hiệu lực phải sau phiên bản gần nhất và không trước ngày phiên bản đó kết thúc',
+              400,
+            );
+          }
         }
         const [created] = await tx
           .insert(productConversions)
           .values({
             productId,
-            version: 1,
+            version: (latest?.version ?? 0) + 1,
             itemQuantity: input.itemQuantity,
             weightKilograms: input.weightKilograms,
             effectiveFrom: input.effectiveFrom,
@@ -737,10 +1113,10 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
             auditValue(
               actor,
               context,
-              'PRODUCT_CONVERSION_CREATED',
+              latest ? 'PRODUCT_CONVERSION_APPENDED' : 'PRODUCT_CONVERSION_CREATED',
               'product_conversion',
               result.id,
-              null,
+              latest ? conversionJson(conversionDto(latest)) : null,
               conversionJson(result),
             ),
           );
@@ -1064,6 +1440,70 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       }
       throw error;
     }
+  }
+
+  public async listWarehouseOutboundRequests(
+    actor: AuthenticatedPrincipal,
+    query: ListWarehouseOutboundRequestsQuery,
+  ): Promise<Page<WarehouseOutboundRequest>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const storeIds =
+      actor.role === 'ADMIN'
+        ? query.storeId === undefined
+          ? undefined
+          : [query.storeId]
+        : actor.role === 'STORE'
+          ? actor.storeId === null
+            ? []
+            : [actor.storeId]
+          : query.storeId === undefined
+            ? actor.assignedStoreIds
+            : [query.storeId];
+    const result = await listDatabaseWarehouseOutboundRequests(db, {
+      page: query.page,
+      pageSize: query.pageSize,
+      ...(storeIds === undefined ? {} : { storeIds }),
+      ...(query.status === undefined
+        ? {}
+        : { status: databaseWarehouseOutboundStatus(query.status) }),
+      ...(query.allocationRunId === undefined ? {} : { allocationRunId: query.allocationRunId }),
+    });
+    return {
+      data: result.data.map(warehouseOutboundRequestDto),
+      pagination: result.pagination,
+    };
+  }
+
+  public async dispatchWarehouseOutboundRequest(
+    actor: AuthenticatedPrincipal,
+    outboundRequestId: string,
+    input: DispatchWarehouseOutboundRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<WarehouseOutboundRequest>> {
+    if (actor.role === 'STORE') throw forbidden();
+    return withWarehouseOutboundErrors(async () => {
+      const current = await getDatabaseWarehouseOutboundRequest(db, outboundRequestId);
+      if (!canAccessStore(actor, current.storeId)) throw forbidden();
+      const result = await dispatchDatabaseWarehouseOutboundRequest(db, {
+        outboundRequestId,
+        expectedVersion: input.expectedVersion,
+        dispatchedByUserId: actor.accountId,
+        dispatchNote: input.dispatchNote ?? null,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.id;
+      if (!resourceId) throw new Error('Idempotent warehouse dispatch has no resource id');
+      return {
+        data: warehouseOutboundRequestDto(
+          await getDatabaseWarehouseOutboundRequest(db, resourceId),
+        ),
+        replayed: result.replayed,
+      };
+    });
   }
 
   public async listReceipts(
@@ -1463,6 +1903,167 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     });
   }
 
+  public async listStoreTransfers(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreTransfersQuery,
+  ): Promise<Page<StoreTransfer>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const filters = {
+      page: query.page,
+      pageSize: query.pageSize,
+      ...(query.sourceStoreId === undefined ? {} : { sourceStoreId: query.sourceStoreId }),
+      ...(query.destinationStoreId === undefined
+        ? {}
+        : { destinationStoreId: query.destinationStoreId }),
+      ...(query.productId === undefined ? {} : { productId: query.productId }),
+      ...(query.status === undefined ? {} : { status: databaseTransferStatus(query.status) }),
+    } as const;
+    if (actor.role === 'ADMIN') {
+      return storeTransferPage(
+        await listDatabaseStoreTransfers(db, {
+          ...filters,
+          ...(query.storeId === undefined ? {} : { storeId: query.storeId }),
+        }),
+      );
+    }
+    if (actor.role === 'STORE') {
+      if (actor.storeId === null) return emptyPage(query.page, query.pageSize);
+      return storeTransferPage(
+        await listDatabaseStoreTransfers(db, { ...filters, storeId: actor.storeId }),
+      );
+    }
+    if (query.storeId !== undefined) {
+      return storeTransferPage(
+        await listDatabaseStoreTransfers(db, { ...filters, storeId: query.storeId }),
+      );
+    }
+    return storeTransferPage(
+      await listDatabaseStoreTransfers(db, {
+        ...filters,
+        storeIds: [...new Set(actor.assignedStoreIds)],
+      }),
+    );
+  }
+
+  public async listStoreTransferDestinations(
+    actor: AuthenticatedPrincipal,
+  ): Promise<readonly Store[]> {
+    if (actor.role !== 'STORE' || actor.storeId === null) throw forbidden();
+    const rows = await db
+      .select()
+      .from(stores)
+      .where(
+        and(
+          isNull(stores.deletedAt),
+          eq(stores.isActive, true),
+          eq(stores.kind, 'retail'),
+          ne(stores.id, actor.storeId),
+        ),
+      )
+      .orderBy(asc(stores.displayOrder), asc(stores.code));
+    return rows.map(storeDto);
+  }
+
+  public async createStoreTransfer(
+    actor: AuthenticatedPrincipal,
+    input: CreateStoreTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreTransfer>> {
+    if (actor.role !== 'STORE' || actor.storeId !== input.sourceStoreId) throw forbidden();
+    return withStoreTransferErrors(async () => {
+      const result = await createDatabaseStoreTransfer(db, {
+        ...input,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.transferId;
+      if (!resourceId) throw new Error('Idempotent transfer creation has no resource id');
+      return { data: await this.storeTransferDto(resourceId), replayed: result.replayed };
+    });
+  }
+
+  public async dispatchStoreTransfer(
+    actor: AuthenticatedPrincipal,
+    transferId: string,
+    input: DispatchStoreTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreTransfer>> {
+    if (actor.role !== 'STORE' || actor.storeId === null) throw forbidden();
+    const current = await this.storeTransferDto(transferId);
+    if (current.sourceStoreId !== actor.storeId) throw forbidden();
+    return withStoreTransferErrors(async () => {
+      const result = await dispatchDatabaseStoreTransfer(db, {
+        transferId,
+        ...input,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.transferId;
+      if (!resourceId) throw new Error('Idempotent transfer dispatch has no resource id');
+      return { data: await this.storeTransferDto(resourceId), replayed: result.replayed };
+    });
+  }
+
+  public async receiveStoreTransfer(
+    actor: AuthenticatedPrincipal,
+    transferId: string,
+    input: ReceiveStoreTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreTransfer>> {
+    if (actor.role !== 'STORE' || actor.storeId === null) throw forbidden();
+    const current = await this.storeTransferDto(transferId);
+    if (current.destinationStoreId !== actor.storeId) throw forbidden();
+    return withStoreTransferErrors(async () => {
+      const result = await receiveDatabaseStoreTransfer(db, {
+        transferId,
+        ...input,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.transferId;
+      if (!resourceId) throw new Error('Idempotent transfer receipt has no resource id');
+      return { data: await this.storeTransferDto(resourceId), replayed: result.replayed };
+    });
+  }
+
+  public async cancelStoreTransfer(
+    actor: AuthenticatedPrincipal,
+    transferId: string,
+    input: CancelStoreTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreTransfer>> {
+    if (actor.role !== 'STORE' || actor.storeId === null) throw forbidden();
+    const current = await this.storeTransferDto(transferId);
+    if (current.sourceStoreId !== actor.storeId) throw forbidden();
+    return withStoreTransferErrors(async () => {
+      const result = await cancelDatabaseStoreTransfer(db, {
+        transferId,
+        ...input,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.transferId;
+      if (!resourceId) throw new Error('Idempotent transfer cancellation has no resource id');
+      return { data: await this.storeTransferDto(resourceId), replayed: result.replayed };
+    });
+  }
+
   public async listWaitTickets(
     actor: AuthenticatedPrincipal,
     query: ListWaitTicketsQuery,
@@ -1698,6 +2299,16 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     };
   }
 
+  private async orderSessionById(sessionId: string): Promise<OrderSession> {
+    const [row] = await db
+      .select()
+      .from(orderSessions)
+      .where(and(eq(orderSessions.id, sessionId), isNull(orderSessions.deletedAt)))
+      .limit(1);
+    if (!row) throw notFound('Không tìm thấy phiên đặt hàng');
+    return orderSessionDto(row);
+  }
+
   private async credentialsFromRow(
     account: typeof users.$inferSelect,
   ): Promise<AccountCredentials> {
@@ -1758,6 +2369,103 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       submittedByAccountId: request.requestedByUserId,
       submittedAt: (request.submittedAt ?? request.createdAt).toISOString(),
       cancelledAt: request.cancelledAt?.toISOString() ?? null,
+    };
+  }
+
+  private async inboundReceiptDto(receiptId: string): Promise<InboundReceipt> {
+    const [receipt] = await db
+      .select()
+      .from(receipts)
+      .where(and(eq(receipts.id, receiptId), isNull(receipts.deletedAt)))
+      .limit(1);
+    if (!receipt || receipt.supplierName === null || receipt.receivedAt === null) {
+      throw notFound('Không tìm thấy phiếu nhập nhà cung cấp');
+    }
+    const itemRows = await db
+      .select()
+      .from(receiptItems)
+      .where(eq(receiptItems.receiptId, receipt.id))
+      .orderBy(asc(receiptItems.productId));
+    if (itemRows.length === 0) throw new Error('Supplier receipt has no product lines.');
+    const bagRows = await db
+      .select({
+        id: receiptBagWeights.id,
+        receiptItemId: receiptBagWeights.receiptItemId,
+        labelCode: receiptBagWeights.labelCode,
+        netWeightKg: receiptBagWeights.netWeightKg,
+        createdAt: receiptBagWeights.createdAt,
+      })
+      .from(receiptBagWeights)
+      .where(
+        inArray(
+          receiptBagWeights.receiptItemId,
+          itemRows.map((item) => item.id),
+        ),
+      )
+      .orderBy(asc(receiptBagWeights.receiptItemId), asc(receiptBagWeights.bagNumber));
+    const itemById = new Map(itemRows.map((item) => [item.id, item]));
+    let totalWeightGrams = 0n;
+    const bags = bagRows.map((bag) => {
+      const item = itemById.get(bag.receiptItemId);
+      if (!item || bag.labelCode === null) {
+        throw new Error('Supplier receipt bag evidence is incomplete.');
+      }
+      totalWeightGrams += kilogramsToGramsExact(bag.netWeightKg);
+      return {
+        id: bag.id,
+        receiptId: receipt.id,
+        productId: item.productId,
+        bagCode: bag.labelCode,
+        weightKg: gramsToKilogramsExact(kilogramsToGramsExact(bag.netWeightKg)),
+        createdAt: bag.createdAt.toISOString(),
+      };
+    });
+    if (bags.length === 0) throw new Error('Supplier receipt has no bag evidence.');
+
+    const isConfirmed = receipt.status === 'confirmed';
+    const totalCostVnd =
+      receipt.totalGoodsCostVnd +
+      receipt.totalShippingCostVnd +
+      receipt.totalHandlingCostVnd +
+      receipt.totalOtherCostVnd;
+    if (isConfirmed && receipt.totalOtherCostVnd !== 0n) {
+      throw new Error('Inbound receipt contract cannot represent legacy other costs.');
+    }
+    if (isConfirmed && (receipt.confirmedByUserId === null || receipt.confirmedAt === null)) {
+      throw new Error('Confirmed supplier receipt is missing reviewer evidence.');
+    }
+    const productCosts = isConfirmed
+      ? itemRows.map((item) => {
+          if (item.pricePerKgVnd === null) {
+            throw new Error('Confirmed supplier receipt item is missing its price.');
+          }
+          return { productId: item.productId, priceVndPerKg: safeVnd(item.pricePerKgVnd) };
+        })
+      : [];
+
+    return {
+      id: receipt.id,
+      referenceCode: receipt.receiptNumber,
+      supplierName: receipt.supplierName,
+      status: inboundReceiptStatus(receipt.status),
+      bags,
+      totalWeightKg: gramsToKilogramsExact(totalWeightGrams),
+      cost: isConfirmed
+        ? {
+            productCosts,
+            transportationFeeVnd: safeVnd(receipt.totalShippingCostVnd),
+            handlingFeeVnd: safeVnd(receipt.totalHandlingCostVnd),
+            goodsCostVnd: safeVnd(receipt.totalGoodsCostVnd),
+            totalCostVnd: safeVnd(totalCostVnd),
+            confirmedByAccountId: receipt.confirmedByUserId as string,
+            confirmedAt: (receipt.confirmedAt as Date).toISOString(),
+          }
+        : null,
+      version: receipt.version,
+      receivedByAccountId: receipt.createdByUserId,
+      receivedAt: receipt.receivedAt.toISOString(),
+      createdAt: receipt.createdAt.toISOString(),
+      updatedAt: receipt.updatedAt.toISOString(),
     };
   }
 
@@ -1843,7 +2551,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         outboundRequestId: outboundRequestLines.outboundRequestId,
       })
       .from(storeInventoryBags)
-      .innerJoin(
+      .leftJoin(
         outboundRequestLines,
         eq(outboundRequestLines.id, storeInventoryBags.outboundRequestLineId),
       )
@@ -1856,6 +2564,8 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       storeId: row.bag.storeId,
       productId: row.bag.productId,
       sourceStoreReceiptBagId: row.bag.sourceStoreReceiptBagId,
+      sourceTransferId: row.bag.sourceTransferId,
+      sourceInventoryBagId: row.bag.sourceInventoryBagId,
       outboundRequestId: row.outboundRequestId,
       status: row.bag.status,
       initialWeightKg: row.bag.initialWeightKg,
@@ -1877,6 +2587,16 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       .limit(1);
     if (!outbound) throw notFound('Không tìm thấy phiếu xuất tại cửa hàng');
     return storeOutboundDto(outbound);
+  }
+
+  private async storeTransferDto(transferId: string): Promise<StoreTransfer> {
+    const [transfer] = await db
+      .select()
+      .from(storeTransfers)
+      .where(eq(storeTransfers.id, transferId))
+      .limit(1);
+    if (!transfer) throw notFound('Không tìm thấy phiếu chuyển kho');
+    return storeTransferDto(transfer);
   }
 
   private async authorizeMonthlyReportScope(
@@ -1991,6 +2711,8 @@ function inventoryBagDto(record: StoreInventoryBagRecord): StoreInventoryBag {
     productId: record.productId,
     sourceReceiptBagId: record.sourceStoreReceiptBagId,
     outboundOrderId: record.outboundRequestId,
+    sourceTransferId: record.sourceTransferId,
+    sourceInventoryBagId: record.sourceInventoryBagId,
     bagCode: record.bagCode,
     originalWeightKg: record.initialWeightKg,
     receivedWeightKg: record.initialWeightKg,
@@ -2049,6 +2771,38 @@ function storeOutboundPage(
   page: Awaited<ReturnType<typeof listDatabaseStoreOutbounds>>,
 ): Page<StoreOutbound> {
   return { data: page.data.map(storeOutboundDto), pagination: page.pagination };
+}
+
+function storeTransferDto(row: typeof storeTransfers.$inferSelect): StoreTransfer {
+  return {
+    id: row.id,
+    transferNumber: row.transferNumber,
+    sourceStoreId: row.sourceStoreId,
+    destinationStoreId: row.destinationStoreId,
+    sourceInventoryBagId: row.sourceInventoryBagId,
+    destinationInventoryBagId: row.destinationInventoryBagId,
+    productId: row.productId,
+    weightKg: row.weightKg,
+    costVnd: row.costVnd === null ? null : safeVnd(row.costVnd),
+    status: row.status.toUpperCase() as StoreTransfer['status'],
+    note: row.note,
+    cancellationReason: row.cancellationReason,
+    version: row.version,
+    createdByAccountId: row.createdByUserId,
+    dispatchedByAccountId: row.dispatchedByUserId,
+    receivedByAccountId: row.receivedByUserId,
+    createdAt: row.createdAt.toISOString(),
+    dispatchedAt: row.dispatchedAt?.toISOString() ?? null,
+    receivedAt: row.receivedAt?.toISOString() ?? null,
+    cancelledAt: row.cancelledAt?.toISOString() ?? null,
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function storeTransferPage(
+  page: Awaited<ReturnType<typeof listDatabaseStoreTransfers>>,
+): Page<StoreTransfer> {
+  return { data: page.data.map(storeTransferDto), pagination: page.pagination };
 }
 
 async function listAssignedStoreInventoryBags(
@@ -2194,6 +2948,12 @@ function databaseOutboundStatus(
   return status.toLocaleLowerCase('en-US') as typeof storeOutbounds.$inferSelect.status;
 }
 
+function databaseTransferStatus(
+  status: StoreTransfer['status'],
+): typeof storeTransfers.$inferSelect.status {
+  return status.toLocaleLowerCase('en-US') as typeof storeTransfers.$inferSelect.status;
+}
+
 function sessionDto(stored: typeof sessions.$inferSelect, account: AccountCredentials): Session {
   return {
     id: stored.id,
@@ -2242,6 +3002,25 @@ function adminAuditDto(row: typeof auditLogs.$inferSelect): AdminAuditLog {
     before: sanitizeAuditObject(row.before),
     after: sanitizeAuditObject(row.after),
     metadata: sanitizeAuditObject(row.metadata) ?? {},
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function operationalSettingsDto(
+  row: typeof operationalSettingsVersions.$inferSelect,
+): OperationalSettingsVersion {
+  return {
+    id: row.id,
+    version: row.version,
+    timezone: row.timezone as OperationalSettingsVersion['timezone'],
+    snapshotTime: row.snapshotTime.slice(0, 5),
+    cutoffTime: row.cutoffTime.slice(0, 5),
+    maxRequestsPerStore: row.maxRequestsPerStore,
+    policyVersion: row.policyVersion,
+    idosiSyncIntervalMinutes:
+      row.idosiSyncIntervalMinutes as OperationalSettingsVersion['idosiSyncIntervalMinutes'],
+    createdByAccountId: row.createdByUserId,
+    requestId: row.requestId,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -2353,8 +3132,59 @@ function orderSessionDto(row: typeof orderSessions.$inferSelect): OrderSession {
     requestOpensAt: (row.openedAt ?? row.createdAt).toISOString(),
     requestClosesAt: row.inventorySnapshotDueAt.toISOString(),
     allocationStartsAt: row.requestDeadlineAt.toISOString(),
+    policyVersion: row.policyVersion,
+    version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function databaseWarehouseOutboundStatus(
+  status: WarehouseOutboundRequest['status'],
+): WarehouseOutboundDatabaseStatus {
+  switch (status) {
+    case 'RESERVED':
+      return 'reserved';
+    case 'DISPATCHED':
+      return 'dispatched';
+    case 'PARTIALLY_RECEIVED':
+      return 'partially_received';
+    case 'RECEIVED':
+      return 'received';
+    case 'COMPLETED':
+      return 'completed';
+    case 'CANCELLED':
+      return 'cancelled';
+  }
+}
+
+function warehouseOutboundRequestDto(
+  record: WarehouseOutboundRequestRecord,
+): WarehouseOutboundRequest {
+  return {
+    id: record.id,
+    requestNumber: record.requestNumber,
+    storeId: record.storeId,
+    orderSessionId: record.orderSessionId,
+    allocationRunId: record.allocationRunId,
+    status: record.status.toUpperCase() as WarehouseOutboundRequest['status'],
+    requestedByAccountId: record.requestedByUserId,
+    dispatchedByAccountId: record.dispatchedByUserId,
+    lines: record.lines.map((line) => ({
+      id: line.id,
+      allocationLineId: line.allocationLineId,
+      productId: line.productId,
+      requestedUnits: line.requestedQuantity,
+      approvedUnits: line.approvedQuantity,
+      reservedUnits: line.reservedQuantity,
+      dispatchedUnits: line.dispatchedQuantity,
+      receivedUnits: line.receivedQuantity,
+    })),
+    version: record.version,
+    notes: record.notes,
+    dispatchedAt: record.dispatchedAt?.toISOString() ?? null,
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
   };
 }
 
@@ -2370,6 +3200,36 @@ function databaseReceiptStatus(
       return 'returned';
     case 'FINALIZED':
       return 'finalized';
+  }
+}
+
+function databaseInboundReceiptStatus(
+  status: InboundReceipt['status'],
+): typeof receipts.$inferSelect.status {
+  switch (status) {
+    case 'RECEIVED':
+      return 'draft';
+    case 'COST_PENDING':
+      return 'submitted';
+    case 'COST_CONFIRMED':
+      return 'confirmed';
+    case 'CANCELLED':
+      return 'cancelled';
+  }
+}
+
+function inboundReceiptStatus(
+  status: typeof receipts.$inferSelect.status,
+): InboundReceipt['status'] {
+  switch (status) {
+    case 'draft':
+      return 'RECEIVED';
+    case 'submitted':
+      return 'COST_PENDING';
+    case 'confirmed':
+      return 'COST_CONFIRMED';
+    case 'cancelled':
+      return 'CANCELLED';
   }
 }
 
@@ -2482,6 +3342,62 @@ function databasePriorityOfferResponse(
   };
 }
 
+async function withOrderSessionErrors<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error: unknown) {
+    if (error instanceof OrderSessionAuthorizationError) throw forbidden();
+    if (error instanceof OrderSessionNotFoundError) {
+      throw notFound('Không tìm thấy phiên đặt hàng');
+    }
+    if (error instanceof OrderSessionValidationError) {
+      throw new ApiError('VALIDATION_ERROR', error.message, 400);
+    }
+    if (error instanceof OrderSessionConflictError) {
+      throw new ApiError('VERSION_CONFLICT', error.message, 409);
+    }
+    if (error instanceof IdempotencyConflictError) {
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    }
+    if (error instanceof IdempotencyInProgressError) {
+      throw conflict('Yêu cầu cùng khóa idempotency đang được xử lý');
+    }
+    throw error;
+  }
+}
+
+async function withWarehouseOutboundErrors<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error: unknown) {
+    if (error instanceof WarehouseOutboundAuthorizationError) throw forbidden();
+    if (error instanceof WarehouseOutboundNotFoundError) {
+      throw notFound('Không tìm thấy lệnh xuất kho');
+    }
+    if (error instanceof WarehouseOutboundValidationError) {
+      throw new ApiError('INVALID_STATE_TRANSITION', error.message, 409);
+    }
+    if (error instanceof WarehouseOutboundConflictError) {
+      throw new ApiError('VERSION_CONFLICT', error.message, 409);
+    }
+    if (error instanceof IdempotencyConflictError) {
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    }
+    if (error instanceof IdempotencyInProgressError) {
+      throw conflict('Yêu cầu cùng khóa idempotency đang được xử lý');
+    }
+    throw error;
+  }
+}
+
 async function withWaitErrors<T>(operation: () => Promise<T>): Promise<T> {
   try {
     return await operation();
@@ -2525,6 +3441,74 @@ async function withStoreInventoryErrors<T>(operation: () => Promise<T>): Promise
     }
     if (error instanceof StoreOperationConflictError) {
       throw new ApiError('VERSION_CONFLICT', 'Dữ liệu tồn kho đã thay đổi, vui lòng tải lại', 409);
+    }
+    if (error instanceof IdempotencyConflictError) {
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    }
+    if (error instanceof IdempotencyInProgressError) {
+      throw conflict('Yêu cầu cùng khóa idempotency đang được xử lý');
+    }
+    throw error;
+  }
+}
+
+async function withStoreTransferErrors<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error: unknown) {
+    if (error instanceof StoreTransferAuthorizationError) throw forbidden();
+    if (error instanceof StoreTransferNotFoundError)
+      throw notFound('Không tìm thấy phiếu chuyển kho');
+    if (error instanceof StoreOperationValidationError) {
+      if (/exceeds available inventory/iu.test(error.message)) {
+        throw new ApiError('INSUFFICIENT_STOCK', 'Khối lượng chuyển vượt tồn kho khả dụng', 409);
+      }
+      throw new ApiError('VALIDATION_ERROR', error.message, 400);
+    }
+    if (error instanceof StoreOperationConflictError) {
+      throw new ApiError(
+        'VERSION_CONFLICT',
+        'Phiếu chuyển hoặc tồn kho đã thay đổi, vui lòng tải lại',
+        409,
+      );
+    }
+    if (error instanceof IdempotencyConflictError) {
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    }
+    if (error instanceof IdempotencyInProgressError) {
+      throw conflict('Yêu cầu cùng khóa idempotency đang được xử lý');
+    }
+    throw error;
+  }
+}
+
+async function withSupplierInboundErrors<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error: unknown) {
+    if (error instanceof SupplierInboundAuthorizationError) throw forbidden();
+    if (error instanceof SupplierInboundNotFoundError) {
+      throw notFound('Không tìm thấy phiếu nhập nhà cung cấp');
+    }
+    if (
+      error instanceof SupplierInboundValidationError ||
+      error instanceof StoreOperationValidationError
+    ) {
+      throw new ApiError('VALIDATION_ERROR', error.message, 400);
+    }
+    if (error instanceof SupplierInboundConflictError) {
+      if (/version|changed during/iu.test(error.message)) {
+        throw new ApiError('VERSION_CONFLICT', error.message, 409);
+      }
+      throw conflict(error.message);
     }
     if (error instanceof IdempotencyConflictError) {
       throw new ApiError(
@@ -2638,6 +3622,22 @@ function accountJson(account: Account): JsonObject {
   };
 }
 
+function operationalSettingsJson(settings: OperationalSettingsVersion): JsonObject {
+  return {
+    id: settings.id,
+    version: settings.version,
+    timezone: settings.timezone,
+    snapshotTime: settings.snapshotTime,
+    cutoffTime: settings.cutoffTime,
+    maxRequestsPerStore: settings.maxRequestsPerStore,
+    policyVersion: settings.policyVersion,
+    idosiSyncIntervalMinutes: settings.idosiSyncIntervalMinutes,
+    createdByAccountId: settings.createdByAccountId,
+    requestId: settings.requestId,
+    createdAt: settings.createdAt,
+  };
+}
+
 function databaseAccountRole(role: Account['role']): 'admin' | 'htkd' | 'store' {
   return role.toLocaleLowerCase('en-US') as 'admin' | 'htkd' | 'store';
 }
@@ -2648,6 +3648,15 @@ function databaseAccountStatus(status: Account['status']): 'active' | 'locked' |
 
 function requirePostgresAdmin(actor: AuthenticatedPrincipal): void {
   if (actor.role !== 'ADMIN') throw forbidden();
+}
+
+function requireWarehouseActor(actor: AuthenticatedPrincipal): void {
+  if (actor.role === 'STORE') throw forbidden();
+}
+
+function databaseWarehouseActorRole(actor: AuthenticatedPrincipal): 'admin' | 'htkd' {
+  requireWarehouseActor(actor);
+  return actor.role === 'ADMIN' ? 'admin' : 'htkd';
 }
 
 function assertPostgresAccountVersion(actual: number, expected: number | undefined): void {
@@ -2669,6 +3678,10 @@ function requireAccountStatusVersion(
 
 function accountVersionConflict(): ApiError {
   return new ApiError('VERSION_CONFLICT', 'Tài khoản đã thay đổi, vui lòng tải lại', 409);
+}
+
+function operationalSettingsVersionConflict(): ApiError {
+  return new ApiError('VERSION_CONFLICT', 'Cấu hình vận hành đã thay đổi, vui lòng tải lại', 409);
 }
 
 function productJson(product: Product): JsonObject {

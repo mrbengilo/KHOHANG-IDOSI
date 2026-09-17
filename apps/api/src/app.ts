@@ -2,20 +2,28 @@ import { randomUUID } from 'node:crypto';
 
 import {
   AccountParamsSchema,
+  CancelInboundReceiptRequestSchema,
   CancelWaitTicketRequestSchema,
   CreateAccountRequestSchema,
+  CreateOrderSessionRequestSchema,
+  CreateInboundReceiptRequestSchema,
   CreateProductRequestSchema,
   CreateProductConversionRequestSchema,
   CreateStoreOrderRequestSchema,
   CreateStoreOutboundRequestSchema,
   CreateStoreRequestSchema,
   DeclareStoreReceiptRequestSchema,
+  DispatchWarehouseOutboundRequestSchema,
+  ConfirmReceiptCostsRequestSchema,
   FinalizeReceiptRequestSchema,
+  GetOperationalSettingsQuerySchema,
   IdempotencyHeadersSchema,
   IsoDateSchema,
+  InboundReceiptParamsSchema,
   ListOrderSessionsQuerySchema,
   ListAccountsQuerySchema,
   ListAuditLogsQuerySchema,
+  ListInboundReceiptsQuerySchema,
   ListPriorityOffersQuerySchema,
   ListProductsQuerySchema,
   ListProductConversionsQuerySchema,
@@ -27,9 +35,11 @@ import {
   ListStoreOrderRequestsQuerySchema,
   ListStoresQuerySchema,
   ListWaitTicketsQuerySchema,
+  ListWarehouseOutboundRequestsQuerySchema,
   LoginRequestSchema,
   MonthlyOperationalReportQuerySchema,
   OpenStoreInventoryBagRequestSchema,
+  OrderSessionParamsSchema,
   ProductParamsSchema,
   ProductConversionParamsSchema,
   PriorityOfferParamsSchema,
@@ -43,10 +53,19 @@ import {
   StoreOutboundParamsSchema,
   WaitTicketHistoryQuerySchema,
   WaitTicketParamsSchema,
+  WarehouseOutboundRequestParamsSchema,
   DeleteProductConversionRequestSchema,
   UpdateProductConversionRequestSchema,
   UpdateProductRequestSchema,
   UpdateAccountRequestSchema,
+  TransitionOrderSessionRequestSchema,
+  ListStoreTransfersQuerySchema,
+  CreateStoreTransferRequestSchema,
+  DispatchStoreTransferRequestSchema,
+  ReceiveStoreTransferRequestSchema,
+  CancelStoreTransferRequestSchema,
+  StoreTransferParamsSchema,
+  UpdateOperationalSettingsRequestSchema,
   type ApiErrorCode,
   type AuthenticatedPrincipal,
   type Session,
@@ -73,6 +92,8 @@ import {
 const SESSION_COOKIE = 'idosi_session';
 const DEFAULT_SESSION_TTL_MS = 12 * 60 * 60 * 1_000;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const DEFAULT_IDOSI_INTEGRATION_ENDPOINT =
+  'https://idosi.io.vn/api/integrations/warehouse/v1/order-statistics';
 
 const StatisticsQuerySchema = z
   .object({
@@ -94,6 +115,8 @@ export interface CreateApiOptions {
   readonly logger?: boolean | { readonly level: string };
   readonly trustProxy?: FastifyServerOptions['trustProxy'];
   readonly loginRateLimit?: LoginRateLimitOptions;
+  readonly idosiIntegrationEndpoint?: string;
+  readonly idosiIntegrationSecretConfigured?: boolean;
 }
 
 export async function createApi(options: CreateApiOptions = {}): Promise<FastifyInstance> {
@@ -104,6 +127,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
   }
   const dummyPasswordHash = await hashPassword(randomUUID());
   const loginRateLimiter = new LoginRateLimiter(options.loginRateLimit);
+  const idosiIntegration = integrationStatus(options);
   const fastifyOptions: FastifyServerOptions = {
     logger: options.logger ?? false,
     bodyLimit: 1_048_576,
@@ -290,6 +314,25 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return repository.listAuditLogs(session.principal, query);
   });
 
+  app.get('/api/v1/admin/operational-settings', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const query = GetOperationalSettingsQuerySchema.parse(request.query);
+    const settings = await repository.getOperationalSettings(session.principal, query.historyLimit);
+    reply.header('cache-control', 'no-store');
+    return { data: { ...settings, integration: idosiIntegration } };
+  });
+
+  app.put('/api/v1/admin/operational-settings', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const input = UpdateOperationalSettingsRequestSchema.parse(request.body);
+    await repository.updateOperationalSettings(session.principal, input, requestContext(request));
+    const settings = await repository.getOperationalSettings(session.principal, 10);
+    reply.header('cache-control', 'no-store');
+    return { data: { ...settings, integration: idosiIntegration } };
+  });
+
   app.get('/api/v1/products', async (request) => {
     await authenticate(request, repository);
     const query = ListProductsQuerySchema.parse(request.query);
@@ -300,6 +343,40 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     await authenticate(request, repository);
     const query = ListOrderSessionsQuerySchema.parse(request.query);
     return repository.listOrderSessions(query);
+  });
+
+  app.post('/api/v1/order-sessions', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = CreateOrderSessionRequestSchema.parse(request.body);
+    const result = await repository.createOrderSession(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CREATE_ORDER_SESSION', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
+  });
+
+  app.post('/api/v1/order-sessions/:sessionId/transition', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { sessionId } = OrderSessionParamsSchema.parse(request.params);
+    const input = TransitionOrderSessionRequestSchema.parse(request.body);
+    const result = await repository.transitionOrderSession(
+      session.principal,
+      sessionId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'TRANSITION_ORDER_SESSION', sessionId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
   });
 
   app.post('/api/v1/products', async (request, reply) => {
@@ -388,6 +465,93 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     };
   });
 
+  app.get('/api/v1/warehouse-balances', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    return repository.listWarehouseBalances(session.principal);
+  });
+
+  app.get('/api/v1/inbound-receipts', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const query = ListInboundReceiptsQuerySchema.parse(request.query);
+    return repository.listInboundReceipts(session.principal, query);
+  });
+
+  app.get('/api/v1/inbound-receipts/:receiptId', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const { receiptId } = InboundReceiptParamsSchema.parse(request.params);
+    return { data: await repository.getInboundReceipt(session.principal, receiptId) };
+  });
+
+  app.post('/api/v1/inbound-receipts', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = CreateInboundReceiptRequestSchema.parse(request.body);
+    const result = await repository.receiveSupplierInbound(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({
+        action: 'RECEIVE_SUPPLIER_INBOUND',
+        ...input,
+        bags: [...input.bags].sort(
+          (left, right) =>
+            left.productId.localeCompare(right.productId) ||
+            left.bagCode.localeCompare(right.bagCode),
+        ),
+      }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
+  });
+
+  app.post('/api/v1/inbound-receipts/:receiptId/confirm-costs', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { receiptId } = InboundReceiptParamsSchema.parse(request.params);
+    const input = ConfirmReceiptCostsRequestSchema.parse(request.body);
+    const result = await repository.confirmSupplierInboundCosts(
+      session.principal,
+      receiptId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({
+        action: 'CONFIRM_SUPPLIER_INBOUND_COSTS',
+        receiptId,
+        ...input,
+        productCosts: [...input.productCosts].sort((left, right) =>
+          left.productId.localeCompare(right.productId),
+        ),
+      }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.post('/api/v1/inbound-receipts/:receiptId/cancel', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { receiptId } = InboundReceiptParamsSchema.parse(request.params);
+    const input = CancelInboundReceiptRequestSchema.parse(request.body);
+    const result = await repository.cancelSupplierInbound(
+      session.principal,
+      receiptId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CANCEL_SUPPLIER_INBOUND', receiptId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
   app.get('/api/v1/stores', async (request) => {
     const session = await authenticate(request, repository);
     const query = ListStoresQuerySchema.parse(request.query);
@@ -426,6 +590,30 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     );
     reply.header('idempotency-replayed', String(submitted.replayed));
     return reply.status(201).send({ data: submitted.data });
+  });
+
+  app.get('/api/v1/outbound-requests', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = ListWarehouseOutboundRequestsQuerySchema.parse(request.query);
+    return repository.listWarehouseOutboundRequests(session.principal, query);
+  });
+
+  app.post('/api/v1/outbound-requests/:outboundRequestId/dispatch', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { outboundRequestId } = WarehouseOutboundRequestParamsSchema.parse(request.params);
+    const input = DispatchWarehouseOutboundRequestSchema.parse(request.body);
+    const result = await repository.dispatchWarehouseOutboundRequest(
+      session.principal,
+      outboundRequestId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'DISPATCH_WAREHOUSE_OUTBOUND', outboundRequestId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
   });
 
   app.get('/api/v1/store-receipts', async (request) => {
@@ -610,6 +798,88 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return reply.send({ data: result.data });
   });
 
+  app.get('/api/v1/store-transfers', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = ListStoreTransfersQuerySchema.parse(request.query);
+    return repository.listStoreTransfers(session.principal, query);
+  });
+
+  app.get('/api/v1/store-transfers/destinations', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    return { data: await repository.listStoreTransferDestinations(session.principal) };
+  });
+
+  app.post('/api/v1/store-transfers', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = CreateStoreTransferRequestSchema.parse(request.body);
+    const result = await repository.createStoreTransfer(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CREATE_STORE_TRANSFER', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
+  });
+
+  app.post('/api/v1/store-transfers/:transferId/dispatch', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { transferId } = StoreTransferParamsSchema.parse(request.params);
+    const input = DispatchStoreTransferRequestSchema.parse(request.body);
+    const result = await repository.dispatchStoreTransfer(
+      session.principal,
+      transferId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'DISPATCH_STORE_TRANSFER', transferId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.post('/api/v1/store-transfers/:transferId/receive', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { transferId } = StoreTransferParamsSchema.parse(request.params);
+    const input = ReceiveStoreTransferRequestSchema.parse(request.body);
+    const result = await repository.receiveStoreTransfer(
+      session.principal,
+      transferId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'RECEIVE_STORE_TRANSFER', transferId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.post('/api/v1/store-transfers/:transferId/cancel', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { transferId } = StoreTransferParamsSchema.parse(request.params);
+    const input = CancelStoreTransferRequestSchema.parse(request.body);
+    const result = await repository.cancelStoreTransfer(
+      session.principal,
+      transferId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CANCEL_STORE_TRANSFER', transferId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
   app.get('/api/v1/wait-tickets', async (request) => {
     const session = await authenticate(request, repository);
     const query = ListWaitTicketsQuerySchema.parse(request.query);
@@ -764,7 +1034,7 @@ function applyCors(
   if (!isAllowedOrigin(requestOrigin, configuredOrigin)) return;
   reply.header('access-control-allow-origin', requestOrigin);
   reply.header('access-control-allow-credentials', 'true');
-  reply.header('access-control-allow-methods', 'GET,POST,PATCH,DELETE,OPTIONS');
+  reply.header('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
   reply.header('access-control-allow-headers', 'content-type,idempotency-key,x-request-id');
   reply.header('vary', 'Origin');
 }
@@ -777,6 +1047,27 @@ function isAllowedOrigin(
     ? configuredOrigin
     : [configuredOrigin ?? 'http://localhost:5173'];
   return allowed.includes(requestOrigin);
+}
+
+function integrationStatus(options: CreateApiOptions): {
+  readonly endpoint: string;
+  readonly status: 'CONFIGURED' | 'NOT_CONFIGURED';
+} {
+  const endpoint = options.idosiIntegrationEndpoint?.trim() || DEFAULT_IDOSI_INTEGRATION_ENDPOINT;
+  if (endpoint.length > 2_048) throw new Error('IDOSI integration endpoint is too long');
+  let parsed: URL;
+  try {
+    parsed = new URL(endpoint);
+  } catch {
+    throw new Error('IDOSI integration endpoint must be an absolute URL');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('IDOSI integration endpoint must use HTTP or HTTPS');
+  }
+  return {
+    endpoint,
+    status: options.idosiIntegrationSecretConfigured ? 'CONFIGURED' : 'NOT_CONFIGURED',
+  };
 }
 
 function zodFieldErrors(error: ZodError): Record<string, string[]> {
@@ -864,6 +1155,21 @@ function openApiDocument(): Record<string, unknown> {
           responses: { '200': { description: 'Filtered immutable audit history (ADMIN only)' } },
         },
       },
+      '/api/v1/admin/operational-settings': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'Current and versioned operational settings (ADMIN only)' },
+          },
+        },
+        put: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'Created immutable operational settings version (ADMIN only)' },
+            '409': { description: 'Optimistic settings version conflict' },
+          },
+        },
+      },
       '/api/v1/products': {
         get: { security: cookieSecurity, responses: { '200': { description: 'Products' } } },
         post: {
@@ -884,7 +1190,9 @@ function openApiDocument(): Record<string, unknown> {
         },
         post: {
           security: cookieSecurity,
-          responses: { '201': { description: 'Initial conversion' } },
+          responses: {
+            '201': { description: 'Initial or resumed immutable conversion version' },
+          },
         },
       },
       '/api/v1/product-conversions': {
@@ -917,10 +1225,86 @@ function openApiDocument(): Record<string, unknown> {
           responses: { '201': { description: 'Submitted or replayed request' } },
         },
       },
+      '/api/v1/outbound-requests': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Scoped allocation-backed warehouse outbounds' } },
+        },
+      },
+      '/api/v1/outbound-requests/{outboundRequestId}/dispatch': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Dispatched or replayed warehouse outbound' } },
+        },
+      },
       '/api/v1/order-sessions': {
         get: {
           security: cookieSecurity,
           responses: { '200': { description: 'Paginated order sessions' } },
+        },
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '201': { description: 'Created or replayed order session (ADMIN only)' } },
+        },
+      },
+      '/api/v1/order-sessions/{sessionId}/transition': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Versioned order session transition' } },
+        },
+      },
+      '/api/v1/warehouse-balances': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Current warehouse balances (ADMIN/HTKD)' } },
+        },
+      },
+      '/api/v1/inbound-receipts': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Paginated supplier inbound receipts' } },
+        },
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '201': { description: 'Received supplier bags and increased warehouse stock' },
+          },
+        },
+      },
+      '/api/v1/inbound-receipts/{receiptId}': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Supplier inbound receipt detail' } },
+        },
+      },
+      '/api/v1/inbound-receipts/{receiptId}/confirm-costs': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Confirmed exact supplier receipt costs' } },
+        },
+      },
+      '/api/v1/inbound-receipts/{receiptId}/cancel': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Cancelled pending supplier stock receipt' } },
         },
       },
       '/api/v1/store-receipts': {
@@ -1009,6 +1393,52 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: { '200': { description: 'Approved, rejected or replayed store outbound' } },
+        },
+      },
+      '/api/v1/store-transfers': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Transfers visible to the caller store scope' } },
+        },
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '201': { description: 'Created or replayed draft store transfer' } },
+        },
+      },
+      '/api/v1/store-transfers/destinations': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Active retail transfer destinations' } },
+        },
+      },
+      '/api/v1/store-transfers/{transferId}/dispatch': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Dispatched transfer and deducted source stock' } },
+        },
+      },
+      '/api/v1/store-transfers/{transferId}/receive': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Received transfer and created destination lot' } },
+        },
+      },
+      '/api/v1/store-transfers/{transferId}/cancel': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Cancelled an undispatched draft transfer' } },
         },
       },
       '/api/v1/wait-tickets': {

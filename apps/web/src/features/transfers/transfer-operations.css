@@ -1,0 +1,227 @@
+.transfer-create,
+.transfer-list,
+.transfer-card,
+.transfer-card-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.transfer-create .button,
+.transfer-card .button,
+.transfer-list .button,
+.transfer-filter select,
+.transfer-create input,
+.transfer-create select,
+.transfer-card__actions input {
+  min-height: 44px;
+}
+
+.transfer-create .section-heading > svg,
+.transfer-oversight > svg {
+  flex: 0 0 auto;
+  color: var(--success);
+}
+
+.transfer-create__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.transfer-create__grid label,
+.transfer-card__actions label,
+.transfer-filter {
+  display: grid;
+  gap: 0.4rem;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 760;
+}
+
+.transfer-create__note {
+  grid-column: 1 / -1;
+}
+
+.transfer-create input,
+.transfer-create select,
+.transfer-card__actions input,
+.transfer-filter select {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  background: var(--surface);
+  color: var(--text);
+  padding: 0.65rem 0.75rem;
+  font: inherit;
+}
+
+.transfer-create small {
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.transfer-create > .button {
+  justify-self: start;
+}
+
+.transfer-oversight {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.transfer-oversight p {
+  margin: 0.2rem 0 0;
+  color: var(--text-secondary);
+}
+
+.transfer-filter {
+  min-width: min(100%, 14rem);
+}
+
+.transfer-card-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 27rem), 1fr));
+}
+
+.transfer-card {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 0.9rem;
+  background: var(--surface);
+  padding: 1rem;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.transfer-card:hover {
+  border-color: color-mix(in srgb, var(--brand) 35%, var(--border));
+  box-shadow: 0 0.45rem 1.2rem rgb(15 23 42 / 7%);
+  transform: translateY(-1px);
+}
+
+.transfer-card > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.transfer-card > header > div {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.transfer-card > header strong {
+  overflow-wrap: anywhere;
+}
+
+.transfer-card > header span,
+.transfer-card__note,
+.transfer-card__reason {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.transfer-flow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  overflow-x: auto;
+  color: var(--muted);
+}
+
+.transfer-flow__step {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 740;
+}
+
+.transfer-flow__step--done {
+  color: var(--success);
+}
+
+.transfer-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem 1rem;
+  margin: 0;
+}
+
+.transfer-card dl > div {
+  min-width: 0;
+}
+
+.transfer-card dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.transfer-card dd {
+  margin: 0.2rem 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 0.83rem;
+  font-weight: 720;
+}
+
+.transfer-card__note,
+.transfer-card__reason {
+  margin: 0;
+  border-top: 1px solid var(--border);
+  padding-top: 0.7rem;
+}
+
+.transfer-card__reason {
+  color: var(--danger);
+}
+
+.transfer-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.85rem;
+}
+
+.transfer-card__actions label {
+  flex: 1 1 100%;
+}
+
+@media (max-width: 720px) {
+  .transfer-create__grid,
+  .transfer-card dl {
+    grid-template-columns: 1fr;
+  }
+
+  .transfer-create__note {
+    grid-column: auto;
+  }
+
+  .transfer-create > .button,
+  .transfer-card__actions,
+  .transfer-card__actions .button,
+  .transfer-filter {
+    width: 100%;
+  }
+
+  .transfer-oversight {
+    align-items: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transfer-card {
+    transition: none;
+  }
+
+  .transfer-card:hover {
+    transform: none;
+  }
+}

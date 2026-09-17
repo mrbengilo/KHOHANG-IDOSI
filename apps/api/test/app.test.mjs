@@ -32,6 +32,134 @@ describe('KHOHANG-IDOSI API', () => {
     assert.ok(specification.json().paths['/api/v1/store-receipt-sources']);
     assert.ok(specification.json().paths['/api/v1/store-inventory-bags']);
     assert.ok(specification.json().paths['/api/v1/store-outbounds/{outboundId}/review']);
+    assert.ok(specification.json().paths['/api/v1/order-sessions/{sessionId}/transition']);
+    assert.ok(specification.json().paths['/api/v1/outbound-requests/{outboundRequestId}/dispatch']);
+    assert.ok(specification.json().paths['/api/v1/store-transfers/destinations']);
+    assert.ok(specification.json().paths['/api/v1/store-transfers/{transferId}/receive']);
+    assert.ok(specification.json().paths['/api/v1/warehouse-balances']);
+    assert.ok(specification.json().paths['/api/v1/inbound-receipts']);
+    assert.ok(specification.json().paths['/api/v1/inbound-receipts/{receiptId}/confirm-costs']);
+    assert.ok(specification.json().paths['/api/v1/admin/operational-settings']);
+  });
+
+  test('versions operational settings for ADMIN without accepting or returning secrets', async () => {
+    await app.close();
+    app = await createApi({
+      repository,
+      corsOrigin: 'http://localhost:5173',
+      idosiIntegrationEndpoint:
+        'https://idosi.io.vn/api/integrations/warehouse/v1/order-statistics',
+      idosiIntegrationSecretConfigured: true,
+    });
+    const adminCookie = cookieOf(await login('admin'));
+    const storeCookie = cookieOf(await login('ds_nvt'));
+
+    const denied = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/operational-settings',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(denied.statusCode, 403);
+
+    const initial = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/operational-settings?historyLimit=10',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(initial.statusCode, 200);
+    assert.equal(initial.headers['cache-control'], 'no-store');
+    assert.equal(initial.json().data.current.version, 1);
+    assert.equal(initial.json().data.current.snapshotTime, '08:00');
+    assert.equal(initial.json().data.current.cutoffTime, '09:00');
+    assert.deepEqual(initial.json().data.integration, {
+      endpoint: 'https://idosi.io.vn/api/integrations/warehouse/v1/order-statistics',
+      status: 'CONFIGURED',
+    });
+    assert.equal(JSON.stringify(initial.json()).includes('integrationSecret'), false);
+    assert.equal(JSON.stringify(initial.json()).includes('secretConfigured'), false);
+
+    const invalidSchedule = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/operational-settings',
+      headers: { cookie: adminCookie },
+      payload: {
+        expectedVersion: 1,
+        timezone: 'Asia/Ho_Chi_Minh',
+        snapshotTime: '09:00',
+        cutoffTime: '08:00',
+        maxRequestsPerStore: 2,
+        policyVersion: 'ALLOC-v1.3',
+        idosiSyncIntervalMinutes: 15,
+      },
+    });
+    assert.equal(invalidSchedule.statusCode, 400);
+    assert.equal(invalidSchedule.json().error.code, 'VALIDATION_ERROR');
+
+    const secretInput = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/operational-settings',
+      headers: { cookie: adminCookie },
+      payload: {
+        expectedVersion: 1,
+        timezone: 'Asia/Ho_Chi_Minh',
+        snapshotTime: '08:00',
+        cutoffTime: '09:00',
+        maxRequestsPerStore: 2,
+        policyVersion: 'ALLOC-v1.3',
+        idosiSyncIntervalMinutes: 15,
+        integrationSecret: 'must-not-be-accepted',
+      },
+    });
+    assert.equal(secretInput.statusCode, 400);
+
+    const updated = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/operational-settings',
+      headers: { cookie: adminCookie, 'x-request-id': 'settings-update-request' },
+      payload: {
+        expectedVersion: 1,
+        timezone: 'Asia/Ho_Chi_Minh',
+        snapshotTime: '07:45',
+        cutoffTime: '08:45',
+        maxRequestsPerStore: 3,
+        policyVersion: 'ALLOC-v1.3',
+        idosiSyncIntervalMinutes: 30,
+      },
+    });
+    assert.equal(updated.statusCode, 200);
+    assert.equal(updated.json().data.current.version, 2);
+    assert.equal(updated.json().data.current.createdByAccountId, MEMORY_SEED_IDS.adminAccount);
+    assert.equal(updated.json().data.current.requestId, 'settings-update-request');
+    assert.deepEqual(
+      updated.json().data.history.map((item) => item.version),
+      [2, 1],
+    );
+
+    const stale = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/operational-settings',
+      headers: { cookie: adminCookie },
+      payload: {
+        expectedVersion: 1,
+        timezone: 'Asia/Ho_Chi_Minh',
+        snapshotTime: '08:00',
+        cutoffTime: '09:00',
+        maxRequestsPerStore: 2,
+        policyVersion: 'ALLOC-v1.4',
+        idosiSyncIntervalMinutes: 15,
+      },
+    });
+    assert.equal(stale.statusCode, 409);
+    assert.equal(stale.json().error.code, 'VERSION_CONFLICT');
+
+    const audit = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/audit-logs?action=OPERATIONAL_SETTINGS_VERSION_CREATED',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(audit.statusCode, 200);
+    assert.equal(audit.json().pagination.totalItems, 1);
+    assert.equal(audit.json().data[0].requestId, 'settings-update-request');
   });
 
   test('uses scrypt and issues an opaque HttpOnly session without exposing secrets', async () => {
@@ -304,6 +432,96 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(rejected.json().error.code, 'SESSION_NOT_OPEN');
   });
 
+  test('creates and transitions an order session with idempotency and optimistic locking', async () => {
+    await app.close();
+    const fixedNow = new Date();
+    const dateParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(fixedNow);
+    const businessDate = `${dateParts.find((part) => part.type === 'year')?.value}-${dateParts.find((part) => part.type === 'month')?.value}-${dateParts.find((part) => part.type === 'day')?.value}`;
+    repository = await MemoryWarehouseRepository.create({
+      bootstrapPassword: PASSWORD,
+      now: () => fixedNow,
+    });
+    app = await createApi({ repository, corsOrigin: 'http://localhost:5173' });
+    const adminCookie = cookieOf(await login('admin'));
+    const storeCookie = cookieOf(await login('ds_nvt'));
+
+    const cancelledSeed = await mutateSession(
+      adminCookie,
+      `/api/v1/order-sessions/${MEMORY_SEED_IDS.orderSession}/transition`,
+      'cancel-seeded-session',
+      { status: 'CANCELLED', expectedVersion: 0, reason: 'Thay bằng lịch vận hành mới' },
+    );
+    assert.equal(cancelledSeed.statusCode, 200);
+    assert.equal(cancelledSeed.json().data.status, 'CANCELLED');
+    assert.equal(cancelledSeed.json().data.version, 1);
+
+    const createPayload = {
+      businessDate,
+      requestOpensAt: `${businessDate}T00:00:00+07:00`,
+      requestClosesAt: `${businessDate}T23:59:58+07:00`,
+      allocationStartsAt: `${businessDate}T23:59:59+07:00`,
+    };
+    const denied = await app.inject({
+      method: 'POST',
+      url: '/api/v1/order-sessions',
+      headers: { cookie: storeCookie, 'idempotency-key': 'store-session-create' },
+      payload: createPayload,
+    });
+    assert.equal(denied.statusCode, 403);
+
+    const created = await mutateSession(
+      adminCookie,
+      '/api/v1/order-sessions',
+      'create-session-20260918',
+      createPayload,
+    );
+    const replay = await mutateSession(
+      adminCookie,
+      '/api/v1/order-sessions',
+      'create-session-20260918',
+      createPayload,
+    );
+    assert.equal(created.statusCode, 201);
+    assert.equal(created.json().data.status, 'SCHEDULED');
+    assert.equal(created.json().data.policyVersion, 'idosi-round-robin-p0a-p3-v1');
+    assert.equal(replay.headers['idempotency-replayed'], 'true');
+    assert.equal(replay.json().data.id, created.json().data.id);
+
+    const sessionId = created.json().data.id;
+    const opened = await mutateSession(
+      adminCookie,
+      `/api/v1/order-sessions/${sessionId}/transition`,
+      'open-session-20260918',
+      { status: 'OPEN', expectedVersion: 0 },
+    );
+    assert.equal(opened.statusCode, 200);
+    assert.equal(opened.json().data.version, 1);
+
+    const stale = await mutateSession(
+      adminCookie,
+      `/api/v1/order-sessions/${sessionId}/transition`,
+      'close-stale-session-20260918',
+      { status: 'CLOSED', expectedVersion: 0 },
+    );
+    assert.equal(stale.statusCode, 409);
+    assert.equal(stale.json().error.code, 'VERSION_CONFLICT');
+
+    const closed = await mutateSession(
+      adminCookie,
+      `/api/v1/order-sessions/${sessionId}/transition`,
+      'close-session-20260918',
+      { status: 'CLOSED', expectedVersion: 1 },
+    );
+    assert.equal(closed.statusCode, 200);
+    assert.equal(closed.json().data.status, 'CLOSED');
+    assert.equal(closed.json().data.version, 2);
+  });
+
   test('replays the same idempotency key and rejects reuse with another payload', async () => {
     const cookie = cookieOf(await login('ds_nvt'));
     const productId = await firstProductId(cookie);
@@ -444,6 +662,157 @@ describe('KHOHANG-IDOSI API', () => {
     );
   });
 
+  test('resumes a retired conversion history with one optimistic immutable append', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const products = await app.inject({
+      method: 'GET',
+      url: '/api/v1/products?pageSize=100',
+      headers: { cookie: adminCookie },
+    });
+    const product = products.json().data[0];
+    assert.ok(product);
+
+    const initialHistory = await app.inject({
+      method: 'GET',
+      url: `/api/v1/products/${product.id}/conversions?includeRetired=true`,
+      headers: { cookie: adminCookie },
+    });
+    const initial = initialHistory.json().data[0];
+    assert.equal(initial.version, 1);
+
+    const retired = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/products/${product.id}/conversions/${initial.id}`,
+      headers: { cookie: adminCookie },
+      payload: { expectedVersion: 1, reason: 'Tạm ngừng định mức để kiểm kê lại' },
+    });
+    assert.equal(retired.statusCode, 200);
+    assert.notEqual(retired.json().data.retiredAt, null);
+
+    const resumedPayload = {
+      itemQuantity: initial.itemQuantity,
+      weightKilograms: initial.weightKilograms,
+      effectiveFrom: '2099-01-01',
+      effectiveTo: null,
+      reason: 'Khôi phục định mức sau khi kiểm kê',
+      expectedVersion: 1,
+    };
+    const missingExpectation = await app.inject({
+      method: 'POST',
+      url: `/api/v1/products/${product.id}/conversions`,
+      headers: { cookie: adminCookie },
+      payload: { ...resumedPayload, expectedVersion: undefined },
+    });
+    assert.equal(missingExpectation.statusCode, 409);
+    assert.equal(missingExpectation.json().error.code, 'VERSION_CONFLICT');
+
+    const invalidDate = await app.inject({
+      method: 'POST',
+      url: `/api/v1/products/${product.id}/conversions`,
+      headers: { cookie: adminCookie },
+      payload: { ...resumedPayload, effectiveFrom: initial.effectiveFrom },
+    });
+    assert.equal(invalidDate.statusCode, 400);
+    assert.equal(invalidDate.json().error.code, 'VALIDATION_ERROR');
+
+    const attempts = await Promise.all(
+      ['resume-conversion-a', 'resume-conversion-b'].map((requestId) =>
+        app.inject({
+          method: 'POST',
+          url: `/api/v1/products/${product.id}/conversions`,
+          headers: { cookie: adminCookie, 'x-request-id': requestId },
+          payload: resumedPayload,
+        }),
+      ),
+    );
+    assert.equal(attempts.filter((response) => response.statusCode === 201).length, 1);
+    assert.equal(attempts.filter((response) => response.statusCode === 409).length, 1);
+    const createdResponse = attempts.find((response) => response.statusCode === 201);
+    const conflictedResponse = attempts.find((response) => response.statusCode === 409);
+    assert.ok(createdResponse);
+    assert.ok(conflictedResponse);
+    assert.equal(conflictedResponse.json().error.code, 'VERSION_CONFLICT');
+    const created = createdResponse.json().data;
+    assert.equal(created.version, 2);
+    assert.equal(created.retiredAt, null);
+
+    const activeAppend = await app.inject({
+      method: 'POST',
+      url: `/api/v1/products/${product.id}/conversions`,
+      headers: { cookie: adminCookie },
+      payload: { ...resumedPayload, effectiveFrom: '2099-01-02', expectedVersion: 2 },
+    });
+    assert.equal(activeAppend.statusCode, 409);
+    assert.equal(activeAppend.json().error.code, 'CONFLICT');
+
+    const finalHistory = await app.inject({
+      method: 'GET',
+      url: `/api/v1/products/${product.id}/conversions?includeRetired=true`,
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(finalHistory.json().data.length, 2);
+    assert.deepEqual(
+      finalHistory.json().data.find((conversion) => conversion.version === 1),
+      retired.json().data,
+    );
+
+    const audit = await app.inject({
+      method: 'GET',
+      url:
+        '/api/v1/admin/audit-logs?action=PRODUCT_CONVERSION_APPENDED' +
+        `&entityType=product_conversion&entityId=${created.id}`,
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(audit.statusCode, 200);
+    assert.equal(audit.json().pagination.totalItems, 1);
+    assert.equal(audit.json().data[0].before.version, 1);
+    assert.notEqual(audit.json().data[0].before.retiredAt, null);
+    assert.equal(audit.json().data[0].after.version, 2);
+  });
+
+  test('creates an initial conversion against the zero-version baseline', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const productResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/products',
+      headers: { cookie: adminCookie },
+      payload: {
+        sku: 'CATALOG_LIFECYCLE_TEST',
+        name: 'Mặt hàng kiểm thử vòng đời',
+        measurement: 'UNIT',
+        unitLabel: 'cái',
+      },
+    });
+    assert.equal(productResponse.statusCode, 201);
+    const product = productResponse.json().data;
+    const payload = {
+      itemQuantity: 2,
+      weightKilograms: '1.000',
+      effectiveFrom: '2026-09-18',
+      effectiveTo: null,
+      reason: 'Khởi tạo định mức có chốt phiên bản',
+      expectedVersion: 0,
+    };
+
+    const created = await app.inject({
+      method: 'POST',
+      url: `/api/v1/products/${product.id}/conversions`,
+      headers: { cookie: adminCookie },
+      payload,
+    });
+    assert.equal(created.statusCode, 201);
+    assert.equal(created.json().data.version, 1);
+
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/api/v1/products/${product.id}/conversions`,
+      headers: { cookie: adminCookie },
+      payload,
+    });
+    assert.equal(replay.statusCode, 409);
+    assert.equal(replay.json().error.code, 'VERSION_CONFLICT');
+  });
+
   test('lists only authorized dispatched sources that do not have a receipt', async () => {
     const unauthenticated = await app.inject({
       method: 'GET',
@@ -528,6 +897,76 @@ describe('KHOHANG-IDOSI API', () => {
     });
     assert.equal(invalidPagination.statusCode, 400);
     assert.equal(invalidPagination.json().error.code, 'VALIDATION_ERROR');
+  });
+
+  test('dispatches an allocation-backed outbound once and exposes it as a receipt source', async () => {
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const htkdCookie = cookieOf(await login('htkd'));
+    const reserved = await app.inject({
+      method: 'GET',
+      url: '/api/v1/outbound-requests?status=RESERVED&pageSize=10',
+      headers: { cookie: htkdCookie },
+    });
+    assert.equal(reserved.statusCode, 200);
+    assert.equal(reserved.json().pagination.totalItems, 1);
+    assert.equal(reserved.json().data[0].id, MEMORY_SEED_IDS.reservedOutboundRequest);
+    assert.equal(reserved.json().data[0].lines[0].dispatchedUnits, 0);
+
+    const sourcesBeforeDispatch = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-receipt-sources?pageSize=100',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(sourcesBeforeDispatch.statusCode, 200);
+    assert.equal(
+      sourcesBeforeDispatch
+        .json()
+        .data.some((source) => source.id === MEMORY_SEED_IDS.reservedOutboundRequest),
+      false,
+    );
+
+    const storeDenied = await app.inject({
+      method: 'POST',
+      url: `/api/v1/outbound-requests/${MEMORY_SEED_IDS.reservedOutboundRequest}/dispatch`,
+      headers: { cookie: storeCookie, 'idempotency-key': 'store-cannot-dispatch' },
+      payload: { expectedVersion: 0 },
+    });
+    assert.equal(storeDenied.statusCode, 403);
+
+    const dispatched = await app.inject({
+      method: 'POST',
+      url: `/api/v1/outbound-requests/${MEMORY_SEED_IDS.reservedOutboundRequest}/dispatch`,
+      headers: { cookie: htkdCookie, 'idempotency-key': 'dispatch-outbound-0001' },
+      payload: { expectedVersion: 0, dispatchNote: 'Đã bàn giao đủ hàng cho đơn vị vận chuyển' },
+    });
+    assert.equal(dispatched.statusCode, 200);
+    assert.equal(dispatched.json().data.status, 'DISPATCHED');
+    assert.equal(dispatched.json().data.version, 1);
+    assert.equal(dispatched.json().data.lines[0].dispatchedUnits, 3);
+    assert.equal(dispatched.json().data.lines[0].reservedUnits, 3);
+
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/api/v1/outbound-requests/${MEMORY_SEED_IDS.reservedOutboundRequest}/dispatch`,
+      headers: { cookie: htkdCookie, 'idempotency-key': 'dispatch-outbound-0001' },
+      payload: { expectedVersion: 0, dispatchNote: 'Đã bàn giao đủ hàng cho đơn vị vận chuyển' },
+    });
+    assert.equal(replay.statusCode, 200);
+    assert.equal(replay.headers['idempotency-replayed'], 'true');
+    assert.equal(replay.json().data.version, 1);
+
+    const receiptSources = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-receipt-sources?pageSize=100',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(receiptSources.statusCode, 200);
+    assert.equal(
+      receiptSources
+        .json()
+        .data.some((source) => source.id === MEMORY_SEED_IDS.reservedOutboundRequest),
+      true,
+    );
   });
 
   test('runs the auditable store receipt lifecycle with scopes, versions and idempotency', async () => {
@@ -935,6 +1374,190 @@ describe('KHOHANG-IDOSI API', () => {
     });
     assert.equal(ledger.json().pagination.totalItems, 1);
     assert.equal(ledger.json().data[0].operation, 'RECEIVE');
+  });
+
+  test('moves one exact-cost lot only after source dispatch and destination confirmation', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const createdDestinationAccount = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/accounts',
+      headers: { cookie: adminCookie },
+      payload: {
+        username: 'ds_bd',
+        displayName: 'Cửa hàng DS BD',
+        password: PASSWORD,
+        role: 'STORE',
+        storeId: MEMORY_SEED_IDS.bdStore,
+      },
+    });
+    assert.equal(createdDestinationAccount.statusCode, 201);
+
+    const sourceCookie = cookieOf(await login('ds_nvt'));
+    const destinationCookie = cookieOf(await login('ds_bd'));
+    const destinationDirectory = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-transfers/destinations',
+      headers: { cookie: sourceCookie },
+    });
+    assert.equal(destinationDirectory.statusCode, 200);
+    assert.ok(
+      destinationDirectory.json().data.some((store) => store.id === MEMORY_SEED_IDS.bdStore),
+    );
+    assert.ok(
+      destinationDirectory
+        .json()
+        .data.every(
+          (store) =>
+            store.id !== MEMORY_SEED_IDS.nvtStore &&
+            store.kind === 'RETAIL' &&
+            store.status === 'ACTIVE',
+        ),
+    );
+    const createPayload = {
+      sourceStoreId: MEMORY_SEED_IDS.nvtStore,
+      destinationStoreId: MEMORY_SEED_IDS.bdStore,
+      sourceInventoryBagId: MEMORY_SEED_IDS.inventoryBag,
+      weightKg: '5.000',
+      expectedSourceBagVersion: 0,
+      note: 'Bổ sung tồn kho cửa hàng Bình Dương',
+    };
+    const created = await mutateTransfer(
+      sourceCookie,
+      '/api/v1/store-transfers',
+      'transfer-create-0001',
+      createPayload,
+    );
+    assert.equal(created.statusCode, 201);
+    assert.equal(created.json().data.status, 'DRAFT');
+    assert.equal(created.json().data.costVnd, null);
+    const transferId = created.json().data.id;
+
+    const replayedCreate = await mutateTransfer(
+      sourceCookie,
+      '/api/v1/store-transfers',
+      'transfer-create-0001',
+      createPayload,
+    );
+    assert.equal(replayedCreate.statusCode, 201);
+    assert.equal(replayedCreate.headers['idempotency-replayed'], 'true');
+    assert.equal(replayedCreate.json().data.id, transferId);
+
+    const destinationCannotDispatch = await mutateTransfer(
+      destinationCookie,
+      `/api/v1/store-transfers/${transferId}/dispatch`,
+      'transfer-wrong-dispatch',
+      { expectedVersion: 0, expectedSourceBagVersion: 0 },
+    );
+    assert.equal(destinationCannotDispatch.statusCode, 403);
+
+    const dispatched = await mutateTransfer(
+      sourceCookie,
+      `/api/v1/store-transfers/${transferId}/dispatch`,
+      'transfer-dispatch-0001',
+      { expectedVersion: 0, expectedSourceBagVersion: 0 },
+    );
+    assert.equal(dispatched.statusCode, 200);
+    assert.equal(dispatched.json().data.status, 'IN_TRANSIT');
+    assert.equal(dispatched.json().data.costVnd, 500_000);
+
+    const sourceInventory = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-inventory-bags',
+      headers: { cookie: sourceCookie },
+    });
+    assert.equal(sourceInventory.json().data[0].remainingWeightKg, '19.500');
+    assert.equal(sourceInventory.json().data[0].version, 1);
+
+    const sourceCannotReceive = await mutateTransfer(
+      sourceCookie,
+      `/api/v1/store-transfers/${transferId}/receive`,
+      'transfer-wrong-receive',
+      { expectedVersion: 1 },
+    );
+    assert.equal(sourceCannotReceive.statusCode, 403);
+
+    const received = await mutateTransfer(
+      destinationCookie,
+      `/api/v1/store-transfers/${transferId}/receive`,
+      'transfer-receive-0001',
+      { expectedVersion: 1 },
+    );
+    assert.equal(received.statusCode, 200);
+    assert.equal(received.json().data.status, 'RECEIVED');
+    assert.ok(received.json().data.destinationInventoryBagId);
+
+    const replayedReceipt = await mutateTransfer(
+      destinationCookie,
+      `/api/v1/store-transfers/${transferId}/receive`,
+      'transfer-receive-0001',
+      { expectedVersion: 1 },
+    );
+    assert.equal(replayedReceipt.statusCode, 200);
+    assert.equal(replayedReceipt.headers['idempotency-replayed'], 'true');
+    assert.equal(
+      replayedReceipt.json().data.destinationInventoryBagId,
+      received.json().data.destinationInventoryBagId,
+    );
+
+    const destinationInventory = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-inventory-bags',
+      headers: { cookie: destinationCookie },
+    });
+    assert.equal(destinationInventory.statusCode, 200);
+    assert.equal(destinationInventory.json().pagination.totalItems, 1);
+    assert.equal(destinationInventory.json().data[0].remainingWeightKg, '5.000');
+    assert.equal(destinationInventory.json().data[0].sourceTransferId, transferId);
+    assert.equal(
+      destinationInventory.json().data[0].sourceInventoryBagId,
+      MEMORY_SEED_IDS.inventoryBag,
+    );
+
+    const destinationLedger = await app.inject({
+      method: 'GET',
+      url: `/api/v1/store-inventory-bags/${received.json().data.destinationInventoryBagId}/ledger`,
+      headers: { cookie: destinationCookie },
+    });
+    assert.equal(destinationLedger.statusCode, 200);
+    assert.equal(destinationLedger.json().data[0].operation, 'RECEIVE');
+
+    const oversight = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-transfers?status=RECEIVED',
+      headers: { cookie: cookieOf(await login('htkd')) },
+    });
+    assert.equal(oversight.statusCode, 200);
+    assert.equal(oversight.json().pagination.totalItems, 1);
+    assert.equal(oversight.json().data[0].id, transferId);
+
+    const concurrentDraft = await mutateTransfer(
+      sourceCookie,
+      '/api/v1/store-transfers',
+      'transfer-create-concurrent',
+      {
+        ...createPayload,
+        weightKg: '1.000',
+        expectedSourceBagVersion: 1,
+      },
+    );
+    assert.equal(concurrentDraft.statusCode, 201);
+    const concurrentId = concurrentDraft.json().data.id;
+    const concurrentDispatches = await Promise.all([
+      mutateTransfer(
+        sourceCookie,
+        `/api/v1/store-transfers/${concurrentId}/dispatch`,
+        'transfer-dispatch-concurrent-a',
+        { expectedVersion: 0, expectedSourceBagVersion: 1 },
+      ),
+      mutateTransfer(
+        sourceCookie,
+        `/api/v1/store-transfers/${concurrentId}/dispatch`,
+        'transfer-dispatch-concurrent-b',
+        { expectedVersion: 0, expectedSourceBagVersion: 1 },
+      ),
+    ]);
+    assert.equal(concurrentDispatches.filter((response) => response.statusCode === 200).length, 1);
+    assert.equal(concurrentDispatches.filter((response) => response.statusCode === 409).length, 1);
   });
 
   test('lists and filters store-scoped wait tickets, offers and history', async () => {
@@ -1384,6 +2007,174 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(nonAdminAudit.statusCode, 403);
   });
 
+  test('receives supplier bags into warehouse stock and confirms exact costs idempotently', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const productId = await firstProductId(adminCookie);
+    const denied = await app.inject({
+      method: 'GET',
+      url: '/api/v1/inbound-receipts',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(denied.statusCode, 403);
+
+    const before = await app.inject({
+      method: 'GET',
+      url: '/api/v1/warehouse-balances',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(before.statusCode, 200);
+    const beforeBalance = before.json().data.find((balance) => balance.productId === productId);
+    const payload = {
+      referenceCode: 'SUPPLIER-TEST-001',
+      supplierName: 'Nhà cung cấp test',
+      receivedAt: '2026-09-17T08:00:00+07:00',
+      bags: [
+        { productId, bagCode: 'SUP-BAG-001', weightKg: '1.234' },
+        { productId, bagCode: 'SUP-BAG-002', weightKg: '2.001' },
+      ],
+    };
+    const received = await mutateReceipt(
+      adminCookie,
+      'POST',
+      '/api/v1/inbound-receipts',
+      'supplier-receive-001',
+      payload,
+    );
+    assert.equal(received.statusCode, 201);
+    assert.equal(received.headers['idempotency-replayed'], 'false');
+    assert.equal(received.json().data.status, 'COST_PENDING');
+    assert.equal(received.json().data.totalWeightKg, '3.235');
+    const receiptId = received.json().data.id;
+
+    const replay = await mutateReceipt(
+      adminCookie,
+      'POST',
+      '/api/v1/inbound-receipts',
+      'supplier-receive-001',
+      payload,
+    );
+    assert.equal(replay.statusCode, 201);
+    assert.equal(replay.headers['idempotency-replayed'], 'true');
+    assert.equal(replay.json().data.id, receiptId);
+    const conflictReplay = await mutateReceipt(
+      adminCookie,
+      'POST',
+      '/api/v1/inbound-receipts',
+      'supplier-receive-001',
+      { ...payload, supplierName: 'Nhà cung cấp khác' },
+    );
+    assert.equal(conflictReplay.statusCode, 409);
+    assert.equal(conflictReplay.json().error.code, 'IDEMPOTENCY_CONFLICT');
+
+    const duplicateReference = await mutateReceipt(
+      adminCookie,
+      'POST',
+      '/api/v1/inbound-receipts',
+      'supplier-receive-duplicate-reference',
+      payload,
+    );
+    assert.equal(duplicateReference.statusCode, 409);
+    assert.equal(duplicateReference.json().error.code, 'CONFLICT');
+
+    const after = await app.inject({
+      method: 'GET',
+      url: '/api/v1/warehouse-balances',
+      headers: { cookie: adminCookie },
+    });
+    const afterBalance = after.json().data.find((balance) => balance.productId === productId);
+    assert.equal(
+      afterBalance.available.quantity,
+      beforeBalance.available.quantity + payload.bags.length,
+    );
+    assert.equal(afterBalance.version, beforeBalance.version + 1);
+
+    const confirmed = await mutateReceipt(
+      adminCookie,
+      'POST',
+      `/api/v1/inbound-receipts/${receiptId}/confirm-costs`,
+      'supplier-cost-001',
+      {
+        productCosts: [{ productId, priceVndPerKg: 10_001 }],
+        transportationFeeVnd: 100_000,
+        handlingFeeVnd: 20_000,
+        expectedVersion: 0,
+      },
+    );
+    assert.equal(confirmed.statusCode, 200);
+    assert.equal(confirmed.json().data.status, 'COST_CONFIRMED');
+    assert.equal(confirmed.json().data.cost.goodsCostVnd, 32_353);
+    assert.equal(confirmed.json().data.cost.totalCostVnd, 152_353);
+    assert.equal(confirmed.json().data.version, 1);
+
+    const cannotCancelConfirmed = await mutateReceipt(
+      adminCookie,
+      'POST',
+      `/api/v1/inbound-receipts/${receiptId}/cancel`,
+      'supplier-cancel-confirmed',
+      { reason: 'Không được hủy sau khi chốt giá', expectedVersion: 1 },
+    );
+    assert.equal(cannotCancelConfirmed.statusCode, 409);
+
+    const listed = await app.inject({
+      method: 'GET',
+      url: '/api/v1/inbound-receipts?status=COST_CONFIRMED&supplier=test',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(listed.statusCode, 200);
+    assert.deepEqual(
+      listed.json().data.map((receipt) => receipt.id),
+      [receiptId],
+    );
+  });
+
+  test('cancels only pending supplier stock with optimistic locking and audit context', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const productId = await firstProductId(adminCookie);
+    const received = await mutateReceipt(
+      adminCookie,
+      'POST',
+      '/api/v1/inbound-receipts',
+      'supplier-receive-cancel',
+      {
+        referenceCode: 'SUPPLIER-CANCEL-001',
+        supplierName: 'Nhà cung cấp hủy',
+        receivedAt: '2026-09-17T08:15:00+07:00',
+        bags: [{ productId, bagCode: 'SUP-CANCEL-BAG-001', weightKg: '1.000' }],
+      },
+    );
+    const receiptId = received.json().data.id;
+    const stale = await mutateReceipt(
+      adminCookie,
+      'POST',
+      `/api/v1/inbound-receipts/${receiptId}/cancel`,
+      'supplier-cancel-stale',
+      { reason: 'Phiên bản cũ', expectedVersion: 1 },
+    );
+    assert.equal(stale.statusCode, 409);
+    assert.equal(stale.json().error.code, 'VERSION_CONFLICT');
+
+    const cancelled = await mutateReceipt(
+      adminCookie,
+      'POST',
+      `/api/v1/inbound-receipts/${receiptId}/cancel`,
+      'supplier-cancel-ok',
+      { reason: 'Nhà cung cấp giao nhầm lô', expectedVersion: 0 },
+    );
+    assert.equal(cancelled.statusCode, 200);
+    assert.equal(cancelled.json().data.status, 'CANCELLED');
+    assert.equal(cancelled.json().data.version, 1);
+
+    const audit = await app.inject({
+      method: 'GET',
+      url: `/api/v1/admin/audit-logs?action=SUPPLIER_INBOUND_CANCELLED&entityId=${receiptId}`,
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(audit.statusCode, 200);
+    assert.equal(audit.json().pagination.totalItems, 1);
+    assert.equal(audit.json().data[0].metadata.reason, 'Nhà cung cấp giao nhầm lô');
+  });
+
   test('returns structured validation errors with the propagated request id', async () => {
     const response = await app.inject({
       method: 'POST',
@@ -1432,6 +2223,15 @@ describe('KHOHANG-IDOSI API', () => {
     });
   }
 
+  async function mutateTransfer(cookie, url, idempotencyKey, payload) {
+    return app.inject({
+      method: 'POST',
+      url,
+      headers: { cookie, 'idempotency-key': idempotencyKey },
+      payload,
+    });
+  }
+
   async function mutateWait(cookie, url, idempotencyKey, payload) {
     return app.inject({
       method: 'POST',
@@ -1442,6 +2242,15 @@ describe('KHOHANG-IDOSI API', () => {
   }
 
   async function mutateInventory(cookie, url, idempotencyKey, payload) {
+    return app.inject({
+      method: 'POST',
+      url,
+      headers: { cookie, 'idempotency-key': idempotencyKey },
+      payload,
+    });
+  }
+
+  async function mutateSession(cookie, url, idempotencyKey, payload) {
     return app.inject({
       method: 'POST',
       url,

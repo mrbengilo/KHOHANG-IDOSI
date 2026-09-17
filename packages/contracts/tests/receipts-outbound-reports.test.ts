@@ -1,16 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  CancelInboundReceiptRequestSchema,
   CreateInboundReceiptRequestSchema,
   CreateOutboundLineSchema,
   DeclareStoreReceiptRequestSchema,
   ExportMonthlyReportQuerySchema,
   FinalizeReceiptRequestSchema,
+  DispatchWarehouseOutboundRequestSchema,
   MonthlyReportQuerySchema,
   OutboundReceiptDeclarationLineSchema,
   ReceiptCostConfirmationSchema,
   ReceiptSchema,
   StoreInventoryBagSchema,
+  WarehouseOutboundRequestSchema,
 } from '../src/index.js';
 
 const IDS = {
@@ -67,6 +70,20 @@ describe('receipt, outbound and report contracts', () => {
     ).toBe(false);
   });
 
+  it('requires an optimistic version when cancelling supplier stock', () => {
+    expect(
+      CancelInboundReceiptRequestSchema.safeParse({
+        reason: 'Nhà cung cấp giao nhầm lô hàng',
+        expectedVersion: 0,
+      }).success,
+    ).toBe(true);
+    expect(
+      CancelInboundReceiptRequestSchema.safeParse({
+        reason: 'Nhà cung cấp giao nhầm lô hàng',
+      }).success,
+    ).toBe(false);
+  });
+
   it('requires weight outbound picks to exactly match integer grams', () => {
     const line = {
       allocationLineId: IDS.allocationLine,
@@ -81,6 +98,57 @@ describe('receipt, outbound and report contracts', () => {
         bagPicks: [{ sourceReceiptBagId: IDS.bag, weightGrams: 1_249 }],
       }).success,
     ).toBe(false);
+  });
+
+  it('keeps warehouse dispatch quantities conserved and versioned', () => {
+    const reserved = {
+      id: IDS.outbound,
+      requestNumber: 'OUT-20260917-001',
+      storeId: IDS.store,
+      orderSessionId: IDS.receipt,
+      allocationRunId: IDS.account,
+      status: 'RESERVED',
+      requestedByAccountId: IDS.account,
+      dispatchedByAccountId: null,
+      lines: [
+        {
+          id: IDS.outboundLine,
+          allocationLineId: IDS.allocationLine,
+          productId: IDS.product,
+          requestedUnits: 3,
+          approvedUnits: 3,
+          reservedUnits: 3,
+          dispatchedUnits: 0,
+          receivedUnits: 0,
+        },
+      ],
+      version: 0,
+      notes: null,
+      dispatchedAt: null,
+      createdAt: '2026-09-17T01:00:00Z',
+      updatedAt: '2026-09-17T01:00:00Z',
+    };
+    expect(WarehouseOutboundRequestSchema.safeParse(reserved).success).toBe(true);
+    expect(
+      WarehouseOutboundRequestSchema.safeParse({
+        ...reserved,
+        status: 'DISPATCHED',
+        dispatchedAt: '2026-09-17T02:00:00Z',
+      }).success,
+    ).toBe(false);
+    expect(
+      WarehouseOutboundRequestSchema.safeParse({
+        ...reserved,
+        status: 'DISPATCHED',
+        dispatchedAt: '2026-09-17T02:00:00Z',
+        dispatchedByAccountId: IDS.account,
+        lines: [{ ...reserved.lines[0], dispatchedUnits: 3 }],
+      }).success,
+    ).toBe(true);
+    expect(DispatchWarehouseOutboundRequestSchema.safeParse({ expectedVersion: 0 }).success).toBe(
+      true,
+    );
+    expect(DispatchWarehouseOutboundRequestSchema.safeParse({}).success).toBe(false);
   });
 
   it('distinguishes full and short receipt declarations', () => {

@@ -11,6 +11,14 @@ const waitOfferMigration = readFileSync(
   new URL('../migrations/0002_wait_offer_history_index.sql', import.meta.url),
   'utf8',
 );
+const storeTransferMigration = readFileSync(
+  new URL('../migrations/0004_store_transfers.sql', import.meta.url),
+  'utf8',
+);
+const operationalSettingsMigration = readFileSync(
+  new URL('../migrations/0003_operational_settings_versions.sql', import.meta.url),
+  'utf8',
+);
 const schemaSource = readFileSync(new URL('../src/schema.ts', import.meta.url), 'utf8');
 const seedDataSource = readFileSync(new URL('../src/seed-data.ts', import.meta.url), 'utf8');
 const storeOperationsSource = readFileSync(
@@ -35,6 +43,20 @@ const waitOfferSnapshot = JSON.parse(
 ) as {
   prevId: string;
   tables: Record<string, { indexes: Record<string, unknown> }>;
+};
+const operationalSettingsSnapshot = JSON.parse(
+  readFileSync(new URL('../migrations/meta/0003_snapshot.json', import.meta.url), 'utf8'),
+) as {
+  id: string;
+  prevId: string;
+  tables: Record<string, { columns: Record<string, unknown>; indexes: Record<string, unknown> }>;
+};
+const storeTransferSnapshot = JSON.parse(
+  readFileSync(new URL('../migrations/meta/0004_snapshot.json', import.meta.url), 'utf8'),
+) as {
+  prevId: string;
+  tables: Record<string, { columns: Record<string, unknown>; indexes: Record<string, unknown> }>;
+  enums: Record<string, { values: string[] }>;
 };
 
 const requiredTables = [
@@ -91,7 +113,7 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(3);
+    expect(journal.entries).toHaveLength(5);
     expect(journal.entries[0]).toMatchObject({
       tag: '0000_initial',
       breakpoints: true,
@@ -104,6 +126,44 @@ describe('initial migration invariants', () => {
       tag: '0002_wait_offer_history_index',
       breakpoints: true,
     });
+    expect(journal.entries[3]).toMatchObject({
+      tag: '0003_operational_settings_versions',
+      breakpoints: true,
+    });
+    expect(journal.entries[4]).toMatchObject({
+      tag: '0004_store_transfers',
+      breakpoints: true,
+    });
+  });
+
+  it('adds exact-cost transfer provenance and safe lifecycle constraints', () => {
+    expect(storeTransferMigration).toContain(
+      `CREATE TYPE "public"."store_transfer_status" AS ENUM('draft', 'in_transit', 'received', 'cancelled')`,
+    );
+    expect(storeTransferMigration).toContain('CREATE TABLE "store_transfers"');
+    expect(storeTransferMigration).toContain('"weight_kg" numeric(14, 3) NOT NULL');
+    expect(storeTransferMigration).toContain('"cost_vnd" bigint');
+    expect(storeTransferMigration).toContain('"store_transfers_distinct_stores"');
+    expect(storeTransferMigration).toContain('"store_transfers_dispatch_state"');
+    expect(storeTransferMigration).toContain('"store_transfers_receive_state"');
+    expect(storeTransferMigration).toContain('"store_inventory_bags_exactly_one_provenance"');
+    expect(storeTransferMigration).toContain(
+      '"store_inventory_bags_source_inventory_bag_id_store_inventory_bags_id_fk"',
+    );
+    expect(storeTransferMigration).toContain(
+      '"store_inventory_bags_source_transfer_id_store_transfers_id_fk"',
+    );
+    expect(storeTransferSnapshot.prevId).toBe(operationalSettingsSnapshot.id);
+    expect(storeTransferSnapshot.enums['public.store_transfer_status']?.values).toEqual([
+      'draft',
+      'in_transit',
+      'received',
+      'cancelled',
+    ]);
+    expect(storeTransferSnapshot.tables).toHaveProperty('public.store_transfers');
+    expect(storeTransferSnapshot.tables['public.store_inventory_bags']?.columns).toHaveProperty(
+      'source_transfer_id',
+    );
   });
 
   it('indexes priority-offer history without losing the migration snapshot chain', () => {
@@ -291,6 +351,31 @@ describe('initial migration invariants', () => {
     for (const table of protectedTables) {
       expect(migration).toContain(`CREATE TRIGGER ${table}_no_hard_delete`);
     }
+  });
+});
+
+describe('operational settings migration', () => {
+  it('creates immutable, versioned settings with safe operational constraints', () => {
+    expect(operationalSettingsMigration).toContain('CREATE TABLE "operational_settings_versions"');
+    expect(operationalSettingsMigration).toContain('"operational_settings_versions_version_uidx"');
+    expect(operationalSettingsMigration).toContain(
+      '"operational_settings_versions_cutoff_after_snapshot"',
+    );
+    expect(operationalSettingsMigration).toContain('"idosi_sync_interval_minutes" IN (15, 30)');
+    expect(operationalSettingsMigration).toContain(
+      'CREATE TRIGGER operational_settings_versions_immutable',
+    );
+    expect(operationalSettingsMigration).toContain("'Asia/Ho_Chi_Minh'");
+    expect(operationalSettingsMigration).toContain("'08:00'");
+    expect(operationalSettingsMigration).toContain("'09:00'");
+    expect(schemaSource).toContain('export const operationalSettingsVersions = pgTable(');
+    expect(operationalSettingsSnapshot.prevId).toBe('67f76077-c02e-4657-858f-6c753b546d57');
+    expect(
+      operationalSettingsSnapshot.tables['public.operational_settings_versions']?.columns,
+    ).toHaveProperty('snapshot_time');
+    expect(
+      operationalSettingsSnapshot.tables['public.operational_settings_versions']?.indexes,
+    ).toHaveProperty('operational_settings_versions_version_uidx');
   });
 });
 

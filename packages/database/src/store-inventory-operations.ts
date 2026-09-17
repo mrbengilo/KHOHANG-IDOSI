@@ -49,8 +49,10 @@ export interface StoreInventoryBagRecord {
   readonly bagCode: string;
   readonly storeId: string;
   readonly productId: string;
-  readonly sourceStoreReceiptBagId: string;
-  readonly outboundRequestId: string;
+  readonly sourceStoreReceiptBagId: string | null;
+  readonly sourceTransferId: string | null;
+  readonly sourceInventoryBagId: string | null;
+  readonly outboundRequestId: string | null;
   readonly status: InventoryBagStatus;
   readonly initialWeightKg: string;
   readonly currentWeightKg: string;
@@ -160,6 +162,8 @@ export async function listStoreInventoryBags(
       storeId: bag.storeId,
       productId: bag.productId,
       sourceStoreReceiptBagId: bag.sourceStoreReceiptBagId,
+      sourceTransferId: bag.sourceTransferId,
+      sourceInventoryBagId: bag.sourceInventoryBagId,
       outboundRequestId,
       status: bag.status,
       initialWeightKg: bag.initialWeightKg,
@@ -196,7 +200,7 @@ export function buildStoreInventoryBagPageQueries(
     total: database
       .select({ value: count() })
       .from(storeInventoryBags)
-      .innerJoin(
+      .leftJoin(
         outboundRequestLines,
         eq(outboundRequestLines.id, storeInventoryBags.outboundRequestLineId),
       )
@@ -207,7 +211,7 @@ export function buildStoreInventoryBagPageQueries(
         outboundRequestId: outboundRequestLines.outboundRequestId,
       })
       .from(storeInventoryBags)
-      .innerJoin(
+      .leftJoin(
         outboundRequestLines,
         eq(outboundRequestLines.id, storeInventoryBags.outboundRequestLineId),
       )

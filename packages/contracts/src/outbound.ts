@@ -271,6 +271,146 @@ export const ListOutboundOrdersResponseSchema = z
   .strict();
 export type ListOutboundOrdersResponse = z.infer<typeof ListOutboundOrdersResponseSchema>;
 
+/** Warehouse dispatch created from a committed allocation line. */
+export const WarehouseOutboundRequestStatusSchema = z.enum([
+  'RESERVED',
+  'DISPATCHED',
+  'PARTIALLY_RECEIVED',
+  'RECEIVED',
+  'COMPLETED',
+  'CANCELLED',
+]);
+export type WarehouseOutboundRequestStatus = z.infer<typeof WarehouseOutboundRequestStatusSchema>;
+
+export const WarehouseOutboundRequestLineSchema = z
+  .object({
+    id: EntityIdSchema,
+    allocationLineId: EntityIdSchema,
+    productId: EntityIdSchema,
+    requestedUnits: z.number().int().positive().safe(),
+    approvedUnits: z.number().int().positive().safe(),
+    reservedUnits: z.number().int().positive().safe(),
+    dispatchedUnits: z.number().int().nonnegative().safe(),
+    receivedUnits: z.number().int().nonnegative().safe(),
+  })
+  .strict()
+  .superRefine((line, context) => {
+    if (line.approvedUnits > line.requestedUnits) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['approvedUnits'],
+        message: 'Approved units cannot exceed requested units',
+      });
+    }
+    if (line.reservedUnits > line.approvedUnits) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['reservedUnits'],
+        message: 'Reserved units cannot exceed approved units',
+      });
+    }
+    if (line.dispatchedUnits > line.reservedUnits) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['dispatchedUnits'],
+        message: 'Dispatched units cannot exceed reserved units',
+      });
+    }
+    if (line.receivedUnits > line.dispatchedUnits) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['receivedUnits'],
+        message: 'Received units cannot exceed dispatched units',
+      });
+    }
+  });
+export type WarehouseOutboundRequestLine = z.infer<typeof WarehouseOutboundRequestLineSchema>;
+
+export const WarehouseOutboundRequestSchema = z
+  .object({
+    id: EntityIdSchema,
+    requestNumber: z.string().trim().min(1).max(100),
+    storeId: EntityIdSchema,
+    orderSessionId: EntityIdSchema.nullable(),
+    allocationRunId: EntityIdSchema.nullable(),
+    status: WarehouseOutboundRequestStatusSchema,
+    requestedByAccountId: EntityIdSchema,
+    dispatchedByAccountId: EntityIdSchema.nullable(),
+    lines: z.array(WarehouseOutboundRequestLineSchema).min(1).max(500),
+    version: z.number().int().nonnegative(),
+    notes: z.string().trim().min(1).max(1_000).nullable(),
+    dispatchedAt: IsoDateTimeSchema.nullable(),
+    createdAt: IsoDateTimeSchema,
+    updatedAt: IsoDateTimeSchema,
+  })
+  .strict()
+  .superRefine((request, context) => {
+    const dispatched = request.status !== 'RESERVED' && request.status !== 'CANCELLED';
+    if (dispatched !== (request.dispatchedAt !== null)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['dispatchedAt'],
+        message: 'Dispatch timestamp must match the outbound request status',
+      });
+    }
+    if (dispatched !== (request.dispatchedByAccountId !== null)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['dispatchedByAccountId'],
+        message: 'Dispatcher must match the outbound request status',
+      });
+    }
+    if (dispatched && request.lines.some((line) => line.dispatchedUnits !== line.approvedUnits)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['lines'],
+        message: 'Every approved line must be fully dispatched',
+      });
+    }
+  });
+export type WarehouseOutboundRequest = z.infer<typeof WarehouseOutboundRequestSchema>;
+
+export const WarehouseOutboundRequestParamsSchema = z
+  .object({ outboundRequestId: EntityIdSchema })
+  .strict();
+export type WarehouseOutboundRequestParams = z.infer<typeof WarehouseOutboundRequestParamsSchema>;
+
+export const DispatchWarehouseOutboundRequestSchema = z
+  .object({
+    expectedVersion: z.number().int().nonnegative(),
+    dispatchNote: z.string().trim().min(3).max(500).optional(),
+  })
+  .strict();
+export type DispatchWarehouseOutboundRequest = z.infer<
+  typeof DispatchWarehouseOutboundRequestSchema
+>;
+
+export const ListWarehouseOutboundRequestsQuerySchema = PaginationQuerySchema.extend({
+  storeId: EntityIdSchema.optional(),
+  status: WarehouseOutboundRequestStatusSchema.optional(),
+  allocationRunId: EntityIdSchema.optional(),
+}).strict();
+export type ListWarehouseOutboundRequestsQuery = z.infer<
+  typeof ListWarehouseOutboundRequestsQuerySchema
+>;
+
+export const WarehouseOutboundRequestResponseSchema = z
+  .object({ data: WarehouseOutboundRequestSchema })
+  .strict();
+export type WarehouseOutboundRequestResponse = z.infer<
+  typeof WarehouseOutboundRequestResponseSchema
+>;
+
+export const ListWarehouseOutboundRequestsResponseSchema = z
+  .object({
+    data: z.array(WarehouseOutboundRequestSchema),
+    pagination: PaginationMetaSchema,
+  })
+  .strict();
+export type ListWarehouseOutboundRequestsResponse = z.infer<
+  typeof ListWarehouseOutboundRequestsResponseSchema
+>;
+
 /** Lightweight aggregate for reconciliation endpoints. */
 export const OutboundReceiptTotalsSchema = z
   .object({ expectedGrams: GramsSchema, actualGrams: GramsSchema, shortageGrams: GramsSchema })

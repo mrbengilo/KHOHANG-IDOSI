@@ -98,7 +98,8 @@ export async function createOrderRequest(
         .select({
           id: orderSessions.id,
           status: orderSessions.status,
-          requestDeadlineAt: orderSessions.requestDeadlineAt,
+          openedAt: orderSessions.openedAt,
+          requestClosesAt: orderSessions.inventorySnapshotDueAt,
           deletedAt: orderSessions.deletedAt,
         })
         .from(orderSessions)
@@ -110,7 +111,8 @@ export async function createOrderRequest(
         !session ||
         session.status !== 'open' ||
         session.deletedAt !== null ||
-        isRequestDeadlineClosed(session.requestDeadlineAt, now)
+        (session.openedAt !== null && session.openedAt.getTime() > now.getTime()) ||
+        isRequestDeadlineClosed(session.requestClosesAt, now)
       ) {
         throw new OrderSessionUnavailableError();
       }

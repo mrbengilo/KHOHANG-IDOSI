@@ -102,4 +102,20 @@ describe('monthly report UI helpers', () => {
     expect(csv).toContain('"Đầm, loại A"');
     expect(csv).toContain(`STORE:${storeId}`);
   });
+
+  it('neutralizes spreadsheet formulas from product fields', () => {
+    const csv = buildMonthlyReportCsv({
+      ...report,
+      products: [
+        {
+          ...report.products[0]!,
+          productName: ' +SUM(1,1)',
+          sku: '=HYPERLINK("bad")',
+        },
+      ],
+    });
+
+    expect(csv).toContain('"\'=HYPERLINK(""bad"")"');
+    expect(csv).toContain('"\' +SUM(1,1)"');
+  });
 });

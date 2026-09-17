@@ -2,17 +2,23 @@ import type {
   Account,
   AdminAuditLog,
   AuthenticatedPrincipal,
+  CancelInboundReceiptRequest,
   CancelWaitTicketRequest,
+  CreateOrderSessionRequest,
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
   CreateStoreRequest,
   CreateAccountRequest,
+  CreateInboundReceiptRequest,
   DeclareStoreReceiptRequest,
+  DispatchWarehouseOutboundRequest,
   FinalizeReceiptRequest,
+  ConfirmReceiptCostsRequest,
   ListOrderSessionsQuery,
   ListAccountsQuery,
   ListAuditLogsQuery,
+  ListInboundReceiptsQuery,
   ListProductsQuery,
   ListReceiptsQuery,
   ListStoreInventoryBagLedgerQuery,
@@ -40,18 +46,31 @@ import type {
   StoreOutbound,
   StoreReceiptSource,
   SubmitStoreReceiptRequest,
+  TransitionOrderSessionRequest,
   UpdateProductRequest,
   UpdateAccountRequest,
   UpdateProductConversionRequest,
   DeleteProductConversionRequest,
   ListWaitTicketsQuery,
+  ListWarehouseOutboundRequestsQuery,
   MonthlyOperationalReport,
   MonthlyOperationalReportQuery,
+  InboundReceipt,
+  OperationalSettingsVersion,
   WaitTicket,
   WaitTicketHistory,
+  WarehouseOutboundRequest,
   OpenStoreInventoryBagRequest,
   CreateStoreOutboundRequest,
   ReviewStoreOutboundRequest,
+  StoreTransfer,
+  ListStoreTransfersQuery,
+  CreateStoreTransferRequest,
+  DispatchStoreTransferRequest,
+  ReceiveStoreTransferRequest,
+  CancelStoreTransferRequest,
+  WarehouseBalancesResponse,
+  UpdateOperationalSettingsRequest,
 } from '@idosi/contracts';
 
 import { forbidden } from './errors.js';
@@ -141,6 +160,11 @@ export function assertActiveRetailStore(
   }
 }
 
+export interface OperationalSettingsState {
+  readonly current: OperationalSettingsVersion;
+  readonly history: readonly OperationalSettingsVersion[];
+}
+
 export interface WarehouseRepository {
   ready(): Promise<boolean>;
   close(): Promise<void>;
@@ -184,8 +208,62 @@ export interface WarehouseRepository {
     actor: AuthenticatedPrincipal,
     query: ListAuditLogsQuery,
   ): Promise<Page<AdminAuditLog>>;
+  getOperationalSettings(
+    actor: AuthenticatedPrincipal,
+    historyLimit: number,
+  ): Promise<OperationalSettingsState>;
+  updateOperationalSettings(
+    actor: AuthenticatedPrincipal,
+    input: UpdateOperationalSettingsRequest,
+    context: RequestContext,
+  ): Promise<OperationalSettingsVersion>;
 
   listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>>;
+  createOrderSession(
+    actor: AuthenticatedPrincipal,
+    input: CreateOrderSessionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<OrderSession>>;
+  transitionOrderSession(
+    actor: AuthenticatedPrincipal,
+    sessionId: string,
+    input: TransitionOrderSessionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<OrderSession>>;
+
+  listWarehouseBalances(actor: AuthenticatedPrincipal): Promise<WarehouseBalancesResponse>;
+  listInboundReceipts(
+    actor: AuthenticatedPrincipal,
+    query: ListInboundReceiptsQuery,
+  ): Promise<Page<InboundReceipt>>;
+  getInboundReceipt(actor: AuthenticatedPrincipal, receiptId: string): Promise<InboundReceipt>;
+  receiveSupplierInbound(
+    actor: AuthenticatedPrincipal,
+    input: CreateInboundReceiptRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<InboundReceipt>>;
+  confirmSupplierInboundCosts(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: ConfirmReceiptCostsRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<InboundReceipt>>;
+  cancelSupplierInbound(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: CancelInboundReceiptRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<InboundReceipt>>;
 
   listProducts(query: ListProductsQuery): Promise<Page<Product>>;
   createProduct(
@@ -204,6 +282,7 @@ export interface WarehouseRepository {
     query: ListProductConversionsQuery,
   ): Promise<Page<ProductConversion>>;
   listAllProductConversions(query: ListProductConversionsQuery): Promise<Page<ProductConversion>>;
+  /** Creates v1, or atomically appends after the latest version has been explicitly retired. */
   createProductConversion(
     actor: AuthenticatedPrincipal,
     productId: string,
@@ -243,6 +322,19 @@ export interface WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<SubmittedOrderRequest>;
+
+  listWarehouseOutboundRequests(
+    actor: AuthenticatedPrincipal,
+    query: ListWarehouseOutboundRequestsQuery,
+  ): Promise<Page<WarehouseOutboundRequest>>;
+  dispatchWarehouseOutboundRequest(
+    actor: AuthenticatedPrincipal,
+    outboundRequestId: string,
+    input: DispatchWarehouseOutboundRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<WarehouseOutboundRequest>>;
 
   listReceipts(actor: AuthenticatedPrincipal, query: ListReceiptsQuery): Promise<Page<Receipt>>;
   listStoreReceiptSources(
@@ -318,6 +410,43 @@ export interface WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<StoreOutbound>>;
+
+  listStoreTransfers(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreTransfersQuery,
+  ): Promise<Page<StoreTransfer>>;
+  listStoreTransferDestinations(actor: AuthenticatedPrincipal): Promise<readonly Store[]>;
+  createStoreTransfer(
+    actor: AuthenticatedPrincipal,
+    input: CreateStoreTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreTransfer>>;
+  dispatchStoreTransfer(
+    actor: AuthenticatedPrincipal,
+    transferId: string,
+    input: DispatchStoreTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreTransfer>>;
+  receiveStoreTransfer(
+    actor: AuthenticatedPrincipal,
+    transferId: string,
+    input: ReceiveStoreTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreTransfer>>;
+  cancelStoreTransfer(
+    actor: AuthenticatedPrincipal,
+    transferId: string,
+    input: CancelStoreTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreTransfer>>;
 
   listWaitTickets(
     actor: AuthenticatedPrincipal,
