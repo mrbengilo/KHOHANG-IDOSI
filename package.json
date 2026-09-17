@@ -26,6 +26,7 @@
     "db:migrate": "npm -w @idosi/database run migrate",
     "db:seed": "npm -w @idosi/database run seed",
     "e2e": "npm -w @idosi/web run e2e",
+    "e2e:live": "npm -w @idosi/web run e2e:live",
     "quality": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build"
   },
   "devDependencies": {

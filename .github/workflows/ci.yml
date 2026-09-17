@@ -108,6 +108,13 @@ jobs:
       - name: Run responsive browser smoke tests
         run: npm run e2e
 
+      - name: Run live browser workflows against API and PostgreSQL
+        env:
+          LIVE_E2E_ADMIN_PASSWORD: ci-bootstrap-password-not-for-production
+          LIVE_E2E_ADMIN_USERNAME: ci.admin
+          LIVE_E2E_RUN_SUFFIX: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: npm run e2e:live
+
       - name: Validate infrastructure sources
         env:
           APP_DOMAIN: localhost
