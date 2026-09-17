@@ -4,7 +4,7 @@ const mockGroup = {
   code: 'MIEN_NAM',
   createdAt: '2026-09-17T00:00:00.000Z',
   id: '11111111-1111-4111-8111-111111111111',
-  name: 'Miền Nam',
+  name: 'NhomCuaHangMienNamKhongCoKhoangTrangDeKiemTraXuongDong',
   status: 'ACTIVE',
   updatedAt: '2026-09-17T00:00:00.000Z',
   version: 1,
@@ -17,7 +17,7 @@ const mockStore = {
   groupId: mockGroup.id,
   id: '22222222-2222-4222-8222-222222222222',
   kind: 'RETAIL',
-  name: 'DS Quận 1',
+  name: 'CuaHangQuanMotKhongCoKhoangTrangDeKiemTraXuongDongAnToan',
   status: 'ACTIVE',
   updatedAt: '2026-09-17T00:00:00.000Z',
   version: 2,
@@ -160,7 +160,7 @@ test('mobile navigation remains usable at 390px', async ({ page }, testInfo) => 
   expect(undersizedTargets).toEqual([]);
 });
 
-test('store administration stays responsive with visible button feedback at 390px', async ({
+test('store administration stays responsive with visible button feedback at 390px and 360px', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile-390', 'mobile-only assertion');
@@ -170,11 +170,42 @@ test('store administration stays responsive with visible button feedback at 390p
   await expect(page.getByRole('heading', { name: 'Cửa hàng & nhóm' })).toBeVisible();
   await expect(page.getByText('DS_Q1')).toBeVisible();
   const addGroup = page.getByRole('button', { name: 'Thêm nhóm' });
+  const addStore = page.getByRole('button', { name: 'Thêm cửa hàng' });
+  await expect(addGroup).toBeVisible();
+  await expect(addStore).toBeVisible();
   expect(
     await addGroup.evaluate((element) => getComputedStyle(element).transitionProperty),
   ).toContain('transform');
   await addGroup.click();
   await expect(page.locator('#store-group-editor')).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => document.body.scrollWidth <= window.innerWidth))
+    .toBe(true);
+
+  await page.setViewportSize({ width: 360, height: 800 });
+  await expect(addGroup).toBeVisible();
+  await expect(addStore).toBeVisible();
+
+  const [addGroupBox, addStoreBox] = await Promise.all([
+    addGroup.boundingBox(),
+    addStore.boundingBox(),
+  ]);
+  expect(addGroupBox).not.toBeNull();
+  expect(addStoreBox).not.toBeNull();
+  expect(addGroupBox!.x).toBeGreaterThanOrEqual(0);
+  expect(addStoreBox!.x).toBeGreaterThanOrEqual(0);
+  expect(addGroupBox!.x + addGroupBox!.width).toBeLessThanOrEqual(360);
+  expect(addStoreBox!.x + addStoreBox!.width).toBeLessThanOrEqual(360);
+  expect(addStoreBox!.y).toBeGreaterThanOrEqual(addGroupBox!.y + addGroupBox!.height);
+
+  const unbrokenNames = page
+    .locator('.store-lifecycle-table strong')
+    .filter({ hasText: /KhongCoKhoangTrangDeKiemTraXuongDong/ });
+  await expect(unbrokenNames).toHaveCount(3);
+  const overflowingNames = await unbrokenNames.evaluateAll((elements) =>
+    elements.filter((element) => element.scrollWidth > element.clientWidth),
+  );
+  expect(overflowingNames).toEqual([]);
   await expect
     .poll(() => page.evaluate(() => document.body.scrollWidth <= window.innerWidth))
     .toBe(true);

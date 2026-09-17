@@ -75,6 +75,12 @@
   max-width: 340px;
 }
 
+.store-lifecycle-table td strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .store-lifecycle-table td small {
   overflow-wrap: anywhere;
 }
@@ -126,6 +132,21 @@
 }
 
 @media (max-width: 620px) {
+  .page-header:has(.store-lifecycle-add-group) {
+    flex-direction: column;
+  }
+
+  .page-header__actions:has(.store-lifecycle-add-group) {
+    width: 100%;
+    min-width: 0;
+    flex-direction: column;
+    overflow-x: visible;
+  }
+
+  .page-header__actions:has(.store-lifecycle-add-group) .button {
+    width: 100%;
+  }
+
   .page-header__actions .store-lifecycle-add-group {
     display: inline-flex;
   }
