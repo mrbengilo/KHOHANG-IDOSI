@@ -15,7 +15,7 @@
     "bootstrap-admin:production": "node --enable-source-maps dist/bootstrap-admin.js",
     "dev": "tsx watch src/server.ts",
     "start": "node --enable-source-maps dist/server.js",
-    "test": "tsc -p tsconfig.json && node --test --test-isolation=none test/*.test.mjs",
+    "test": "tsc -p tsconfig.json && node --test --test-concurrency=1 test/*.test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
