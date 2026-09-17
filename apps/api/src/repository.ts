@@ -1,13 +1,18 @@
 import type {
+  Account,
+  AdminAuditLog,
   AuthenticatedPrincipal,
   CancelWaitTicketRequest,
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
   CreateStoreRequest,
+  CreateAccountRequest,
   DeclareStoreReceiptRequest,
   FinalizeReceiptRequest,
   ListOrderSessionsQuery,
+  ListAccountsQuery,
+  ListAuditLogsQuery,
   ListProductsQuery,
   ListReceiptsQuery,
   ListPriorityOffersQuery,
@@ -22,11 +27,13 @@ import type {
   Receipt,
   RespondPriorityOfferRequest,
   ReturnReceiptForCorrectionRequest,
+  ResetPasswordRequest,
   Session,
   Store,
   StoreOrderRequest,
   SubmitStoreReceiptRequest,
   UpdateProductRequest,
+  UpdateAccountRequest,
   UpdateProductConversionRequest,
   DeleteProductConversionRequest,
   ListWaitTicketsQuery,
@@ -114,6 +121,33 @@ export interface WarehouseRepository {
   ): Promise<Session>;
   resolveSession(token: string): Promise<Session>;
   revokeSession(token: string, reason: string): Promise<boolean>;
+
+  listAccounts(actor: AuthenticatedPrincipal, query: ListAccountsQuery): Promise<Page<Account>>;
+  createAccount(
+    actor: AuthenticatedPrincipal,
+    input: CreateAccountRequest,
+    context: RequestContext,
+  ): Promise<Account>;
+  updateAccount(
+    actor: AuthenticatedPrincipal,
+    accountId: string,
+    input: UpdateAccountRequest,
+    context: RequestContext,
+  ): Promise<Account>;
+  resetAccountPassword(
+    actor: AuthenticatedPrincipal,
+    accountId: string,
+    input: ResetPasswordRequest,
+    context: RequestContext,
+  ): Promise<{
+    readonly accountId: string;
+    readonly sessionsRevoked: number;
+    readonly sessionVersion: number;
+  }>;
+  listAuditLogs(
+    actor: AuthenticatedPrincipal,
+    query: ListAuditLogsQuery,
+  ): Promise<Page<AdminAuditLog>>;
 
   listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>>;
 

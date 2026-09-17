@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  AccountParamsSchema,
   CancelWaitTicketRequestSchema,
+  CreateAccountRequestSchema,
   CreateProductRequestSchema,
   CreateProductConversionRequestSchema,
   CreateStoreOrderRequestSchema,
@@ -11,6 +13,8 @@ import {
   IdempotencyHeadersSchema,
   IsoDateSchema,
   ListOrderSessionsQuerySchema,
+  ListAccountsQuerySchema,
+  ListAuditLogsQuerySchema,
   ListPriorityOffersQuerySchema,
   ListProductsQuerySchema,
   ListProductConversionsQuerySchema,
@@ -24,6 +28,7 @@ import {
   ProductConversionParamsSchema,
   PriorityOfferParamsSchema,
   ReceiptParamsSchema,
+  ResetPasswordRequestSchema,
   ReturnReceiptForCorrectionRequestSchema,
   RespondPriorityOfferRequestSchema,
   SubmitStoreReceiptRequestSchema,
@@ -32,6 +37,7 @@ import {
   DeleteProductConversionRequestSchema,
   UpdateProductConversionRequestSchema,
   UpdateProductRequestSchema,
+  UpdateAccountRequestSchema,
   type ApiErrorCode,
   type AuthenticatedPrincipal,
   type Session,
@@ -214,6 +220,65 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     const session = await authenticate(request, repository);
     reply.header('cache-control', 'no-store');
     return { data: session };
+  });
+
+  app.get('/api/v1/admin/accounts', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const query = ListAccountsQuerySchema.parse(request.query);
+    reply.header('cache-control', 'no-store');
+    return repository.listAccounts(session.principal, query);
+  });
+
+  app.post('/api/v1/admin/accounts', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const input = CreateAccountRequestSchema.parse(request.body);
+    const account = await repository.createAccount(
+      session.principal,
+      input,
+      requestContext(request),
+    );
+    reply.header('cache-control', 'no-store');
+    return reply.status(201).send({ data: account });
+  });
+
+  app.patch('/api/v1/admin/accounts/:accountId', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const { accountId } = AccountParamsSchema.parse(request.params);
+    const input = UpdateAccountRequestSchema.parse(request.body);
+    const account = await repository.updateAccount(
+      session.principal,
+      accountId,
+      input,
+      requestContext(request),
+    );
+    reply.header('cache-control', 'no-store');
+    return { data: account };
+  });
+
+  app.post('/api/v1/admin/accounts/:accountId/reset-password', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const { accountId } = AccountParamsSchema.parse(request.params);
+    const input = ResetPasswordRequestSchema.parse(request.body);
+    const result = await repository.resetAccountPassword(
+      session.principal,
+      accountId,
+      input,
+      requestContext(request),
+    );
+    reply.header('cache-control', 'no-store');
+    return { data: result };
+  });
+
+  app.get('/api/v1/admin/audit-logs', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const query = ListAuditLogsQuerySchema.parse(request.query);
+    reply.header('cache-control', 'no-store');
+    return repository.listAuditLogs(session.principal, query);
   });
 
   app.get('/api/v1/products', async (request) => {
@@ -683,6 +748,34 @@ function openApiDocument(): Record<string, unknown> {
       },
       '/api/v1/auth/session': {
         get: { security: cookieSecurity, responses: { '200': { description: 'Current session' } } },
+      },
+      '/api/v1/admin/accounts': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Paginated accounts (ADMIN only)' } },
+        },
+        post: {
+          security: cookieSecurity,
+          responses: { '201': { description: 'Created account (ADMIN only)' } },
+        },
+      },
+      '/api/v1/admin/accounts/{accountId}': {
+        patch: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Updated account (ADMIN only)' } },
+        },
+      },
+      '/api/v1/admin/accounts/{accountId}/reset-password': {
+        post: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Password reset and sessions revoked' } },
+        },
+      },
+      '/api/v1/admin/audit-logs': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Filtered immutable audit history (ADMIN only)' } },
+        },
       },
       '/api/v1/products': {
         get: { security: cookieSecurity, responses: { '200': { description: 'Products' } } },

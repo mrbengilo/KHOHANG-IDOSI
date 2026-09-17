@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 
 import { createApi } from '../dist/app.js';
+import { sanitizeAuditObject } from '../dist/audit-sanitization.js';
 import { MEMORY_SEED_IDS, MemoryWarehouseRepository } from '../dist/memory-repository.js';
 import { hashPassword, verifyPassword } from '../dist/security.js';
 import { asiaHoChiMinhDateRange } from '../dist/time.js';
@@ -101,6 +102,16 @@ describe('KHOHANG-IDOSI API', () => {
     const range = asiaHoChiMinhDateRange('2026-09-17', '2026-09-17');
     assert.equal(range.start.toISOString(), '2026-09-16T17:00:00.000Z');
     assert.equal(range.endExclusive.toISOString(), '2026-09-17T17:00:00.000Z');
+  });
+
+  test('redacts nested credentials at the audit response boundary', () => {
+    assert.deepEqual(
+      sanitizeAuditObject({
+        account: { id: 'safe', passwordHash: 'scrypt$never-return', token: 'opaque-secret' },
+        metadata: { sessionsRevoked: 1, authorization: 'Bearer secret' },
+      }),
+      { account: { id: 'safe' }, metadata: { sessionsRevoked: 1 } },
+    );
   });
 
   test('revokes an already-issued session when the account version changes', async () => {
@@ -737,6 +748,216 @@ describe('KHOHANG-IDOSI API', () => {
     });
     assert.equal(malformed.statusCode, 400);
     assert.equal(malformed.json().error.code, 'VALIDATION_ERROR');
+  });
+
+  test('restricts account administration to ADMIN and never returns credentials', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const denied = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/accounts',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(denied.statusCode, 403);
+
+    const initial = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/accounts?pageSize=100',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(initial.statusCode, 200);
+    assert.equal(initial.json().pagination.totalItems, 3);
+    assert.equal(JSON.stringify(initial.json()).includes('password'), false);
+    assert.equal(JSON.stringify(initial.json()).includes('Hash'), false);
+
+    const selfLock = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/accounts/${MEMORY_SEED_IDS.adminAccount}`,
+      headers: { cookie: adminCookie },
+      payload: { status: 'LOCKED', expectedSessionVersion: 0 },
+    });
+    assert.equal(selfLock.statusCode, 403);
+
+    const missingVersion = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/accounts/${MEMORY_SEED_IDS.storeAccount}`,
+      headers: { cookie: adminCookie },
+      payload: { status: 'LOCKED' },
+    });
+    assert.equal(missingVersion.statusCode, 400);
+    assert.equal(missingVersion.json().error.code, 'VALIDATION_ERROR');
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/accounts',
+      headers: { cookie: adminCookie, 'x-request-id': 'create-security-account' },
+      payload: {
+        username: 'security.htkd',
+        displayName: 'Security HTKD',
+        password: 'Initial-secure-password-2026!',
+        role: 'HTKD',
+      },
+    });
+    assert.equal(created.statusCode, 201);
+    assert.equal(created.json().data.sessionVersion, 0);
+    assert.equal(JSON.stringify(created.json()).includes('Initial-secure-password'), false);
+    const accountId = created.json().data.id;
+
+    const duplicate = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/accounts',
+      headers: { cookie: adminCookie },
+      payload: {
+        username: 'security.htkd',
+        displayName: 'Duplicate HTKD',
+        password: 'Initial-secure-password-2026!',
+        role: 'HTKD',
+      },
+    });
+    assert.equal(duplicate.statusCode, 409);
+
+    const accountLogin = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { username: 'security.htkd', password: 'Initial-secure-password-2026!' },
+    });
+    assert.equal(accountLogin.statusCode, 200);
+    const accountCookie = cookieOf(accountLogin);
+
+    const locked = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/accounts/${accountId}`,
+      headers: { cookie: adminCookie, 'x-request-id': 'lock-security-account' },
+      payload: { status: 'LOCKED', expectedSessionVersion: 0 },
+    });
+    assert.equal(locked.statusCode, 200);
+    assert.equal(locked.json().data.status, 'LOCKED');
+    assert.equal(locked.json().data.sessionVersion, 1);
+
+    const revokedSession = await app.inject({
+      method: 'GET',
+      url: '/api/v1/auth/session',
+      headers: { cookie: accountCookie },
+    });
+    assert.equal(revokedSession.statusCode, 401);
+
+    const stalePatch = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/accounts/${accountId}`,
+      headers: { cookie: adminCookie },
+      payload: { displayName: 'Stale update', expectedSessionVersion: 0 },
+    });
+    assert.equal(stalePatch.statusCode, 409);
+    assert.equal(stalePatch.json().error.code, 'VERSION_CONFLICT');
+
+    const filtered = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/accounts?search=security.htkd&status=LOCKED',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(filtered.statusCode, 200);
+    assert.deepEqual(
+      filtered.json().data.map((account) => account.id),
+      [accountId],
+    );
+  });
+
+  test('resets passwords with optimistic locking, revokes sessions and exposes safe audit rows', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const oldPassword = 'Old-secure-password-2026!';
+    const newPassword = 'New-secure-password-2026!';
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/accounts',
+      headers: { cookie: adminCookie },
+      payload: {
+        username: 'password.reset',
+        displayName: 'Password Reset',
+        password: oldPassword,
+        role: 'HTKD',
+      },
+    });
+    assert.equal(created.statusCode, 201);
+    const accountId = created.json().data.id;
+    const oldLogin = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { username: 'password.reset', password: oldPassword },
+    });
+    assert.equal(oldLogin.statusCode, 200);
+    const oldCookie = cookieOf(oldLogin);
+
+    const reset = await app.inject({
+      method: 'POST',
+      url: `/api/v1/admin/accounts/${accountId}/reset-password`,
+      headers: { cookie: adminCookie, 'x-request-id': 'reset-password-request' },
+      payload: { newPassword, expectedSessionVersion: 0 },
+    });
+    assert.equal(reset.statusCode, 200);
+    assert.equal(reset.json().data.accountId, accountId);
+    assert.equal(reset.json().data.sessionVersion, 1);
+    assert.equal(reset.json().data.sessionsRevoked, 1);
+    assert.equal(JSON.stringify(reset.json()).includes(newPassword), false);
+
+    assert.equal(
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/api/v1/auth/session',
+          headers: { cookie: oldCookie },
+        })
+      ).statusCode,
+      401,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/v1/auth/login',
+          payload: { username: 'password.reset', password: oldPassword },
+        })
+      ).statusCode,
+      401,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/v1/auth/login',
+          payload: { username: 'password.reset', password: newPassword },
+        })
+      ).statusCode,
+      200,
+    );
+
+    const staleReset = await app.inject({
+      method: 'POST',
+      url: `/api/v1/admin/accounts/${accountId}/reset-password`,
+      headers: { cookie: adminCookie },
+      payload: { newPassword: 'Another-secure-password-2026!', expectedSessionVersion: 0 },
+    });
+    assert.equal(staleReset.statusCode, 409);
+
+    const audit = await app.inject({
+      method: 'GET',
+      url:
+        `/api/v1/admin/audit-logs?action=ACCOUNT_PASSWORD_RESET&entityType=user` +
+        `&entityId=${accountId}`,
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(audit.statusCode, 200);
+    assert.equal(audit.json().pagination.totalItems, 1);
+    assert.equal(audit.json().data[0].requestId, 'reset-password-request');
+    const serializedAudit = JSON.stringify(audit.json());
+    assert.equal(serializedAudit.includes(newPassword), false);
+    assert.equal(/passwordHash|newPassword|token/iu.test(serializedAudit), false);
+
+    const nonAdminAudit = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/audit-logs',
+      headers: { cookie: cookieOf(await login('ds_nvt')) },
+    });
+    assert.equal(nonAdminAudit.statusCode, 403);
   });
 
   test('returns structured validation errors with the propagated request id', async () => {

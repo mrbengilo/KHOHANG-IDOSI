@@ -1,13 +1,18 @@
 import type {
+  Account,
+  AdminAuditLog,
   AuthenticatedPrincipal,
   CancelWaitTicketRequest,
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
   CreateStoreRequest,
+  CreateAccountRequest,
   DeclareStoreReceiptRequest,
   FinalizeReceiptRequest,
   ListOrderSessionsQuery,
+  ListAccountsQuery,
+  ListAuditLogsQuery,
   ListPriorityOffersQuery,
   ListProductsQuery,
   ListReceiptsQuery,
@@ -23,12 +28,14 @@ import type {
   Receipt,
   RespondPriorityOfferRequest,
   ReturnReceiptForCorrectionRequest,
+  ResetPasswordRequest,
   OrderSession,
   Session,
   Store,
   StoreOrderRequest,
   SubmitStoreReceiptRequest,
   UpdateProductRequest,
+  UpdateAccountRequest,
   UpdateProductConversionRequest,
   DeleteProductConversionRequest,
   WaitTicket,
@@ -90,8 +97,23 @@ import {
   type WaitTicketEffectiveStatus,
   type WaitTicketRecord,
 } from '@idosi/database';
-import { and, asc, count, desc, eq, gte, inArray, isNull, lt, lte, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gte,
+  ilike,
+  inArray,
+  isNull,
+  lt,
+  lte,
+  or,
+  type SQL,
+} from 'drizzle-orm';
 
+import { sanitizeAuditObject } from './audit-sanitization.js';
 import { ApiError, conflict, forbidden, notFound, unauthenticated } from './errors.js';
 import { monthlyOperationalReportDto } from './monthly-report.js';
 import type {
@@ -104,7 +126,7 @@ import type {
   WarehouseRepository,
 } from './repository.js';
 import { canAccessStore, pagination, slicePage } from './repository.js';
-import { hashSessionToken } from './security.js';
+import { hashPassword, hashSessionToken } from './security.js';
 import { asiaHoChiMinhDateRange } from './time.js';
 
 export class PostgresWarehouseRepository implements WarehouseRepository {
@@ -190,6 +212,249 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       .where(and(eq(sessions.tokenHash, hashSessionToken(token)), isNull(sessions.revokedAt)))
       .returning({ id: sessions.id });
     return revoked.length > 0;
+  }
+
+  public async listAccounts(
+    actor: AuthenticatedPrincipal,
+    query: ListAccountsQuery,
+  ): Promise<Page<Account>> {
+    requirePostgresAdmin(actor);
+    const predicates: SQL[] = [isNull(users.deletedAt)];
+    if (query.role !== undefined) {
+      predicates.push(eq(users.role, databaseAccountRole(query.role)));
+    }
+    if (query.status !== undefined) {
+      predicates.push(eq(users.status, databaseAccountStatus(query.status)));
+    }
+    if (query.storeId !== undefined) predicates.push(eq(users.storeId, query.storeId));
+    if (query.search !== undefined) {
+      const pattern = `%${query.search.replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
+      predicates.push(or(ilike(users.email, pattern), ilike(users.displayName, pattern))!);
+    }
+    const where = and(...predicates);
+    const [totalRow] = await db.select({ value: count() }).from(users).where(where);
+    const rows = await db
+      .select()
+      .from(users)
+      .where(where)
+      .orderBy(asc(users.email), asc(users.id))
+      .limit(query.pageSize)
+      .offset((query.page - 1) * query.pageSize);
+    return {
+      data: rows.map(accountDto),
+      pagination: pagination(query.page, query.pageSize, totalRow?.value ?? 0),
+    };
+  }
+
+  public async createAccount(
+    actor: AuthenticatedPrincipal,
+    input: CreateAccountRequest,
+    context: RequestContext,
+  ): Promise<Account> {
+    requirePostgresAdmin(actor);
+    const passwordHash = await hashPassword(input.password);
+    try {
+      return await db.transaction(async (tx) => {
+        if (input.role === 'STORE') {
+          if (input.storeId === null) {
+            throw new ApiError('VALIDATION_ERROR', 'Tài khoản cửa hàng thiếu mã cửa hàng', 400);
+          }
+          const [store] = await tx
+            .select({ id: stores.id })
+            .from(stores)
+            .where(
+              and(
+                eq(stores.id, input.storeId),
+                eq(stores.isActive, true),
+                isNull(stores.deletedAt),
+              ),
+            )
+            .limit(1);
+          if (!store) throw notFound('Không tìm thấy cửa hàng đang hoạt động');
+        }
+        const [created] = await tx
+          .insert(users)
+          .values({
+            email: input.username,
+            passwordHash,
+            displayName: input.displayName,
+            role: databaseAccountRole(input.role),
+            status: 'active',
+            storeId: input.storeId,
+          })
+          .returning();
+        if (!created) throw new Error('Account insert did not return a row');
+        const result = accountDto(created);
+        await tx
+          .insert(auditLogs)
+          .values(
+            auditValue(
+              actor,
+              context,
+              'ACCOUNT_CREATED',
+              'user',
+              created.id,
+              null,
+              accountJson(result),
+            ),
+          );
+        return result;
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) throw conflict('Tên đăng nhập hoặc cửa hàng đã có tài khoản');
+      throw error;
+    }
+  }
+
+  public async updateAccount(
+    actor: AuthenticatedPrincipal,
+    accountId: string,
+    input: UpdateAccountRequest,
+    context: RequestContext,
+  ): Promise<Account> {
+    requirePostgresAdmin(actor);
+    requireAccountStatusVersion(input.status, input.expectedSessionVersion);
+    if (accountId === actor.accountId && input.status !== undefined && input.status !== 'ACTIVE') {
+      throw forbidden('Không thể tự khóa hoặc vô hiệu hóa tài khoản quản trị đang dùng');
+    }
+    return db.transaction(async (tx) => {
+      const [current] = await tx
+        .select()
+        .from(users)
+        .where(and(eq(users.id, accountId), isNull(users.deletedAt)))
+        .for('update')
+        .limit(1);
+      if (!current) throw notFound('Không tìm thấy tài khoản');
+      assertPostgresAccountVersion(current.tokenVersion, input.expectedSessionVersion);
+      const currentDto = accountDto(current);
+      const nextDisplayName = input.displayName ?? currentDto.displayName;
+      const nextStatus = input.status ?? currentDto.status;
+      const statusChanged = nextStatus !== currentDto.status;
+      if (nextDisplayName === currentDto.displayName && !statusChanged) return currentDto;
+
+      const now = new Date();
+      const nextVersion = current.tokenVersion + (statusChanged ? 1 : 0);
+      const [updated] = await tx
+        .update(users)
+        .set({
+          displayName: nextDisplayName,
+          status: databaseAccountStatus(nextStatus),
+          tokenVersion: nextVersion,
+          updatedAt: now,
+        })
+        .where(and(eq(users.id, accountId), eq(users.tokenVersion, current.tokenVersion)))
+        .returning();
+      if (!updated) throw accountVersionConflict();
+
+      const sessionsRevoked = statusChanged
+        ? (
+            await tx
+              .update(sessions)
+              .set({ revokedAt: now, revokeReason: 'account_status_changed' })
+              .where(and(eq(sessions.userId, accountId), isNull(sessions.revokedAt)))
+              .returning({ id: sessions.id })
+          ).length
+        : 0;
+      const result = accountDto(updated);
+      await tx.insert(auditLogs).values({
+        ...auditValue(
+          actor,
+          context,
+          statusChanged ? 'ACCOUNT_STATUS_UPDATED' : 'ACCOUNT_UPDATED',
+          'user',
+          accountId,
+          accountJson(currentDto),
+          accountJson(result),
+        ),
+        metadata: { sessionsRevoked },
+      });
+      return result;
+    });
+  }
+
+  public async resetAccountPassword(
+    actor: AuthenticatedPrincipal,
+    accountId: string,
+    input: ResetPasswordRequest,
+    context: RequestContext,
+  ): Promise<{ accountId: string; sessionsRevoked: number; sessionVersion: number }> {
+    requirePostgresAdmin(actor);
+    const passwordHash = await hashPassword(input.newPassword);
+    return db.transaction(async (tx) => {
+      const [current] = await tx
+        .select()
+        .from(users)
+        .where(and(eq(users.id, accountId), isNull(users.deletedAt)))
+        .for('update')
+        .limit(1);
+      if (!current) throw notFound('Không tìm thấy tài khoản');
+      assertPostgresAccountVersion(current.tokenVersion, input.expectedSessionVersion);
+
+      const now = new Date();
+      const nextVersion = current.tokenVersion + 1;
+      const [updated] = await tx
+        .update(users)
+        .set({ passwordHash, tokenVersion: nextVersion, updatedAt: now })
+        .where(and(eq(users.id, accountId), eq(users.tokenVersion, current.tokenVersion)))
+        .returning();
+      if (!updated) throw accountVersionConflict();
+      const sessionsRevoked = (
+        await tx
+          .update(sessions)
+          .set({ revokedAt: now, revokeReason: 'admin_password_reset' })
+          .where(and(eq(sessions.userId, accountId), isNull(sessions.revokedAt)))
+          .returning({ id: sessions.id })
+      ).length;
+      await tx.insert(auditLogs).values({
+        ...auditValue(
+          actor,
+          context,
+          'ACCOUNT_PASSWORD_RESET',
+          'user',
+          accountId,
+          accountJson(accountDto(current)),
+          accountJson(accountDto(updated)),
+        ),
+        metadata: { sessionsRevoked },
+      });
+      return { accountId, sessionsRevoked, sessionVersion: updated.tokenVersion };
+    });
+  }
+
+  public async listAuditLogs(
+    actor: AuthenticatedPrincipal,
+    query: ListAuditLogsQuery,
+  ): Promise<Page<AdminAuditLog>> {
+    requirePostgresAdmin(actor);
+    const predicates: SQL[] = [];
+    if (query.actorAccountId !== undefined) {
+      predicates.push(eq(auditLogs.actorUserId, query.actorAccountId));
+    }
+    if (query.action !== undefined) predicates.push(eq(auditLogs.action, query.action));
+    if (query.entityType !== undefined) {
+      predicates.push(eq(auditLogs.entityType, query.entityType));
+    }
+    if (query.entityId !== undefined) predicates.push(eq(auditLogs.entityId, query.entityId));
+    if (query.requestId !== undefined) predicates.push(eq(auditLogs.requestId, query.requestId));
+    if (query.createdFrom !== undefined) {
+      predicates.push(gte(auditLogs.createdAt, new Date(query.createdFrom)));
+    }
+    if (query.createdTo !== undefined) {
+      predicates.push(lte(auditLogs.createdAt, new Date(query.createdTo)));
+    }
+    const where = predicates.length > 0 ? and(...predicates) : undefined;
+    const [totalRow] = await db.select({ value: count() }).from(auditLogs).where(where);
+    const rows = await db
+      .select()
+      .from(auditLogs)
+      .where(where)
+      .orderBy(desc(auditLogs.createdAt), desc(auditLogs.id))
+      .limit(query.pageSize)
+      .offset((query.page - 1) * query.pageSize);
+    return {
+      data: rows.map(adminAuditDto),
+      pagination: pagination(query.page, query.pageSize, totalRow?.value ?? 0),
+    };
   }
 
   public async listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>> {
@@ -1354,6 +1619,40 @@ function sessionDto(stored: typeof sessions.$inferSelect, account: AccountCreden
   };
 }
 
+function accountDto(row: typeof users.$inferSelect): Account {
+  return {
+    id: row.id,
+    username: row.email,
+    displayName: row.displayName,
+    role: row.role.toUpperCase() as Account['role'],
+    status: row.status.toUpperCase() as Account['status'],
+    storeId: row.storeId,
+    sessionVersion: row.tokenVersion,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function adminAuditDto(row: typeof auditLogs.$inferSelect): AdminAuditLog {
+  return {
+    id: row.id,
+    requestId: row.requestId,
+    actorAccountId: row.actorUserId,
+    actorRole:
+      row.actorRole === null
+        ? null
+        : (row.actorRole.toUpperCase() as NonNullable<AdminAuditLog['actorRole']>),
+    actorStoreId: row.actorStoreId,
+    action: row.action,
+    entityType: row.entityType,
+    entityId: row.entityId,
+    before: sanitizeAuditObject(row.before),
+    after: sanitizeAuditObject(row.after),
+    metadata: sanitizeAuditObject(row.metadata) ?? {},
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
 function productDto(row: typeof products.$inferSelect): Product {
   return {
     id: row.id,
@@ -1701,6 +2000,53 @@ function auditValue(
     ipAddress: context.ipAddress,
     userAgent: context.userAgent,
   };
+}
+
+function accountJson(account: Account): JsonObject {
+  return {
+    id: account.id,
+    username: account.username,
+    displayName: account.displayName,
+    role: account.role,
+    status: account.status,
+    storeId: account.storeId,
+    sessionVersion: account.sessionVersion,
+    createdAt: account.createdAt,
+    updatedAt: account.updatedAt,
+  };
+}
+
+function databaseAccountRole(role: Account['role']): 'admin' | 'htkd' | 'store' {
+  return role.toLocaleLowerCase('en-US') as 'admin' | 'htkd' | 'store';
+}
+
+function databaseAccountStatus(status: Account['status']): 'active' | 'locked' | 'disabled' {
+  return status.toLocaleLowerCase('en-US') as 'active' | 'locked' | 'disabled';
+}
+
+function requirePostgresAdmin(actor: AuthenticatedPrincipal): void {
+  if (actor.role !== 'ADMIN') throw forbidden();
+}
+
+function assertPostgresAccountVersion(actual: number, expected: number | undefined): void {
+  if (expected !== undefined && actual !== expected) throw accountVersionConflict();
+}
+
+function requireAccountStatusVersion(
+  status: UpdateAccountRequest['status'],
+  expectedSessionVersion: number | undefined,
+): void {
+  if (status !== undefined && expectedSessionVersion === undefined) {
+    throw new ApiError(
+      'VALIDATION_ERROR',
+      'Cần phiên bản hiện tại khi thay đổi trạng thái tài khoản',
+      400,
+    );
+  }
+}
+
+function accountVersionConflict(): ApiError {
+  return new ApiError('VERSION_CONFLICT', 'Tài khoản đã thay đổi, vui lòng tải lại', 409);
 }
 
 function productJson(product: Product): JsonObject {

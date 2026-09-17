@@ -1,15 +1,20 @@
 import { randomUUID } from 'node:crypto';
 
 import type {
+  Account,
+  AdminAuditLog,
   AuthenticatedPrincipal,
   CancelWaitTicketRequest,
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
   CreateStoreRequest,
+  CreateAccountRequest,
   DeclareStoreReceiptRequest,
   FinalizeReceiptRequest,
   ListOrderSessionsQuery,
+  ListAccountsQuery,
+  ListAuditLogsQuery,
   ListProductsQuery,
   ListPriorityOffersQuery,
   ListReceiptsQuery,
@@ -25,12 +30,14 @@ import type {
   Receipt,
   RespondPriorityOfferRequest,
   ReturnReceiptForCorrectionRequest,
+  ResetPasswordRequest,
   OrderSession,
   Session,
   Store,
   StoreOrderRequest,
   SubmitStoreReceiptRequest,
   UpdateProductRequest,
+  UpdateAccountRequest,
   UpdateProductConversionRequest,
   DeleteProductConversionRequest,
   WaitTicket,
@@ -46,6 +53,7 @@ import { calculateWeightedCostVnd, summarizeMonthlyReport } from '@idosi/databas
 import type { MonthlyReportScope } from '@idosi/database';
 
 import { ApiError, conflict, forbidden, notFound, unauthenticated } from './errors.js';
+import { sanitizeAuditObject } from './audit-sanitization.js';
 import { monthlyOperationalReportDto } from './monthly-report.js';
 import type {
   AccountCredentials,
@@ -75,9 +83,12 @@ export const MEMORY_SEED_IDS = {
 } as const;
 
 interface MutableAccount extends AccountCredentials {
+  displayName: string;
   passwordHash: string;
   sessionVersion: number;
   status: 'ACTIVE' | 'LOCKED' | 'DISABLED';
+  readonly createdAt: string;
+  updatedAt: string;
 }
 
 interface StoredSession {
@@ -220,6 +231,163 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (!stored || stored.revokedAt !== null) return false;
     stored.revokedAt = this.now();
     return true;
+  }
+
+  public async listAccounts(
+    actor: AuthenticatedPrincipal,
+    query: ListAccountsQuery,
+  ): Promise<Page<Account>> {
+    requireMemoryAdmin(actor);
+    const search = query.search?.toLocaleLowerCase('vi-VN');
+    const values = [...this.accounts.values()]
+      .filter((account) => query.role === undefined || account.role === query.role)
+      .filter((account) => query.status === undefined || account.status === query.status)
+      .filter((account) => query.storeId === undefined || account.storeId === query.storeId)
+      .filter(
+        (account) =>
+          search === undefined ||
+          account.username.toLocaleLowerCase('vi-VN').includes(search) ||
+          account.displayName.toLocaleLowerCase('vi-VN').includes(search),
+      )
+      .sort((left, right) => left.username.localeCompare(right.username))
+      .map(memoryAccountDto);
+    return {
+      data: slicePage(values, query.page, query.pageSize),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
+  }
+
+  public async createAccount(
+    actor: AuthenticatedPrincipal,
+    input: CreateAccountRequest,
+    context: RequestContext,
+  ): Promise<Account> {
+    requireMemoryAdmin(actor);
+    if ([...this.accounts.values()].some((account) => account.username === input.username)) {
+      throw conflict('Tên đăng nhập đã tồn tại');
+    }
+    if (input.role === 'STORE') {
+      const store = input.storeId === null ? undefined : this.stores.get(input.storeId);
+      if (!store || store.status !== 'ACTIVE')
+        throw notFound('Không tìm thấy cửa hàng đang hoạt động');
+      if (
+        [...this.accounts.values()].some(
+          (account) => account.role === 'STORE' && account.storeId === input.storeId,
+        )
+      ) {
+        throw conflict('Cửa hàng đã có tài khoản');
+      }
+    }
+    const now = this.now().toISOString();
+    const created: MutableAccount = {
+      id: randomUUID(),
+      username: input.username,
+      displayName: input.displayName,
+      role: input.role,
+      status: 'ACTIVE',
+      storeId: input.storeId,
+      passwordHash: await hashPassword(input.password),
+      sessionVersion: 0,
+      assignedStoreIds: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.accounts.set(created.id, created);
+    const result = memoryAccountDto(created);
+    this.appendAudit(actor, context, 'ACCOUNT_CREATED', 'user', created.id, null, result);
+    return result;
+  }
+
+  public async updateAccount(
+    actor: AuthenticatedPrincipal,
+    accountId: string,
+    input: UpdateAccountRequest,
+    context: RequestContext,
+  ): Promise<Account> {
+    requireMemoryAdmin(actor);
+    const account = this.accounts.get(accountId);
+    if (!account) throw notFound('Không tìm thấy tài khoản');
+    requireAccountStatusVersion(input.status, input.expectedSessionVersion);
+    assertMemoryAccountVersion(account, input.expectedSessionVersion);
+    if (accountId === actor.accountId && input.status !== undefined && input.status !== 'ACTIVE') {
+      throw forbidden('Không thể tự khóa hoặc vô hiệu hóa tài khoản quản trị đang dùng');
+    }
+
+    const before = memoryAccountDto(account);
+    const statusChanged = input.status !== undefined && input.status !== account.status;
+    const nameChanged =
+      input.displayName !== undefined && input.displayName !== account.displayName;
+    if (!statusChanged && !nameChanged) return before;
+
+    if (input.displayName !== undefined) account.displayName = input.displayName;
+    if (input.status !== undefined) account.status = input.status;
+    let sessionsRevoked = 0;
+    if (statusChanged) {
+      account.sessionVersion += 1;
+      sessionsRevoked = this.revokeAccountSessions(accountId);
+    }
+    account.updatedAt = this.now().toISOString();
+    const result = memoryAccountDto(account);
+    this.appendAudit(
+      actor,
+      context,
+      statusChanged ? 'ACCOUNT_STATUS_UPDATED' : 'ACCOUNT_UPDATED',
+      'user',
+      account.id,
+      before,
+      result,
+      { sessionsRevoked },
+    );
+    return result;
+  }
+
+  public async resetAccountPassword(
+    actor: AuthenticatedPrincipal,
+    accountId: string,
+    input: ResetPasswordRequest,
+    context: RequestContext,
+  ): Promise<{ accountId: string; sessionsRevoked: number; sessionVersion: number }> {
+    requireMemoryAdmin(actor);
+    const account = this.accounts.get(accountId);
+    if (!account) throw notFound('Không tìm thấy tài khoản');
+    assertMemoryAccountVersion(account, input.expectedSessionVersion);
+    const before = memoryAccountDto(account);
+    account.passwordHash = await hashPassword(input.newPassword);
+    account.sessionVersion += 1;
+    account.updatedAt = this.now().toISOString();
+    const sessionsRevoked = this.revokeAccountSessions(accountId);
+    const after = memoryAccountDto(account);
+    this.appendAudit(actor, context, 'ACCOUNT_PASSWORD_RESET', 'user', account.id, before, after, {
+      sessionsRevoked,
+    });
+    return { accountId, sessionsRevoked, sessionVersion: account.sessionVersion };
+  }
+
+  public async listAuditLogs(
+    actor: AuthenticatedPrincipal,
+    query: ListAuditLogsQuery,
+  ): Promise<Page<AdminAuditLog>> {
+    requireMemoryAdmin(actor);
+    const values = this.audit
+      .filter(
+        (event) =>
+          query.actorAccountId === undefined || event.actorAccountId === query.actorAccountId,
+      )
+      .filter((event) => query.action === undefined || event.action === query.action)
+      .filter((event) => query.entityType === undefined || event.entityType === query.entityType)
+      .filter((event) => query.entityId === undefined || event.entityId === query.entityId)
+      .filter((event) => query.requestId === undefined || event.requestId === query.requestId)
+      .filter((event) => query.createdFrom === undefined || event.createdAt >= query.createdFrom)
+      .filter((event) => query.createdTo === undefined || event.createdAt <= query.createdTo)
+      .sort(
+        (left, right) =>
+          right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
+      )
+      .map(memoryAuditDto);
+    return {
+      data: slicePage(values, query.page, query.pageSize),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
   }
 
   public async listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>> {
@@ -1359,6 +1527,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         passwordHash,
         sessionVersion: 0,
         assignedStoreIds: [],
+        createdAt: now,
+        updatedAt: now,
       },
       {
         id: MEMORY_SEED_IDS.htkdAccount,
@@ -1370,6 +1540,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         passwordHash,
         sessionVersion: 0,
         assignedStoreIds: [nvtId, bdId],
+        createdAt: now,
+        updatedAt: now,
       },
       {
         id: MEMORY_SEED_IDS.storeAccount,
@@ -1381,6 +1553,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         passwordHash,
         sessionVersion: 0,
         assignedStoreIds: [],
+        createdAt: now,
+        updatedAt: now,
       },
     ];
     for (const account of seededAccounts) this.accounts.set(account.id, account);
@@ -1418,6 +1592,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     entityId: string,
     before: unknown,
     after: unknown,
+    metadata: Readonly<Record<string, unknown>> = {},
   ): void {
     this.audit.push(
       Object.freeze({
@@ -1431,9 +1606,77 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         requestId: context.requestId,
         before: structuredClone(before),
         after: structuredClone(after),
-        metadata: {},
+        metadata: structuredClone(metadata),
         createdAt: this.now().toISOString(),
       }),
+    );
+  }
+
+  private revokeAccountSessions(accountId: string): number {
+    let revoked = 0;
+    const now = this.now();
+    for (const session of this.sessions.values()) {
+      if (session.accountId !== accountId || session.revokedAt !== null) continue;
+      session.revokedAt = now;
+      revoked += 1;
+    }
+    return revoked;
+  }
+}
+
+function memoryAccountDto(account: MutableAccount): Account {
+  return {
+    id: account.id,
+    username: account.username,
+    displayName: account.displayName,
+    role: account.role,
+    status: account.status,
+    storeId: account.storeId,
+    sessionVersion: account.sessionVersion,
+    createdAt: account.createdAt,
+    updatedAt: account.updatedAt,
+  };
+}
+
+function memoryAuditDto(event: AuditRecord): AdminAuditLog {
+  return {
+    id: event.id,
+    requestId: event.requestId,
+    actorAccountId: event.actorAccountId,
+    actorRole: event.actorRole,
+    actorStoreId: event.actorStoreId,
+    action: event.action,
+    entityType: event.entityType,
+    entityId: event.entityId,
+    before: sanitizeAuditObject(event.before),
+    after: sanitizeAuditObject(event.after),
+    metadata: sanitizeAuditObject(event.metadata) ?? {},
+    createdAt: event.createdAt,
+  };
+}
+
+function requireMemoryAdmin(actor: AuthenticatedPrincipal): void {
+  if (actor.role !== 'ADMIN') throw forbidden();
+}
+
+function assertMemoryAccountVersion(
+  account: MutableAccount,
+  expectedSessionVersion: number | undefined,
+): void {
+  if (expectedSessionVersion !== undefined && account.sessionVersion !== expectedSessionVersion) {
+    throw new ApiError('VERSION_CONFLICT', 'Tài khoản đã thay đổi, vui lòng tải lại', 409);
+  }
+}
+
+function requireAccountStatusVersion(
+  status: UpdateAccountRequest['status'],
+  expectedSessionVersion: number | undefined,
+): void {
+  if (status !== undefined && expectedSessionVersion === undefined) {
+    throw new ApiError(
+      'VALIDATION_ERROR',
+      'Cần phiên bản hiện tại khi thay đổi trạng thái tài khoản',
+      400,
     );
   }
 }

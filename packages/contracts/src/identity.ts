@@ -163,9 +163,22 @@ export const UpdateAccountRequestSchema = z
   .object({
     displayName: z.string().trim().min(1).max(120).optional(),
     status: AccountStatusSchema.optional(),
+    expectedSessionVersion: z.number().int().nonnegative().optional(),
   })
   .strict()
-  .refine((request) => Object.keys(request).length > 0, 'At least one field is required');
+  .refine(
+    (request) => request.displayName !== undefined || request.status !== undefined,
+    'At least one mutable field is required',
+  )
+  .superRefine((request, context) => {
+    if (request.status !== undefined && request.expectedSessionVersion === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['expectedSessionVersion'],
+        message: 'expectedSessionVersion is required when changing account status',
+      });
+    }
+  });
 export type UpdateAccountRequest = z.infer<typeof UpdateAccountRequestSchema>;
 
 export const UpdateAccountResponseSchema = z.object({ data: AccountSchema }).strict();
@@ -174,6 +187,7 @@ export type UpdateAccountResponse = z.infer<typeof UpdateAccountResponseSchema>;
 export const ResetPasswordRequestSchema = z
   .object({
     newPassword: z.string().min(12).max(256),
+    expectedSessionVersion: z.number().int().nonnegative(),
     revokeSessions: z.literal(true).default(true),
   })
   .strict();
@@ -185,6 +199,7 @@ export const ResetPasswordResponseSchema = z
       .object({
         accountId: EntityIdSchema,
         sessionsRevoked: z.number().int().nonnegative(),
+        sessionVersion: z.number().int().nonnegative(),
       })
       .strict(),
   })
@@ -206,3 +221,6 @@ export const ListAccountsResponseSchema = z
   })
   .strict();
 export type ListAccountsResponse = z.infer<typeof ListAccountsResponseSchema>;
+
+export const AccountParamsSchema = z.object({ accountId: EntityIdSchema }).strict();
+export type AccountParams = z.infer<typeof AccountParamsSchema>;
