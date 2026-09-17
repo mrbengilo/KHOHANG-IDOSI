@@ -101,6 +101,28 @@ describe('receipt source selection', () => {
     expect(init).toMatchObject({ credentials: 'include' });
   });
 
+  it('loads every dispatched source page instead of truncating after 100 rows', async () => {
+    const second = {
+      ...source,
+      id: '30000000-0000-4000-8000-000000000002',
+      requestNumber: 'OUT-2026-0002',
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const page = String(input).includes('page=2') ? 2 : 1;
+      return new Response(
+        JSON.stringify({
+          data: [page === 1 ? source : second],
+          pagination: { page, pageSize: 100, totalItems: 101, totalPages: 2 },
+        }),
+        { headers: { 'content-type': 'application/json' }, status: 200 },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(listStoreReceiptSources()).resolves.toEqual([source, second]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('surfaces a network error instead of inventing receipt sources', async () => {
     vi.stubGlobal(
       'fetch',
