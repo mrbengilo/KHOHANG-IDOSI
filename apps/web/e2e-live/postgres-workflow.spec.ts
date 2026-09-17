@@ -143,24 +143,38 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
 
   await page.getByRole('link', { name: 'Tài khoản' }).click();
   await expect(page.getByRole('heading', { name: 'Tài khoản & phân quyền' })).toBeVisible();
-  await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
-  const accountForm = page.locator('#admin-create-account');
-  const storeUsername = `live.store.${runSuffix}.${testInfo.retry}`.slice(0, 80);
+  const storeUsername = `live.store.${runSuffix}`.slice(0, 80);
   const storePassword = 'Live-store-password-2026!';
-  await accountForm.getByLabel('Tên đăng nhập').fill(storeUsername);
-  await accountForm.getByLabel('Tên hiển thị').fill('Live PostgreSQL Store');
-  await accountForm.getByLabel('Vai trò').selectOption('STORE');
-  await accountForm.getByLabel('Cửa hàng').selectOption({ label: 'DS_BMT · DS BMT' });
-  await accountForm.getByLabel('Mật khẩu ban đầu').fill(storePassword);
-  await accountForm.getByLabel('Nhập lại mật khẩu').fill(storePassword);
-  const accountResponsePromise = page.waitForResponse(
-    (response) =>
-      response.url() === `${apiOrigin}/api/v1/admin/accounts` &&
-      response.request().method() === 'POST',
+  const existingAccountResponse = await page
+    .context()
+    .request.get(
+      `${apiOrigin}/api/v1/admin/accounts?search=${encodeURIComponent(storeUsername)}&page=1&pageSize=20`,
+    );
+  expect(existingAccountResponse.status()).toBe(200);
+  const existingAccountPayload = (await existingAccountResponse.json()) as {
+    data: Array<{ username: string }>;
+  };
+  const accountExists = existingAccountPayload.data.some(
+    (account) => account.username === storeUsername,
   );
-  await accountForm.getByRole('button', { exact: true, name: 'Tạo tài khoản' }).click();
-  expect((await accountResponsePromise).status()).toBe(201);
-  await expect(page.getByText(`Đã tạo tài khoản ${storeUsername}.`)).toBeVisible();
+  if (!accountExists) {
+    await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
+    const accountForm = page.locator('#admin-create-account');
+    await accountForm.getByLabel('Tên đăng nhập').fill(storeUsername);
+    await accountForm.getByLabel('Tên hiển thị').fill('Live PostgreSQL Store');
+    await accountForm.getByLabel('Vai trò').selectOption('STORE');
+    await accountForm.getByLabel('Cửa hàng').selectOption({ label: 'DS_BMT · DS BMT' });
+    await accountForm.getByLabel('Mật khẩu ban đầu').fill(storePassword);
+    await accountForm.getByLabel('Nhập lại mật khẩu').fill(storePassword);
+    const accountResponsePromise = page.waitForResponse(
+      (response) =>
+        response.url() === `${apiOrigin}/api/v1/admin/accounts` &&
+        response.request().method() === 'POST',
+    );
+    await accountForm.getByRole('button', { exact: true, name: 'Tạo tài khoản' }).click();
+    expect((await accountResponsePromise).status()).toBe(201);
+    await expect(page.getByText(`Đã tạo tài khoản ${storeUsername}.`)).toBeVisible();
+  }
   const openSessionId = await ensureOpenOrderSession(page);
 
   const logoutResponsePromise = page.waitForResponse(
