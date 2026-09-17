@@ -2,14 +2,21 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AdminApiError } from './adminApi';
 import {
+  createAdminStore,
+  createAdminStoreGroup,
   getAdminOperationalSettings,
   getAdminHtkdAssignments,
   listActiveRetailStoresForAccounts,
   listAdminAccounts,
+  listAdminStoreGroupDirectory,
+  listAdminStoreGroups,
+  listAdminStores,
   replaceAdminHtkdAssignments,
   resetAdminAccountPassword,
   updateAdminAccount,
   updateAdminOperationalSettings,
+  updateAdminStore,
+  updateAdminStoreGroup,
 } from './adminApi';
 
 const account = {
@@ -22,6 +29,29 @@ const account = {
   storeId: null,
   updatedAt: '2026-09-17T00:00:00.000Z',
   username: 'htkd.test',
+} as const;
+
+const group = {
+  id: '22222222-2222-4222-8222-222222222222',
+  code: 'MIEN_NAM',
+  name: 'Miền Nam',
+  status: 'ACTIVE',
+  version: 2,
+  createdAt: '2026-09-17T00:00:00.000Z',
+  updatedAt: '2026-09-17T00:00:00.000Z',
+} as const;
+
+const store = {
+  id: '33333333-3333-4333-8333-333333333333',
+  code: 'DS_TEST',
+  name: 'DS Test',
+  groupId: group.id,
+  kind: 'RETAIL',
+  status: 'ACTIVE',
+  address: null,
+  version: 4,
+  createdAt: '2026-09-17T00:00:00.000Z',
+  updatedAt: '2026-09-17T00:00:00.000Z',
 } as const;
 
 afterEach(() => {
@@ -265,6 +295,132 @@ describe('admin API client', () => {
       idosiSyncIntervalMinutes: 30,
     });
     expect(String(updateInit.body)).not.toContain('secret');
+  });
+
+  it('queries store and group lifecycle pages with server-side filters', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: [group],
+          pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: [store],
+          pagination: { page: 2, pageSize: 20, totalItems: 21, totalPages: 2 },
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      listAdminStoreGroups({ page: 1, pageSize: 20, search: '%_Nam', status: 'ACTIVE' }),
+    ).resolves.toMatchObject({ data: [group] });
+    await expect(
+      listAdminStores({
+        page: 2,
+        pageSize: 20,
+        groupId: group.id,
+        kind: 'RETAIL',
+        status: 'ACTIVE',
+      }),
+    ).resolves.toMatchObject({ data: [store] });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('search=%25_Nam');
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('status=ACTIVE');
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain(`groupId=${group.id}`);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('kind=RETAIL');
+  });
+
+  it('loads every store-group page for filters and editors', async () => {
+    const northernGroup = {
+      ...group,
+      code: 'MIEN_BAC',
+      id: '44444444-4444-4444-8444-444444444444',
+      name: 'Miền Bắc',
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: [group],
+          pagination: { page: 1, pageSize: 100, totalItems: 101, totalPages: 2 },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: [northernGroup],
+          pagination: { page: 2, pageSize: 100, totalItems: 101, totalPages: 2 },
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(listAdminStoreGroupDirectory()).resolves.toEqual([group, northernGroup]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('page=1&pageSize=100');
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('page=2&pageSize=100');
+  });
+
+  it('sends idempotency keys and optimistic versions for store lifecycle mutations', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ data: { ...group, version: 0 } }, 201))
+      .mockResolvedValueOnce(jsonResponse({ data: { ...group, name: 'Miền Nam mới', version: 3 } }))
+      .mockResolvedValueOnce(jsonResponse({ data: { ...store, version: 0 } }, 201))
+      .mockResolvedValueOnce(jsonResponse({ data: { ...store, status: 'INACTIVE', version: 5 } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await createAdminStoreGroup({ code: group.code, name: group.name }, 'group-create-key');
+    await updateAdminStoreGroup(
+      group.id,
+      { expectedVersion: 2, name: 'Miền Nam mới' },
+      'group-update-key',
+    );
+    await createAdminStore(
+      {
+        address: null,
+        code: store.code,
+        groupId: group.id,
+        kind: store.kind,
+        name: store.name,
+      },
+      'store-create-key',
+    );
+    await updateAdminStore(
+      store.id,
+      { expectedVersion: 4, status: 'INACTIVE' },
+      'store-update-key',
+    );
+
+    const requests = fetchMock.mock.calls.map(([url, init]) => ({
+      body: JSON.parse(String((init as RequestInit | undefined)?.body)),
+      key: new Headers((init as RequestInit | undefined)?.headers).get('idempotency-key'),
+      method: (init as RequestInit | undefined)?.method,
+      url: String(url),
+    }));
+    expect(requests).toEqual([
+      expect.objectContaining({
+        key: 'group-create-key',
+        method: 'POST',
+        url: expect.stringContaining('/store-groups'),
+      }),
+      expect.objectContaining({
+        body: { expectedVersion: 2, name: 'Miền Nam mới' },
+        key: 'group-update-key',
+        method: 'PATCH',
+      }),
+      expect.objectContaining({
+        key: 'store-create-key',
+        method: 'POST',
+        url: expect.stringContaining('/stores'),
+      }),
+      expect.objectContaining({
+        body: { expectedVersion: 4, status: 'INACTIVE' },
+        key: 'store-update-key',
+        method: 'PATCH',
+      }),
+    ]);
   });
 });
 

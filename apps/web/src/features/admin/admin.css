@@ -397,6 +397,17 @@
   color: var(--text-secondary);
 }
 
+.admin-action--danger {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.admin-action--danger:hover:not(:disabled) {
+  border-color: #f87171;
+  background: #fee2e2;
+}
+
 .admin-action:disabled {
   opacity: 0.52;
 }

@@ -41,6 +41,11 @@ const UsersPage = lazy(() =>
     default: module.AdminUsersPage,
   })),
 );
+const StoresPage = lazy(() =>
+  import('./features/admin/AdminStoresPage').then((module) => ({
+    default: module.AdminStoresPage,
+  })),
+);
 const AuditPage = lazy(() =>
   import('./features/admin/AuditLogPage').then((module) => ({ default: module.AuditLogPage })),
 );
@@ -78,6 +83,7 @@ export const router = createBrowserRouter([
       { path: 'catalog', element: suspense(<CatalogPage />) },
       { path: 'costs', element: suspense(<ReceivePage />) },
       { path: 'reports', element: suspense(<ReportsPage />) },
+      { path: 'stores', element: suspense(<StoresPage />) },
       { path: 'users', element: suspense(<UsersPage />) },
       { path: 'audit', element: suspense(<AuditPage />) },
       { path: 'settings', element: suspense(<SettingsPage />) },
