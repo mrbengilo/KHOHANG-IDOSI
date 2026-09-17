@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AllocationLineSchema,
+  CancelStoreOrderRequestSchema,
   AllocationResultSchema,
   CreateOrderSessionRequestSchema,
   CreateStoreOrderRequestSchema,
@@ -94,6 +95,18 @@ describe('order, allocation and wait-list contracts', () => {
     };
     expect(CreateStoreOrderRequestSchema.safeParse(request).success).toBe(true);
     expect(
+      CreateStoreOrderRequestSchema.safeParse({
+        ...request,
+        items: [{ ...request.items[0], note: 'Ưu tiên kiện loại A' }],
+      }).success,
+    ).toBe(true);
+    expect(
+      CreateStoreOrderRequestSchema.safeParse({
+        ...request,
+        items: [{ ...request.items[0], note: '   ' }],
+      }).success,
+    ).toBe(false);
+    expect(
       CreateStoreOrderRequestSchema.safeParse({ ...request, requestSequence: 1 }).success,
     ).toBe(false);
     expect(
@@ -126,6 +139,10 @@ describe('order, allocation and wait-list contracts', () => {
         items: [{ productId: IDS.product, quantity: 100_001 }],
       }).success,
     ).toBe(false);
+    expect(
+      CancelStoreOrderRequestSchema.safeParse({ reason: 'Cửa hàng nhập nhầm nhu cầu' }).success,
+    ).toBe(true);
+    expect(CancelStoreOrderRequestSchema.safeParse({ reason: '  ' }).success).toBe(false);
   });
 
   it('retains server-assigned request sequence and priority in responses', () => {

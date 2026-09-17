@@ -20,6 +20,65 @@ async function login(page: Page, username: string, password: string) {
   expect(response.status()).toBe(200);
 }
 
+function hoChiMinhBusinessDate(): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    day: '2-digit',
+    month: '2-digit',
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+  }).formatToParts(new Date());
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  if (!year || !month || !day) throw new Error('Unable to resolve the Ho Chi Minh business date');
+  return `${year}-${month}-${day}`;
+}
+
+async function ensureOpenOrderSession(page: Page): Promise<string> {
+  const businessDate = hoChiMinhBusinessDate();
+  const existingResponse = await page
+    .context()
+    .request.get(
+      `${apiOrigin}/api/v1/order-sessions?dateFrom=${businessDate}&dateTo=${businessDate}&page=1&pageSize=20`,
+    );
+  expect(existingResponse.status()).toBe(200);
+  const existing = (await existingResponse.json()) as {
+    data: Array<{ id: string; status: string; version: number }>;
+  };
+  const openSession = existing.data.find((session) => session.status === 'OPEN');
+  if (openSession) return openSession.id;
+
+  let targetSession = existing.data.find((session) => session.status === 'SCHEDULED');
+  if (!targetSession) {
+    const createResponse = await page.context().request.post(`${apiOrigin}/api/v1/order-sessions`, {
+      data: {
+        allocationStartsAt: `${businessDate}T23:59:59+07:00`,
+        businessDate,
+        requestClosesAt: `${businessDate}T23:59:58+07:00`,
+        requestOpensAt: `${businessDate}T00:00:00+07:00`,
+      },
+      headers: { 'idempotency-key': `live-open-session-${runSuffix}` },
+    });
+    expect([200, 201]).toContain(createResponse.status());
+    const created = (await createResponse.json()) as {
+      data: { id: string; status: string; version: number };
+    };
+    if (created.data.status === 'OPEN') return created.data.id;
+    targetSession = created.data;
+  }
+
+  const openResponse = await page
+    .context()
+    .request.post(`${apiOrigin}/api/v1/order-sessions/${targetSession.id}/transition`, {
+      data: { expectedVersion: targetSession.version, status: 'OPEN' },
+      headers: { 'idempotency-key': `live-open-session-transition-${runSuffix}` },
+    });
+  expect(openResponse.status()).toBe(200);
+  const opened = (await openResponse.json()) as { data: { id: string; status: string } };
+  expect(opened.data.status).toBe('OPEN');
+  return opened.data.id;
+}
+
 test('production UI persists operations in PostgreSQL and enforces the store role', async ({
   page,
 }, testInfo) => {
@@ -32,7 +91,10 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
       response.url().includes(`${apiOrigin}/api/v1/allocations?`) &&
       response.request().method() === 'GET',
   );
-  await page.getByRole('link', { name: 'Phân bổ hàng hóa' }).click();
+  await page
+    .getByRole('navigation', { name: 'Điều hướng chính' })
+    .getByRole('link', { name: 'Phân bổ hàng hóa' })
+    .click();
   const allocationResponse = await allocationResponsePromise;
   expect(allocationResponse.status()).toBe(200);
   const allocationPayload = (await allocationResponse.json()) as { data: unknown[] };
@@ -120,7 +182,6 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
 
   await page.getByRole('link', { name: 'Tài khoản' }).click();
   await expect(page.getByRole('heading', { name: 'Tài khoản & phân quyền' })).toBeVisible();
-
   await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
   const htkdForm = page.locator('#admin-create-account');
   const htkdUsername = `live.htkd.${runSuffix}.${testInfo.retry}`.slice(0, 80);
@@ -176,25 +237,39 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   await expect(page.getByText('Đã thu hồi toàn bộ quyền theo cửa hàng.')).toBeVisible();
   await page.getByRole('button', { name: 'Đóng biểu mẫu phân công cửa hàng' }).click();
 
-  await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
-  const accountForm = page.locator('#admin-create-account');
-  const storeUsername = `live.store.${runSuffix}.${testInfo.retry}`.slice(0, 80);
+  const storeUsername = `live.store.${runSuffix}`.slice(0, 80);
   const storePassword = 'Live-store-password-2026!';
-  await accountForm.getByLabel('Tên đăng nhập').fill(storeUsername);
-  await accountForm.getByLabel('Tên hiển thị').fill('Live PostgreSQL Store');
-  await accountForm.getByLabel('Vai trò').selectOption('STORE');
-  await accountForm.getByLabel('Cửa hàng').selectOption({ label: 'DS_BMT · DS BMT' });
-  await accountForm.getByLabel('Mật khẩu ban đầu').fill(storePassword);
-  await accountForm.getByLabel('Nhập lại mật khẩu').fill(storePassword);
-  const accountResponsePromise = page.waitForResponse(
-    (response) =>
-      response.url() === `${apiOrigin}/api/v1/admin/accounts` &&
-      response.request().method() === 'POST',
+  const existingAccountResponse = await page
+    .context()
+    .request.get(
+      `${apiOrigin}/api/v1/admin/accounts?search=${encodeURIComponent(storeUsername)}&page=1&pageSize=20`,
+    );
+  expect(existingAccountResponse.status()).toBe(200);
+  const existingAccountPayload = (await existingAccountResponse.json()) as {
+    data: Array<{ username: string }>;
+  };
+  const accountExists = existingAccountPayload.data.some(
+    (account) => account.username === storeUsername,
   );
-  await accountForm.getByRole('button', { exact: true, name: 'Tạo tài khoản' }).click();
-  const accountResponse = await accountResponsePromise;
-  expect(accountResponse.status()).toBe(201);
-  await expect(page.getByText(`Đã tạo tài khoản ${storeUsername}.`)).toBeVisible();
+  if (!accountExists) {
+    await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
+    const accountForm = page.locator('#admin-create-account');
+    await accountForm.getByLabel('Tên đăng nhập').fill(storeUsername);
+    await accountForm.getByLabel('Tên hiển thị').fill('Live PostgreSQL Store');
+    await accountForm.getByLabel('Vai trò').selectOption('STORE');
+    await accountForm.getByLabel('Cửa hàng').selectOption({ label: 'DS_BMT · DS BMT' });
+    await accountForm.getByLabel('Mật khẩu ban đầu').fill(storePassword);
+    await accountForm.getByLabel('Nhập lại mật khẩu').fill(storePassword);
+    const accountResponsePromise = page.waitForResponse(
+      (response) =>
+        response.url() === `${apiOrigin}/api/v1/admin/accounts` &&
+        response.request().method() === 'POST',
+    );
+    await accountForm.getByRole('button', { exact: true, name: 'Tạo tài khoản' }).click();
+    expect((await accountResponsePromise).status()).toBe(201);
+    await expect(page.getByText(`Đã tạo tài khoản ${storeUsername}.`)).toBeVisible();
+  }
+  const openSessionId = await ensureOpenOrderSession(page);
 
   const logoutResponsePromise = page.waitForResponse(
     (response) =>
@@ -207,6 +282,85 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   await expect(page.getByRole('heading', { name: 'Tổng quan cửa hàng' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Tài khoản' })).toHaveCount(0);
 
+  await page.getByRole('link', { name: 'Đặt hàng' }).click();
+  await expect(
+    page.getByRole('heading', { exact: true, name: 'Đặt hàng & kết quả' }),
+  ).toBeVisible();
+  const lineNote = `REF-${runSuffix}-${testInfo.retry}-${'X'.repeat(180)}`;
+  await page.getByLabel('Số bao').fill('2');
+  await page.getByLabel('Ghi chú mặt hàng').fill(lineNote);
+  await page.getByRole('button', { name: 'Thêm mặt hàng' }).click();
+  await expect(page.getByText(`2 bao • ${lineNote}`)).toBeVisible();
+
+  const orderResponsePromise = page.waitForResponse(
+    (response) =>
+      response.url() === `${apiOrigin}/api/v1/order-requests` &&
+      response.request().method() === 'POST',
+  );
+  await page.getByRole('button', { name: 'Gửi yêu cầu đặt hàng' }).click();
+  const orderResponse = await orderResponsePromise;
+  expect(orderResponse.status()).toBe(201);
+  const orderPayload = (await orderResponse.json()) as {
+    data: { id: string; lines: Array<{ note?: string }>; storeId: string };
+  };
+  expect(orderPayload.data.lines).toContainEqual(expect.objectContaining({ note: lineNote }));
+  await expect(
+    page.getByText('Đã gửi yêu cầu. Kho chỉ giữ hàng sau khi chạy phân bổ.'),
+  ).toBeVisible();
+
+  const orderCard = page.locator('.request-history-card').filter({ hasText: lineNote });
+  await expect(orderCard).toHaveCount(1);
+  await orderCard.locator('summary').click();
+  await expect(orderCard.getByText(lineNote)).toBeVisible();
+  await page.setViewportSize({ height: 844, width: 390 });
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
+    .toBe(true);
+  const cancellationTrigger = orderCard.getByRole('button', { name: 'Hủy yêu cầu' });
+  expect((await cancellationTrigger.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+  await cancellationTrigger.click();
+  const cancellationReason = `Live cancellation ${runSuffix}-${testInfo.retry}`;
+  await orderCard.getByLabel('Lý do hủy').fill(cancellationReason);
+  const confirmCancellation = orderCard.getByRole('button', { name: 'Xác nhận hủy' });
+  expect(
+    await confirmCancellation.evaluate((button) => {
+      const label = button.querySelector<HTMLElement>('.button__content');
+      return label ? getComputedStyle(label).color === getComputedStyle(button).color : false;
+    }),
+  ).toBe(true);
+  const cancelOrderResponsePromise = page.waitForResponse(
+    (response) =>
+      response.url() === `${apiOrigin}/api/v1/order-requests/${orderPayload.data.id}/cancel` &&
+      response.request().method() === 'POST',
+  );
+  await confirmCancellation.click();
+  expect((await cancelOrderResponsePromise).status()).toBe(200);
+  await expect(orderCard.getByText('Đã hủy')).toBeVisible();
+  await expect(page.getByText('Đã hủy yêu cầu đặt hàng.')).toBeVisible();
+
+  const persistedOrders = await page
+    .context()
+    .request.get(
+      `${apiOrigin}/api/v1/order-requests?storeId=${orderPayload.data.storeId}&sessionId=${openSessionId}&page=1&pageSize=20`,
+    );
+  expect(persistedOrders.status()).toBe(200);
+  const persistedOrderPayload = (await persistedOrders.json()) as {
+    data: Array<{
+      cancellationReason?: string | null;
+      id: string;
+      lines: Array<{ note?: string }>;
+      status: string;
+    }>;
+  };
+  expect(persistedOrderPayload.data).toContainEqual(
+    expect.objectContaining({
+      cancellationReason,
+      id: orderPayload.data.id,
+      lines: expect.arrayContaining([expect.objectContaining({ note: lineNote })]),
+      status: 'CANCELLED',
+    }),
+  );
+
   const forbiddenAdminApi = await page
     .context()
     .request.get(`${apiOrigin}/api/v1/admin/accounts?page=1&pageSize=20`);
@@ -216,7 +370,10 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
       response.url().includes(`${apiOrigin}/api/v1/allocations?`) &&
       response.request().method() === 'GET',
   );
-  await page.getByRole('link', { name: 'Phân bổ hàng hóa' }).click();
+  await page
+    .getByRole('navigation', { name: 'Điều hướng mobile' })
+    .getByRole('link', { name: 'Phân bổ hàng hóa' })
+    .click();
   expect((await storeAllocationResponsePromise).status()).toBe(200);
   await expect(page.getByRole('heading', { name: 'Giám sát phân bổ hàng hóa' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Kết quả phân bổ đã lưu' })).toBeVisible();

@@ -9,6 +9,7 @@ import { PageHeader } from '../components/PageHeader';
 import { WaitlistPanel } from '../components/WaitlistPanel';
 import {
   ApiClientError,
+  cancelStoreOrderRequest,
   listAccessibleStores,
   listCatalog,
   listOpenOrderSessions,
@@ -201,6 +202,7 @@ export function RequestsPage() {
 interface ProductionDraftLine {
   readonly productId: string;
   readonly quantity: number;
+  readonly note: string;
 }
 
 interface RequestNotice {
@@ -225,10 +227,16 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
   const [selectedSessionId, setSelectedSessionId] = useState('');
   const [selectedProductId, setSelectedProductId] = useState('');
   const [quantity, setQuantity] = useState(1);
+  const [lineNote, setLineNote] = useState('');
   const [draftLines, setDraftLines] = useState<ProductionDraftLine[]>([]);
   const [notice, setNotice] = useState<RequestNotice | null>(null);
+  const [historyNotice, setHistoryNotice] = useState<RequestNotice | null>(null);
+  const [cancelRequestId, setCancelRequestId] = useState<string | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancellingRequestId, setCancellingRequestId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const idempotencyKey = useRef<string | null>(null);
+  const cancellationKeys = useRef(new Map<string, { key: string; reason: string }>());
 
   const stores = storesQuery.data ?? [];
   const catalogProducts = catalogQuery.data ?? [];
@@ -249,7 +257,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
     retry: false,
   });
   const submittedRequests = requestsQuery.data ?? [];
-  const usedSlots = submittedRequests.filter((request) => request.status !== 'CANCELLED').length;
+  const usedSlots = submittedRequests.length;
   const remainingSlots = Math.max(0, 2 - usedSlots);
   const productNameById = useMemo(
     () => new Map(catalogProducts.map((product) => [product.id, product.name])),
@@ -269,12 +277,19 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
       const existing = current.find((line) => line.productId === productId);
       if (existing) {
         return current.map((line) =>
-          line.productId === productId ? { ...line, quantity: line.quantity + quantity } : line,
+          line.productId === productId
+            ? {
+                ...line,
+                quantity: line.quantity + quantity,
+                note: lineNote.trim() || line.note,
+              }
+            : line,
         );
       }
-      return [...current, { productId, quantity }];
+      return [...current, { productId, quantity, note: lineNote.trim() }];
     });
     setQuantity(1);
+    setLineNote('');
     resetMutationKey();
   };
 
@@ -292,6 +307,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
           items: draftLines.map((line) => ({
             productId: line.productId,
             quantity: line.quantity,
+            ...(line.note ? { note: line.note } : {}),
           })),
           storeId: effectiveStoreId,
         },
@@ -314,6 +330,39 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
       });
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const cancelRequest = async (requestId: string) => {
+    const reason = cancelReason.trim();
+    if (reason.length < 3) {
+      setHistoryNotice({ kind: 'error', message: 'Lý do hủy cần ít nhất 3 ký tự.' });
+      return;
+    }
+    setCancellingRequestId(requestId);
+    setHistoryNotice(null);
+    let mutation = cancellationKeys.current.get(requestId);
+    if (!mutation || mutation.reason !== reason) {
+      mutation = { key: crypto.randomUUID(), reason };
+      cancellationKeys.current.set(requestId, mutation);
+    }
+    try {
+      await cancelStoreOrderRequest(requestId, { reason }, mutation.key);
+      cancellationKeys.current.delete(requestId);
+      setCancelRequestId(null);
+      setCancelReason('');
+      setHistoryNotice({ kind: 'success', message: 'Đã hủy yêu cầu đặt hàng.' });
+      await requestsQuery.refetch();
+    } catch (cause) {
+      setHistoryNotice({
+        kind: 'error',
+        message:
+          cause instanceof ApiClientError
+            ? cause.message
+            : 'Không thể hủy yêu cầu vì phản hồi máy chủ không hợp lệ.',
+      });
+    } finally {
+      setCancellingRequestId(null);
     }
   };
 
@@ -488,6 +537,20 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
                 value={quantity}
               />
             </label>
+            <label className="form-grid__wide">
+              Ghi chú mặt hàng
+              <textarea
+                disabled={formDisabled || !activeSession || remainingSlots === 0}
+                maxLength={500}
+                onChange={(event) => {
+                  setLineNote(event.target.value);
+                  resetMutationKey();
+                }}
+                placeholder="Nhu cầu hoặc ưu tiên vận hành (không bắt buộc)"
+                rows={3}
+                value={lineNote}
+              />
+            </label>
           </div>
           <Button
             disabled={
@@ -511,7 +574,9 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
             <article className="request-line" key={line.productId}>
               <div>
                 <strong>{productNameById.get(line.productId) ?? line.productId}</strong>
-                <span>{line.quantity} bao</span>
+                <span>
+                  {line.quantity} bao • {line.note || 'Không có ghi chú'}
+                </span>
               </div>
               <button
                 aria-label={`Xóa ${productNameById.get(line.productId) ?? 'mặt hàng'}`}
@@ -558,31 +623,111 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
             <p>Dữ liệu trực tiếp từ máy chủ; ưu tiên do hệ thống phân bổ gán.</p>
           </div>
         </div>
+        {historyNotice ? (
+          <div
+            className={historyNotice.kind === 'error' ? 'form-error' : 'inline-notice'}
+            role={historyNotice.kind === 'error' ? 'alert' : 'status'}
+          >
+            {historyNotice.message}
+          </div>
+        ) : null}
         {submittedRequests.length === 0 ? <p>Chưa có yêu cầu đã gửi.</p> : null}
         {submittedRequests.map((request) => (
-          <article key={request.id}>
-            <div>
-              <strong>Phiếu {request.requestSequence}</strong>
-              <span>
-                <Clock3 size={14} />{' '}
-                {request.lines
-                  .map((line) => {
-                    const quantity =
-                      line.requested.kind === 'UNIT'
-                        ? `${line.requested.quantity} bao`
-                        : `${line.requested.value} kg`;
-                    return `${productNameById.get(line.productId) ?? line.productId}: ${quantity}`;
-                  })
-                  .join(' • ')}
-              </span>
+          <article className="request-history-card" key={request.id}>
+            <div className="request-history-card__summary">
+              <div>
+                <strong>Phiếu {request.requestSequence}</strong>
+                <span>
+                  <Clock3 size={14} />{' '}
+                  {request.lines
+                    .map((line) => {
+                      const quantity =
+                        line.requested.kind === 'UNIT'
+                          ? `${line.requested.quantity} bao`
+                          : `${line.requested.value} kg`;
+                      return `${productNameById.get(line.productId) ?? line.productId}: ${quantity}`;
+                    })
+                    .join(' • ')}
+                </span>
+              </div>
+              <Badge tone={request.status === 'CANCELLED' ? 'neutral' : 'warning'}>
+                {request.status === 'CANCELLED'
+                  ? 'Đã hủy'
+                  : request.status === 'MERGED'
+                    ? 'Đã gộp'
+                    : 'Đã gửi'}
+              </Badge>
+              {request.status === 'SUBMITTED' ? (
+                <button
+                  aria-expanded={cancelRequestId === request.id}
+                  className="link-button link-button--danger"
+                  onClick={() => {
+                    const opening = cancelRequestId !== request.id;
+                    setCancelRequestId(opening ? request.id : null);
+                    setCancelReason('');
+                    setHistoryNotice(null);
+                  }}
+                  type="button"
+                >
+                  Hủy yêu cầu
+                </button>
+              ) : null}
             </div>
-            <Badge tone={request.status === 'CANCELLED' ? 'neutral' : 'warning'}>
-              {request.status === 'CANCELLED'
-                ? 'Đã hủy'
-                : request.status === 'MERGED'
-                  ? 'Đã gộp'
-                  : 'Đã gửi'}
-            </Badge>
+            <details className="request-history-card__details">
+              <summary className="link-button">Xem chi tiết</summary>
+              <p>Gửi lúc {new Date(request.submittedAt).toLocaleString('vi-VN')}</p>
+              <ul>
+                {request.lines.map((line) => (
+                  <li key={line.productId}>
+                    <strong>{productNameById.get(line.productId) ?? line.productId}</strong>
+                    <span>{line.note || 'Không có ghi chú'}</span>
+                  </li>
+                ))}
+              </ul>
+              {request.cancelledAt ? (
+                <p>
+                  Hủy lúc {new Date(request.cancelledAt).toLocaleString('vi-VN')} •{' '}
+                  {request.cancellationReason || 'Không có lý do được ghi nhận'}
+                </p>
+              ) : null}
+            </details>
+            {cancelRequestId === request.id ? (
+              <div className="request-cancel-form">
+                <label htmlFor={`cancel-order-request-${request.id}`}>Lý do hủy</label>
+                <textarea
+                  autoFocus
+                  id={`cancel-order-request-${request.id}`}
+                  maxLength={500}
+                  onChange={(event) => {
+                    setCancelReason(event.target.value);
+                    setHistoryNotice(null);
+                  }}
+                  placeholder="Ví dụ: cửa hàng nhập nhầm nhu cầu"
+                  rows={3}
+                  value={cancelReason}
+                />
+                <div className="request-cancel-form__actions">
+                  <Button
+                    disabled={cancellingRequestId === request.id}
+                    onClick={() => {
+                      setCancelRequestId(null);
+                      setCancelReason('');
+                    }}
+                    tone="secondary"
+                  >
+                    Giữ yêu cầu
+                  </Button>
+                  <Button
+                    busy={cancellingRequestId === request.id}
+                    disabled={cancelReason.trim().length < 3}
+                    onClick={() => void cancelRequest(request.id)}
+                    tone="danger"
+                  >
+                    Xác nhận hủy
+                  </Button>
+                </div>
+              </div>
+            ) : null}
           </article>
         ))}
       </section>

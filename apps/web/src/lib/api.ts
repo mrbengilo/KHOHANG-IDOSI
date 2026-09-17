@@ -1,6 +1,7 @@
 import {
   ErrorEnvelopeSchema,
   CancelWaitTicketRequestSchema,
+  CancelStoreOrderRequestSchema,
   CreateOrderSessionRequestSchema,
   ListAllocationsResponseSchema,
   ListReceiptsResponseSchema,
@@ -26,6 +27,7 @@ import {
   WaitTicketHistoryResponseSchema,
   WaitTicketResponseSchema,
   type CancelWaitTicketRequest,
+  type CancelStoreOrderRequest,
   type AllocationResultStatus,
   type CreateOrderSessionRequest,
   type DeclareStoreReceiptRequest,
@@ -391,6 +393,20 @@ export async function submitStoreOrderRequest(
 ): Promise<StoreOrderRequest> {
   const payload = await request('/order-requests', {
     body: JSON.stringify(input),
+    headers: { 'idempotency-key': idempotencyKey },
+    method: 'POST',
+  });
+  return StoreOrderRequestResponseSchema.parse(payload).data;
+}
+
+export async function cancelStoreOrderRequest(
+  requestId: string,
+  input: CancelStoreOrderRequest,
+  idempotencyKey: string,
+): Promise<StoreOrderRequest> {
+  const validated = CancelStoreOrderRequestSchema.parse(input);
+  const payload = await request(`/order-requests/${encodeURIComponent(requestId)}/cancel`, {
+    body: JSON.stringify(validated),
     headers: { 'idempotency-key': idempotencyKey },
     method: 'POST',
   });

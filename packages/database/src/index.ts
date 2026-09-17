@@ -65,6 +65,7 @@ export type {
 export {
   ActiveWaitTicketExistsError,
   createOrderRequest,
+  isRequestDeadlineClosed,
   OrderRequestAuthorizationError,
   OrderSessionUnavailableError,
   RequestLimitExceededError,

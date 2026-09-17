@@ -4,6 +4,7 @@ import type {
   AllocationResult,
   AuthenticatedPrincipal,
   CancelInboundReceiptRequest,
+  CancelStoreOrderRequest,
   CancelWaitTicketRequest,
   CreateOrderSessionRequest,
   CreateProductConversionRequest,
@@ -114,6 +115,7 @@ import {
   listWarehouseOutboundRequests as listDatabaseWarehouseOutboundRequests,
   loadMonthlyOperationalReport,
   loadIdosiStatisticsState as loadDatabaseIdosiStatisticsState,
+  isRequestDeadlineClosed,
   openStoreInventoryBag as openDatabaseStoreInventoryBag,
   orderRequestItems,
   orderRequests,
@@ -1941,7 +1943,11 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         orderSessionId: input.businessSessionId,
         storeId: input.storeId,
         requestedByUserId: actor.accountId,
-        items: input.items,
+        items: input.items.map((item) => ({
+          productId: item.productId,
+          quantity: item.quantity,
+          ...(item.note ? { notes: item.note } : {}),
+        })),
         idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
         requestHash,
         onCreated: async (tx, created) => {
@@ -1955,6 +1961,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
               productId: item.productId,
               requested: { kind: 'UNIT', quantity: item.quantity },
               priority: 'P1',
+              ...(item.note ? { note: item.note } : {}),
             })),
             submittedByAccountId: actor.accountId,
             submittedAt: created.submittedAt.toISOString(),
@@ -2003,6 +2010,115 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       }
       if (error instanceof ActiveWaitTicketExistsError) {
         throw conflict('Cửa hàng đã có yêu cầu chờ đang hoạt động cho mặt hàng này');
+      }
+      throw error;
+    }
+  }
+
+  public async cancelOrderRequest(
+    actor: AuthenticatedPrincipal,
+    requestId: string,
+    input: CancelStoreOrderRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreOrderRequest>> {
+    const current = await this.requestDto(requestId);
+    if (!canAccessStore(actor, current.storeId)) throw forbidden();
+
+    try {
+      const result = await withIdempotency(
+        db,
+        {
+          scope: `order-request.cancel:${requestId}`,
+          key: `${actor.accountId}:${idempotencyKey}`,
+          requestHash,
+        },
+        (tx) =>
+          withAdvisoryLock(tx, 'order-request', requestId, async () => {
+            const [session] = await tx
+              .select({
+                status: orderSessions.status,
+                requestClosesAt: orderSessions.inventorySnapshotDueAt,
+                deletedAt: orderSessions.deletedAt,
+              })
+              .from(orderSessions)
+              .where(eq(orderSessions.id, current.sessionId))
+              .for('update')
+              .limit(1);
+            const now = new Date();
+            if (
+              !session ||
+              session.status !== 'open' ||
+              session.deletedAt !== null ||
+              isRequestDeadlineClosed(session.requestClosesAt, now)
+            ) {
+              throw conflict('Đã quá thời hạn hủy yêu cầu trong phiên đặt hàng');
+            }
+
+            const [row] = await tx
+              .select()
+              .from(orderRequests)
+              .where(and(eq(orderRequests.id, requestId), isNull(orderRequests.deletedAt)))
+              .for('update')
+              .limit(1);
+            if (!row) throw notFound('Không tìm thấy yêu cầu đặt hàng');
+            if (row.status !== 'submitted') {
+              throw conflict('Chỉ có thể hủy yêu cầu chưa được gộp hoặc phân bổ');
+            }
+
+            const [updated] = await tx
+              .update(orderRequests)
+              .set({
+                status: 'cancelled',
+                cancelledAt: now,
+                cancellationReason: input.reason,
+                updatedAt: now,
+              })
+              .where(and(eq(orderRequests.id, requestId), eq(orderRequests.status, 'submitted')))
+              .returning({ id: orderRequests.id });
+            if (!updated) throw conflict('Yêu cầu đặt hàng đã thay đổi, vui lòng tải lại');
+
+            const after: StoreOrderRequest = {
+              ...current,
+              status: 'CANCELLED',
+              cancelledAt: now.toISOString(),
+              cancellationReason: input.reason,
+            };
+            await tx.insert(auditLogs).values({
+              ...auditValue(
+                actor,
+                context,
+                'ORDER_REQUEST_CANCELLED',
+                'order_request',
+                requestId,
+                requestJson(current),
+                requestJson(after),
+              ),
+              metadata: { reason: input.reason },
+            });
+            return {
+              value: { requestId },
+              responseStatus: 200,
+              responseBody: { requestId },
+              resourceType: 'order_request',
+              resourceId: requestId,
+            };
+          }),
+      );
+      const resourceId = result.replayed ? result.resourceId : result.value.requestId;
+      if (!resourceId) throw new Error('Idempotent cancellation has no order request id');
+      return { data: await this.requestDto(resourceId), replayed: result.replayed };
+    } catch (error: unknown) {
+      if (error instanceof IdempotencyConflictError) {
+        throw new ApiError(
+          'IDEMPOTENCY_CONFLICT',
+          'Khóa idempotency đã được dùng cho nội dung khác',
+          409,
+        );
+      }
+      if (error instanceof IdempotencyInProgressError) {
+        throw conflict('Yêu cầu cùng khóa idempotency đang được xử lý');
       }
       throw error;
     }
@@ -2938,6 +3054,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       submittedByAccountId: request.requestedByUserId,
       submittedAt: (request.submittedAt ?? request.createdAt).toISOString(),
       cancelledAt: request.cancelledAt?.toISOString() ?? null,
+      cancellationReason: request.cancellationReason,
     };
   }
 
@@ -4417,6 +4534,7 @@ function requestJson(request: StoreOrderRequest): JsonObject {
     submittedByAccountId: request.submittedByAccountId,
     submittedAt: request.submittedAt,
     cancelledAt: request.cancelledAt,
+    cancellationReason: request.cancellationReason ?? null,
   };
 }
 
