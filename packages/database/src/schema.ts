@@ -181,6 +181,7 @@ export const storeGroups = pgTable(
     name: text('name').notNull(),
     displayOrder: integer('display_order').notNull().default(0),
     isActive: boolean('is_active').notNull().default(true),
+    version: integer('version').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -188,6 +189,7 @@ export const storeGroups = pgTable(
     check('store_groups_code_not_blank', sql`length(btrim(${table.code})) > 0`),
     check('store_groups_name_not_blank', sql`length(btrim(${table.name})) > 0`),
     check('store_groups_display_order_nonnegative', sql`${table.displayOrder} >= 0`),
+    check('store_groups_version_nonnegative', sql`${table.version} >= 0`),
   ],
 );
 

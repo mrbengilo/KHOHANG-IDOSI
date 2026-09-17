@@ -551,7 +551,7 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(invalidStatus.statusCode, 400);
   });
 
-  test('blocks wholesale and inactive STORE accounts from protected retail workflow actions', async () => {
+  test('blocks wholesale STORE actors and inactive stores from protected retail actions', async () => {
     const storeCookie = cookieOf(await login('ds_nvt'));
     const products = await app.inject({
       method: 'GET',
@@ -684,6 +684,21 @@ describe('KHOHANG-IDOSI API', () => {
       inactiveTransferDestinations.json().error.message,
       RETAIL_STORE_OPERATION_FORBIDDEN_MESSAGE,
     );
+
+    const adminCookie = cookieOf(await login('admin'));
+    const htkdCookie = cookieOf(await login('htkd'));
+    for (const [role, cookie] of [
+      ['admin', adminCookie],
+      ['htkd', htkdCookie],
+    ]) {
+      const delegatedInactive = await submitOrder(
+        cookie,
+        `${role}-inactive-store-order-request`,
+        orderPayload(firstProduct.id, 1),
+      );
+      assert.equal(delegatedInactive.statusCode, 403);
+      assert.equal(delegatedInactive.json().error.code, 'FORBIDDEN');
+    }
   });
 
   test('lists the open order session and rejects an unknown session', async () => {

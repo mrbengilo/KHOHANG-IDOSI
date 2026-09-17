@@ -27,6 +27,7 @@ const stores: Store[] = [
     kind: 'RETAIL',
     name: 'Gò Vấp',
     status: 'ACTIVE',
+    version: 0,
     updatedAt: timestamp,
   },
   {
@@ -38,6 +39,7 @@ const stores: Store[] = [
     kind: 'WHOLESALE',
     name: 'Long Xuyên',
     status: 'ACTIVE',
+    version: 0,
     updatedAt: timestamp,
   },
 ];

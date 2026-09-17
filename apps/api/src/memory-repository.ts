@@ -13,6 +13,7 @@ import type {
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
+  CreateStoreGroupRequest,
   CreateStoreOutboundRequest,
   CreateStoreRequest,
   CreateAccountRequest,
@@ -35,6 +36,7 @@ import type {
   ListStoreReceiptSourcesQuery,
   ListProductConversionsQuery,
   ListStoreOrderRequestsQuery,
+  ListStoreGroupsQuery,
   ListStoresQuery,
   ListWaitTicketsQuery,
   ListWarehouseOutboundRequestsQuery,
@@ -57,6 +59,7 @@ import type {
   OrderSession,
   Session,
   Store,
+  StoreGroup,
   StoreInventoryBag,
   StoreInventoryBagLedgerEntry,
   StoreOrderRequest,
@@ -68,6 +71,8 @@ import type {
   UpdateAccountRequest,
   UpdateProductConversionRequest,
   UpdateOperationalSettingsRequest,
+  UpdateStoreGroupRequest,
+  UpdateStoreRequest,
   DeleteProductConversionRequest,
   WaitTicket,
   WaitTicketHistory,
@@ -223,6 +228,11 @@ interface TransferMutationIdempotencyRecord {
   readonly response: StoreTransfer;
 }
 
+interface StoreLifecycleIdempotencyRecord {
+  readonly requestHash: string;
+  readonly response: Store | StoreGroup;
+}
+
 interface AuditRecord {
   readonly id: string;
   readonly action: string;
@@ -282,7 +292,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     TransferMutationIdempotencyRecord
   >();
   private readonly warehouseBalances = new Map<string, MemoryWarehouseBalance>();
-  private readonly storeGroupIds = new Set<string>();
+  private readonly storeGroups = new Map<string, StoreGroup>();
+  private readonly storeLifecycleIdempotency = new Map<string, StoreLifecycleIdempotencyRecord>();
   private readonly audit: AuditRecord[] = [];
   private readonly operationalSettings: OperationalSettingsVersion[] = [];
   private readonly idosiStatisticsSnapshots = new Map<string, IdosiStatisticsSnapshot>();
@@ -1420,12 +1431,127 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     };
   }
 
+  public async listStoreGroups(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreGroupsQuery,
+  ): Promise<Page<StoreGroup>> {
+    requireMemoryAdmin(actor);
+    const search = query.search?.toLocaleLowerCase('vi-VN');
+    const values = [...this.storeGroups.values()]
+      .filter((group) => query.status === undefined || group.status === query.status)
+      .filter(
+        (group) =>
+          search === undefined ||
+          group.name.toLocaleLowerCase('vi-VN').includes(search) ||
+          group.code.toLocaleLowerCase('en-US').includes(search),
+      )
+      .sort((left, right) => left.code.localeCompare(right.code));
+    return {
+      data: slicePage(values, query.page, query.pageSize),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
+  }
+
+  public async createStoreGroup(
+    actor: AuthenticatedPrincipal,
+    input: CreateStoreGroupRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreGroup>> {
+    requireMemoryAdmin(actor);
+    const replay = this.replayStoreLifecycle<StoreGroup>(
+      'STORE_GROUP_CREATE',
+      actor,
+      idempotencyKey,
+      requestHash,
+    );
+    if (replay) return replay;
+    if ([...this.storeGroups.values()].some((group) => group.code === input.code)) {
+      throw conflict('Mã nhóm cửa hàng đã tồn tại');
+    }
+    const now = this.now().toISOString();
+    const group: StoreGroup = {
+      id: randomUUID(),
+      code: input.code,
+      name: input.name,
+      status: 'ACTIVE',
+      version: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.storeGroups.set(group.id, group);
+    this.appendAudit(actor, context, 'STORE_GROUP_CREATED', 'store_group', group.id, null, group);
+    this.rememberStoreLifecycle('STORE_GROUP_CREATE', actor, idempotencyKey, requestHash, group);
+    return { data: group, replayed: false };
+  }
+
+  public async updateStoreGroup(
+    actor: AuthenticatedPrincipal,
+    groupId: string,
+    input: UpdateStoreGroupRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreGroup>> {
+    requireMemoryAdmin(actor);
+    const replay = this.replayStoreLifecycle<StoreGroup>(
+      'STORE_GROUP_UPDATE',
+      actor,
+      idempotencyKey,
+      requestHash,
+    );
+    if (replay) return replay;
+    const current = this.storeGroups.get(groupId);
+    if (!current) throw notFound('Không tìm thấy nhóm cửa hàng');
+    if (current.version !== input.expectedVersion) throw storeLifecycleVersionConflict();
+    if (
+      input.status === 'INACTIVE' &&
+      current.status !== 'INACTIVE' &&
+      [...this.stores.values()].some(
+        (store) => store.groupId === groupId && store.status === 'ACTIVE',
+      )
+    ) {
+      throw conflict('Không thể vô hiệu hóa nhóm còn cửa hàng hoạt động');
+    }
+    const updated: StoreGroup = {
+      ...current,
+      name: input.name ?? current.name,
+      status: input.status ?? current.status,
+      version: current.version + 1,
+      updatedAt: this.now().toISOString(),
+    };
+    this.storeGroups.set(groupId, updated);
+    this.appendAudit(
+      actor,
+      context,
+      'STORE_GROUP_UPDATED',
+      'store_group',
+      groupId,
+      current,
+      updated,
+    );
+    this.rememberStoreLifecycle('STORE_GROUP_UPDATE', actor, idempotencyKey, requestHash, updated);
+    return { data: updated, replayed: false };
+  }
+
   public async createStore(
     actor: AuthenticatedPrincipal,
     input: CreateStoreRequest,
+    idempotencyKey: string,
+    requestHash: string,
     context: RequestContext,
-  ): Promise<Store> {
-    if (input.groupId === null || !this.storeGroupIds.has(input.groupId)) {
+  ): Promise<IdempotentResource<Store>> {
+    requireMemoryAdmin(actor);
+    const replay = this.replayStoreLifecycle<Store>(
+      'STORE_CREATE',
+      actor,
+      idempotencyKey,
+      requestHash,
+    );
+    if (replay) return replay;
+    const group = this.storeGroups.get(input.groupId);
+    if (!group || group.status !== 'ACTIVE') {
       throw new ApiError('VALIDATION_ERROR', 'Cửa hàng phải thuộc một nhóm hợp lệ', 400, {
         field: 'groupId',
       });
@@ -1442,12 +1568,63 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       kind: input.kind,
       address: input.address,
       status: 'ACTIVE',
+      version: 0,
       createdAt: now,
       updatedAt: now,
     };
     this.stores.set(store.id, store);
     this.appendAudit(actor, context, 'STORE_CREATED', 'store', store.id, null, store);
-    return store;
+    this.rememberStoreLifecycle('STORE_CREATE', actor, idempotencyKey, requestHash, store);
+    return { data: store, replayed: false };
+  }
+
+  public async updateStore(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+    input: UpdateStoreRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<Store>> {
+    requireMemoryAdmin(actor);
+    const replay = this.replayStoreLifecycle<Store>(
+      'STORE_UPDATE',
+      actor,
+      idempotencyKey,
+      requestHash,
+    );
+    if (replay) return replay;
+    const current = this.stores.get(storeId);
+    if (!current) throw notFound('Không tìm thấy cửa hàng');
+    if (current.version !== input.expectedVersion) throw storeLifecycleVersionConflict();
+    const targetGroup = this.storeGroups.get(input.groupId ?? current.groupId);
+    const targetStatus = input.status ?? current.status;
+    if (
+      !targetGroup ||
+      ((input.groupId !== undefined || targetStatus === 'ACTIVE') &&
+        targetGroup.status !== 'ACTIVE')
+    ) {
+      throw new ApiError(
+        'VALIDATION_ERROR',
+        'Cửa hàng hoạt động phải thuộc một nhóm đang hoạt động',
+        400,
+        { field: 'groupId' },
+      );
+    }
+    const updated: Store = {
+      ...current,
+      name: input.name ?? current.name,
+      groupId: input.groupId ?? current.groupId,
+      kind: input.kind ?? current.kind,
+      status: targetStatus,
+      address: input.address === undefined ? current.address : input.address,
+      version: current.version + 1,
+      updatedAt: this.now().toISOString(),
+    };
+    this.stores.set(storeId, updated);
+    this.appendAudit(actor, context, 'STORE_UPDATED', 'store', storeId, current, updated);
+    this.rememberStoreLifecycle('STORE_UPDATE', actor, idempotencyKey, requestHash, updated);
+    return { data: updated, replayed: false };
   }
 
   public async listOrderRequests(
@@ -1477,7 +1654,9 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (actor.role === 'STORE') await this.authorizeRetailStoreOperation(actor);
     if (!canAccessStore(actor, input.storeId))
       throw forbidden('Không có quyền gửi cho cửa hàng này');
-    if (!this.stores.has(input.storeId)) throw notFound('Không tìm thấy cửa hàng');
+    const targetStore = this.stores.get(input.storeId);
+    if (!targetStore) throw notFound('Không tìm thấy cửa hàng');
+    if (targetStore.status !== 'ACTIVE') throw forbidden();
     const session = this.orderSessions.get(input.businessSessionId);
     if (
       !session ||
@@ -2749,7 +2928,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (scope.kind === 'ALL' && actor.role !== 'ADMIN') throw forbidden();
     if (scope.kind === 'GROUP') {
       if (actor.role !== 'ADMIN') throw forbidden();
-      if (!this.storeGroupIds.has(scope.id)) throw notFound('Không tìm thấy nhóm cửa hàng');
+      if (!this.storeGroups.has(scope.id)) throw notFound('Không tìm thấy nhóm cửa hàng');
     }
     if (scope.kind === 'STORE') {
       if (!canAccessStore(actor, scope.id)) throw forbidden();
@@ -3067,7 +3246,15 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       const id = `30000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`;
       groupIdByCode.set(group.code, id);
       groupKindByCode.set(group.code, group.kind === 'wholesale' ? 'WHOLESALE' : 'RETAIL');
-      this.storeGroupIds.add(id);
+      this.storeGroups.set(id, {
+        id,
+        code: group.code,
+        name: group.name,
+        status: 'ACTIVE',
+        version: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
     });
 
     STORE_SEEDS.forEach((seed, index) => {
@@ -3084,6 +3271,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         kind,
         status: 'ACTIVE',
         address: null,
+        version: 0,
         createdAt: now,
         updatedAt: now,
       });
@@ -3483,6 +3671,39 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     );
   }
 
+  private replayStoreLifecycle<T extends Store | StoreGroup>(
+    action: string,
+    actor: AuthenticatedPrincipal,
+    idempotencyKey: string,
+    requestHash: string,
+  ): IdempotentResource<T> | null {
+    const previous = this.storeLifecycleIdempotency.get(
+      `${action}:${actor.accountId}:${idempotencyKey}`,
+    );
+    if (!previous) return null;
+    if (previous.requestHash !== requestHash) {
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    }
+    return { data: structuredClone(previous.response) as T, replayed: true };
+  }
+
+  private rememberStoreLifecycle(
+    action: string,
+    actor: AuthenticatedPrincipal,
+    idempotencyKey: string,
+    requestHash: string,
+    response: Store | StoreGroup,
+  ): void {
+    this.storeLifecycleIdempotency.set(`${action}:${actor.accountId}:${idempotencyKey}`, {
+      requestHash,
+      response: structuredClone(response),
+    });
+  }
+
   private revokeAccountSessions(accountId: string): number {
     let revoked = 0;
     const now = this.now();
@@ -3532,6 +3753,10 @@ function requireMemoryAdmin(actor: AuthenticatedPrincipal): void {
 
 function operationalSettingsVersionConflict(): ApiError {
   return new ApiError('VERSION_CONFLICT', 'Cấu hình vận hành đã thay đổi, vui lòng tải lại', 409);
+}
+
+function storeLifecycleVersionConflict(): ApiError {
+  return new ApiError('VERSION_CONFLICT', 'Dữ liệu cửa hàng đã thay đổi, vui lòng tải lại', 409);
 }
 
 function assertMemoryAccountVersion(

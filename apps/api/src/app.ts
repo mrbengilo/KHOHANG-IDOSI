@@ -11,6 +11,7 @@ import {
   CreateProductRequestSchema,
   CreateProductConversionRequestSchema,
   CreateStoreOrderRequestSchema,
+  CreateStoreGroupRequestSchema,
   CreateStoreOutboundRequestSchema,
   CreateStoreRequestSchema,
   DeclareStoreReceiptRequestSchema,
@@ -37,6 +38,7 @@ import {
   ListStoreOutboundsQuerySchema,
   ListStoreReceiptSourcesQuerySchema,
   ListStoreOrderRequestsQuerySchema,
+  ListStoreGroupsQuerySchema,
   ListStoresQuerySchema,
   ListWaitTicketsQuerySchema,
   ListWarehouseOutboundRequestsQuerySchema,
@@ -56,6 +58,8 @@ import {
   SubmitStoreReceiptRequestSchema,
   SyncIdosiStatisticsRequestSchema,
   StoreInventoryBagParamsSchema,
+  StoreGroupParamsSchema,
+  StoreParamsSchema,
   StoreOutboundParamsSchema,
   WaitTicketHistoryQuerySchema,
   WaitTicketParamsSchema,
@@ -72,6 +76,8 @@ import {
   CancelStoreTransferRequestSchema,
   StoreTransferParamsSchema,
   UpdateOperationalSettingsRequestSchema,
+  UpdateStoreGroupRequestSchema,
+  UpdateStoreRequestSchema,
   type ApiErrorCode,
   type AuthenticatedPrincipal,
   IdosiGatewayError,
@@ -641,12 +647,79 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return repository.listStores(session.principal, query);
   });
 
+  app.get('/api/v1/store-groups', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const query = ListStoreGroupsQuerySchema.parse(request.query);
+    return repository.listStoreGroups(session.principal, query);
+  });
+
+  app.post('/api/v1/store-groups', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = CreateStoreGroupRequestSchema.parse(request.body);
+    const result = await repository.createStoreGroup(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'STORE_GROUP_CREATE', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
+  });
+
+  app.patch('/api/v1/store-groups/:groupId', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { groupId } = StoreGroupParamsSchema.parse(request.params);
+    const input = UpdateStoreGroupRequestSchema.parse(request.body);
+    const result = await repository.updateStoreGroup(
+      session.principal,
+      groupId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'STORE_GROUP_UPDATE', groupId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
   app.post('/api/v1/stores', async (request, reply) => {
     const session = await authenticate(request, repository);
     requireRole(session.principal, ['ADMIN']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
     const input = CreateStoreRequestSchema.parse(request.body);
-    const store = await repository.createStore(session.principal, input, requestContext(request));
-    return reply.status(201).send({ data: store });
+    const result = await repository.createStore(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'STORE_CREATE', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
+  });
+
+  app.patch('/api/v1/stores/:storeId', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { storeId } = StoreParamsSchema.parse(request.params);
+    const input = UpdateStoreRequestSchema.parse(request.body);
+    const result = await repository.updateStore(
+      session.principal,
+      storeId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'STORE_UPDATE', storeId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
   });
 
   app.get('/api/v1/order-requests', async (request) => {
@@ -1339,7 +1412,50 @@ function openApiDocument(): Record<string, unknown> {
       },
       '/api/v1/stores': {
         get: { security: cookieSecurity, responses: { '200': { description: 'Scoped stores' } } },
-        post: { security: cookieSecurity, responses: { '201': { description: 'Created store' } } },
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '201': { description: 'Created or replayed store (ADMIN only)' } },
+        },
+      },
+      '/api/v1/stores/{storeId}': {
+        patch: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Versioned store update (ADMIN only)' },
+            '409': { description: 'Optimistic version or idempotency conflict' },
+          },
+        },
+      },
+      '/api/v1/store-groups': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Paginated store groups (ADMIN only)' } },
+        },
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '201': { description: 'Created or replayed store group (ADMIN only)' } },
+        },
+      },
+      '/api/v1/store-groups/{groupId}': {
+        patch: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Versioned store-group update (ADMIN only)' },
+            '409': { description: 'Optimistic version, idempotency, or active-store conflict' },
+          },
+        },
       },
       '/api/v1/order-requests': {
         get: { security: cookieSecurity, responses: { '200': { description: 'Scoped requests' } } },

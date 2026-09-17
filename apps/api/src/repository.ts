@@ -10,6 +10,7 @@ import type {
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
+  CreateStoreGroupRequest,
   CreateStoreRequest,
   CreateAccountRequest,
   CreateInboundReceiptRequest,
@@ -31,6 +32,7 @@ import type {
   ListPriorityOffersQuery,
   ListProductConversionsQuery,
   ListStoreOrderRequestsQuery,
+  ListStoreGroupsQuery,
   ListStoresQuery,
   PaginationMeta,
   OrderSession,
@@ -43,6 +45,7 @@ import type {
   ResetPasswordRequest,
   Session,
   Store,
+  StoreGroup,
   StoreInventoryBag,
   StoreInventoryBagLedgerEntry,
   StoreOrderRequest,
@@ -78,6 +81,8 @@ import type {
   CancelStoreTransferRequest,
   WarehouseBalancesResponse,
   UpdateOperationalSettingsRequest,
+  UpdateStoreGroupRequest,
+  UpdateStoreRequest,
 } from '@idosi/contracts';
 
 import { forbidden } from './errors.js';
@@ -353,11 +358,40 @@ export interface WarehouseRepository {
   ): Promise<ProductConversion>;
 
   listStores(actor: AuthenticatedPrincipal, query: ListStoresQuery): Promise<Page<Store>>;
+  listStoreGroups(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreGroupsQuery,
+  ): Promise<Page<StoreGroup>>;
+  createStoreGroup(
+    actor: AuthenticatedPrincipal,
+    input: CreateStoreGroupRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreGroup>>;
+  updateStoreGroup(
+    actor: AuthenticatedPrincipal,
+    groupId: string,
+    input: UpdateStoreGroupRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreGroup>>;
   createStore(
     actor: AuthenticatedPrincipal,
     input: CreateStoreRequest,
+    idempotencyKey: string,
+    requestHash: string,
     context: RequestContext,
-  ): Promise<Store>;
+  ): Promise<IdempotentResource<Store>>;
+  updateStore(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+    input: UpdateStoreRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<Store>>;
 
   listOrderRequests(
     actor: AuthenticatedPrincipal,

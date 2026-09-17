@@ -10,6 +10,7 @@ import type {
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
+  CreateStoreGroupRequest,
   CreateStoreOutboundRequest,
   CreateStoreRequest,
   CreateAccountRequest,
@@ -32,6 +33,7 @@ import type {
   ListStoreReceiptSourcesQuery,
   ListProductConversionsQuery,
   ListStoreOrderRequestsQuery,
+  ListStoreGroupsQuery,
   ListStoresQuery,
   ListWaitTicketsQuery,
   ListWarehouseOutboundRequestsQuery,
@@ -53,6 +55,7 @@ import type {
   OrderSession,
   Session,
   Store,
+  StoreGroup,
   StoreInventoryBag,
   StoreInventoryBagLedgerEntry,
   StoreOrderRequest,
@@ -64,6 +67,8 @@ import type {
   UpdateAccountRequest,
   UpdateProductConversionRequest,
   UpdateOperationalSettingsRequest,
+  UpdateStoreGroupRequest,
+  UpdateStoreRequest,
   DeleteProductConversionRequest,
   WaitTicket,
   WaitTicketHistory,
@@ -76,6 +81,7 @@ import type {
   CancelStoreTransferRequest,
   WarehouseBalancesResponse,
 } from '@idosi/contracts';
+import { StoreGroupSchema, StoreSchema } from '@idosi/contracts';
 import {
   ActiveWaitTicketExistsError,
   auditLogs,
@@ -204,6 +210,7 @@ import {
   lte,
   ne,
   or,
+  sql,
   type SQL,
 } from 'drizzle-orm';
 
@@ -1413,56 +1420,318 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     };
   }
 
+  public async listStoreGroups(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreGroupsQuery,
+  ): Promise<Page<StoreGroup>> {
+    requirePostgresAdmin(actor);
+    const predicates: SQL[] = [];
+    if (query.status !== undefined) {
+      predicates.push(eq(storeGroups.isActive, query.status === 'ACTIVE'));
+    }
+    if (query.search !== undefined) {
+      const pattern = `%${escapeLike(query.search)}%`;
+      predicates.push(or(ilike(storeGroups.code, pattern), ilike(storeGroups.name, pattern))!);
+    }
+    const where = and(...predicates);
+    const [totalRow] = await db.select({ value: count() }).from(storeGroups).where(where);
+    const rows = await db
+      .select()
+      .from(storeGroups)
+      .where(where)
+      .orderBy(asc(storeGroups.displayOrder), asc(storeGroups.code))
+      .limit(query.pageSize)
+      .offset((query.page - 1) * query.pageSize);
+    return {
+      data: rows.map(storeGroupDto),
+      pagination: pagination(query.page, query.pageSize, totalRow?.value ?? 0),
+    };
+  }
+
+  public async createStoreGroup(
+    actor: AuthenticatedPrincipal,
+    input: CreateStoreGroupRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreGroup>> {
+    requirePostgresAdmin(actor);
+    return withStoreLifecycleErrors('Mã nhóm cửa hàng đã tồn tại', async () => {
+      const result = await withIdempotency(
+        db,
+        {
+          scope: 'store-group:create',
+          key: `${actor.accountId}:${idempotencyKey}`,
+          requestHash,
+        },
+        async (tx) => {
+          const [created] = await tx
+            .insert(storeGroups)
+            .values({ code: input.code, name: input.name, isActive: true })
+            .returning();
+          if (!created) throw new Error('Store group insert did not return a row');
+          const data = storeGroupDto(created);
+          await tx
+            .insert(auditLogs)
+            .values(
+              auditValue(
+                actor,
+                context,
+                'STORE_GROUP_CREATED',
+                'store_group',
+                data.id,
+                null,
+                storeGroupJson(data),
+              ),
+            );
+          return {
+            value: data,
+            responseStatus: 201,
+            responseBody: storeGroupJson(data),
+            resourceType: 'store_group',
+            resourceId: data.id,
+          };
+        },
+      );
+      return {
+        data: result.replayed ? StoreGroupSchema.parse(result.responseBody) : result.value,
+        replayed: result.replayed,
+      };
+    });
+  }
+
+  public async updateStoreGroup(
+    actor: AuthenticatedPrincipal,
+    groupId: string,
+    input: UpdateStoreGroupRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreGroup>> {
+    requirePostgresAdmin(actor);
+    return withStoreLifecycleErrors('Mã nhóm cửa hàng đã tồn tại', async () => {
+      const result = await withIdempotency(
+        db,
+        {
+          scope: 'store-group:update',
+          key: `${actor.accountId}:${idempotencyKey}`,
+          requestHash,
+        },
+        async (tx) => {
+          const [current] = await tx
+            .select()
+            .from(storeGroups)
+            .where(eq(storeGroups.id, groupId))
+            .for('update')
+            .limit(1);
+          if (!current) throw notFound('Không tìm thấy nhóm cửa hàng');
+          if (current.version !== input.expectedVersion) throw storeLifecycleVersionConflict();
+          if (input.status === 'INACTIVE' && current.isActive) {
+            const [activeStore] = await tx
+              .select({ id: stores.id })
+              .from(stores)
+              .where(
+                and(
+                  eq(stores.groupId, groupId),
+                  eq(stores.isActive, true),
+                  isNull(stores.deletedAt),
+                ),
+              )
+              .limit(1);
+            if (activeStore) throw conflict('Không thể vô hiệu hóa nhóm còn cửa hàng hoạt động');
+          }
+          const before = storeGroupDto(current);
+          const [updated] = await tx
+            .update(storeGroups)
+            .set({
+              name: input.name,
+              isActive: input.status === undefined ? undefined : input.status === 'ACTIVE',
+              version: sql`${storeGroups.version} + 1`,
+              updatedAt: new Date(),
+            })
+            .where(and(eq(storeGroups.id, groupId), eq(storeGroups.version, input.expectedVersion)))
+            .returning();
+          if (!updated) throw storeLifecycleVersionConflict();
+          const data = storeGroupDto(updated);
+          await tx
+            .insert(auditLogs)
+            .values(
+              auditValue(
+                actor,
+                context,
+                'STORE_GROUP_UPDATED',
+                'store_group',
+                data.id,
+                storeGroupJson(before),
+                storeGroupJson(data),
+              ),
+            );
+          return {
+            value: data,
+            responseStatus: 200,
+            responseBody: storeGroupJson(data),
+            resourceType: 'store_group',
+            resourceId: data.id,
+          };
+        },
+      );
+      return {
+        data: result.replayed ? StoreGroupSchema.parse(result.responseBody) : result.value,
+        replayed: result.replayed,
+      };
+    });
+  }
+
   public async createStore(
     actor: AuthenticatedPrincipal,
     input: CreateStoreRequest,
+    idempotencyKey: string,
+    requestHash: string,
     context: RequestContext,
-  ): Promise<Store> {
-    if (input.groupId === null) {
-      throw new ApiError('VALIDATION_ERROR', 'Cửa hàng phải thuộc một nhóm', 400, {
-        field: 'groupId',
-      });
-    }
-    try {
-      return await db.transaction(async (tx) => {
-        const [group] = await tx
-          .select({ id: storeGroups.id })
-          .from(storeGroups)
-          .where(and(eq(storeGroups.id, input.groupId as string), eq(storeGroups.isActive, true)))
-          .limit(1);
-        if (!group) throw notFound('Không tìm thấy nhóm cửa hàng hoạt động');
-        const [created] = await tx
-          .insert(stores)
-          .values({
-            code: input.code,
-            name: input.name,
-            groupId: group.id,
-            kind: input.kind.toLocaleLowerCase('en-US') as 'retail' | 'wholesale',
-            address: input.address,
-            isActive: true,
-          })
-          .returning();
-        if (!created) throw new Error('Store insert did not return a row');
-        const result = storeDto(created);
-        await tx
-          .insert(auditLogs)
-          .values(
-            auditValue(
-              actor,
-              context,
-              'STORE_CREATED',
-              'store',
-              result.id,
-              null,
-              storeJson(result),
-            ),
-          );
-        return result;
-      });
-    } catch (error: unknown) {
-      if (isUniqueViolation(error)) throw conflict('Mã cửa hàng đã tồn tại');
-      throw error;
-    }
+  ): Promise<IdempotentResource<Store>> {
+    requirePostgresAdmin(actor);
+    return withStoreLifecycleErrors('Mã cửa hàng đã tồn tại', async () => {
+      const result = await withIdempotency(
+        db,
+        {
+          scope: 'store:create',
+          key: `${actor.accountId}:${idempotencyKey}`,
+          requestHash,
+        },
+        async (tx) => {
+          const [group] = await tx
+            .select({ id: storeGroups.id })
+            .from(storeGroups)
+            .where(and(eq(storeGroups.id, input.groupId), eq(storeGroups.isActive, true)))
+            .limit(1);
+          if (!group) throw notFound('Không tìm thấy nhóm cửa hàng hoạt động');
+          const [created] = await tx
+            .insert(stores)
+            .values({
+              code: input.code,
+              name: input.name,
+              groupId: group.id,
+              kind: input.kind.toLocaleLowerCase('en-US') as 'retail' | 'wholesale',
+              address: input.address,
+              isActive: true,
+            })
+            .returning();
+          if (!created) throw new Error('Store insert did not return a row');
+          const data = storeDto(created);
+          await tx
+            .insert(auditLogs)
+            .values(
+              auditValue(actor, context, 'STORE_CREATED', 'store', data.id, null, storeJson(data)),
+            );
+          return {
+            value: data,
+            responseStatus: 201,
+            responseBody: storeJson(data),
+            resourceType: 'store',
+            resourceId: data.id,
+          };
+        },
+      );
+      return {
+        data: result.replayed ? StoreSchema.parse(result.responseBody) : result.value,
+        replayed: result.replayed,
+      };
+    });
+  }
+
+  public async updateStore(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+    input: UpdateStoreRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<Store>> {
+    requirePostgresAdmin(actor);
+    return withStoreLifecycleErrors('Mã cửa hàng đã tồn tại', async () => {
+      const result = await withIdempotency(
+        db,
+        {
+          scope: 'store:update',
+          key: `${actor.accountId}:${idempotencyKey}`,
+          requestHash,
+        },
+        async (tx) => {
+          const [current] = await tx
+            .select()
+            .from(stores)
+            .where(and(eq(stores.id, storeId), isNull(stores.deletedAt)))
+            .for('update')
+            .limit(1);
+          if (!current) throw notFound('Không tìm thấy cửa hàng');
+          if (current.version !== input.expectedVersion) throw storeLifecycleVersionConflict();
+          const targetStatus = input.status ?? (current.isActive ? 'ACTIVE' : 'INACTIVE');
+          if (input.groupId !== undefined || targetStatus === 'ACTIVE') {
+            const [targetGroup] = await tx
+              .select({ id: storeGroups.id })
+              .from(storeGroups)
+              .where(
+                and(
+                  eq(storeGroups.id, input.groupId ?? current.groupId),
+                  eq(storeGroups.isActive, true),
+                ),
+              )
+              .limit(1);
+            if (!targetGroup) {
+              throw new ApiError(
+                'VALIDATION_ERROR',
+                'Cửa hàng hoạt động phải thuộc một nhóm đang hoạt động',
+                400,
+                { field: 'groupId' },
+              );
+            }
+          }
+          const before = storeDto(current);
+          const [updated] = await tx
+            .update(stores)
+            .set({
+              name: input.name,
+              groupId: input.groupId,
+              kind:
+                input.kind === undefined
+                  ? undefined
+                  : (input.kind.toLocaleLowerCase('en-US') as 'retail' | 'wholesale'),
+              isActive: input.status === undefined ? undefined : input.status === 'ACTIVE',
+              address: input.address,
+              version: sql`${stores.version} + 1`,
+              updatedAt: new Date(),
+            })
+            .where(and(eq(stores.id, storeId), eq(stores.version, input.expectedVersion)))
+            .returning();
+          if (!updated) throw storeLifecycleVersionConflict();
+          const data = storeDto(updated);
+          await tx
+            .insert(auditLogs)
+            .values(
+              auditValue(
+                actor,
+                context,
+                'STORE_UPDATED',
+                'store',
+                data.id,
+                storeJson(before),
+                storeJson(data),
+              ),
+            );
+          return {
+            value: data,
+            responseStatus: 200,
+            responseBody: storeJson(data),
+            resourceType: 'store',
+            resourceId: data.id,
+          };
+        },
+      );
+      return {
+        data: result.replayed ? StoreSchema.parse(result.responseBody) : result.value,
+        replayed: result.replayed,
+      };
+    });
   }
 
   public async listOrderRequests(
@@ -3295,6 +3564,19 @@ function storeDto(row: typeof stores.$inferSelect): Store {
     kind: row.kind === 'wholesale' ? 'WHOLESALE' : 'RETAIL',
     status: row.isActive ? 'ACTIVE' : 'INACTIVE',
     address: row.address,
+    version: row.version,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function storeGroupDto(row: typeof storeGroups.$inferSelect): StoreGroup {
+  return {
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    status: row.isActive ? 'ACTIVE' : 'INACTIVE',
+    version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -3644,6 +3926,28 @@ async function withOrderSessionErrors<T>(operation: () => Promise<T>): Promise<T
   }
 }
 
+async function withStoreLifecycleErrors<T>(
+  duplicateMessage: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error: unknown) {
+    if (isUniqueViolation(error)) throw conflict(duplicateMessage);
+    if (error instanceof IdempotencyConflictError) {
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    }
+    if (error instanceof IdempotencyInProgressError) {
+      throw conflict('Yêu cầu cùng khóa idempotency đang được xử lý');
+    }
+    throw error;
+  }
+}
+
 async function withWarehouseOutboundErrors<T>(operation: () => Promise<T>): Promise<T> {
   try {
     return await operation();
@@ -3954,6 +4258,14 @@ function accountVersionConflict(): ApiError {
   return new ApiError('VERSION_CONFLICT', 'Tài khoản đã thay đổi, vui lòng tải lại', 409);
 }
 
+function storeLifecycleVersionConflict(): ApiError {
+  return new ApiError('VERSION_CONFLICT', 'Dữ liệu cửa hàng đã thay đổi, vui lòng tải lại', 409);
+}
+
+function escapeLike(value: string): string {
+  return value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_');
+}
+
 function operationalSettingsVersionConflict(): ApiError {
   return new ApiError('VERSION_CONFLICT', 'Cấu hình vận hành đã thay đổi, vui lòng tải lại', 409);
 }
@@ -3980,8 +4292,21 @@ function storeJson(store: Store): JsonObject {
     kind: store.kind,
     status: store.status,
     address: store.address,
+    version: store.version,
     createdAt: store.createdAt,
     updatedAt: store.updatedAt,
+  };
+}
+
+function storeGroupJson(group: StoreGroup): JsonObject {
+  return {
+    id: group.id,
+    code: group.code,
+    name: group.name,
+    status: group.status,
+    version: group.version,
+    createdAt: group.createdAt,
+    updatedAt: group.updatedAt,
   };
 }
 
