@@ -12,6 +12,8 @@ import {
   Truck,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { useOutletContext } from 'react-router-dom';
+import type { AppOutletContext } from '../components/AppShell';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { PageHeader } from '../components/PageHeader';
@@ -21,8 +23,14 @@ import { mockModeEnabled } from '../lib/api';
 import { estimateKilograms, itemsPerKilogram, kilogramsPerItem } from '../lib/conversions';
 import { inventoryLedger, productConversions } from '../lib/data';
 import { formatKg, formatPercent, formatVnd } from '../lib/format';
+import {
+  ProductionInventoryPage,
+  ProductionOpenBagPage,
+  ProductionOutboundPage,
+} from '../features/inventory/InventoryOperations';
 
 export function InventoryPage() {
+  const context = useOutletContext<AppOutletContext>();
   const [query, setQuery] = useState('');
   const rows = useMemo(
     () =>
@@ -33,7 +41,7 @@ export function InventoryPage() {
       ),
     [query],
   );
-  if (!mockModeEnabled) return <UnavailableFeature title="Tồn kho & lịch sử" />;
+  if (!mockModeEnabled) return <ProductionInventoryPage {...context} />;
   return (
     <>
       <PageHeader
@@ -111,6 +119,7 @@ export function InventoryPage() {
 }
 
 export function OpenBagPage() {
+  const context = useOutletContext<AppOutletContext>();
   const [selected, setSelected] = useState<string[]>(['GV-DAM-014']);
   const bags = [
     { id: 'GV-DAM-014', kg: 92 },
@@ -120,7 +129,7 @@ export function OpenBagPage() {
   const total = bags
     .filter((bag) => selected.includes(bag.id))
     .reduce((sum, bag) => sum + bag.kg, 0);
-  if (!mockModeEnabled) return <UnavailableFeature title="Khui kiện" />;
+  if (!mockModeEnabled) return <ProductionOpenBagPage {...context} />;
   return (
     <>
       <PageHeader
@@ -174,6 +183,7 @@ export function OpenBagPage() {
 }
 
 export function SalesPage() {
+  const context = useOutletContext<AppOutletContext>();
   const [syncing, setSyncing] = useState(false);
   const [syncedAt, setSyncedAt] = useState('09:20');
   const sync = () => {
@@ -183,7 +193,7 @@ export function SalesPage() {
       setSyncedAt(new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }));
     }, 650);
   };
-  if (!mockModeEnabled) return <UnavailableFeature title="Bán & đồng bộ" />;
+  if (!mockModeEnabled) return <ProductionOutboundPage {...context} mode="SALE" />;
   return (
     <>
       <PageHeader
@@ -279,6 +289,7 @@ export function SalesPage() {
 }
 
 export function SortingPage() {
+  const context = useOutletContext<AppOutletContext>();
   const [destroyed, setDestroyed] = useState(5);
   const [cheapKg, setCheapKg] = useState(12);
   const [cheapPieces, setCheapPieces] = useState(20);
@@ -293,7 +304,7 @@ export function SortingPage() {
       ? null
       : inputKg - normalKg - destroyed - cheapKg - cheapPiecesKg - charity;
   const valid = remaining !== null && Math.abs(remaining) < 0.001;
-  if (!mockModeEnabled) return <UnavailableFeature title="Lọc & xử lý" />;
+  if (!mockModeEnabled) return <ProductionOutboundPage {...context} mode="SORTING" />;
   return (
     <>
       <PageHeader
