@@ -1,4 +1,18 @@
-import { and, asc, count, desc, eq, gt, inArray, isNull, lte, or, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  exists,
+  gt,
+  inArray,
+  isNull,
+  lte,
+  notExists,
+  or,
+  type SQL,
+} from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
@@ -24,6 +38,7 @@ const MAX_HISTORY_LIMIT = 200;
 
 export type WaitTicketDatabaseStatus = typeof waitTickets.$inferSelect.status;
 export type WaitTicketPriority = typeof waitTickets.$inferSelect.priorityLevel;
+export type WaitTicketEffectiveStatus = 'waiting' | 'offered' | 'partially_fulfilled';
 export type PriorityOfferDatabaseStatus = typeof dailyPriorityOffers.$inferSelect.status;
 export type PriorityOfferResponseAction = 'accept' | 'decline' | 'expire';
 export type PriorityOfferEffectiveAction = PriorityOfferResponseAction | 'cancel';
@@ -52,6 +67,7 @@ export interface WaitTicketListInput extends PageInput {
   readonly productId?: string;
   readonly sessionId?: string;
   readonly status?: WaitTicketDatabaseStatus;
+  readonly effectiveStatus?: WaitTicketEffectiveStatus;
   readonly priorityLevel?: WaitTicketPriority;
 }
 
@@ -287,6 +303,46 @@ export async function listWaitTickets(
   }
   if (input.status !== undefined) {
     conditions.push(eq(waitTickets.status, input.status));
+  }
+  if (input.effectiveStatus !== undefined) {
+    conditions.push(eq(waitTickets.status, 'active'));
+    const openOffer = exists(
+      database
+        .select({ id: dailyPriorityOffers.id })
+        .from(dailyPriorityOffers)
+        .where(
+          and(
+            eq(dailyPriorityOffers.waitTicketId, waitTickets.id),
+            eq(dailyPriorityOffers.status, 'offered'),
+            gt(dailyPriorityOffers.responseDeadlineAt, now),
+            isNull(dailyPriorityOffers.deletedAt),
+          ),
+        ),
+    );
+    if (input.effectiveStatus === 'offered') {
+      conditions.push(openOffer);
+    } else {
+      conditions.push(
+        notExists(
+          database
+            .select({ id: dailyPriorityOffers.id })
+            .from(dailyPriorityOffers)
+            .where(
+              and(
+                eq(dailyPriorityOffers.waitTicketId, waitTickets.id),
+                eq(dailyPriorityOffers.status, 'offered'),
+                gt(dailyPriorityOffers.responseDeadlineAt, now),
+                isNull(dailyPriorityOffers.deletedAt),
+              ),
+            ),
+        ),
+      );
+      conditions.push(
+        input.effectiveStatus === 'partially_fulfilled'
+          ? gt(waitTickets.fulfilledQuantity, 0)
+          : eq(waitTickets.fulfilledQuantity, 0),
+      );
+    }
   }
   if (input.priorityLevel !== undefined) {
     conditions.push(eq(waitTickets.priorityLevel, input.priorityLevel));

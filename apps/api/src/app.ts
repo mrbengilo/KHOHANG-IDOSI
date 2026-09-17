@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  CancelWaitTicketRequestSchema,
   CreateProductRequestSchema,
   CreateProductConversionRequestSchema,
   CreateStoreOrderRequestSchema,
@@ -10,17 +11,23 @@ import {
   IdempotencyHeadersSchema,
   IsoDateSchema,
   ListOrderSessionsQuerySchema,
+  ListPriorityOffersQuerySchema,
   ListProductsQuerySchema,
   ListProductConversionsQuerySchema,
   ListReceiptsQuerySchema,
   ListStoreOrderRequestsQuerySchema,
   ListStoresQuerySchema,
+  ListWaitTicketsQuerySchema,
   LoginRequestSchema,
   ProductParamsSchema,
   ProductConversionParamsSchema,
+  PriorityOfferParamsSchema,
   ReceiptParamsSchema,
   ReturnReceiptForCorrectionRequestSchema,
+  RespondPriorityOfferRequestSchema,
   SubmitStoreReceiptRequestSchema,
+  WaitTicketHistoryQuerySchema,
+  WaitTicketParamsSchema,
   DeleteProductConversionRequestSchema,
   UpdateProductConversionRequestSchema,
   UpdateProductRequestSchema,
@@ -451,6 +458,62 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return reply.send({ data: result.data });
   });
 
+  app.get('/api/v1/wait-tickets', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = ListWaitTicketsQuerySchema.parse(request.query);
+    return repository.listWaitTickets(session.principal, query);
+  });
+
+  app.get('/api/v1/wait-tickets/:waitTicketId/history', async (request) => {
+    const session = await authenticate(request, repository);
+    const { waitTicketId } = WaitTicketParamsSchema.parse(request.params);
+    const { limit } = WaitTicketHistoryQuerySchema.parse(request.query);
+    return {
+      data: await repository.getWaitTicketHistory(session.principal, waitTicketId, limit),
+    };
+  });
+
+  app.post('/api/v1/wait-tickets/:waitTicketId/cancel', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { waitTicketId } = WaitTicketParamsSchema.parse(request.params);
+    const input = CancelWaitTicketRequestSchema.parse(request.body);
+    const result = await repository.cancelWaitTicket(
+      session.principal,
+      waitTicketId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CANCEL_WAIT_TICKET', waitTicketId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.get('/api/v1/priority-offers', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = ListPriorityOffersQuerySchema.parse(request.query);
+    return repository.listPriorityOffers(session.principal, query);
+  });
+
+  app.post('/api/v1/priority-offers/:offerId/respond', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { offerId } = PriorityOfferParamsSchema.parse(request.params);
+    const input = RespondPriorityOfferRequestSchema.parse(request.body);
+    const result = await repository.respondPriorityOffer(
+      session.principal,
+      offerId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ operation: 'RESPOND_PRIORITY_OFFER', offerId, response: input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
   app.get('/api/v1/integrations/warehouse/v1/order-statistics', async (request) => {
     const session = await authenticate(request, repository);
     const query = StatisticsQuerySchema.parse(request.query);
@@ -706,6 +769,36 @@ function openApiDocument(): Record<string, unknown> {
         post: {
           security: cookieSecurity,
           responses: { '200': { description: 'Finalized receipt and inventory' } },
+        },
+      },
+      '/api/v1/wait-tickets': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Scoped wait tickets' } },
+        },
+      },
+      '/api/v1/wait-tickets/{waitTicketId}/history': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Ticket, offer and audit history' } },
+        },
+      },
+      '/api/v1/wait-tickets/{waitTicketId}/cancel': {
+        post: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Cancelled wait ticket' } },
+        },
+      },
+      '/api/v1/priority-offers': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Scoped priority offers' } },
+        },
+      },
+      '/api/v1/priority-offers/{offerId}/respond': {
+        post: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Accepted or declined priority offer' } },
         },
       },
       '/api/v1/integrations/warehouse/v1/order-statistics': {

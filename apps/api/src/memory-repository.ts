@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type {
   AuthenticatedPrincipal,
+  CancelWaitTicketRequest,
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
@@ -10,13 +11,17 @@ import type {
   FinalizeReceiptRequest,
   ListOrderSessionsQuery,
   ListProductsQuery,
+  ListPriorityOffersQuery,
   ListReceiptsQuery,
   ListProductConversionsQuery,
   ListStoreOrderRequestsQuery,
   ListStoresQuery,
+  ListWaitTicketsQuery,
   Product,
   ProductConversion,
+  PriorityOffer,
   Receipt,
+  RespondPriorityOfferRequest,
   ReturnReceiptForCorrectionRequest,
   OrderSession,
   Session,
@@ -26,6 +31,8 @@ import type {
   UpdateProductRequest,
   UpdateProductConversionRequest,
   DeleteProductConversionRequest,
+  WaitTicket,
+  WaitTicketHistory,
 } from '@idosi/contracts';
 import {
   PRODUCT_CONVERSION_SEEDS,
@@ -56,6 +63,9 @@ export const MEMORY_SEED_IDS = {
   outboundRequest: '11000000-0000-4000-8000-000000000001',
   secondOutboundRequest: '11000000-0000-4000-8000-000000000002',
   storeReceipt: '12000000-0000-4000-8000-000000000001',
+  waitTicket: '13000000-0000-4000-8000-000000000001',
+  cancellableWaitTicket: '13000000-0000-4000-8000-000000000002',
+  priorityOffer: '14000000-0000-4000-8000-000000000001',
   nvtStore: '20000000-0000-4000-8000-000000000007',
   bdStore: '20000000-0000-4000-8000-000000000008',
 } as const;
@@ -87,6 +97,12 @@ interface ReceiptIdempotencyRecord {
   readonly response: Receipt;
 }
 
+interface WaitMutationIdempotencyRecord {
+  readonly requestHash: string;
+  readonly resourceType: 'WAIT_TICKET' | 'PRIORITY_OFFER';
+  readonly resourceId: string;
+}
+
 interface MemoryDispatchedOutbound {
   readonly storeId: string;
   readonly lines: readonly { readonly productId: string; readonly approvedUnits: number }[];
@@ -98,9 +114,12 @@ interface AuditRecord {
   readonly entityType: string;
   readonly entityId: string;
   readonly actorAccountId: string;
+  readonly actorRole: AuthenticatedPrincipal['role'];
+  readonly actorStoreId: string | null;
   readonly requestId: string;
   readonly before: unknown;
   readonly after: unknown;
+  readonly metadata: Readonly<Record<string, unknown>>;
   readonly createdAt: string;
 }
 
@@ -120,9 +139,12 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly productConversions = new Map<string, ProductConversion>();
   private readonly orderRequests = new Map<string, StoreOrderRequest>();
   private readonly receipts = new Map<string, Receipt>();
+  private readonly waitTickets = new Map<string, WaitTicket>();
+  private readonly priorityOffers = new Map<string, PriorityOffer>();
   private readonly dispatchedOutbounds = new Map<string, MemoryDispatchedOutbound>();
   private readonly idempotency = new Map<string, IdempotencyRecord>();
   private readonly receiptIdempotency = new Map<string, ReceiptIdempotencyRecord>();
+  private readonly waitMutationIdempotency = new Map<string, WaitMutationIdempotencyRecord>();
   private readonly storeGroupIds = new Set<string>();
   private readonly audit: AuditRecord[] = [];
 
@@ -816,6 +838,209 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     return { data: structuredClone(updated), replayed: false };
   }
 
+  public async listWaitTickets(
+    actor: AuthenticatedPrincipal,
+    query: ListWaitTicketsQuery,
+  ): Promise<Page<WaitTicket>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const values = [...this.waitTickets.values()]
+      .map((ticket) => this.effectiveWaitTicket(ticket))
+      .filter((ticket) => canAccessStore(actor, ticket.storeId))
+      .filter((ticket) => query.storeId === undefined || ticket.storeId === query.storeId)
+      .filter((ticket) => query.sessionId === undefined || ticket.sessionId === query.sessionId)
+      .filter((ticket) => query.productId === undefined || ticket.productId === query.productId)
+      .filter((ticket) => query.priority === undefined || ticket.priority === query.priority)
+      .filter((ticket) => query.status === undefined || ticket.status === query.status)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return {
+      data: slicePage(values, query.page, query.pageSize),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
+  }
+
+  public async getWaitTicketHistory(
+    actor: AuthenticatedPrincipal,
+    waitTicketId: string,
+    limit: number,
+  ): Promise<WaitTicketHistory> {
+    const stored = this.waitTickets.get(waitTicketId);
+    if (!stored) throw notFound('Không tìm thấy phiếu chờ');
+    if (!canAccessStore(actor, stored.storeId)) throw forbidden();
+    const offers = [...this.priorityOffers.values()]
+      .filter((offer) => offer.waitTicketId === waitTicketId)
+      .map((offer) => this.effectivePriorityOffer(offer))
+      .sort((left, right) => right.offeredAt.localeCompare(left.offeredAt))
+      .slice(0, limit);
+    const offerIds = new Set(offers.map((offer) => offer.id));
+    const audit = this.audit
+      .filter(
+        (event) =>
+          (event.entityType === 'wait_ticket' && event.entityId === waitTicketId) ||
+          (event.entityType === 'priority_offer' && offerIds.has(event.entityId)),
+      )
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, limit)
+      .map((event) => ({
+        id: event.id,
+        requestId: event.requestId,
+        actorAccountId: event.actorAccountId,
+        actorRole: event.actorRole,
+        actorStoreId: event.actorStoreId,
+        action: event.action,
+        entityType:
+          event.entityType === 'priority_offer'
+            ? ('PRIORITY_OFFER' as const)
+            : ('WAIT_TICKET' as const),
+        entityId: event.entityId,
+        before: auditSnapshot(event.before),
+        after: auditSnapshot(event.after),
+        metadata: { ...event.metadata },
+        createdAt: event.createdAt,
+      }));
+    return {
+      ticket: this.effectiveWaitTicket(stored),
+      offers,
+      audit,
+    };
+  }
+
+  public async cancelWaitTicket(
+    actor: AuthenticatedPrincipal,
+    waitTicketId: string,
+    input: CancelWaitTicketRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<WaitTicket>> {
+    const current = this.waitTickets.get(waitTicketId);
+    if (!current) throw notFound('Không tìm thấy phiếu chờ');
+    if (!canAccessStore(actor, current.storeId)) throw forbidden();
+    const scopedKey = `${actor.accountId}:wait-ticket:cancel:${waitTicketId}:${idempotencyKey}`;
+    const replay = this.replayWaitMutation(scopedKey, requestHash, 'WAIT_TICKET');
+    if (replay) {
+      const replayed = this.waitTickets.get(replay.resourceId);
+      if (!replayed) throw notFound('Không tìm thấy phiếu chờ');
+      return { data: this.effectiveWaitTicket(replayed), replayed: true };
+    }
+    const effective = this.effectiveWaitTicket(current);
+    if (!['WAITING', 'OFFERED', 'PARTIALLY_FULFILLED'].includes(effective.status)) {
+      throw conflict('Chỉ có thể hủy phiếu chờ đang hoạt động');
+    }
+    const relatedOffers = [...this.priorityOffers.values()].filter(
+      (offer) => offer.waitTicketId === waitTicketId,
+    );
+    if (relatedOffers.some((offer) => offer.status === 'ACCEPTED')) {
+      throw conflict('Phiếu chờ đã nhận ưu tiên không thể hủy');
+    }
+
+    const now = this.now().toISOString();
+    const updated: WaitTicket = { ...current, status: 'CANCELLED', updatedAt: now };
+    this.waitTickets.set(waitTicketId, updated);
+    for (const offer of relatedOffers) {
+      if (this.effectivePriorityOffer(offer).status !== 'PENDING') continue;
+      this.priorityOffers.set(offer.id, {
+        ...offer,
+        status: 'CANCELLED',
+        respondedAt: now,
+        accepted: null,
+      });
+    }
+    this.waitMutationIdempotency.set(scopedKey, {
+      requestHash,
+      resourceType: 'WAIT_TICKET',
+      resourceId: waitTicketId,
+    });
+    this.appendAudit(
+      actor,
+      context,
+      'WAIT_TICKET_CANCELLED',
+      'wait_ticket',
+      waitTicketId,
+      current,
+      { ...updated, reason: input.reason },
+    );
+    return { data: structuredClone(updated), replayed: false };
+  }
+
+  public async listPriorityOffers(
+    actor: AuthenticatedPrincipal,
+    query: ListPriorityOffersQuery,
+  ): Promise<Page<PriorityOffer>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const values = [...this.priorityOffers.values()]
+      .map((offer) => this.effectivePriorityOffer(offer))
+      .filter((offer) => canAccessStore(actor, offer.storeId))
+      .filter((offer) => query.storeId === undefined || offer.storeId === query.storeId)
+      .filter(
+        (offer) => query.waitTicketId === undefined || offer.waitTicketId === query.waitTicketId,
+      )
+      .filter((offer) => query.status === undefined || offer.status === query.status)
+      .sort((left, right) => right.offeredAt.localeCompare(left.offeredAt));
+    return {
+      data: slicePage(values, query.page, query.pageSize),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
+  }
+
+  public async respondPriorityOffer(
+    actor: AuthenticatedPrincipal,
+    offerId: string,
+    input: RespondPriorityOfferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<PriorityOffer>> {
+    const current = this.priorityOffers.get(offerId);
+    if (!current) throw notFound('Không tìm thấy đề nghị ưu tiên');
+    if (actor.role !== 'STORE' || actor.storeId !== current.storeId) throw forbidden();
+    const scopedKey = `${actor.accountId}:priority-offer:respond:${offerId}:${idempotencyKey}`;
+    const replay = this.replayWaitMutation(scopedKey, requestHash, 'PRIORITY_OFFER');
+    if (replay) {
+      const replayed = this.priorityOffers.get(replay.resourceId);
+      if (!replayed) throw notFound('Không tìm thấy đề nghị ưu tiên');
+      return { data: this.effectivePriorityOffer(replayed), replayed: true };
+    }
+    if (this.effectivePriorityOffer(current).status !== 'PENDING') {
+      throw conflict('Đề nghị ưu tiên đã hết hạn hoặc đã được phản hồi');
+    }
+    const ticket = this.waitTickets.get(current.waitTicketId);
+    if (!ticket || !['WAITING', 'OFFERED', 'PARTIALLY_FULFILLED'].includes(ticket.status)) {
+      throw conflict('Phiếu chờ không còn hoạt động');
+    }
+    if (
+      input.action === 'ACCEPT' &&
+      (input.accepted.kind !== 'UNIT' ||
+        current.offered.kind !== 'UNIT' ||
+        input.accepted.quantity !== current.offered.quantity)
+    ) {
+      throw new ApiError('VALIDATION_ERROR', 'Phải nhận đủ toàn bộ số lượng đã được đề nghị', 400);
+    }
+
+    const now = this.now().toISOString();
+    const updated: PriorityOffer = {
+      ...current,
+      status: input.action === 'ACCEPT' ? 'ACCEPTED' : 'DECLINED',
+      respondedAt: now,
+      accepted: input.action === 'ACCEPT' ? input.accepted : null,
+    };
+    this.priorityOffers.set(offerId, updated);
+    this.waitMutationIdempotency.set(scopedKey, {
+      requestHash,
+      resourceType: 'PRIORITY_OFFER',
+      resourceId: offerId,
+    });
+    this.appendAudit(
+      actor,
+      context,
+      input.action === 'ACCEPT' ? 'PRIORITY_OFFER_ACCEPTED' : 'PRIORITY_OFFER_DECLINED',
+      'priority_offer',
+      offerId,
+      current,
+      updated,
+    );
+    return { data: structuredClone(updated), replayed: false };
+  }
+
   public async getOrderStatistics(
     actor: AuthenticatedPrincipal,
     storeCode: string,
@@ -854,6 +1079,48 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       requestHash,
       response: structuredClone(receipt),
     });
+  }
+
+  private replayWaitMutation(
+    scopedKey: string,
+    requestHash: string,
+    resourceType: WaitMutationIdempotencyRecord['resourceType'],
+  ): WaitMutationIdempotencyRecord | null {
+    const previous = this.waitMutationIdempotency.get(scopedKey);
+    if (!previous) return null;
+    if (previous.requestHash !== requestHash || previous.resourceType !== resourceType) {
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    }
+    return previous;
+  }
+
+  private effectivePriorityOffer(offer: PriorityOffer): PriorityOffer {
+    if (offer.status !== 'PENDING' || Date.parse(offer.expiresAt) > this.now().getTime()) {
+      return structuredClone(offer);
+    }
+    return { ...structuredClone(offer), status: 'EXPIRED', accepted: null };
+  }
+
+  private effectiveWaitTicket(ticket: WaitTicket): WaitTicket {
+    if (['FULFILLED', 'CANCELLED', 'EXPIRED'].includes(ticket.status)) {
+      return structuredClone(ticket);
+    }
+    const hasOpenOffer = [...this.priorityOffers.values()].some(
+      (offer) =>
+        offer.waitTicketId === ticket.id && this.effectivePriorityOffer(offer).status === 'PENDING',
+    );
+    return {
+      ...structuredClone(ticket),
+      status: hasOpenOffer
+        ? 'OFFERED'
+        : ticket.fulfilled.kind === 'UNIT' && ticket.fulfilled.quantity > 0
+          ? 'PARTIALLY_FULFILLED'
+          : 'WAITING',
+    };
   }
 
   private requireMutableReceipt(
@@ -998,6 +1265,46 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       createdAt: now,
       updatedAt: now,
     });
+    this.waitTickets.set(MEMORY_SEED_IDS.waitTicket, {
+      id: MEMORY_SEED_IDS.waitTicket,
+      sessionId: MEMORY_SEED_IDS.orderSession,
+      mergedOrderId: null,
+      storeId: nvtId,
+      productId: firstProduct.id,
+      priority: 'P0A',
+      requested: { kind: 'UNIT', quantity: 3 },
+      fulfilled: { kind: 'UNIT', quantity: 0 },
+      remaining: { kind: 'UNIT', quantity: 3 },
+      status: 'OFFERED',
+      createdAt: now,
+      updatedAt: now,
+    });
+    this.waitTickets.set(MEMORY_SEED_IDS.cancellableWaitTicket, {
+      id: MEMORY_SEED_IDS.cancellableWaitTicket,
+      sessionId: MEMORY_SEED_IDS.orderSession,
+      mergedOrderId: null,
+      storeId: nvtId,
+      productId: secondProduct.id,
+      priority: 'P1',
+      requested: { kind: 'UNIT', quantity: 2 },
+      fulfilled: { kind: 'UNIT', quantity: 0 },
+      remaining: { kind: 'UNIT', quantity: 2 },
+      status: 'WAITING',
+      createdAt: now,
+      updatedAt: now,
+    });
+    this.priorityOffers.set(MEMORY_SEED_IDS.priorityOffer, {
+      id: MEMORY_SEED_IDS.priorityOffer,
+      waitTicketId: MEMORY_SEED_IDS.waitTicket,
+      storeId: nvtId,
+      productId: firstProduct.id,
+      offered: { kind: 'UNIT', quantity: 3 },
+      status: 'PENDING',
+      offeredAt: now,
+      expiresAt: new Date(this.now().getTime() + 2 * 60 * 60 * 1_000).toISOString(),
+      respondedAt: null,
+      accepted: null,
+    });
     const seededAccounts: MutableAccount[] = [
       {
         id: MEMORY_SEED_IDS.adminAccount,
@@ -1076,9 +1383,12 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         entityType,
         entityId,
         actorAccountId: actor.accountId,
+        actorRole: actor.role,
+        actorStoreId: actor.storeId,
         requestId: context.requestId,
         before: structuredClone(before),
         after: structuredClone(after),
+        metadata: {},
         createdAt: this.now().toISOString(),
       }),
     );
@@ -1147,4 +1457,9 @@ function validateMemoryFinalization(input: FinalizeReceiptRequest, current: Rece
 
 function versionConflict(): ApiError {
   return new ApiError('VERSION_CONFLICT', 'Phiếu nhận đã thay đổi, vui lòng tải lại', 409);
+}
+
+function auditSnapshot(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  return structuredClone(value) as Record<string, unknown>;
 }

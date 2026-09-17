@@ -149,6 +149,7 @@ export type {
   RespondPriorityOfferInput,
   WaitTicketAuditRecord,
   WaitTicketDatabaseStatus,
+  WaitTicketEffectiveStatus,
   WaitTicketHistory,
   WaitTicketHistoryInput,
   WaitTicketListInput,

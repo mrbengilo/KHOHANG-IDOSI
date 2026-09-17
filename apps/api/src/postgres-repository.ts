@@ -1,5 +1,6 @@
 import type {
   AuthenticatedPrincipal,
+  CancelWaitTicketRequest,
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
@@ -7,14 +8,18 @@ import type {
   DeclareStoreReceiptRequest,
   FinalizeReceiptRequest,
   ListOrderSessionsQuery,
+  ListPriorityOffersQuery,
   ListProductsQuery,
   ListReceiptsQuery,
   ListProductConversionsQuery,
   ListStoreOrderRequestsQuery,
   ListStoresQuery,
+  ListWaitTicketsQuery,
   Product,
   ProductConversion,
+  PriorityOffer,
   Receipt,
+  RespondPriorityOfferRequest,
   ReturnReceiptForCorrectionRequest,
   OrderSession,
   Session,
@@ -24,17 +29,24 @@ import type {
   UpdateProductRequest,
   UpdateProductConversionRequest,
   DeleteProductConversionRequest,
+  WaitTicket,
+  WaitTicketHistory,
 } from '@idosi/contracts';
 import {
   ActiveWaitTicketExistsError,
   auditLogs,
+  cancelWaitTicket as cancelDatabaseWaitTicket,
   closeDatabase,
+  dailyPriorityOffers,
   declareStoreReceipt as declareDatabaseStoreReceipt,
   db,
   htkdAssignments,
   IdempotencyConflictError,
   IdempotencyInProgressError,
   finalizeStoreReceipt as finalizeDatabaseStoreReceipt,
+  getWaitTicketHistory as getDatabaseWaitTicketHistory,
+  listPriorityOffers as listDatabasePriorityOffers,
+  listWaitTickets as listDatabaseWaitTickets,
   orderRequestItems,
   orderRequests,
   orderSessions,
@@ -44,6 +56,7 @@ import {
   productConversions,
   products,
   RequestLimitExceededError,
+  respondPriorityOffer as respondDatabasePriorityOffer,
   sessions,
   StoreOperationConflictError,
   StoreOperationValidationError,
@@ -59,9 +72,19 @@ import {
   submitStoreReceipt as submitDatabaseStoreReceipt,
   users,
   returnStoreReceiptForCorrection as returnDatabaseStoreReceiptForCorrection,
+  PriorityOfferConflictError,
+  PriorityOfferNotFoundError,
+  WaitTicketAuthorizationError,
+  WaitTicketConflictError,
+  WaitTicketNotFoundError,
+  WaitTicketValidationError,
   withAdvisoryLock,
   withSerializableTransaction,
   type JsonObject,
+  type PriorityOfferRecord,
+  type WaitTicketDatabaseStatus,
+  type WaitTicketEffectiveStatus,
+  type WaitTicketRecord,
 } from '@idosi/database';
 import { and, asc, count, desc, eq, gte, inArray, isNull, lt, lte, type SQL } from 'drizzle-orm';
 
@@ -905,6 +928,145 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     }
   }
 
+  public async listWaitTickets(
+    actor: AuthenticatedPrincipal,
+    query: ListWaitTicketsQuery,
+  ): Promise<Page<WaitTicket>> {
+    return withWaitErrors(async () => {
+      const status = databaseWaitTicketFilter(query.status);
+      const result = await listDatabaseWaitTickets(db, {
+        actorUserId: actor.accountId,
+        page: query.page,
+        pageSize: query.pageSize,
+        ...(query.storeId === undefined ? {} : { storeId: query.storeId }),
+        ...(query.productId === undefined ? {} : { productId: query.productId }),
+        ...(query.sessionId === undefined ? {} : { sessionId: query.sessionId }),
+        ...(query.priority === undefined ? {} : { priorityLevel: query.priority }),
+        ...status,
+      });
+      return {
+        data: result.data.map(waitTicketDto),
+        pagination: result.pagination,
+      };
+    });
+  }
+
+  public async getWaitTicketHistory(
+    actor: AuthenticatedPrincipal,
+    waitTicketId: string,
+    limit: number,
+  ): Promise<WaitTicketHistory> {
+    return withWaitErrors(async () => {
+      const history = await getDatabaseWaitTicketHistory(db, {
+        actorUserId: actor.accountId,
+        waitTicketId,
+        limit,
+      });
+      return {
+        ticket: waitTicketDto(history.ticket),
+        offers: history.offers.map(priorityOfferDto),
+        audit: history.audit.map((event) => ({
+          id: event.id,
+          requestId: event.requestId,
+          actorAccountId: event.actorUserId,
+          actorRole:
+            event.actorRole === null
+              ? null
+              : (event.actorRole.toUpperCase() as AuthenticatedPrincipal['role']),
+          actorStoreId: event.actorStoreId,
+          action: event.action,
+          entityType:
+            event.entityType === 'priority_offer'
+              ? ('PRIORITY_OFFER' as const)
+              : ('WAIT_TICKET' as const),
+          entityId: event.entityId,
+          before: event.before,
+          after: event.after,
+          metadata: event.metadata,
+          createdAt: event.createdAt.toISOString(),
+        })),
+      };
+    });
+  }
+
+  public async cancelWaitTicket(
+    actor: AuthenticatedPrincipal,
+    waitTicketId: string,
+    input: CancelWaitTicketRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<WaitTicket>> {
+    return withWaitErrors(async () => {
+      const result = await cancelDatabaseWaitTicket(db, {
+        waitTicketId,
+        actorUserId: actor.accountId,
+        reason: input.reason,
+        requestId: context.requestId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.waitTicketId;
+      if (!resourceId) throw new Error('Idempotent wait cancellation has no resource id');
+      const history = await getDatabaseWaitTicketHistory(db, {
+        actorUserId: actor.accountId,
+        waitTicketId: resourceId,
+        limit: 1,
+      });
+      return { data: waitTicketDto(history.ticket), replayed: result.replayed };
+    });
+  }
+
+  public async listPriorityOffers(
+    actor: AuthenticatedPrincipal,
+    query: ListPriorityOffersQuery,
+  ): Promise<Page<PriorityOffer>> {
+    return withWaitErrors(async () => {
+      const result = await listDatabasePriorityOffers(db, {
+        actorUserId: actor.accountId,
+        page: query.page,
+        pageSize: query.pageSize,
+        ...(query.waitTicketId === undefined ? {} : { waitTicketId: query.waitTicketId }),
+        ...(query.storeId === undefined ? {} : { storeId: query.storeId }),
+        ...(query.status === undefined
+          ? {}
+          : { status: databasePriorityOfferStatus(query.status) }),
+      });
+      return {
+        data: result.data.map(priorityOfferDto),
+        pagination: result.pagination,
+      };
+    });
+  }
+
+  public async respondPriorityOffer(
+    actor: AuthenticatedPrincipal,
+    offerId: string,
+    input: RespondPriorityOfferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<PriorityOffer>> {
+    if (actor.role !== 'STORE') throw forbidden();
+    const response = databasePriorityOfferResponse(input);
+    return withWaitErrors(async () => {
+      const result = await respondDatabasePriorityOffer(db, {
+        offerId,
+        actorUserId: actor.accountId,
+        ...response,
+        requestId: context.requestId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.offerId;
+      if (!resourceId) throw new Error('Idempotent priority-offer response has no resource id');
+      return {
+        data: await this.priorityOfferDto(actor, resourceId),
+        replayed: result.replayed,
+      };
+    });
+  }
+
   public async getOrderStatistics(
     actor: AuthenticatedPrincipal,
     storeCode: string,
@@ -1104,6 +1266,24 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       updatedAt: receipt.updatedAt.toISOString(),
     };
   }
+
+  private async priorityOfferDto(
+    actor: AuthenticatedPrincipal,
+    offerId: string,
+  ): Promise<PriorityOffer> {
+    const [offer] = await db
+      .select()
+      .from(dailyPriorityOffers)
+      .where(and(eq(dailyPriorityOffers.id, offerId), isNull(dailyPriorityOffers.deletedAt)))
+      .limit(1);
+    if (!offer) throw notFound('Không tìm thấy đề nghị ưu tiên');
+    if (!canAccessStore(actor, offer.storeId)) throw forbidden();
+    const effectiveStatus =
+      offer.status === 'offered' && offer.responseDeadlineAt.getTime() <= Date.now()
+        ? 'expired'
+        : offer.status;
+    return priorityOfferDto({ ...offer, effectiveStatus });
+  }
 }
 
 function sessionDto(stored: typeof sessions.$inferSelect, account: AccountCredentials): Session {
@@ -1261,6 +1441,131 @@ function receiptStatus(status: typeof storeReceipts.$inferSelect.status): Receip
       return 'RETURNED';
     case 'finalized':
       return 'FINALIZED';
+  }
+}
+
+function waitTicketDto(ticket: WaitTicketRecord): WaitTicket {
+  return {
+    id: ticket.id,
+    sessionId: ticket.orderSessionId,
+    mergedOrderId: ticket.mergedOrderId,
+    storeId: ticket.storeId,
+    productId: ticket.productId,
+    priority: ticket.priorityLevel,
+    requested: { kind: 'UNIT', quantity: ticket.originalQuantity },
+    fulfilled: { kind: 'UNIT', quantity: ticket.fulfilledQuantity },
+    remaining: { kind: 'UNIT', quantity: ticket.remainingQuantity },
+    status:
+      ticket.status === 'active'
+        ? ticket.hasOpenOffer
+          ? 'OFFERED'
+          : ticket.fulfilledQuantity > 0
+            ? 'PARTIALLY_FULFILLED'
+            : 'WAITING'
+        : (ticket.status.toUpperCase() as WaitTicket['status']),
+    createdAt: ticket.createdAt.toISOString(),
+    updatedAt: ticket.updatedAt.toISOString(),
+  };
+}
+
+function priorityOfferDto(offer: PriorityOfferRecord): PriorityOffer {
+  const status = offer.effectiveStatus.toUpperCase() as PriorityOffer['status'];
+  return {
+    id: offer.id,
+    waitTicketId: offer.waitTicketId,
+    storeId: offer.storeId,
+    productId: offer.productId,
+    offered: { kind: 'UNIT', quantity: offer.offeredQuantity },
+    status,
+    offeredAt: offer.createdAt.toISOString(),
+    expiresAt: offer.responseDeadlineAt.toISOString(),
+    respondedAt: offer.respondedAt?.toISOString() ?? null,
+    accepted: status === 'ACCEPTED' ? { kind: 'UNIT', quantity: offer.acceptedQuantity } : null,
+  };
+}
+
+function databaseWaitTicketFilter(status: WaitTicket['status'] | undefined): {
+  readonly status?: WaitTicketDatabaseStatus;
+  readonly effectiveStatus?: WaitTicketEffectiveStatus;
+} {
+  switch (status) {
+    case undefined:
+      return {};
+    case 'WAITING':
+      return { effectiveStatus: 'waiting' };
+    case 'OFFERED':
+      return { effectiveStatus: 'offered' };
+    case 'PARTIALLY_FULFILLED':
+      return { effectiveStatus: 'partially_fulfilled' };
+    case 'FULFILLED':
+      return { status: 'fulfilled' };
+    case 'CANCELLED':
+      return { status: 'cancelled' };
+    case 'EXPIRED':
+      return { status: 'expired' };
+  }
+}
+
+function databasePriorityOfferStatus(
+  status: PriorityOffer['status'],
+): PriorityOfferRecord['status'] {
+  switch (status) {
+    case 'PENDING':
+      return 'offered';
+    case 'ACCEPTED':
+      return 'accepted';
+    case 'DECLINED':
+      return 'declined';
+    case 'EXPIRED':
+      return 'expired';
+    case 'CANCELLED':
+      return 'cancelled';
+  }
+}
+
+function databasePriorityOfferResponse(
+  input: RespondPriorityOfferRequest,
+):
+  | { readonly action: 'accept'; readonly acceptedQuantity: number }
+  | { readonly action: 'decline'; readonly reason?: string } {
+  if (input.action === 'ACCEPT') {
+    if (input.accepted.kind !== 'UNIT') {
+      throw new ApiError('VALIDATION_ERROR', 'Đề nghị ưu tiên chỉ hỗ trợ số lượng đơn vị', 400);
+    }
+    return { action: 'accept', acceptedQuantity: input.accepted.quantity };
+  }
+  return {
+    action: 'decline',
+    ...(input.reason === undefined ? {} : { reason: input.reason }),
+  };
+}
+
+async function withWaitErrors<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error: unknown) {
+    if (error instanceof WaitTicketAuthorizationError) throw forbidden();
+    if (error instanceof WaitTicketNotFoundError) throw notFound('Không tìm thấy phiếu chờ');
+    if (error instanceof PriorityOfferNotFoundError) {
+      throw notFound('Không tìm thấy đề nghị ưu tiên');
+    }
+    if (error instanceof WaitTicketValidationError) {
+      throw new ApiError('VALIDATION_ERROR', error.message, 400);
+    }
+    if (error instanceof WaitTicketConflictError || error instanceof PriorityOfferConflictError) {
+      throw conflict(error.message);
+    }
+    if (error instanceof IdempotencyConflictError) {
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    }
+    if (error instanceof IdempotencyInProgressError) {
+      throw conflict('Yêu cầu cùng khóa idempotency đang được xử lý');
+    }
+    throw error;
   }
 }
 

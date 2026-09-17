@@ -12,6 +12,7 @@ import {
   kilogramsToGramsForRefinement,
   safeIntegerToBigIntForRefinement,
 } from './refinement-values.js';
+import { AccountRoleSchema } from './identity.js';
 import { InventoryAmountSchema, PositiveInventoryAmountSchema } from './warehouse.js';
 import type { InventoryAmount } from './warehouse.js';
 
@@ -28,6 +29,7 @@ export const WaitTicketStatusSchema = z.enum([
   'PARTIALLY_FULFILLED',
   'FULFILLED',
   'CANCELLED',
+  'EXPIRED',
 ]);
 export type WaitTicketStatus = z.infer<typeof WaitTicketStatusSchema>;
 
@@ -35,7 +37,7 @@ export const WaitTicketSchema = z
   .object({
     id: EntityIdSchema,
     sessionId: EntityIdSchema,
-    mergedOrderId: EntityIdSchema,
+    mergedOrderId: EntityIdSchema.nullable(),
     storeId: EntityIdSchema,
     productId: EntityIdSchema,
     priority: AllocationPrioritySchema,
@@ -71,6 +73,20 @@ export const WaitTicketSchema = z
         message: 'Fulfilled and remaining amounts must equal the requested amount',
       });
     }
+    if (remaining !== null && ticket.status === 'FULFILLED' && remaining !== 0n) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['remaining'],
+        message: 'A fulfilled wait ticket cannot have a remaining amount',
+      });
+    }
+    if (fulfilled !== null && ticket.status === 'PARTIALLY_FULFILLED' && fulfilled === 0n) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['fulfilled'],
+        message: 'A partially fulfilled wait ticket must have a fulfilled amount',
+      });
+    }
   });
 export type WaitTicket = z.infer<typeof WaitTicketSchema>;
 
@@ -79,6 +95,9 @@ export type WaitTicketParams = z.infer<typeof WaitTicketParamsSchema>;
 
 export const CancelWaitTicketRequestSchema = z.object({ reason: AuditReasonSchema }).strict();
 export type CancelWaitTicketRequest = z.infer<typeof CancelWaitTicketRequestSchema>;
+
+export const CancelWaitTicketResponseSchema = z.object({ data: WaitTicketSchema }).strict();
+export type CancelWaitTicketResponse = z.infer<typeof CancelWaitTicketResponseSchema>;
 
 export const WaitTicketResponseSchema = z.object({ data: WaitTicketSchema }).strict();
 export type WaitTicketResponse = z.infer<typeof WaitTicketResponseSchema>;
@@ -135,6 +154,27 @@ export const PriorityOfferSchema = z
         message: 'An accepted offer must record its accepted amount',
       });
     }
+    if (offer.status !== 'ACCEPTED' && offer.accepted !== null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['accepted'],
+        message: 'Only an accepted offer may record an accepted amount',
+      });
+    }
+    if (offer.status === 'ACCEPTED' && offer.respondedAt === null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['respondedAt'],
+        message: 'An accepted offer must record when it was accepted',
+      });
+    }
+    if (offer.status === 'PENDING' && offer.respondedAt !== null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['respondedAt'],
+        message: 'A pending offer cannot have a response timestamp',
+      });
+    }
     if (offer.accepted !== null && offer.accepted.kind !== offer.offered.kind) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -144,11 +184,16 @@ export const PriorityOfferSchema = z
     } else if (offer.accepted !== null) {
       const accepted = amountValue(offer.accepted);
       const offered = amountValue(offer.offered);
-      if (accepted !== null && offered !== null && accepted > offered) {
+      if (
+        offer.status === 'ACCEPTED' &&
+        accepted !== null &&
+        offered !== null &&
+        accepted !== offered
+      ) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['accepted'],
-          message: 'Accepted amount cannot exceed offered amount',
+          message: 'The accepted amount must equal the full offered amount',
         });
       }
     }
@@ -167,9 +212,11 @@ export type CreatePriorityOfferRequest = z.infer<typeof CreatePriorityOfferReque
 export const AcceptPriorityOfferRequestSchema = z
   .object({ action: z.literal('ACCEPT'), accepted: PositiveInventoryAmountSchema })
   .strict();
+export type AcceptPriorityOfferRequest = z.infer<typeof AcceptPriorityOfferRequestSchema>;
 export const DeclinePriorityOfferRequestSchema = z
   .object({ action: z.literal('DECLINE'), reason: AuditReasonSchema.optional() })
   .strict();
+export type DeclinePriorityOfferRequest = z.infer<typeof DeclinePriorityOfferRequestSchema>;
 export const RespondPriorityOfferRequestSchema = z.discriminatedUnion('action', [
   AcceptPriorityOfferRequestSchema,
   DeclinePriorityOfferRequestSchema,
@@ -182,6 +229,9 @@ export type PriorityOfferParams = z.infer<typeof PriorityOfferParamsSchema>;
 export const PriorityOfferResponseSchema = z.object({ data: PriorityOfferSchema }).strict();
 export type PriorityOfferResponse = z.infer<typeof PriorityOfferResponseSchema>;
 
+export const RespondPriorityOfferResponseSchema = PriorityOfferResponseSchema;
+export type RespondPriorityOfferResponse = z.infer<typeof RespondPriorityOfferResponseSchema>;
+
 export const ListPriorityOffersQuerySchema = PaginationQuerySchema.extend({
   waitTicketId: EntityIdSchema.optional(),
   storeId: EntityIdSchema.optional(),
@@ -193,3 +243,40 @@ export const ListPriorityOffersResponseSchema = z
   .object({ data: z.array(PriorityOfferSchema), pagination: PaginationMetaSchema })
   .strict();
 export type ListPriorityOffersResponse = z.infer<typeof ListPriorityOffersResponseSchema>;
+
+export const WaitTicketHistoryQuerySchema = z
+  .object({ limit: z.coerce.number().int().min(1).max(200).default(100) })
+  .strict();
+export type WaitTicketHistoryQuery = z.infer<typeof WaitTicketHistoryQuerySchema>;
+
+const AuditSnapshotSchema = z.record(z.string(), z.unknown());
+
+export const WaitTicketAuditEventSchema = z
+  .object({
+    id: EntityIdSchema,
+    requestId: z.string().trim().min(1).max(128).nullable(),
+    actorAccountId: EntityIdSchema.nullable(),
+    actorRole: AccountRoleSchema.nullable(),
+    actorStoreId: EntityIdSchema.nullable(),
+    action: z.string().trim().min(1).max(120),
+    entityType: z.enum(['WAIT_TICKET', 'PRIORITY_OFFER']),
+    entityId: EntityIdSchema.nullable(),
+    before: AuditSnapshotSchema.nullable(),
+    after: AuditSnapshotSchema.nullable(),
+    metadata: AuditSnapshotSchema,
+    createdAt: IsoDateTimeSchema,
+  })
+  .strict();
+export type WaitTicketAuditEvent = z.infer<typeof WaitTicketAuditEventSchema>;
+
+export const WaitTicketHistorySchema = z
+  .object({
+    ticket: WaitTicketSchema,
+    offers: z.array(PriorityOfferSchema),
+    audit: z.array(WaitTicketAuditEventSchema),
+  })
+  .strict();
+export type WaitTicketHistory = z.infer<typeof WaitTicketHistorySchema>;
+
+export const WaitTicketHistoryResponseSchema = z.object({ data: WaitTicketHistorySchema }).strict();
+export type WaitTicketHistoryResponse = z.infer<typeof WaitTicketHistoryResponseSchema>;

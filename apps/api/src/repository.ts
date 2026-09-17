@@ -1,5 +1,6 @@
 import type {
   AuthenticatedPrincipal,
+  CancelWaitTicketRequest,
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
@@ -9,6 +10,7 @@ import type {
   ListOrderSessionsQuery,
   ListProductsQuery,
   ListReceiptsQuery,
+  ListPriorityOffersQuery,
   ListProductConversionsQuery,
   ListStoreOrderRequestsQuery,
   ListStoresQuery,
@@ -16,7 +18,9 @@ import type {
   OrderSession,
   Product,
   ProductConversion,
+  PriorityOffer,
   Receipt,
+  RespondPriorityOfferRequest,
   ReturnReceiptForCorrectionRequest,
   Session,
   Store,
@@ -25,6 +29,9 @@ import type {
   UpdateProductRequest,
   UpdateProductConversionRequest,
   DeleteProductConversionRequest,
+  ListWaitTicketsQuery,
+  WaitTicket,
+  WaitTicketHistory,
 } from '@idosi/contracts';
 
 export interface RequestContext {
@@ -198,6 +205,36 @@ export interface WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<Receipt>>;
+
+  listWaitTickets(
+    actor: AuthenticatedPrincipal,
+    query: ListWaitTicketsQuery,
+  ): Promise<Page<WaitTicket>>;
+  getWaitTicketHistory(
+    actor: AuthenticatedPrincipal,
+    waitTicketId: string,
+    limit: number,
+  ): Promise<WaitTicketHistory>;
+  cancelWaitTicket(
+    actor: AuthenticatedPrincipal,
+    waitTicketId: string,
+    input: CancelWaitTicketRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<WaitTicket>>;
+  listPriorityOffers(
+    actor: AuthenticatedPrincipal,
+    query: ListPriorityOffersQuery,
+  ): Promise<Page<PriorityOffer>>;
+  respondPriorityOffer(
+    actor: AuthenticatedPrincipal,
+    offerId: string,
+    input: RespondPriorityOfferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<PriorityOffer>>;
 
   getOrderStatistics(
     actor: AuthenticatedPrincipal,

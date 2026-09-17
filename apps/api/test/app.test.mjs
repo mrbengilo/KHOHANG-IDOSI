@@ -492,6 +492,186 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(filtered.json().data[0].status, 'FINALIZED');
   });
 
+  test('lists and filters store-scoped wait tickets, offers and history', async () => {
+    const storeCookie = cookieOf(await login('ds_nvt'));
+
+    const tickets = await app.inject({
+      method: 'GET',
+      url: '/api/v1/wait-tickets?page=1&pageSize=10',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(tickets.statusCode, 200);
+    assert.equal(tickets.json().pagination.totalItems, 2);
+    assert.deepEqual(
+      new Set(tickets.json().data.map((ticket) => ticket.id)),
+      new Set([MEMORY_SEED_IDS.waitTicket, MEMORY_SEED_IDS.cancellableWaitTicket]),
+    );
+
+    const filteredTickets = await app.inject({
+      method: 'GET',
+      url: `/api/v1/wait-tickets?status=OFFERED&priority=P0A&sessionId=${MEMORY_SEED_IDS.orderSession}`,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(filteredTickets.statusCode, 200);
+    assert.equal(filteredTickets.json().data.length, 1);
+    assert.equal(filteredTickets.json().data[0].id, MEMORY_SEED_IDS.waitTicket);
+
+    const offers = await app.inject({
+      method: 'GET',
+      url: `/api/v1/priority-offers?waitTicketId=${MEMORY_SEED_IDS.waitTicket}&status=PENDING`,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(offers.statusCode, 200);
+    assert.equal(offers.json().data.length, 1);
+    assert.equal(offers.json().data[0].id, MEMORY_SEED_IDS.priorityOffer);
+    assert.deepEqual(offers.json().data[0].offered, { kind: 'UNIT', quantity: 3 });
+
+    const history = await app.inject({
+      method: 'GET',
+      url: `/api/v1/wait-tickets/${MEMORY_SEED_IDS.waitTicket}/history?limit=25`,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(history.statusCode, 200);
+    assert.equal(history.json().data.ticket.id, MEMORY_SEED_IDS.waitTicket);
+    assert.equal(history.json().data.ticket.status, 'OFFERED');
+    assert.equal(history.json().data.offers.length, 1);
+    assert.equal(history.json().data.offers[0].id, MEMORY_SEED_IDS.priorityOffer);
+
+    const deniedScope = await app.inject({
+      method: 'GET',
+      url: `/api/v1/wait-tickets?storeId=${MEMORY_SEED_IDS.bdStore}`,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(deniedScope.statusCode, 403);
+    assert.equal(deniedScope.json().error.code, 'FORBIDDEN');
+  });
+
+  test('lets only the target store accept a full priority offer with idempotency', async () => {
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const htkdCookie = cookieOf(await login('htkd'));
+    const url = `/api/v1/priority-offers/${MEMORY_SEED_IDS.priorityOffer}/respond`;
+    const acceptance = { action: 'ACCEPT', accepted: { kind: 'UNIT', quantity: 3 } };
+
+    const htkdDenied = await mutateWait(
+      htkdCookie,
+      url,
+      'wait-offer-htkd-denied',
+      acceptance,
+    );
+    assert.equal(htkdDenied.statusCode, 403);
+    assert.equal(htkdDenied.json().error.code, 'FORBIDDEN');
+
+    const partialAcceptance = await mutateWait(
+      storeCookie,
+      url,
+      'wait-offer-partial',
+      { action: 'ACCEPT', accepted: { kind: 'UNIT', quantity: 2 } },
+    );
+    assert.equal(partialAcceptance.statusCode, 400);
+    assert.equal(partialAcceptance.json().error.code, 'VALIDATION_ERROR');
+
+    const accepted = await mutateWait(storeCookie, url, 'wait-offer-accept-0001', acceptance);
+    assert.equal(accepted.statusCode, 200);
+    assert.equal(accepted.headers['idempotency-replayed'], 'false');
+    assert.equal(accepted.json().data.status, 'ACCEPTED');
+    assert.deepEqual(accepted.json().data.accepted, acceptance.accepted);
+
+    const replay = await mutateWait(storeCookie, url, 'wait-offer-accept-0001', acceptance);
+    assert.equal(replay.statusCode, 200);
+    assert.equal(replay.headers['idempotency-replayed'], 'true');
+    assert.deepEqual(replay.json().data, accepted.json().data);
+
+    const keyConflict = await mutateWait(storeCookie, url, 'wait-offer-accept-0001', {
+      action: 'DECLINE',
+      reason: 'Không thể nhận hàng trong hôm nay',
+    });
+    assert.equal(keyConflict.statusCode, 409);
+    assert.equal(keyConflict.json().error.code, 'IDEMPOTENCY_CONFLICT');
+
+    const acceptedFilter = await app.inject({
+      method: 'GET',
+      url: '/api/v1/priority-offers?status=ACCEPTED',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(acceptedFilter.statusCode, 200);
+    assert.equal(acceptedFilter.json().data.length, 1);
+    assert.equal(acceptedFilter.json().data[0].id, MEMORY_SEED_IDS.priorityOffer);
+
+    const history = await app.inject({
+      method: 'GET',
+      url: `/api/v1/wait-tickets/${MEMORY_SEED_IDS.waitTicket}/history`,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(history.statusCode, 200);
+    assert.equal(history.json().data.offers[0].status, 'ACCEPTED');
+    assert.equal(
+      history
+        .json()
+        .data.audit.some(
+          (event) =>
+            event.action === 'PRIORITY_OFFER_ACCEPTED' && event.actorRole === 'STORE',
+        ),
+      true,
+    );
+  });
+
+  test('cancels an active wait ticket once and replays the same mutation', async () => {
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const url = `/api/v1/wait-tickets/${MEMORY_SEED_IDS.cancellableWaitTicket}/cancel`;
+    const payload = { reason: 'Cửa hàng không còn nhu cầu nhận mặt hàng này' };
+
+    const cancelled = await mutateWait(
+      storeCookie,
+      url,
+      'wait-ticket-cancel-0001',
+      payload,
+    );
+    assert.equal(cancelled.statusCode, 200);
+    assert.equal(cancelled.headers['idempotency-replayed'], 'false');
+    assert.equal(cancelled.json().data.id, MEMORY_SEED_IDS.cancellableWaitTicket);
+    assert.equal(cancelled.json().data.status, 'CANCELLED');
+
+    const replay = await mutateWait(
+      storeCookie,
+      url,
+      'wait-ticket-cancel-0001',
+      payload,
+    );
+    assert.equal(replay.statusCode, 200);
+    assert.equal(replay.headers['idempotency-replayed'], 'true');
+    assert.deepEqual(replay.json().data, cancelled.json().data);
+
+    const keyConflict = await mutateWait(
+      storeCookie,
+      url,
+      'wait-ticket-cancel-0001',
+      { reason: 'Thay đổi lý do hủy phiếu chờ' },
+    );
+    assert.equal(keyConflict.statusCode, 409);
+    assert.equal(keyConflict.json().error.code, 'IDEMPOTENCY_CONFLICT');
+
+    const filtered = await app.inject({
+      method: 'GET',
+      url: '/api/v1/wait-tickets?status=CANCELLED',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(filtered.statusCode, 200);
+    assert.equal(filtered.json().data.length, 1);
+    assert.equal(filtered.json().data[0].id, MEMORY_SEED_IDS.cancellableWaitTicket);
+
+    const history = await app.inject({
+      method: 'GET',
+      url: `/api/v1/wait-tickets/${MEMORY_SEED_IDS.cancellableWaitTicket}/history`,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(history.statusCode, 200);
+    assert.equal(history.json().data.ticket.status, 'CANCELLED');
+    assert.equal(
+      history.json().data.audit.some((event) => event.action === 'WAIT_TICKET_CANCELLED'),
+      true,
+    );
+  });
+
   test('returns structured validation errors with the propagated request id', async () => {
     const response = await app.inject({
       method: 'POST',
@@ -534,6 +714,15 @@ describe('KHOHANG-IDOSI API', () => {
   async function mutateReceipt(cookie, method, url, idempotencyKey, payload) {
     return app.inject({
       method,
+      url,
+      headers: { cookie, 'idempotency-key': idempotencyKey },
+      payload,
+    });
+  }
+
+  async function mutateWait(cookie, url, idempotencyKey, payload) {
+    return app.inject({
+      method: 'POST',
       url,
       headers: { cookie, 'idempotency-key': idempotencyKey },
       payload,
