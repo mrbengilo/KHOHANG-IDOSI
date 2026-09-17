@@ -328,8 +328,15 @@ export function allocationResultsViewState(input: {
   return 'EMPTY';
 }
 
-function allocationRoundText(result: AllocationResult): string {
-  return `Vòng ${result.roundNumber} · lượt ${result.sequenceInRound}`;
+export function allocationRoundText(
+  result: Pick<AllocationResult, 'allocatedQuantity' | 'rounds'>,
+): string {
+  if (result.rounds.length === 0) {
+    return result.allocatedQuantity === 0 ? 'Không có lượt cấp' : 'Chưa có dữ liệu vòng';
+  }
+  return result.rounds
+    .map((round) => `Vòng ${round.roundNumber}: ${round.allocatedQuantity}`)
+    .join(' · ');
 }
 
 type AdminSessionTransition = TransitionOrderSessionRequest['status'];

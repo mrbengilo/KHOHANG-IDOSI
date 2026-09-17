@@ -271,6 +271,10 @@ describe('API projections', () => {
       requestedQuantity: 5,
       roundNumber: 2,
       sequenceInRound: 4,
+      rounds: [
+        { roundNumber: 1, allocatedQuantity: 1 },
+        { roundNumber: 2, allocatedQuantity: 2 },
+      ],
       sessionId,
       status: 'PARTIAL',
       storeId,

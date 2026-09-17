@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  allocationRoundText,
   allocationResultsViewState,
   availableSessionTransitions,
   defaultOrderSessionDraft,
@@ -87,5 +88,19 @@ describe('production allocation session helpers', () => {
     expect(allocationResultsViewState({ hasError: true, isPending: false, resultCount: 2 })).toBe(
       'READY',
     );
+  });
+
+  it('renders authoritative planner-round aggregates without inventing legacy metadata', () => {
+    expect(
+      allocationRoundText({
+        allocatedQuantity: 3,
+        rounds: [
+          { roundNumber: 1, allocatedQuantity: 1 },
+          { roundNumber: 2, allocatedQuantity: 2 },
+        ],
+      }),
+    ).toBe('Vòng 1: 1 · Vòng 2: 2');
+    expect(allocationRoundText({ allocatedQuantity: 0, rounds: [] })).toBe('Không có lượt cấp');
+    expect(allocationRoundText({ allocatedQuantity: 2, rounds: [] })).toBe('Chưa có dữ liệu vòng');
   });
 });
