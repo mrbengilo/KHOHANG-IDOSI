@@ -1,6 +1,7 @@
 import type {
   Account,
   AdminAuditLog,
+  AllocationResult,
   AuthenticatedPrincipal,
   CancelInboundReceiptRequest,
   CancelWaitTicketRequest,
@@ -18,6 +19,7 @@ import type {
   FinalizeReceiptRequest,
   ListOrderSessionsQuery,
   ListAccountsQuery,
+  ListAllocationsQuery,
   ListAuditLogsQuery,
   ListInboundReceiptsQuery,
   ListPriorityOffersQuery,
@@ -95,6 +97,7 @@ import {
   kilogramsToGramsExact,
   getWaitTicketHistory as getDatabaseWaitTicketHistory,
   listPriorityOffers as listDatabasePriorityOffers,
+  listAllocationResults as listDatabaseAllocationResults,
   listStoreInventoryBags as listDatabaseStoreInventoryBags,
   listStoreInventoryLedger as listDatabaseStoreInventoryLedger,
   listStoreOutbounds as listDatabaseStoreOutbounds,
@@ -170,6 +173,8 @@ import {
   withAdvisoryLock,
   withSerializableTransaction,
   type JsonObject,
+  type AllocationResultDatabaseStatus,
+  type AllocationResultRecord,
   type MonthlyReportScope,
   type PriorityOfferRecord,
   type StoreReceiptSourceRecord,
@@ -726,6 +731,37 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       data: rows.map(orderSessionDto),
       pagination: pagination(query.page, query.pageSize, totalRow?.value ?? 0),
     };
+  }
+
+  public async listAllocations(
+    actor: AuthenticatedPrincipal,
+    query: ListAllocationsQuery,
+  ): Promise<Page<AllocationResult>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const storeIds =
+      actor.role === 'ADMIN'
+        ? query.storeId === undefined
+          ? undefined
+          : [query.storeId]
+        : actor.role === 'STORE'
+          ? actor.storeId === null
+            ? []
+            : [actor.storeId]
+          : query.storeId === undefined
+            ? actor.assignedStoreIds
+            : [query.storeId];
+    const result = await listDatabaseAllocationResults(db, {
+      page: query.page,
+      pageSize: query.pageSize,
+      ...(storeIds === undefined ? {} : { storeIds }),
+      ...(query.sessionId === undefined ? {} : { sessionId: query.sessionId }),
+      ...(query.productId === undefined ? {} : { productId: query.productId }),
+      ...(query.status === undefined
+        ? {}
+        : { status: databaseAllocationResultStatus(query.status) }),
+      ...(query.priority === undefined ? {} : { priority: query.priority }),
+    });
+    return { data: result.data.map(allocationResultDto), pagination: result.pagination };
   }
 
   public async createOrderSession(
@@ -3221,6 +3257,32 @@ function databaseWarehouseOutboundStatus(
     case 'CANCELLED':
       return 'cancelled';
   }
+}
+
+function databaseAllocationResultStatus(
+  status: AllocationResult['status'],
+): AllocationResultDatabaseStatus {
+  return status.toLocaleLowerCase('en-US') as AllocationResultDatabaseStatus;
+}
+
+function allocationResultDto(record: AllocationResultRecord): AllocationResult {
+  return {
+    id: record.id,
+    allocationRunId: record.allocationRunId,
+    sessionId: record.sessionId,
+    mergedOrderId: record.mergedOrderId,
+    storeId: record.storeId,
+    productId: record.productId,
+    priority: record.priority,
+    roundNumber: record.roundNumber,
+    sequenceInRound: record.sequenceInRound,
+    requestedQuantity: record.requestedQuantity,
+    allocatedQuantity: record.allocatedQuantity,
+    waitlistedQuantity: record.waitlistedQuantity,
+    status: record.status.toLocaleUpperCase('en-US') as AllocationResult['status'],
+    reasonCode: record.reasonCode,
+    createdAt: record.createdAt.toISOString(),
+  };
 }
 
 function warehouseOutboundRequestDto(
