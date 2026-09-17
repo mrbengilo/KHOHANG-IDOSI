@@ -31,6 +31,9 @@ describe('KHOHANG-IDOSI API', () => {
     assert.ok(specification.json().paths['/api/v1/store-receipt-sources']);
     assert.ok(specification.json().paths['/api/v1/store-inventory-bags']);
     assert.ok(specification.json().paths['/api/v1/store-outbounds/{outboundId}/review']);
+    assert.ok(specification.json().paths['/api/v1/warehouse-balances']);
+    assert.ok(specification.json().paths['/api/v1/inbound-receipts']);
+    assert.ok(specification.json().paths['/api/v1/inbound-receipts/{receiptId}/confirm-costs']);
     assert.ok(specification.json().paths['/api/v1/admin/operational-settings']);
   });
 
@@ -1566,6 +1569,174 @@ describe('KHOHANG-IDOSI API', () => {
       headers: { cookie: cookieOf(await login('ds_nvt')) },
     });
     assert.equal(nonAdminAudit.statusCode, 403);
+  });
+
+  test('receives supplier bags into warehouse stock and confirms exact costs idempotently', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const productId = await firstProductId(adminCookie);
+    const denied = await app.inject({
+      method: 'GET',
+      url: '/api/v1/inbound-receipts',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(denied.statusCode, 403);
+
+    const before = await app.inject({
+      method: 'GET',
+      url: '/api/v1/warehouse-balances',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(before.statusCode, 200);
+    const beforeBalance = before.json().data.find((balance) => balance.productId === productId);
+    const payload = {
+      referenceCode: 'SUPPLIER-TEST-001',
+      supplierName: 'Nhà cung cấp test',
+      receivedAt: '2026-09-17T08:00:00+07:00',
+      bags: [
+        { productId, bagCode: 'SUP-BAG-001', weightKg: '1.234' },
+        { productId, bagCode: 'SUP-BAG-002', weightKg: '2.001' },
+      ],
+    };
+    const received = await mutateReceipt(
+      adminCookie,
+      'POST',
+      '/api/v1/inbound-receipts',
+      'supplier-receive-001',
+      payload,
+    );
+    assert.equal(received.statusCode, 201);
+    assert.equal(received.headers['idempotency-replayed'], 'false');
+    assert.equal(received.json().data.status, 'COST_PENDING');
+    assert.equal(received.json().data.totalWeightKg, '3.235');
+    const receiptId = received.json().data.id;
+
+    const replay = await mutateReceipt(
+      adminCookie,
+      'POST',
+      '/api/v1/inbound-receipts',
+      'supplier-receive-001',
+      payload,
+    );
+    assert.equal(replay.statusCode, 201);
+    assert.equal(replay.headers['idempotency-replayed'], 'true');
+    assert.equal(replay.json().data.id, receiptId);
+    const conflictReplay = await mutateReceipt(
+      adminCookie,
+      'POST',
+      '/api/v1/inbound-receipts',
+      'supplier-receive-001',
+      { ...payload, supplierName: 'Nhà cung cấp khác' },
+    );
+    assert.equal(conflictReplay.statusCode, 409);
+    assert.equal(conflictReplay.json().error.code, 'IDEMPOTENCY_CONFLICT');
+
+    const duplicateReference = await mutateReceipt(
+      adminCookie,
+      'POST',
+      '/api/v1/inbound-receipts',
+      'supplier-receive-duplicate-reference',
+      payload,
+    );
+    assert.equal(duplicateReference.statusCode, 409);
+    assert.equal(duplicateReference.json().error.code, 'CONFLICT');
+
+    const after = await app.inject({
+      method: 'GET',
+      url: '/api/v1/warehouse-balances',
+      headers: { cookie: adminCookie },
+    });
+    const afterBalance = after.json().data.find((balance) => balance.productId === productId);
+    assert.equal(
+      afterBalance.available.quantity,
+      beforeBalance.available.quantity + payload.bags.length,
+    );
+    assert.equal(afterBalance.version, beforeBalance.version + 1);
+
+    const confirmed = await mutateReceipt(
+      adminCookie,
+      'POST',
+      `/api/v1/inbound-receipts/${receiptId}/confirm-costs`,
+      'supplier-cost-001',
+      {
+        productCosts: [{ productId, priceVndPerKg: 10_001 }],
+        transportationFeeVnd: 100_000,
+        handlingFeeVnd: 20_000,
+        expectedVersion: 0,
+      },
+    );
+    assert.equal(confirmed.statusCode, 200);
+    assert.equal(confirmed.json().data.status, 'COST_CONFIRMED');
+    assert.equal(confirmed.json().data.cost.goodsCostVnd, 32_353);
+    assert.equal(confirmed.json().data.cost.totalCostVnd, 152_353);
+    assert.equal(confirmed.json().data.version, 1);
+
+    const cannotCancelConfirmed = await mutateReceipt(
+      adminCookie,
+      'POST',
+      `/api/v1/inbound-receipts/${receiptId}/cancel`,
+      'supplier-cancel-confirmed',
+      { reason: 'Không được hủy sau khi chốt giá', expectedVersion: 1 },
+    );
+    assert.equal(cannotCancelConfirmed.statusCode, 409);
+
+    const listed = await app.inject({
+      method: 'GET',
+      url: '/api/v1/inbound-receipts?status=COST_CONFIRMED&supplier=test',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(listed.statusCode, 200);
+    assert.deepEqual(
+      listed.json().data.map((receipt) => receipt.id),
+      [receiptId],
+    );
+  });
+
+  test('cancels only pending supplier stock with optimistic locking and audit context', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const productId = await firstProductId(adminCookie);
+    const received = await mutateReceipt(
+      adminCookie,
+      'POST',
+      '/api/v1/inbound-receipts',
+      'supplier-receive-cancel',
+      {
+        referenceCode: 'SUPPLIER-CANCEL-001',
+        supplierName: 'Nhà cung cấp hủy',
+        receivedAt: '2026-09-17T08:15:00+07:00',
+        bags: [{ productId, bagCode: 'SUP-CANCEL-BAG-001', weightKg: '1.000' }],
+      },
+    );
+    const receiptId = received.json().data.id;
+    const stale = await mutateReceipt(
+      adminCookie,
+      'POST',
+      `/api/v1/inbound-receipts/${receiptId}/cancel`,
+      'supplier-cancel-stale',
+      { reason: 'Phiên bản cũ', expectedVersion: 1 },
+    );
+    assert.equal(stale.statusCode, 409);
+    assert.equal(stale.json().error.code, 'VERSION_CONFLICT');
+
+    const cancelled = await mutateReceipt(
+      adminCookie,
+      'POST',
+      `/api/v1/inbound-receipts/${receiptId}/cancel`,
+      'supplier-cancel-ok',
+      { reason: 'Nhà cung cấp giao nhầm lô', expectedVersion: 0 },
+    );
+    assert.equal(cancelled.statusCode, 200);
+    assert.equal(cancelled.json().data.status, 'CANCELLED');
+    assert.equal(cancelled.json().data.version, 1);
+
+    const audit = await app.inject({
+      method: 'GET',
+      url: `/api/v1/admin/audit-logs?action=SUPPLIER_INBOUND_CANCELLED&entityId=${receiptId}`,
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(audit.statusCode, 200);
+    assert.equal(audit.json().pagination.totalItems, 1);
+    assert.equal(audit.json().data[0].metadata.reason, 'Nhà cung cấp giao nhầm lô');
   });
 
   test('returns structured validation errors with the propagated request id', async () => {
