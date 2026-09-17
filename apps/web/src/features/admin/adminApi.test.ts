@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AdminApiError } from './adminApi';
-import { listAdminAccounts, resetAdminAccountPassword, updateAdminAccount } from './adminApi';
+import {
+  getAdminOperationalSettings,
+  listAdminAccounts,
+  resetAdminAccountPassword,
+  updateAdminAccount,
+  updateAdminOperationalSettings,
+} from './adminApi';
 
 const account = {
   createdAt: '2026-09-17T00:00:00.000Z',
@@ -97,6 +103,81 @@ describe('admin API client', () => {
       requestId: 'request-version-1',
       status: 409,
     });
+  });
+
+  it('loads and versions operational settings without a secret field', async () => {
+    const version = {
+      id: '22222222-2222-4222-8222-222222222222',
+      version: 1,
+      timezone: 'Asia/Ho_Chi_Minh',
+      snapshotTime: '08:00',
+      cutoffTime: '09:00',
+      maxRequestsPerStore: 2,
+      policyVersion: 'ALLOC-v1.2',
+      idosiSyncIntervalMinutes: 15,
+      createdByAccountId: null,
+      requestId: 'migration:0003',
+      createdAt: '2026-09-17T00:00:00.000Z',
+    } as const;
+    const overview = {
+      current: version,
+      history: [version],
+      integration: {
+        endpoint: 'https://idosi.io.vn/api/integrations/warehouse/v1/order-statistics',
+        status: 'CONFIGURED',
+      },
+    } as const;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ data: overview }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: {
+            ...overview,
+            current: {
+              ...version,
+              id: '33333333-3333-4333-8333-333333333333',
+              version: 2,
+            },
+            history: [
+              {
+                ...version,
+                id: '33333333-3333-4333-8333-333333333333',
+                version: 2,
+              },
+              version,
+            ],
+          },
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getAdminOperationalSettings(10)).resolves.toEqual(overview);
+    await updateAdminOperationalSettings({
+      expectedVersion: 1,
+      timezone: 'Asia/Ho_Chi_Minh',
+      snapshotTime: '08:00',
+      cutoffTime: '09:00',
+      maxRequestsPerStore: 2,
+      policyVersion: 'ALLOC-v1.3',
+      idosiSyncIntervalMinutes: 30,
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      '/api/v1/admin/operational-settings?historyLimit=10',
+    );
+    const updateInit = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    expect(updateInit.method).toBe('PUT');
+    expect(JSON.parse(String(updateInit.body))).toEqual({
+      expectedVersion: 1,
+      timezone: 'Asia/Ho_Chi_Minh',
+      snapshotTime: '08:00',
+      cutoffTime: '09:00',
+      maxRequestsPerStore: 2,
+      policyVersion: 'ALLOC-v1.3',
+      idosiSyncIntervalMinutes: 30,
+    });
+    expect(String(updateInit.body)).not.toContain('secret');
   });
 });
 
