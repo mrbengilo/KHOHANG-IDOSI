@@ -24,6 +24,7 @@ export type JsonObject = { readonly [key: string]: JsonValue };
 
 export const userRoleEnum = pgEnum('user_role', ['admin', 'htkd', 'store']);
 export const userStatusEnum = pgEnum('user_status', ['active', 'locked', 'disabled']);
+export const storeKindEnum = pgEnum('store_kind', ['retail', 'wholesale']);
 export const productUnitEnum = pgEnum('product_unit', ['item', 'bag', 'kilogram']);
 export const orderSessionStatusEnum = pgEnum('order_session_status', [
   'draft',
@@ -192,6 +193,7 @@ export const stores = pgTable(
       .references(() => storeGroups.id, { onDelete: 'restrict' }),
     code: text('code').notNull().unique(),
     name: text('name').notNull(),
+    kind: storeKindEnum('kind').notNull().default('retail'),
     address: text('address'),
     timezone: text('timezone').notNull().default('Asia/Ho_Chi_Minh'),
     displayOrder: integer('display_order').notNull().default(0),
@@ -203,6 +205,7 @@ export const stores = pgTable(
   },
   (table) => [
     index('stores_group_active_idx').on(table.groupId, table.isActive, table.displayOrder),
+    index('stores_kind_active_idx').on(table.kind, table.isActive, table.displayOrder),
     check('stores_code_not_blank', sql`length(btrim(${table.code})) > 0`),
     check('stores_name_not_blank', sql`length(btrim(${table.name})) > 0`),
     check('stores_display_order_nonnegative', sql`${table.displayOrder} >= 0`),
@@ -336,6 +339,62 @@ export const products = pgTable(
     check(
       'products_standard_bag_weight_nonnegative',
       sql`${table.standardBagWeightKg} IS NULL OR ${table.standardBagWeightKg} >= 0`,
+    ),
+  ],
+);
+
+/**
+ * Append-only versions of exact item-to-kilogram ratios. A ratio means
+ * `itemQuantity` items correspond to `weightKilograms` kg; `effectiveTo` is exclusive.
+ */
+export const productConversions = pgTable(
+  'product_conversions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    version: integer('version').notNull(),
+    itemQuantity: integer('item_quantity').notNull(),
+    weightKilograms: numeric('weight_kilograms', { precision: 14, scale: 3 }).notNull(),
+    effectiveFrom: date('effective_from').notNull(),
+    effectiveTo: date('effective_to'),
+    reason: text('reason').notNull(),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    retiredAt: timestamp('retired_at', { withTimezone: true }),
+    retiredByUserId: uuid('retired_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    retirementReason: text('retirement_reason'),
+  },
+  (table) => [
+    uniqueIndex('product_conversions_product_version_uidx').on(table.productId, table.version),
+    uniqueIndex('product_conversions_product_effective_from_uidx').on(
+      table.productId,
+      table.effectiveFrom,
+    ),
+    index('product_conversions_product_period_idx').on(
+      table.productId,
+      table.effectiveFrom,
+      table.effectiveTo,
+    ),
+    index('product_conversions_active_idx')
+      .on(table.productId, table.effectiveFrom)
+      .where(sql`${table.retiredAt} IS NULL`),
+    check('product_conversions_version_positive', sql`${table.version} > 0`),
+    check('product_conversions_item_quantity_positive', sql`${table.itemQuantity} > 0`),
+    check('product_conversions_weight_positive', sql`${table.weightKilograms} > 0`),
+    check(
+      'product_conversions_effective_period_valid',
+      sql`${table.effectiveTo} IS NULL OR ${table.effectiveTo} > ${table.effectiveFrom} OR (${table.effectiveTo} = ${table.effectiveFrom} AND ${table.retiredAt} IS NOT NULL)`,
+    ),
+    check('product_conversions_reason_not_blank', sql`length(btrim(${table.reason})) >= 3`),
+    check(
+      'product_conversions_retirement_consistent',
+      sql`(${table.retiredAt} IS NULL AND ${table.retiredByUserId} IS NULL AND ${table.retirementReason} IS NULL) OR (${table.retiredAt} IS NOT NULL AND ${table.retiredByUserId} IS NOT NULL AND ${table.retirementReason} IS NOT NULL AND length(btrim(${table.retirementReason})) >= 3 AND ${table.effectiveTo} IS NOT NULL)`,
     ),
   ],
 );

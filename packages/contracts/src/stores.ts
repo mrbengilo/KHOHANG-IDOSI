@@ -11,6 +11,9 @@ import {
 export const StoreStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
 export type StoreStatus = z.infer<typeof StoreStatusSchema>;
 
+export const StoreKindSchema = z.enum(['RETAIL', 'WHOLESALE']);
+export type StoreKind = z.infer<typeof StoreKindSchema>;
+
 export const StoreGroupStatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
 export type StoreGroupStatus = z.infer<typeof StoreGroupStatusSchema>;
 
@@ -31,7 +34,8 @@ export const StoreSchema = z
     id: EntityIdSchema,
     code: z.string().trim().min(1).max(40),
     name: z.string().trim().min(1).max(160),
-    groupId: EntityIdSchema.nullable(),
+    groupId: EntityIdSchema,
+    kind: StoreKindSchema,
     status: StoreStatusSchema,
     address: z.string().trim().min(1).max(500).nullable(),
     createdAt: IsoDateTimeSchema,
@@ -50,7 +54,8 @@ export const CreateStoreRequestSchema = z
   .object({
     code: z.string().trim().min(1).max(40),
     name: z.string().trim().min(1).max(160),
-    groupId: EntityIdSchema.nullable().default(null),
+    groupId: EntityIdSchema,
+    kind: StoreKindSchema,
     address: z.string().trim().min(1).max(500).nullable().default(null),
   })
   .strict();
@@ -59,7 +64,8 @@ export type CreateStoreRequest = z.infer<typeof CreateStoreRequestSchema>;
 export const UpdateStoreRequestSchema = z
   .object({
     name: z.string().trim().min(1).max(160).optional(),
-    groupId: EntityIdSchema.nullable().optional(),
+    groupId: EntityIdSchema.optional(),
+    kind: StoreKindSchema.optional(),
     status: StoreStatusSchema.optional(),
     address: z.string().trim().min(1).max(500).nullable().optional(),
   })
@@ -72,6 +78,7 @@ export type StoreResponse = z.infer<typeof StoreResponseSchema>;
 
 export const ListStoresQuerySchema = PaginationQuerySchema.extend({
   groupId: EntityIdSchema.optional(),
+  kind: StoreKindSchema.optional(),
   status: StoreStatusSchema.optional(),
   search: z.string().trim().min(1).max(160).optional(),
 }).strict();

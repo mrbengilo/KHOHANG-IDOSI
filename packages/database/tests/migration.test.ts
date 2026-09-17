@@ -3,7 +3,12 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const migration = readFileSync(new URL('../migrations/0000_initial.sql', import.meta.url), 'utf8');
+const forwardMigration = readFileSync(
+  new URL('../migrations/0001_store_kind_product_conversions.sql', import.meta.url),
+  'utf8',
+);
 const schemaSource = readFileSync(new URL('../src/schema.ts', import.meta.url), 'utf8');
+const seedDataSource = readFileSync(new URL('../src/seed-data.ts', import.meta.url), 'utf8');
 const storeOperationsSource = readFileSync(
   new URL('../src/store-operations.ts', import.meta.url),
   'utf8',
@@ -14,6 +19,13 @@ const journal = JSON.parse(
 const snapshot = JSON.parse(
   readFileSync(new URL('../migrations/meta/0000_snapshot.json', import.meta.url), 'utf8'),
 ) as { tables: Record<string, { name: string }> };
+const forwardSnapshot = JSON.parse(
+  readFileSync(new URL('../migrations/meta/0001_snapshot.json', import.meta.url), 'utf8'),
+) as {
+  prevId: string;
+  tables: Record<string, { name: string; columns: Record<string, unknown> }>;
+  enums: Record<string, { values: string[] }>;
+};
 
 const requiredTables = [
   'allocation_lines',
@@ -69,9 +81,13 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(1);
+    expect(journal.entries).toHaveLength(2);
     expect(journal.entries[0]).toMatchObject({
       tag: '0000_initial',
+      breakpoints: true,
+    });
+    expect(journal.entries[1]).toMatchObject({
+      tag: '0001_store_kind_product_conversions',
       breakpoints: true,
     });
   });
@@ -249,5 +265,57 @@ describe('initial migration invariants', () => {
     for (const table of protectedTables) {
       expect(migration).toContain(`CREATE TRIGGER ${table}_no_hard_delete`);
     }
+  });
+});
+
+describe('store kind and product conversion migration', () => {
+  it('adds and backfills the store kind enum from the canonical store group', () => {
+    expect(forwardMigration).toContain(
+      `CREATE TYPE "public"."store_kind" AS ENUM('retail', 'wholesale')`,
+    );
+    expect(forwardMigration).toContain(`SET "kind" = 'wholesale'::"store_kind"`);
+    expect(forwardMigration).toContain(`AND "store_groups"."code" = 'SI_TINH'`);
+    expect(schemaSource).toContain("storeKindEnum('kind').notNull().default('retail')");
+  });
+
+  it('stores exact versioned conversion ratios with bounded effective periods', () => {
+    expect(forwardMigration).toMatch(/CREATE TABLE "product_conversions"/);
+    expect(forwardMigration).toContain('"weight_kilograms" numeric(14, 3) NOT NULL');
+    expect(forwardMigration).toContain('product_conversions_product_version_uidx');
+    expect(forwardMigration).toContain('product_conversions_effective_period_valid');
+    expect(forwardMigration).toContain('product_conversions_validate_period');
+    expect(forwardMigration).toContain('product_conversions_protect_history');
+    expect(schemaSource).toContain(
+      "weightKilograms: numeric('weight_kilograms', { precision: 14, scale: 3 }).notNull()",
+    );
+    expect(forwardSnapshot.tables['public.product_conversions']?.columns).toHaveProperty(
+      'weight_kilograms',
+    );
+    expect(forwardSnapshot.tables['public.stores']?.columns).toHaveProperty('kind');
+    expect(forwardSnapshot.enums['public.store_kind']?.values).toEqual(['retail', 'wholesale']);
+  });
+
+  it('backfills all 25 approved ratios and preserves bedding as one item for three kg', () => {
+    const conversionRows = [
+      ...forwardMigration.matchAll(/^\s*\('[A-Z_]+', \d+, '\d+\.\d{3}'\),?$/gm),
+    ];
+
+    expect(conversionRows).toHaveLength(25);
+    expect(forwardMigration).toContain(`('CHAN_GA_BAO_GOI_NEM_GON', 1, '3.000')`);
+    expect(seedDataSource).not.toMatch(/1\s*\/\s*3/);
+    expect(seedDataSource).not.toContain('itemsPerKg');
+  });
+
+  it('reconciles legacy catalog rows before conversion backfill without changing product IDs', () => {
+    const renamePosition = forwardMigration.indexOf(`SET "sku" = 'DO_NAM'`);
+    const conversionInsertPosition = forwardMigration.indexOf('INSERT INTO "product_conversions"');
+
+    expect(renamePosition).toBeGreaterThan(-1);
+    expect(renamePosition).toBeLessThan(conversionInsertPosition);
+    expect(forwardMigration).toContain(`WHERE "sku" = 'DO_NAM_CUA_HANG'`);
+    expect(forwardMigration).toContain(
+      `WHERE "sku" IN ('THAP_CAM_TON', 'HANG_JEANS_TAI_CHE', 'HANG_THUN_TAI_CHE')`,
+    );
+    expect(forwardMigration).toContain(`SET "name" = 'KHÁCH SỈ'`);
   });
 });

@@ -50,8 +50,13 @@ export type {
 } from './store-operations.js';
 
 export * from './schema.js';
-export { PRODUCT_SEEDS, STORE_GROUP_SEEDS, STORE_SEEDS } from './seed-data.js';
-export type { ProductSeed, StoreGroupSeed, StoreSeed } from './seed-data.js';
+export {
+  PRODUCT_CONVERSION_SEEDS,
+  PRODUCT_SEEDS,
+  STORE_GROUP_SEEDS,
+  STORE_SEEDS,
+} from './seed-data.js';
+export type { ProductConversionSeed, ProductSeed, StoreGroupSeed, StoreSeed } from './seed-data.js';
 
 export { withAdvisoryLock, withSerializableTransaction, withTransaction } from './transaction.js';
 export type {
