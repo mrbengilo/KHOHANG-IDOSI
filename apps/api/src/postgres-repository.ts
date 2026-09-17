@@ -146,6 +146,7 @@ import {
   isNull,
   lt,
   lte,
+  ne,
   or,
   type SQL,
 } from 'drizzle-orm';
@@ -1493,6 +1494,25 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         storeIds: [...new Set(actor.assignedStoreIds)],
       }),
     );
+  }
+
+  public async listStoreTransferDestinations(
+    actor: AuthenticatedPrincipal,
+  ): Promise<readonly Store[]> {
+    if (actor.role !== 'STORE' || actor.storeId === null) throw forbidden();
+    const rows = await db
+      .select()
+      .from(stores)
+      .where(
+        and(
+          isNull(stores.deletedAt),
+          eq(stores.isActive, true),
+          eq(stores.kind, 'retail'),
+          ne(stores.id, actor.storeId),
+        ),
+      )
+      .orderBy(asc(stores.displayOrder), asc(stores.code));
+    return rows.map(storeDto);
   }
 
   public async createStoreTransfer(

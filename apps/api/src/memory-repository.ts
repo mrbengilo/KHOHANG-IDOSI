@@ -1380,6 +1380,20 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     };
   }
 
+  public async listStoreTransferDestinations(
+    actor: AuthenticatedPrincipal,
+  ): Promise<readonly Store[]> {
+    this.assertStoreMutationActor(actor);
+    return structuredClone(
+      [...this.stores.values()]
+        .filter(
+          (store) =>
+            store.id !== actor.storeId && store.kind === 'RETAIL' && store.status === 'ACTIVE',
+        )
+        .sort((left, right) => left.code.localeCompare(right.code)),
+    );
+  }
+
   public async createStoreTransfer(
     actor: AuthenticatedPrincipal,
     input: CreateStoreTransferRequest,
