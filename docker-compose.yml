@@ -52,7 +52,6 @@ services:
       context: .
       dockerfile: Dockerfile.api
       target: migration
-    command: ['node', 'infra/scripts/run-migrations.mjs']
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       MIGRATION_DB_LOCK_TIMEOUT_MS: ${MIGRATION_DB_LOCK_TIMEOUT_MS:-10000}
@@ -63,6 +62,40 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    logging: *json-logging
+    pull_policy: always
+    restart: 'no'
+    <<: *node-security
+    networks:
+      - data
+
+  bootstrap-admin:
+    # Administrator creation is deliberately opt-in so the bootstrap password
+    # never becomes a long-lived service secret. Run this service once through
+    # the `bootstrap` profile after supplying the three BOOTSTRAP_ADMIN values.
+    profiles:
+      - bootstrap
+    image: ${IMAGE_PREFIX:?IMAGE_PREFIX is required}-api:${IMAGE_TAG:?IMAGE_TAG must be an immutable commit SHA}
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      target: runtime
+    command:
+      - node
+      - --enable-source-maps
+      - apps/api/dist/bootstrap-admin.js
+    environment:
+      BOOTSTRAP_ADMIN_DISPLAY_NAME: ${BOOTSTRAP_ADMIN_DISPLAY_NAME:-Administrator}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      NODE_ENV: production
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     logging: *json-logging
     pull_policy: always
     restart: 'no'
@@ -83,7 +116,6 @@ services:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: production
-      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
       WEB_ORIGIN: ${WEB_ORIGIN:?WEB_ORIGIN is required}

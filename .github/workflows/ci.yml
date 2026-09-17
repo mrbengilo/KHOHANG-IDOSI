@@ -44,7 +44,6 @@ jobs:
       CI: 'true'
       DATABASE_URL: postgresql://idosi_ci:idosi_ci_password@127.0.0.1:5432/idosi_ci
       NODE_ENV: test
-      SESSION_SECRET: ci-only-session-secret-at-least-32-characters
       RUN_POSTGRES_TESTS: '1'
       TZ: Asia/Ho_Chi_Minh
       VITE_API_BASE_URL: /api/v1
@@ -79,17 +78,29 @@ jobs:
       - name: Typecheck all workspaces
         run: npm run typecheck
 
+      - name: Build all production artifacts
+        run: npm run build
+
       - name: Apply migrations to a fresh PostgreSQL database
         run: node infra/scripts/run-migrations.mjs
 
       - name: Verify migrations are repeatable
         run: node infra/scripts/run-migrations.mjs
 
+      - name: Seed reference data twice to verify reconciliation is idempotent
+        run: |
+          npm run seed:production -w @idosi/database
+          npm run seed:production -w @idosi/database
+
+      - name: Verify one-shot administrator bootstrap
+        env:
+          BOOTSTRAP_ADMIN_DISPLAY_NAME: CI Administrator
+          BOOTSTRAP_ADMIN_PASSWORD: ci-bootstrap-password-not-for-production
+          BOOTSTRAP_ADMIN_USERNAME: ci.admin
+        run: npm run bootstrap-admin:production -w @idosi/api
+
       - name: Run all workspace tests
         run: npm run test
-
-      - name: Build all workspaces
-        run: npm run build
 
       - name: Install Playwright Chromium
         run: ./node_modules/.bin/playwright install --with-deps chromium
@@ -123,3 +134,25 @@ jobs:
           IMAGE_TAG: 0000000000000000000000000000000000000000
           POSTGRES_PASSWORD: idosi_ci_password
         run: docker compose --file docker-compose.yml build api migrate worker web
+
+      - name: Verify production migration, seed, and bootstrap containers
+        env:
+          APP_DOMAIN: localhost
+          BOOTSTRAP_ADMIN_DISPLAY_NAME: CI Container Administrator
+          BOOTSTRAP_ADMIN_PASSWORD: ci-container-bootstrap-password
+          BOOTSTRAP_ADMIN_USERNAME: ci.container.admin
+          DATABASE_URL: postgresql://idosi:idosi_ci_password@db:5432/idosi
+          IMAGE_PREFIX: local/khohang-idosi
+          IMAGE_TAG: 0000000000000000000000000000000000000000
+          POSTGRES_PASSWORD: idosi_ci_password
+        run: |
+          set -euo pipefail
+          cleanup() {
+            docker compose --file docker-compose.yml down --volumes --remove-orphans
+          }
+          trap cleanup EXIT
+
+          docker compose --file docker-compose.yml up --detach --pull missing --wait db
+          docker compose --file docker-compose.yml run --rm --no-deps --pull never migrate
+          docker compose --file docker-compose.yml run --rm --no-deps --pull never migrate
+          docker compose --file docker-compose.yml --profile bootstrap run --rm --no-deps --pull never bootstrap-admin
