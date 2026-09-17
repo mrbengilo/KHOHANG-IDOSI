@@ -26,6 +26,18 @@ export function Dialog({
   const descriptionId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const wasOpenRef = useRef(false);
+
+  if (
+    open &&
+    !wasOpenRef.current &&
+    typeof document !== 'undefined' &&
+    document.activeElement instanceof HTMLElement
+  ) {
+    previousFocusRef.current = document.activeElement;
+  }
+  wasOpenRef.current = open;
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -33,7 +45,6 @@ export function Dialog({
 
   useEffect(() => {
     if (!open) return undefined;
-    const previousFocus = document.activeElement;
     const panel = panelRef.current;
     const initialFocus =
       panel?.querySelector<HTMLElement>('input, select, textarea') ??
@@ -74,7 +85,7 @@ export function Dialog({
     return () => {
       document.removeEventListener('keydown', onKeyDown);
       document.body.classList.remove('idosi-dialog-open');
-      if (previousFocus instanceof HTMLElement) previousFocus.focus();
+      previousFocusRef.current?.focus();
     };
   }, [open]);
 
