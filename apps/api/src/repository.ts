@@ -51,12 +51,14 @@ import type {
   ListWarehouseOutboundRequestsQuery,
   MonthlyOperationalReport,
   MonthlyOperationalReportQuery,
+  OperationalSettingsVersion,
   WaitTicket,
   WaitTicketHistory,
   WarehouseOutboundRequest,
   OpenStoreInventoryBagRequest,
   CreateStoreOutboundRequest,
   ReviewStoreOutboundRequest,
+  UpdateOperationalSettingsRequest,
 } from '@idosi/contracts';
 
 export interface RequestContext {
@@ -124,6 +126,11 @@ export interface OrderStatistics {
   readonly generatedAt: string;
 }
 
+export interface OperationalSettingsState {
+  readonly current: OperationalSettingsVersion;
+  readonly history: readonly OperationalSettingsVersion[];
+}
+
 export interface WarehouseRepository {
   ready(): Promise<boolean>;
   close(): Promise<void>;
@@ -164,6 +171,15 @@ export interface WarehouseRepository {
     actor: AuthenticatedPrincipal,
     query: ListAuditLogsQuery,
   ): Promise<Page<AdminAuditLog>>;
+  getOperationalSettings(
+    actor: AuthenticatedPrincipal,
+    historyLimit: number,
+  ): Promise<OperationalSettingsState>;
+  updateOperationalSettings(
+    actor: AuthenticatedPrincipal,
+    input: UpdateOperationalSettingsRequest,
+    context: RequestContext,
+  ): Promise<OperationalSettingsVersion>;
 
   listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>>;
   createOrderSession(
