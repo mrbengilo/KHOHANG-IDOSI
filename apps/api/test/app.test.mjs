@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
+import { OrderSessionSchema } from '@idosi/contracts';
 
 import { createApi } from '../dist/app.js';
 import { sanitizeAuditObject } from '../dist/audit-sanitization.js';
@@ -33,6 +34,7 @@ describe('KHOHANG-IDOSI API', () => {
     assert.ok(specification.json().paths['/api/v1/store-inventory-bags']);
     assert.ok(specification.json().paths['/api/v1/store-outbounds/{outboundId}/review']);
     assert.ok(specification.json().paths['/api/v1/order-sessions/{sessionId}/transition']);
+    assert.ok(specification.json().paths['/api/v1/order-requests/{requestId}/cancel']);
     assert.ok(specification.json().paths['/api/v1/allocations']);
     assert.ok(specification.json().paths['/api/v1/outbound-requests/{outboundRequestId}/dispatch']);
     assert.ok(specification.json().paths['/api/v1/store-transfers/destinations']);
@@ -710,6 +712,7 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(sessions.statusCode, 200);
     assert.equal(sessions.json().data.length, 1);
     assert.equal(sessions.json().data[0].id, MEMORY_SEED_IDS.orderSession);
+    assert.doesNotThrow(() => OrderSessionSchema.parse(sessions.json().data[0]));
 
     const productId = await firstProductId(cookie);
     const rejected = await submitOrder(cookie, 'unknown-session-key', {
@@ -824,6 +827,114 @@ describe('KHOHANG-IDOSI API', () => {
     const keyConflict = await submitOrder(cookie, 'same-request-key', orderPayload(productId, 3));
     assert.equal(keyConflict.statusCode, 409);
     assert.equal(keyConflict.json().error.code, 'IDEMPOTENCY_CONFLICT');
+  });
+
+  test('persists line notes and cancels a request without reopening its quota slot', async () => {
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const adminCookie = cookieOf(await login('admin'));
+    const productId = await firstProductId(storeCookie);
+    const first = await submitOrder(storeCookie, 'request-with-note', {
+      ...orderPayload(productId, 2),
+      items: [{ productId, quantity: 2, note: 'Ưu tiên kiện loại A' }],
+    });
+    assert.equal(first.statusCode, 201);
+    assert.equal(first.json().data.lines[0].note, 'Ưu tiên kiện loại A');
+    const requestId = first.json().data.id;
+
+    const cancelled = await app.inject({
+      method: 'POST',
+      url: `/api/v1/order-requests/${requestId}/cancel`,
+      headers: { cookie: storeCookie, 'idempotency-key': 'cancel-order-request' },
+      payload: { reason: 'Cửa hàng nhập nhầm nhu cầu' },
+    });
+    assert.equal(cancelled.statusCode, 200);
+    assert.equal(cancelled.json().data.status, 'CANCELLED');
+    assert.equal(cancelled.json().data.cancellationReason, 'Cửa hàng nhập nhầm nhu cầu');
+    assert.ok(cancelled.json().data.cancelledAt);
+
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/api/v1/order-requests/${requestId}/cancel`,
+      headers: { cookie: storeCookie, 'idempotency-key': 'cancel-order-request' },
+      payload: { reason: 'Cửa hàng nhập nhầm nhu cầu' },
+    });
+    assert.equal(replay.statusCode, 200);
+    assert.equal(replay.headers['idempotency-replayed'], 'true');
+
+    const second = await submitOrder(
+      storeCookie,
+      'second-slot-after-cancel',
+      orderPayload(productId, 1),
+    );
+    assert.equal(second.statusCode, 201);
+    assert.equal(second.json().data.requestSequence, 2);
+    const third = await submitOrder(
+      storeCookie,
+      'third-slot-after-cancel',
+      orderPayload(productId, 1),
+    );
+    assert.equal(third.statusCode, 409);
+    assert.equal(third.json().error.code, 'REQUEST_LIMIT_REACHED');
+
+    const audit = await app.inject({
+      method: 'GET',
+      url: `/api/v1/admin/audit-logs?action=ORDER_REQUEST_CANCELLED&entityId=${requestId}`,
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(audit.statusCode, 200);
+    assert.equal(audit.json().pagination.totalItems, 1);
+    assert.equal(audit.json().data[0].metadata.reason, 'Cửa hàng nhập nhầm nhu cầu');
+  });
+
+  test('rejects cancellation at the request cutoff without changing the submitted request', async () => {
+    await app.close();
+    let currentTime = new Date('2026-09-17T05:00:00.000Z');
+    repository = await MemoryWarehouseRepository.create({
+      bootstrapPassword: PASSWORD,
+      now: () => currentTime,
+    });
+    app = await createApi({ repository, corsOrigin: 'http://localhost:5173' });
+
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const sessions = await app.inject({
+      method: 'GET',
+      url: '/api/v1/order-sessions?status=OPEN&page=1&pageSize=10',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(sessions.statusCode, 200);
+    const session = sessions.json().data[0];
+    assert.ok(session);
+
+    const productId = await firstProductId(storeCookie);
+    const created = await submitOrder(
+      storeCookie,
+      'cutoff-cancellation-request',
+      orderPayload(productId, 1),
+    );
+    assert.equal(created.statusCode, 201);
+
+    currentTime = new Date(session.requestClosesAt);
+    const rejected = await app.inject({
+      method: 'POST',
+      url: `/api/v1/order-requests/${created.json().data.id}/cancel`,
+      headers: { cookie: storeCookie, 'idempotency-key': 'cutoff-cancellation' },
+      payload: { reason: 'Không được phép hủy sau giờ chốt' },
+    });
+    assert.equal(rejected.statusCode, 409);
+    assert.equal(rejected.json().error.code, 'CONFLICT');
+
+    const persisted = await app.inject({
+      method: 'GET',
+      url:
+        `/api/v1/order-requests?sessionId=${session.id}` +
+        `&storeId=${MEMORY_SEED_IDS.nvtStore}&page=1&pageSize=20`,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(persisted.statusCode, 200);
+    assert.equal(
+      persisted.json().data.find((request) => request.id === created.json().data.id)?.status,
+      'SUBMITTED',
+    );
   });
 
   test('keeps the maximum-two invariant under concurrent submissions', async () => {

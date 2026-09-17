@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import {
   AccountParamsSchema,
   CancelInboundReceiptRequestSchema,
+  CancelStoreOrderRequestSchema,
   CancelWaitTicketRequestSchema,
   CreateAccountRequestSchema,
   CreateOrderSessionRequestSchema,
@@ -46,6 +47,7 @@ import {
   MonthlyOperationalReportQuerySchema,
   OpenStoreInventoryBagRequestSchema,
   OrderSessionParamsSchema,
+  StoreOrderRequestParamsSchema,
   ProductParamsSchema,
   ProductConversionParamsSchema,
   PriorityOfferParamsSchema,
@@ -772,6 +774,23 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return reply.status(201).send({ data: submitted.data });
   });
 
+  app.post('/api/v1/order-requests/:requestId/cancel', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { requestId } = StoreOrderRequestParamsSchema.parse(request.params);
+    const input = CancelStoreOrderRequestSchema.parse(request.body);
+    const result = await repository.cancelOrderRequest(
+      session.principal,
+      requestId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CANCEL_ORDER_REQUEST', requestId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
   app.get('/api/v1/outbound-requests', async (request) => {
     const session = await authenticate(request, repository);
     const query = ListWarehouseOutboundRequestsQuerySchema.parse(request.query);
@@ -1485,6 +1504,18 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: { '201': { description: 'Submitted or replayed request' } },
+        },
+      },
+      '/api/v1/order-requests/{requestId}/cancel': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Cancelled or replayed request' },
+            '409': { description: 'Request can no longer be cancelled' },
+          },
         },
       },
       '/api/v1/outbound-requests': {
