@@ -91,7 +91,10 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
       response.url().includes(`${apiOrigin}/api/v1/allocations?`) &&
       response.request().method() === 'GET',
   );
-  await page.getByRole('link', { name: 'Phân bổ hàng hóa' }).click();
+  await page
+    .getByRole('navigation', { name: 'Điều hướng chính' })
+    .getByRole('link', { name: 'Phân bổ hàng hóa' })
+    .click();
   const allocationResponse = await allocationResponsePromise;
   expect(allocationResponse.status()).toBe(200);
   const allocationPayload = (await allocationResponse.json()) as { data: unknown[] };
@@ -312,7 +315,10 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
       response.url().includes(`${apiOrigin}/api/v1/allocations?`) &&
       response.request().method() === 'GET',
   );
-  await page.getByRole('link', { name: 'Phân bổ hàng hóa' }).click();
+  await page
+    .getByRole('navigation', { name: 'Điều hướng mobile' })
+    .getByRole('link', { name: 'Phân bổ hàng hóa' })
+    .click();
   expect((await storeAllocationResponsePromise).status()).toBe(200);
   await expect(page.getByRole('heading', { name: 'Giám sát phân bổ hàng hóa' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Kết quả phân bổ đã lưu' })).toBeVisible();
