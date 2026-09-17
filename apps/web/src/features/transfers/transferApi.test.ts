@@ -22,6 +22,7 @@ const store = {
   kind: 'RETAIL',
   status: 'ACTIVE',
   address: null,
+  version: 0,
   createdAt: '2026-09-17T01:00:00.000Z',
   updatedAt: '2026-09-17T01:00:00.000Z',
 } as const;

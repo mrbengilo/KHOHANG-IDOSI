@@ -23,6 +23,10 @@ const idosiStatisticsMigration = readFileSync(
   new URL('../migrations/0005_idosi_statistics_snapshots.sql', import.meta.url),
   'utf8',
 );
+const storeGroupVersionMigration = readFileSync(
+  new URL('../migrations/0006_store_group_versions.sql', import.meta.url),
+  'utf8',
+);
 const schemaSource = readFileSync(new URL('../src/schema.ts', import.meta.url), 'utf8');
 const seedDataSource = readFileSync(new URL('../src/seed-data.ts', import.meta.url), 'utf8');
 const storeOperationsSource = readFileSync(
@@ -66,8 +70,18 @@ const storeTransferSnapshot = JSON.parse(
 const idosiStatisticsSnapshot = JSON.parse(
   readFileSync(new URL('../migrations/meta/0005_snapshot.json', import.meta.url), 'utf8'),
 ) as {
+  id: string;
   prevId: string;
   tables: Record<string, { columns: Record<string, unknown>; indexes: Record<string, unknown> }>;
+};
+const storeGroupVersionSnapshot = JSON.parse(
+  readFileSync(new URL('../migrations/meta/0006_snapshot.json', import.meta.url), 'utf8'),
+) as {
+  prevId: string;
+  tables: Record<
+    string,
+    { columns: Record<string, unknown>; checkConstraints: Record<string, unknown> }
+  >;
 };
 
 const requiredTables = [
@@ -124,7 +138,7 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(6);
+    expect(journal.entries).toHaveLength(7);
     expect(journal.entries[0]).toMatchObject({
       tag: '0000_initial',
       breakpoints: true,
@@ -149,6 +163,24 @@ describe('initial migration invariants', () => {
       tag: '0005_idosi_statistics_snapshots',
       breakpoints: true,
     });
+    expect(journal.entries[6]).toMatchObject({
+      tag: '0006_store_group_versions',
+      breakpoints: true,
+    });
+  });
+
+  it('adds optimistic concurrency to store-group lifecycle changes', () => {
+    expect(storeGroupVersionMigration).toContain(
+      'ALTER TABLE "store_groups" ADD COLUMN "version" integer DEFAULT 0 NOT NULL',
+    );
+    expect(storeGroupVersionMigration).toContain('"store_groups_version_nonnegative"');
+    expect(storeGroupVersionSnapshot.prevId).toBe(idosiStatisticsSnapshot.id);
+    expect(storeGroupVersionSnapshot.tables['public.store_groups']?.columns).toHaveProperty(
+      'version',
+    );
+    expect(
+      storeGroupVersionSnapshot.tables['public.store_groups']?.checkConstraints,
+    ).toHaveProperty('store_groups_version_nonnegative');
   });
 
   it('adds exact-cost transfer provenance and safe lifecycle constraints', () => {
