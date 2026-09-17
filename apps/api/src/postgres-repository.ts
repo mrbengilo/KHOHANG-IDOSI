@@ -2,6 +2,7 @@ import type {
   Account,
   AdminAuditLog,
   AuthenticatedPrincipal,
+  CancelInboundReceiptRequest,
   CancelWaitTicketRequest,
   CreateProductConversionRequest,
   CreateProductRequest,
@@ -9,11 +10,14 @@ import type {
   CreateStoreOutboundRequest,
   CreateStoreRequest,
   CreateAccountRequest,
+  CreateInboundReceiptRequest,
   DeclareStoreReceiptRequest,
+  ConfirmReceiptCostsRequest,
   FinalizeReceiptRequest,
   ListOrderSessionsQuery,
   ListAccountsQuery,
   ListAuditLogsQuery,
+  ListInboundReceiptsQuery,
   ListPriorityOffersQuery,
   ListProductsQuery,
   ListReceiptsQuery,
@@ -27,6 +31,7 @@ import type {
   ListWaitTicketsQuery,
   MonthlyOperationalReport,
   MonthlyOperationalReportQuery,
+  InboundReceipt,
   OperationalSettingsVersion,
   OpenStoreInventoryBagRequest,
   Product,
@@ -59,12 +64,15 @@ import type {
   DispatchStoreTransferRequest,
   ReceiveStoreTransferRequest,
   CancelStoreTransferRequest,
+  WarehouseBalancesResponse,
 } from '@idosi/contracts';
 import {
   ActiveWaitTicketExistsError,
   auditLogs,
   cancelWaitTicket as cancelDatabaseWaitTicket,
+  cancelSupplierInbound as cancelDatabaseSupplierInbound,
   closeDatabase,
+  confirmSupplierInboundCosts as confirmDatabaseSupplierInboundCosts,
   createStoreOutbound as createDatabaseStoreOutbound,
   dailyPriorityOffers,
   declareStoreReceipt as declareDatabaseStoreReceipt,
@@ -73,6 +81,8 @@ import {
   IdempotencyConflictError,
   IdempotencyInProgressError,
   finalizeStoreReceipt as finalizeDatabaseStoreReceipt,
+  gramsToKilogramsExact,
+  kilogramsToGramsExact,
   getWaitTicketHistory as getDatabaseWaitTicketHistory,
   listPriorityOffers as listDatabasePriorityOffers,
   listStoreInventoryBags as listDatabaseStoreInventoryBags,
@@ -92,6 +102,10 @@ import {
   pool,
   productConversions,
   products,
+  receiptBagWeights,
+  receiptItems,
+  receipts,
+  receiveSupplierInbound as receiveDatabaseSupplierInbound,
   RequestLimitExceededError,
   respondPriorityOffer as respondDatabasePriorityOffer,
   reviewStoreOutbound as reviewDatabaseStoreOutbound,
@@ -100,6 +114,10 @@ import {
   StoreInventoryAuthorizationError,
   StoreOperationValidationError,
   StoreReceiptAuthorizationError,
+  SupplierInboundAuthorizationError,
+  SupplierInboundConflictError,
+  SupplierInboundNotFoundError,
+  SupplierInboundValidationError,
   storeReceiptBags,
   storeReceiptLines,
   storeReceipts,
@@ -110,6 +128,7 @@ import {
   submitOrderRequest as submitDatabaseOrderRequest,
   submitStoreReceipt as submitDatabaseStoreReceipt,
   users,
+  warehouseBalances,
   returnStoreReceiptForCorrection as returnDatabaseStoreReceiptForCorrection,
   PriorityOfferConflictError,
   PriorityOfferNotFoundError,
@@ -146,6 +165,7 @@ import {
   gte,
   ilike,
   inArray,
+  isNotNull,
   isNull,
   lt,
   lte,
@@ -595,6 +615,174 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       data: rows.map(orderSessionDto),
       pagination: pagination(query.page, query.pageSize, totalRow?.value ?? 0),
     };
+  }
+
+  public async listWarehouseBalances(
+    actor: AuthenticatedPrincipal,
+  ): Promise<WarehouseBalancesResponse> {
+    requireWarehouseActor(actor);
+    const asOf = new Date();
+    const rows = await db
+      .select({
+        productId: products.id,
+        onHandQuantity: warehouseBalances.onHandQuantity,
+        reservedQuantity: warehouseBalances.reservedQuantity,
+        version: warehouseBalances.version,
+        updatedAt: warehouseBalances.updatedAt,
+      })
+      .from(products)
+      .leftJoin(warehouseBalances, eq(warehouseBalances.productId, products.id))
+      .where(isNull(products.deletedAt))
+      .orderBy(asc(products.displayOrder), asc(products.sku));
+    return {
+      data: rows.map((row) => ({
+        productId: row.productId,
+        available: {
+          kind: 'UNIT',
+          quantity: (row.onHandQuantity ?? 0) - (row.reservedQuantity ?? 0),
+        },
+        reserved: { kind: 'UNIT', quantity: row.reservedQuantity ?? 0 },
+        version: row.version ?? 0,
+        updatedAt: (row.updatedAt ?? asOf).toISOString(),
+      })),
+      asOf: asOf.toISOString(),
+    };
+  }
+
+  public async listInboundReceipts(
+    actor: AuthenticatedPrincipal,
+    query: ListInboundReceiptsQuery,
+  ): Promise<Page<InboundReceipt>> {
+    requireWarehouseActor(actor);
+    const conditions: SQL[] = [
+      isNull(receipts.deletedAt),
+      isNotNull(receipts.supplierName),
+      isNotNull(receipts.receivedAt),
+    ];
+    if (query.status !== undefined) {
+      conditions.push(eq(receipts.status, databaseInboundReceiptStatus(query.status)));
+    }
+    if (query.receivedFrom !== undefined) {
+      conditions.push(gte(receipts.receivedAt, new Date(query.receivedFrom)));
+    }
+    if (query.receivedTo !== undefined) {
+      conditions.push(lte(receipts.receivedAt, new Date(query.receivedTo)));
+    }
+    if (query.supplier !== undefined) {
+      const supplier = `%${query.supplier.replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
+      conditions.push(ilike(receipts.supplierName, supplier));
+    }
+    const where = and(...conditions);
+    const [totalRow] = await db.select({ value: count() }).from(receipts).where(where);
+    const rows = await db
+      .select({ id: receipts.id })
+      .from(receipts)
+      .where(where)
+      .orderBy(desc(receipts.receivedAt), desc(receipts.createdAt), desc(receipts.id))
+      .limit(query.pageSize)
+      .offset((query.page - 1) * query.pageSize);
+    return {
+      data: await Promise.all(rows.map((row) => this.inboundReceiptDto(row.id))),
+      pagination: pagination(query.page, query.pageSize, totalRow?.value ?? 0),
+    };
+  }
+
+  public async getInboundReceipt(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+  ): Promise<InboundReceipt> {
+    requireWarehouseActor(actor);
+    return this.inboundReceiptDto(receiptId);
+  }
+
+  public async receiveSupplierInbound(
+    actor: AuthenticatedPrincipal,
+    input: CreateInboundReceiptRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<InboundReceipt>> {
+    requireWarehouseActor(actor);
+    return withSupplierInboundErrors(async () => {
+      const result = await receiveDatabaseSupplierInbound(db, {
+        referenceCode: input.referenceCode,
+        supplierName: input.supplierName,
+        receivedAt: new Date(input.receivedAt),
+        bags: input.bags,
+        receivedByUserId: actor.accountId,
+        actorRole: databaseWarehouseActorRole(actor),
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.receiptId;
+      if (!resourceId) throw new Error('Idempotent supplier receipt has no resource id.');
+      return { data: await this.inboundReceiptDto(resourceId), replayed: result.replayed };
+    });
+  }
+
+  public async confirmSupplierInboundCosts(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: ConfirmReceiptCostsRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<InboundReceipt>> {
+    requireWarehouseActor(actor);
+    return withSupplierInboundErrors(async () => {
+      const result = await confirmDatabaseSupplierInboundCosts(db, {
+        receiptId,
+        expectedVersion: input.expectedVersion,
+        productCosts: input.productCosts.map((cost) => ({
+          productId: cost.productId,
+          priceVndPerKg: BigInt(cost.priceVndPerKg),
+        })),
+        transportationFeeVnd: BigInt(input.transportationFeeVnd),
+        handlingFeeVnd: BigInt(input.handlingFeeVnd),
+        confirmedByUserId: actor.accountId,
+        actorRole: databaseWarehouseActorRole(actor),
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.receiptId;
+      if (!resourceId) throw new Error('Idempotent supplier cost confirmation has no resource id.');
+      return { data: await this.inboundReceiptDto(resourceId), replayed: result.replayed };
+    });
+  }
+
+  public async cancelSupplierInbound(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: CancelInboundReceiptRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<InboundReceipt>> {
+    requireWarehouseActor(actor);
+    return withSupplierInboundErrors(async () => {
+      const result = await cancelDatabaseSupplierInbound(db, {
+        receiptId,
+        expectedVersion: input.expectedVersion,
+        reason: input.reason,
+        cancelledByUserId: actor.accountId,
+        actorRole: databaseWarehouseActorRole(actor),
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.receiptId;
+      if (!resourceId)
+        throw new Error('Idempotent supplier receipt cancellation has no resource id.');
+      return { data: await this.inboundReceiptDto(resourceId), replayed: result.replayed };
+    });
   }
 
   public async listProducts(query: ListProductsQuery): Promise<Page<Product>> {
@@ -2008,6 +2196,103 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     };
   }
 
+  private async inboundReceiptDto(receiptId: string): Promise<InboundReceipt> {
+    const [receipt] = await db
+      .select()
+      .from(receipts)
+      .where(and(eq(receipts.id, receiptId), isNull(receipts.deletedAt)))
+      .limit(1);
+    if (!receipt || receipt.supplierName === null || receipt.receivedAt === null) {
+      throw notFound('Không tìm thấy phiếu nhập nhà cung cấp');
+    }
+    const itemRows = await db
+      .select()
+      .from(receiptItems)
+      .where(eq(receiptItems.receiptId, receipt.id))
+      .orderBy(asc(receiptItems.productId));
+    if (itemRows.length === 0) throw new Error('Supplier receipt has no product lines.');
+    const bagRows = await db
+      .select({
+        id: receiptBagWeights.id,
+        receiptItemId: receiptBagWeights.receiptItemId,
+        labelCode: receiptBagWeights.labelCode,
+        netWeightKg: receiptBagWeights.netWeightKg,
+        createdAt: receiptBagWeights.createdAt,
+      })
+      .from(receiptBagWeights)
+      .where(
+        inArray(
+          receiptBagWeights.receiptItemId,
+          itemRows.map((item) => item.id),
+        ),
+      )
+      .orderBy(asc(receiptBagWeights.receiptItemId), asc(receiptBagWeights.bagNumber));
+    const itemById = new Map(itemRows.map((item) => [item.id, item]));
+    let totalWeightGrams = 0n;
+    const bags = bagRows.map((bag) => {
+      const item = itemById.get(bag.receiptItemId);
+      if (!item || bag.labelCode === null) {
+        throw new Error('Supplier receipt bag evidence is incomplete.');
+      }
+      totalWeightGrams += kilogramsToGramsExact(bag.netWeightKg);
+      return {
+        id: bag.id,
+        receiptId: receipt.id,
+        productId: item.productId,
+        bagCode: bag.labelCode,
+        weightKg: gramsToKilogramsExact(kilogramsToGramsExact(bag.netWeightKg)),
+        createdAt: bag.createdAt.toISOString(),
+      };
+    });
+    if (bags.length === 0) throw new Error('Supplier receipt has no bag evidence.');
+
+    const isConfirmed = receipt.status === 'confirmed';
+    const totalCostVnd =
+      receipt.totalGoodsCostVnd +
+      receipt.totalShippingCostVnd +
+      receipt.totalHandlingCostVnd +
+      receipt.totalOtherCostVnd;
+    if (isConfirmed && receipt.totalOtherCostVnd !== 0n) {
+      throw new Error('Inbound receipt contract cannot represent legacy other costs.');
+    }
+    if (isConfirmed && (receipt.confirmedByUserId === null || receipt.confirmedAt === null)) {
+      throw new Error('Confirmed supplier receipt is missing reviewer evidence.');
+    }
+    const productCosts = isConfirmed
+      ? itemRows.map((item) => {
+          if (item.pricePerKgVnd === null) {
+            throw new Error('Confirmed supplier receipt item is missing its price.');
+          }
+          return { productId: item.productId, priceVndPerKg: safeVnd(item.pricePerKgVnd) };
+        })
+      : [];
+
+    return {
+      id: receipt.id,
+      referenceCode: receipt.receiptNumber,
+      supplierName: receipt.supplierName,
+      status: inboundReceiptStatus(receipt.status),
+      bags,
+      totalWeightKg: gramsToKilogramsExact(totalWeightGrams),
+      cost: isConfirmed
+        ? {
+            productCosts,
+            transportationFeeVnd: safeVnd(receipt.totalShippingCostVnd),
+            handlingFeeVnd: safeVnd(receipt.totalHandlingCostVnd),
+            goodsCostVnd: safeVnd(receipt.totalGoodsCostVnd),
+            totalCostVnd: safeVnd(totalCostVnd),
+            confirmedByAccountId: receipt.confirmedByUserId as string,
+            confirmedAt: (receipt.confirmedAt as Date).toISOString(),
+          }
+        : null,
+      version: receipt.version,
+      receivedByAccountId: receipt.createdByUserId,
+      receivedAt: receipt.receivedAt.toISOString(),
+      createdAt: receipt.createdAt.toISOString(),
+      updatedAt: receipt.updatedAt.toISOString(),
+    };
+  }
+
   private async receiptDto(receiptId: string): Promise<Receipt> {
     const [receipt] = await db
       .select()
@@ -2691,6 +2976,36 @@ function databaseReceiptStatus(
   }
 }
 
+function databaseInboundReceiptStatus(
+  status: InboundReceipt['status'],
+): typeof receipts.$inferSelect.status {
+  switch (status) {
+    case 'RECEIVED':
+      return 'draft';
+    case 'COST_PENDING':
+      return 'submitted';
+    case 'COST_CONFIRMED':
+      return 'confirmed';
+    case 'CANCELLED':
+      return 'cancelled';
+  }
+}
+
+function inboundReceiptStatus(
+  status: typeof receipts.$inferSelect.status,
+): InboundReceipt['status'] {
+  switch (status) {
+    case 'draft':
+      return 'RECEIVED';
+    case 'submitted':
+      return 'COST_PENDING';
+    case 'confirmed':
+      return 'COST_CONFIRMED';
+    case 'cancelled':
+      return 'CANCELLED';
+  }
+}
+
 function receiptStatus(status: typeof storeReceipts.$inferSelect.status): Receipt['status'] {
   switch (status) {
     case 'draft':
@@ -2892,6 +3207,40 @@ async function withStoreTransferErrors<T>(operation: () => Promise<T>): Promise<
   }
 }
 
+async function withSupplierInboundErrors<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error: unknown) {
+    if (error instanceof SupplierInboundAuthorizationError) throw forbidden();
+    if (error instanceof SupplierInboundNotFoundError) {
+      throw notFound('Không tìm thấy phiếu nhập nhà cung cấp');
+    }
+    if (
+      error instanceof SupplierInboundValidationError ||
+      error instanceof StoreOperationValidationError
+    ) {
+      throw new ApiError('VALIDATION_ERROR', error.message, 400);
+    }
+    if (error instanceof SupplierInboundConflictError) {
+      if (/version|changed during/iu.test(error.message)) {
+        throw new ApiError('VERSION_CONFLICT', error.message, 409);
+      }
+      throw conflict(error.message);
+    }
+    if (error instanceof IdempotencyConflictError) {
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    }
+    if (error instanceof IdempotencyInProgressError) {
+      throw conflict('Yêu cầu cùng khóa idempotency đang được xử lý');
+    }
+    throw error;
+  }
+}
+
 function assertFinalizationMatchesDeclaration(
   current: Receipt,
   input: FinalizeReceiptRequest,
@@ -3016,6 +3365,15 @@ function databaseAccountStatus(status: Account['status']): 'active' | 'locked' |
 
 function requirePostgresAdmin(actor: AuthenticatedPrincipal): void {
   if (actor.role !== 'ADMIN') throw forbidden();
+}
+
+function requireWarehouseActor(actor: AuthenticatedPrincipal): void {
+  if (actor.role === 'STORE') throw forbidden();
+}
+
+function databaseWarehouseActorRole(actor: AuthenticatedPrincipal): 'admin' | 'htkd' {
+  requireWarehouseActor(actor);
+  return actor.role === 'ADMIN' ? 'admin' : 'htkd';
 }
 
 function assertPostgresAccountVersion(actual: number, expected: number | undefined): void {
