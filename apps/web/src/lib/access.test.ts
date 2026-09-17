@@ -12,6 +12,7 @@ describe('route access policy', () => {
 
   it('separates wholesale and retail store operations', () => {
     expect(canAccessRoute('/requests', 'STORE', 'WHOLESALE')).toBe(true);
+    expect(canAccessRoute('/allocations', 'STORE', 'WHOLESALE')).toBe(true);
     expect(canAccessRoute('/receive', 'STORE', 'WHOLESALE')).toBe(false);
     expect(canAccessRoute('/receive', 'STORE', 'RETAIL')).toBe(true);
   });

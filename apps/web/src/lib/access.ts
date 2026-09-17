@@ -7,7 +7,7 @@ export interface RouteAccessPolicy {
 
 export const routeAccessPolicies = {
   '/': { roles: ['ADMIN', 'HTKD', 'STORE'] },
-  '/allocations': { roles: ['ADMIN', 'HTKD'] },
+  '/allocations': { roles: ['ADMIN', 'HTKD', 'STORE'] },
   '/requests': { roles: ['ADMIN', 'HTKD', 'STORE'] },
   '/receive': {
     roles: ['ADMIN', 'HTKD', 'STORE'],

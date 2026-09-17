@@ -1,6 +1,8 @@
 import {
   CreateOrderSessionRequestSchema,
   DEFAULT_ALLOCATION_POLICY_VERSION,
+  type AllocationResult,
+  type AllocationResultStatus,
   type CreateOrderSessionRequest,
   type OperationalSettingsVersion,
   type OrderSession,
@@ -13,7 +15,10 @@ import {
   Ban,
   CalendarClock,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
+  Eye,
   LockKeyhole,
   Play,
   Plus,
@@ -36,6 +41,7 @@ import { getAdminOperationalSettings } from '../features/admin/adminApi';
 import {
   ApiClientError,
   createOrderSession,
+  listAllocationResults,
   listAccessibleStores,
   listCatalog,
   listOrderSessions,
@@ -285,6 +291,47 @@ const sessionStatusTone: Record<
   CANCELLED: 'neutral',
 };
 
+const allocationResultStatusCopy: Record<AllocationResultStatus, string> = {
+  ALLOCATED: 'Đã cấp đủ',
+  PARTIAL: 'Cấp một phần',
+  WAITLISTED: 'Chuyển phiếu chờ',
+  SKIPPED: 'Không xử lý',
+};
+
+const allocationResultStatusTone: Record<
+  AllocationResultStatus,
+  'neutral' | 'success' | 'warning' | 'danger'
+> = {
+  ALLOCATED: 'success',
+  PARTIAL: 'warning',
+  WAITLISTED: 'danger',
+  SKIPPED: 'neutral',
+};
+
+const allocationResultPageSize = 20;
+const allocationTimestampFormatter = new Intl.DateTimeFormat('vi-VN', {
+  dateStyle: 'short',
+  timeStyle: 'short',
+  timeZone: 'Asia/Ho_Chi_Minh',
+});
+
+export type AllocationResultsViewState = 'LOADING' | 'ERROR' | 'EMPTY' | 'READY';
+
+export function allocationResultsViewState(input: {
+  readonly hasError: boolean;
+  readonly isPending: boolean;
+  readonly resultCount: number;
+}): AllocationResultsViewState {
+  if (input.isPending) return 'LOADING';
+  if (input.resultCount > 0) return 'READY';
+  if (input.hasError) return 'ERROR';
+  return 'EMPTY';
+}
+
+function allocationRoundText(result: AllocationResult): string {
+  return `Vòng ${result.roundNumber} · lượt ${result.sequenceInRound}`;
+}
+
 type AdminSessionTransition = TransitionOrderSessionRequest['status'];
 
 export interface OrderSessionDraft {
@@ -417,6 +464,10 @@ function sessionErrorMessage(error: unknown): string {
 
 function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>) {
   const queryClient = useQueryClient();
+  const [allocationPage, setAllocationPage] = useState(1);
+  const [allocationSessionId, setAllocationSessionId] = useState('');
+  const [allocationStatus, setAllocationStatus] = useState<'' | AllocationResultStatus>('');
+  const [allocationStoreId, setAllocationStoreId] = useState('');
   const catalogQuery = useQuery({ queryFn: listCatalog, queryKey: ['catalog'], retry: false });
   const storesQuery = useQuery({
     queryFn: listAccessibleStores,
@@ -434,6 +485,24 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
     queryKey: ['admin', 'operational-settings'],
     retry: false,
   });
+  const allocationQuery = useQuery({
+    queryFn: () =>
+      listAllocationResults({
+        page: allocationPage,
+        pageSize: allocationResultPageSize,
+        ...(allocationSessionId ? { sessionId: allocationSessionId } : {}),
+        ...(allocationStatus ? { status: allocationStatus } : {}),
+        ...(allocationStoreId ? { storeId: allocationStoreId } : {}),
+      }),
+    queryKey: [
+      'allocation-results',
+      allocationPage,
+      allocationSessionId,
+      allocationStatus,
+      allocationStoreId,
+    ],
+    retry: false,
+  });
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [draft, setDraft] = useState<OrderSessionDraft>(() => defaultOrderSessionDraft());
   const [cancelTarget, setCancelTarget] = useState<OrderSession | null>(null);
@@ -444,6 +513,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
   const operationKeys = useRef(new Map<string, string>());
   const createDateRef = useRef<HTMLInputElement>(null);
   const cancelReasonRef = useRef<HTMLTextAreaElement>(null);
+  const allocationResultsHeadingRef = useRef<HTMLHeadingElement>(null);
 
   const productNameById = useMemo(
     () => new Map((catalogQuery.data ?? []).map((product) => [product.id, product.name])),
@@ -453,17 +523,53 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
     () => new Map((storesQuery.data ?? []).map((store) => [store.id, store.name])),
     [storesQuery.data],
   );
+  const sessionDateById = useMemo(
+    () => new Map((sessionsQuery.data ?? []).map((session) => [session.id, session.businessDate])),
+    [sessionsQuery.data],
+  );
   const contextError = catalogQuery.error ?? storesQuery.error;
-  const refreshing = catalogQuery.isFetching || storesQuery.isFetching || sessionsQuery.isFetching;
+  const allocationViewState = allocationResultsViewState({
+    hasError: allocationQuery.isError,
+    isPending: allocationQuery.isPending,
+    resultCount: allocationQuery.data?.data.length ?? 0,
+  });
+  const refreshing =
+    allocationQuery.isFetching ||
+    catalogQuery.isFetching ||
+    storesQuery.isFetching ||
+    sessionsQuery.isFetching;
 
   const refresh = async () => {
     setNotice(null);
     await Promise.all([
       catalogQuery.refetch(),
+      allocationQuery.refetch(),
       storesQuery.refetch(),
       sessionsQuery.refetch(),
       ...(role === 'ADMIN' ? [settingsQuery.refetch()] : []),
     ]);
+  };
+
+  const showSessionResults = (sessionId: string) => {
+    setAllocationPage(1);
+    setAllocationSessionId(sessionId);
+    setAllocationStatus('');
+    setAllocationStoreId('');
+    void queryClient.invalidateQueries({
+      exact: true,
+      queryKey: ['allocation-results', 1, sessionId, '', ''],
+    });
+    window.requestAnimationFrame(() => {
+      allocationResultsHeadingRef.current?.focus();
+      allocationResultsHeadingRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
+
+  const clearAllocationFilters = () => {
+    setAllocationPage(1);
+    setAllocationSessionId('');
+    setAllocationStatus('');
+    setAllocationStoreId('');
   };
 
   const openCreateForm = () => {
@@ -709,8 +815,8 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
           <div>
             <h2 id="order-session-heading">Phiên nhận đơn và phân bổ</h2>
             <p>
-              Admin vận hành trạng thái có khóa phiên bản; HTKD theo dõi dữ liệu trong phạm vi được
-              cấp.
+              Admin vận hành trạng thái có khóa phiên bản; HTKD và cửa hàng theo dõi dữ liệu đúng
+              phạm vi được cấp.
             </p>
           </div>
           {role === 'ADMIN' ? (
@@ -754,6 +860,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                   <th>Chính sách</th>
                   <th>Trạng thái</th>
                   <th>Phiên bản</th>
+                  <th>Kết quả</th>
                   {role === 'ADMIN' ? <th>Thao tác</th> : null}
                 </tr>
               </thead>
@@ -784,6 +891,16 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                         </Badge>
                       </td>
                       <td data-label="Phiên bản">v{session.version}</td>
+                      <td data-label="Kết quả">
+                        <button
+                          aria-label={`Xem kết quả phiên ${session.businessDate}`}
+                          className="link-button"
+                          onClick={() => showSessionResults(session.id)}
+                          type="button"
+                        >
+                          <Eye aria-hidden="true" size={15} /> Xem kết quả
+                        </button>
+                      </td>
                       {role === 'ADMIN' ? (
                         <td data-label="Thao tác">
                           <div className="allocation-session-actions">
@@ -841,6 +958,215 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
               </tbody>
             </table>
           </div>
+        ) : null}
+      </section>
+
+      <section
+        aria-labelledby="allocation-results-heading"
+        className="panel allocation-results-console"
+      >
+        <div className="section-heading section-heading--compact">
+          <div>
+            <h2 id="allocation-results-heading" ref={allocationResultsHeadingRef} tabIndex={-1}>
+              Kết quả phân bổ đã lưu
+            </h2>
+            <p>
+              Dữ liệu đọc trực tiếp từ từng dòng phân bổ và luôn giới hạn theo phạm vi cửa hàng của
+              tài khoản.
+            </p>
+          </div>
+          <Badge tone="info">{allocationQuery.data?.pagination.totalItems ?? 0} kết quả</Badge>
+        </div>
+
+        <div aria-label="Bộ lọc kết quả phân bổ" className="filter-card allocation-result-filters">
+          <label>
+            Phiên
+            <select
+              aria-label="Lọc kết quả theo phiên"
+              onChange={(event) => {
+                setAllocationPage(1);
+                setAllocationSessionId(event.target.value);
+              }}
+              value={allocationSessionId}
+            >
+              <option value="">Tất cả phiên</option>
+              {(sessionsQuery.data ?? []).map((session) => (
+                <option key={session.id} value={session.id}>
+                  {session.businessDate} · {sessionStatusCopy[session.status]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Cửa hàng
+            <select
+              aria-label="Lọc kết quả theo cửa hàng"
+              onChange={(event) => {
+                setAllocationPage(1);
+                setAllocationStoreId(event.target.value);
+              }}
+              value={allocationStoreId}
+            >
+              <option value="">Tất cả cửa hàng được phép xem</option>
+              {(storesQuery.data ?? []).map((store) => (
+                <option key={store.id} value={store.id}>
+                  {store.code} · {store.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Trạng thái
+            <select
+              aria-label="Lọc kết quả theo trạng thái"
+              onChange={(event) => {
+                setAllocationPage(1);
+                setAllocationStatus(event.target.value as '' | AllocationResultStatus);
+              }}
+              value={allocationStatus}
+            >
+              <option value="">Tất cả trạng thái</option>
+              {(Object.keys(allocationResultStatusCopy) as AllocationResultStatus[]).map(
+                (status) => (
+                  <option key={status} value={status}>
+                    {allocationResultStatusCopy[status]}
+                  </option>
+                ),
+              )}
+            </select>
+          </label>
+          <Button
+            disabled={!allocationSessionId && !allocationStoreId && !allocationStatus}
+            onClick={clearAllocationFilters}
+            tone="secondary"
+          >
+            <RotateCcw aria-hidden="true" size={16} /> Xóa bộ lọc
+          </Button>
+        </div>
+
+        {allocationViewState === 'LOADING' ? (
+          <p aria-live="polite" className="allocation-session-state">
+            Đang tải kết quả phân bổ từ backend…
+          </p>
+        ) : null}
+        {allocationViewState === 'ERROR' ? (
+          <div className="allocation-session-state allocation-session-state--error" role="alert">
+            <span>Không thể tải kết quả phân bổ. Dữ liệu phiên và phiếu chờ vẫn được giữ lại.</span>
+            <Button onClick={() => void allocationQuery.refetch()} tone="secondary">
+              <RotateCcw aria-hidden="true" size={16} /> Thử lại
+            </Button>
+          </div>
+        ) : null}
+        {allocationViewState === 'READY' && allocationQuery.isError ? (
+          <div className="allocation-session-state allocation-session-state--error" role="alert">
+            <span>
+              Không thể cập nhật kết quả mới nhất. Bảng bên dưới vẫn là dữ liệu đã xác nhận gần
+              nhất.
+            </span>
+            <Button onClick={() => void allocationQuery.refetch()} tone="secondary">
+              <RotateCcw aria-hidden="true" size={16} /> Thử lại
+            </Button>
+          </div>
+        ) : null}
+        {allocationViewState === 'EMPTY' ? (
+          <EmptyState
+            detail="Đổi bộ lọc hoặc chọn một phiên đã hoàn tất phân bổ."
+            title="Chưa có kết quả phân bổ phù hợp"
+          />
+        ) : null}
+        {allocationViewState === 'READY' && allocationQuery.data ? (
+          <>
+            {allocationQuery.isFetching ? (
+              <p aria-live="polite" className="allocation-result-refreshing">
+                Đang cập nhật kết quả…
+              </p>
+            ) : null}
+            <div className="responsive-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Phiên</th>
+                    <th>Cửa hàng</th>
+                    <th>Mặt hàng</th>
+                    <th>Yêu cầu</th>
+                    <th>Đã cấp</th>
+                    <th>Chờ</th>
+                    <th>Ưu tiên / vòng</th>
+                    <th>Kết quả / lý do</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {allocationQuery.data.data.map((result) => (
+                    <tr key={result.id}>
+                      <td data-label="Phiên">
+                        <strong>{sessionDateById.get(result.sessionId) ?? 'Không rõ ngày'}</strong>
+                        <small title={result.sessionId}>{result.sessionId.slice(0, 8)}</small>
+                      </td>
+                      <td data-label="Cửa hàng">
+                        <strong>{storeNameById.get(result.storeId) ?? result.storeId}</strong>
+                      </td>
+                      <td data-label="Mặt hàng">
+                        <strong>{productNameById.get(result.productId) ?? result.productId}</strong>
+                      </td>
+                      <td data-label="Yêu cầu">{result.requestedQuantity}</td>
+                      <td data-label="Đã cấp">
+                        <strong className="text-success">{result.allocatedQuantity}</strong>
+                      </td>
+                      <td data-label="Chờ">
+                        <strong
+                          className={result.waitlistedQuantity > 0 ? 'text-danger' : undefined}
+                        >
+                          {result.waitlistedQuantity}
+                        </strong>
+                      </td>
+                      <td data-label="Ưu tiên / vòng">
+                        <Badge tone={result.priority.startsWith('P0') ? 'priority' : 'info'}>
+                          {result.priority}
+                        </Badge>
+                        <small>{allocationRoundText(result)}</small>
+                      </td>
+                      <td className="allocation-result-decision" data-label="Kết quả / lý do">
+                        <Badge tone={allocationResultStatusTone[result.status]}>
+                          {allocationResultStatusCopy[result.status]}
+                        </Badge>
+                        <small title={result.reasonCode}>{result.reasonCode}</small>
+                        <small>
+                          {allocationTimestampFormatter.format(new Date(result.createdAt))}
+                        </small>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="allocation-result-pagination">
+              <span>
+                Trang {allocationQuery.data.pagination.page} /{' '}
+                {Math.max(1, allocationQuery.data.pagination.totalPages)} ·{' '}
+                {allocationQuery.data.pagination.totalItems} kết quả
+              </span>
+              <div>
+                <Button
+                  disabled={allocationQuery.data.pagination.page <= 1 || allocationQuery.isFetching}
+                  onClick={() => setAllocationPage((current) => Math.max(1, current - 1))}
+                  tone="secondary"
+                >
+                  <ChevronLeft aria-hidden="true" size={16} /> Trang trước
+                </Button>
+                <Button
+                  disabled={
+                    allocationQuery.isFetching ||
+                    allocationQuery.data.pagination.page >=
+                      allocationQuery.data.pagination.totalPages
+                  }
+                  onClick={() => setAllocationPage((current) => current + 1)}
+                  tone="secondary"
+                >
+                  Trang sau <ChevronRight aria-hidden="true" size={16} />
+                </Button>
+              </div>
+            </div>
+          </>
         ) : null}
       </section>
 
