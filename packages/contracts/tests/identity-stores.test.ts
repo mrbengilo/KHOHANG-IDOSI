@@ -4,9 +4,12 @@ import {
   AuthenticatedPrincipalSchema,
   CreateAccountRequestSchema,
   CreateStoreRequestSchema,
+  ListStoreGroupsQuerySchema,
   ListStoresQuerySchema,
   ReplaceHtkdAssignmentsRequestSchema,
   UpdateAccountRequestSchema,
+  UpdateStoreGroupRequestSchema,
+  UpdateStoreRequestSchema,
 } from '../src/index.js';
 
 const STORE_ID = '11111111-1111-4111-8111-111111111111';
@@ -111,5 +114,29 @@ describe('identity and store-scope contracts', () => {
     ).toBe(false);
     expect(ListStoresQuerySchema.parse({ kind: 'WHOLESALE' }).kind).toBe('WHOLESALE');
     expect(ListStoresQuerySchema.safeParse({ kind: 'FRANCHISE' }).success).toBe(false);
+  });
+
+  it('requires optimistic versions and mutable fields for store lifecycle patches', () => {
+    expect(UpdateStoreRequestSchema.safeParse({ status: 'INACTIVE' }).success).toBe(false);
+    expect(UpdateStoreRequestSchema.safeParse({ expectedVersion: 0 }).success).toBe(false);
+    expect(
+      UpdateStoreRequestSchema.safeParse({ expectedVersion: 0, status: 'INACTIVE' }).success,
+    ).toBe(true);
+
+    expect(UpdateStoreGroupRequestSchema.safeParse({ name: 'Miền Nam' }).success).toBe(false);
+    expect(UpdateStoreGroupRequestSchema.safeParse({ expectedVersion: 0 }).success).toBe(false);
+    expect(
+      UpdateStoreGroupRequestSchema.safeParse({ expectedVersion: 0, name: 'Miền Nam' }).success,
+    ).toBe(true);
+  });
+
+  it('supports paginated store-group lifecycle filters', () => {
+    expect(ListStoreGroupsQuerySchema.parse({ status: 'INACTIVE', search: 'miền' })).toMatchObject({
+      page: 1,
+      pageSize: 20,
+      status: 'INACTIVE',
+      search: 'miền',
+    });
+    expect(ListStoreGroupsQuerySchema.safeParse({ status: 'ARCHIVED' }).success).toBe(false);
   });
 });

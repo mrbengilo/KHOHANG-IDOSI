@@ -23,6 +23,7 @@ export const StoreGroupSchema = z
     code: z.string().trim().min(1).max(40),
     name: z.string().trim().min(1).max(120),
     status: StoreGroupStatusSchema,
+    version: z.number().int().nonnegative().safe(),
     createdAt: IsoDateTimeSchema,
     updatedAt: IsoDateTimeSchema,
   })
@@ -38,6 +39,7 @@ export const StoreSchema = z
     kind: StoreKindSchema,
     status: StoreStatusSchema,
     address: z.string().trim().min(1).max(500).nullable(),
+    version: z.number().int().nonnegative().safe(),
     createdAt: IsoDateTimeSchema,
     updatedAt: IsoDateTimeSchema,
   })
@@ -63,6 +65,7 @@ export type CreateStoreRequest = z.infer<typeof CreateStoreRequestSchema>;
 
 export const UpdateStoreRequestSchema = z
   .object({
+    expectedVersion: z.number().int().nonnegative().safe(),
     name: z.string().trim().min(1).max(160).optional(),
     groupId: EntityIdSchema.optional(),
     kind: StoreKindSchema.optional(),
@@ -70,7 +73,15 @@ export const UpdateStoreRequestSchema = z
     address: z.string().trim().min(1).max(500).nullable().optional(),
   })
   .strict()
-  .refine((request) => Object.keys(request).length > 0, 'At least one field is required');
+  .refine(
+    (request) =>
+      request.name !== undefined ||
+      request.groupId !== undefined ||
+      request.kind !== undefined ||
+      request.status !== undefined ||
+      request.address !== undefined,
+    'At least one mutable field is required',
+  );
 export type UpdateStoreRequest = z.infer<typeof UpdateStoreRequestSchema>;
 
 export const StoreResponseSchema = z.object({ data: StoreSchema }).strict();
@@ -99,15 +110,25 @@ export type CreateStoreGroupRequest = z.infer<typeof CreateStoreGroupRequestSche
 
 export const UpdateStoreGroupRequestSchema = z
   .object({
+    expectedVersion: z.number().int().nonnegative().safe(),
     name: z.string().trim().min(1).max(120).optional(),
     status: StoreGroupStatusSchema.optional(),
   })
   .strict()
-  .refine((request) => Object.keys(request).length > 0, 'At least one field is required');
+  .refine(
+    (request) => request.name !== undefined || request.status !== undefined,
+    'At least one mutable field is required',
+  );
 export type UpdateStoreGroupRequest = z.infer<typeof UpdateStoreGroupRequestSchema>;
 
 export const StoreGroupResponseSchema = z.object({ data: StoreGroupSchema }).strict();
 export type StoreGroupResponse = z.infer<typeof StoreGroupResponseSchema>;
+
+export const ListStoreGroupsQuerySchema = PaginationQuerySchema.extend({
+  status: StoreGroupStatusSchema.optional(),
+  search: z.string().trim().min(1).max(120).optional(),
+}).strict();
+export type ListStoreGroupsQuery = z.infer<typeof ListStoreGroupsQuerySchema>;
 
 export const ListStoreGroupsResponseSchema = z
   .object({ data: z.array(StoreGroupSchema), pagination: PaginationMetaSchema })

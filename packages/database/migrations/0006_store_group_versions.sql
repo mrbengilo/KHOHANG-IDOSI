@@ -1,0 +1,2 @@
+ALTER TABLE "store_groups" ADD COLUMN "version" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "store_groups" ADD CONSTRAINT "store_groups_version_nonnegative" CHECK ("store_groups"."version" >= 0);
