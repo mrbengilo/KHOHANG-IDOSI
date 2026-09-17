@@ -53,10 +53,12 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
         throw new Error('Reference seed and administrator bootstrap must run before this test.');
       }
 
-      // Keep this integration fixture outside the live E2E business date. The
-      // worker intentionally completes the session and PostgreSQL persists it
-      // for the remainder of the CI job.
-      const businessDate = '2000-01-01';
+      // This PostgreSQL instance is shared by every workspace test in CI. Use
+      // a unique historical date so another integration suite cannot leave a
+      // same-day session behind before the worker suite starts.
+      const runKey = randomUUID();
+      const dateOffset = Number.parseInt(runKey.replaceAll('-', '').slice(0, 8), 16) % 365;
+      const businessDate = new Date(Date.UTC(1900, 0, 1 + dateOffset)).toISOString().slice(0, 10);
       const now = new Date(`${businessDate}T12:00:00+07:00`);
       const requestOpensAt = new Date(`${businessDate}T00:00:00+07:00`);
       const requestClosesAt = new Date(`${businessDate}T23:59:58+07:00`);
@@ -66,7 +68,6 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
           'Integration test started during the final two seconds of the business day.',
         );
       }
-      const runKey = randomUUID();
       const sessionResult = await createOrderSession(client.db, {
         businessDate,
         requestOpensAt,
