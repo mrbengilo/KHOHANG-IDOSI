@@ -12,6 +12,7 @@ import {
   type ProductStatus,
   type UpdateProductConversionRequest,
 } from '@idosi/contracts';
+import { reportUnauthorizedResponse } from '../../lib/session-expiry';
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
 const apiBaseUrl = (configuredBaseUrl || '/api/v1').replace(/\/$/, '');
@@ -117,6 +118,7 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
     );
   }
 
+  reportUnauthorizedResponse(response.status, path);
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const parsed = ErrorEnvelopeSchema.safeParse(payload);

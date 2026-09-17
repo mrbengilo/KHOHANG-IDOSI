@@ -5,6 +5,7 @@ import {
 } from '@idosi/contracts';
 
 import { ApiClientError } from '../../lib/api';
+import { reportUnauthorizedResponse } from '../../lib/session-expiry';
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
 const apiBaseUrl = (configuredBaseUrl || '/api/v1').replace(/\/$/, '');
@@ -31,6 +32,7 @@ async function loadReceiptSourcePage(filters: ReceiptSourceFilters, page: number
     );
   }
 
+  reportUnauthorizedResponse(response.status, '/store-receipt-sources');
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const parsedError = ErrorEnvelopeSchema.safeParse(payload);
