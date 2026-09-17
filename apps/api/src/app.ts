@@ -2,9 +2,11 @@ import { randomUUID } from 'node:crypto';
 
 import {
   AccountParamsSchema,
+  CancelInboundReceiptRequestSchema,
   CancelWaitTicketRequestSchema,
   CreateAccountRequestSchema,
   CreateOrderSessionRequestSchema,
+  CreateInboundReceiptRequestSchema,
   CreateProductRequestSchema,
   CreateProductConversionRequestSchema,
   CreateStoreOrderRequestSchema,
@@ -12,13 +14,16 @@ import {
   CreateStoreRequestSchema,
   DeclareStoreReceiptRequestSchema,
   DispatchWarehouseOutboundRequestSchema,
+  ConfirmReceiptCostsRequestSchema,
   FinalizeReceiptRequestSchema,
   GetOperationalSettingsQuerySchema,
   IdempotencyHeadersSchema,
   IsoDateSchema,
+  InboundReceiptParamsSchema,
   ListOrderSessionsQuerySchema,
   ListAccountsQuerySchema,
   ListAuditLogsQuerySchema,
+  ListInboundReceiptsQuerySchema,
   ListPriorityOffersQuerySchema,
   ListProductsQuerySchema,
   ListProductConversionsQuerySchema,
@@ -452,6 +457,93 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
         requestContext(request),
       ),
     };
+  });
+
+  app.get('/api/v1/warehouse-balances', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    return repository.listWarehouseBalances(session.principal);
+  });
+
+  app.get('/api/v1/inbound-receipts', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const query = ListInboundReceiptsQuerySchema.parse(request.query);
+    return repository.listInboundReceipts(session.principal, query);
+  });
+
+  app.get('/api/v1/inbound-receipts/:receiptId', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const { receiptId } = InboundReceiptParamsSchema.parse(request.params);
+    return { data: await repository.getInboundReceipt(session.principal, receiptId) };
+  });
+
+  app.post('/api/v1/inbound-receipts', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = CreateInboundReceiptRequestSchema.parse(request.body);
+    const result = await repository.receiveSupplierInbound(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({
+        action: 'RECEIVE_SUPPLIER_INBOUND',
+        ...input,
+        bags: [...input.bags].sort(
+          (left, right) =>
+            left.productId.localeCompare(right.productId) ||
+            left.bagCode.localeCompare(right.bagCode),
+        ),
+      }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
+  });
+
+  app.post('/api/v1/inbound-receipts/:receiptId/confirm-costs', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { receiptId } = InboundReceiptParamsSchema.parse(request.params);
+    const input = ConfirmReceiptCostsRequestSchema.parse(request.body);
+    const result = await repository.confirmSupplierInboundCosts(
+      session.principal,
+      receiptId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({
+        action: 'CONFIRM_SUPPLIER_INBOUND_COSTS',
+        receiptId,
+        ...input,
+        productCosts: [...input.productCosts].sort((left, right) =>
+          left.productId.localeCompare(right.productId),
+        ),
+      }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.post('/api/v1/inbound-receipts/:receiptId/cancel', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { receiptId } = InboundReceiptParamsSchema.parse(request.params);
+    const input = CancelInboundReceiptRequestSchema.parse(request.body);
+    const result = await repository.cancelSupplierInbound(
+      session.principal,
+      receiptId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CANCEL_SUPPLIER_INBOUND', receiptId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
   });
 
   app.get('/api/v1/stores', async (request) => {
@@ -1080,6 +1172,51 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: { '200': { description: 'Versioned order session transition' } },
+        },
+      },
+      '/api/v1/warehouse-balances': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Current warehouse balances (ADMIN/HTKD)' } },
+        },
+      },
+      '/api/v1/inbound-receipts': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Paginated supplier inbound receipts' } },
+        },
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '201': { description: 'Received supplier bags and increased warehouse stock' },
+          },
+        },
+      },
+      '/api/v1/inbound-receipts/{receiptId}': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Supplier inbound receipt detail' } },
+        },
+      },
+      '/api/v1/inbound-receipts/{receiptId}/confirm-costs': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Confirmed exact supplier receipt costs' } },
+        },
+      },
+      '/api/v1/inbound-receipts/{receiptId}/cancel': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Cancelled pending supplier stock receipt' } },
         },
       },
       '/api/v1/store-receipts': {

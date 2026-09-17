@@ -8,6 +8,7 @@ import {
   dailyPriorityOffers,
   inventorySnapshotItems,
   inventorySnapshots,
+  loadWarehouseBalancesAt,
   mergedOrderItems,
   mergedOrders,
   mergedOrderSources,
@@ -16,12 +17,9 @@ import {
   orderSessions,
   outboundRequestLines,
   outboundRequests,
-  products,
   reservations,
   stores,
   waitTickets,
-  warehouseBalances,
-  warehouseLedgerEntries,
   withAdvisoryLock,
   withSerializableTransaction,
   type Database,
@@ -170,7 +168,7 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
     }
     assertSessionMatches(lockedSession, session);
 
-    const historicalBalances = await loadBalancesAt(tx, session.snapshotDueAt);
+    const historicalBalances = await loadWarehouseBalancesAt(tx, session.snapshotDueAt);
     const snapshotId = deterministicUuid(
       `snapshot:${session.id}:${session.businessDate}:opening_0800`,
     );
@@ -867,68 +865,6 @@ function assertSessionMatches(
   if (!isRunnableSessionStatus(row.status)) {
     throw new Error(`Allocation session ${expected.id} is not active (status ${row.status}).`);
   }
-}
-
-async function loadBalancesAt(tx: Transaction, cutoff: Date) {
-  const productRows = await tx
-    .select({ id: products.id })
-    .from(products)
-    .orderBy(asc(products.displayOrder), asc(products.id));
-  if (productRows.length === 0) return [];
-  const productIds = productRows.map((row) => row.id);
-  const ledgerRows = await tx
-    .select({
-      productId: warehouseLedgerEntries.productId,
-      onHand: warehouseLedgerEntries.onHandAfter,
-      reserved: warehouseLedgerEntries.reservedAfter,
-      occurredAt: warehouseLedgerEntries.occurredAt,
-      createdAt: warehouseLedgerEntries.createdAt,
-    })
-    .from(warehouseLedgerEntries)
-    .where(
-      and(
-        inArray(warehouseLedgerEntries.productId, productIds),
-        lte(warehouseLedgerEntries.occurredAt, cutoff),
-      ),
-    )
-    .orderBy(
-      asc(warehouseLedgerEntries.productId),
-      desc(warehouseLedgerEntries.occurredAt),
-      desc(warehouseLedgerEntries.createdAt),
-    );
-  const balanceRows = await tx
-    .select()
-    .from(warehouseBalances)
-    .where(inArray(warehouseBalances.productId, productIds));
-  const currentByProduct = new Map(balanceRows.map((row) => [row.productId, row]));
-  const latestByProduct = new Map<string, (typeof ledgerRows)[number]>();
-  const ledgerCountByProduct = new Map<string, number>();
-  for (const row of ledgerRows) {
-    ledgerCountByProduct.set(row.productId, (ledgerCountByProduct.get(row.productId) ?? 0) + 1);
-    if (!latestByProduct.has(row.productId)) latestByProduct.set(row.productId, row);
-  }
-
-  return productRows.map(({ id: productId }) => {
-    const historical = latestByProduct.get(productId);
-    const current = currentByProduct.get(productId);
-    if (historical) {
-      return {
-        productId,
-        onHand: historical.onHand,
-        reserved: historical.reserved,
-        version: ledgerCountByProduct.get(productId) ?? 0,
-      };
-    }
-    if (current && current.updatedAt.getTime() <= cutoff.getTime()) {
-      return {
-        productId,
-        onHand: current.onHandQuantity,
-        reserved: current.reservedQuantity,
-        version: current.version,
-      };
-    }
-    return { productId, onHand: 0, reserved: 0, version: 0 };
-  });
 }
 
 async function loadActiveWaitTickets(tx: Transaction): Promise<WaitTicketRow[]> {

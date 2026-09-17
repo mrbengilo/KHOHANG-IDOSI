@@ -4,6 +4,8 @@ import type {
   Account,
   AdminAuditLog,
   AuthenticatedPrincipal,
+  CancelInboundReceiptRequest,
+  ConfirmReceiptCostsRequest,
   CancelWaitTicketRequest,
   CreateOrderSessionRequest,
   CreateProductConversionRequest,
@@ -12,12 +14,15 @@ import type {
   CreateStoreOutboundRequest,
   CreateStoreRequest,
   CreateAccountRequest,
+  CreateInboundReceiptRequest,
   DeclareStoreReceiptRequest,
   DispatchWarehouseOutboundRequest,
   FinalizeReceiptRequest,
+  InboundReceipt,
   ListOrderSessionsQuery,
   ListAccountsQuery,
   ListAuditLogsQuery,
+  ListInboundReceiptsQuery,
   ListProductsQuery,
   ListPriorityOffersQuery,
   ListReceiptsQuery,
@@ -60,6 +65,7 @@ import type {
   WaitTicket,
   WaitTicketHistory,
   WarehouseOutboundRequest,
+  WarehouseBalancesResponse,
 } from '@idosi/contracts';
 import {
   PRODUCT_CONVERSION_SEEDS,
@@ -145,6 +151,18 @@ interface ReceiptIdempotencyRecord {
   readonly response: Receipt;
 }
 
+interface InboundReceiptIdempotencyRecord {
+  readonly requestHash: string;
+  readonly response: InboundReceipt;
+}
+
+interface MemoryWarehouseBalance {
+  onHandQuantity: number;
+  reservedQuantity: number;
+  version: number;
+  updatedAt: string;
+}
+
 interface WaitMutationIdempotencyRecord {
   readonly requestHash: string;
   readonly resourceType: 'WAIT_TICKET' | 'PRIORITY_OFFER';
@@ -192,6 +210,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly products = new Map<string, Product>();
   private readonly productConversions = new Map<string, ProductConversion>();
   private readonly orderRequests = new Map<string, StoreOrderRequest>();
+  private readonly inboundReceipts = new Map<string, InboundReceipt>();
   private readonly receipts = new Map<string, Receipt>();
   private readonly waitTickets = new Map<string, WaitTicket>();
   private readonly priorityOffers = new Map<string, PriorityOffer>();
@@ -199,6 +218,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly idempotency = new Map<string, IdempotencyRecord>();
   private readonly sessionMutationIdempotency = new Map<string, SessionMutationIdempotencyRecord>();
   private readonly receiptIdempotency = new Map<string, ReceiptIdempotencyRecord>();
+  private readonly inboundReceiptIdempotency = new Map<string, InboundReceiptIdempotencyRecord>();
   private readonly waitMutationIdempotency = new Map<string, WaitMutationIdempotencyRecord>();
   private readonly inventoryMutationIdempotency = new Map<
     string,
@@ -211,6 +231,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly inventoryBags = new Map<string, StoreInventoryBag>();
   private readonly inventoryLedger = new Map<string, StoreInventoryBagLedgerEntry>();
   private readonly storeOutbounds = new Map<string, StoreOutbound>();
+  private readonly warehouseBalances = new Map<string, MemoryWarehouseBalance>();
   private readonly storeGroupIds = new Set<string>();
   private readonly audit: AuditRecord[] = [];
   private readonly operationalSettings: OperationalSettingsVersion[] = [];
@@ -617,6 +638,307 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         input.reason ? { reason: input.reason } : {},
       );
     }
+    return { data: structuredClone(updated), replayed: false };
+  }
+
+  public async listWarehouseBalances(
+    actor: AuthenticatedPrincipal,
+  ): Promise<WarehouseBalancesResponse> {
+    this.assertWarehouseActor(actor);
+    const asOf = this.now().toISOString();
+    return {
+      data: [...this.products.values()]
+        .sort((left, right) => left.sku.localeCompare(right.sku))
+        .map((product) => {
+          const balance = this.warehouseBalances.get(product.id) ?? {
+            onHandQuantity: 0,
+            reservedQuantity: 0,
+            version: 0,
+            updatedAt: asOf,
+          };
+          return {
+            productId: product.id,
+            available: {
+              kind: 'UNIT' as const,
+              quantity: balance.onHandQuantity - balance.reservedQuantity,
+            },
+            reserved: { kind: 'UNIT' as const, quantity: balance.reservedQuantity },
+            version: balance.version,
+            updatedAt: balance.updatedAt,
+          };
+        }),
+      asOf,
+    };
+  }
+
+  public async listInboundReceipts(
+    actor: AuthenticatedPrincipal,
+    query: ListInboundReceiptsQuery,
+  ): Promise<Page<InboundReceipt>> {
+    this.assertWarehouseActor(actor);
+    const supplier = query.supplier?.toLocaleLowerCase('vi-VN');
+    const values = [...this.inboundReceipts.values()]
+      .filter((receipt) => query.status === undefined || receipt.status === query.status)
+      .filter(
+        (receipt) => query.receivedFrom === undefined || receipt.receivedAt >= query.receivedFrom,
+      )
+      .filter((receipt) => query.receivedTo === undefined || receipt.receivedAt <= query.receivedTo)
+      .filter(
+        (receipt) =>
+          supplier === undefined ||
+          receipt.supplierName.toLocaleLowerCase('vi-VN').includes(supplier),
+      )
+      .sort(
+        (left, right) =>
+          right.receivedAt.localeCompare(left.receivedAt) || right.id.localeCompare(left.id),
+      );
+    return {
+      data: structuredClone(slicePage(values, query.page, query.pageSize)),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
+  }
+
+  public async getInboundReceipt(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+  ): Promise<InboundReceipt> {
+    this.assertWarehouseActor(actor);
+    const receipt = this.inboundReceipts.get(receiptId);
+    if (!receipt) throw notFound('Không tìm thấy phiếu nhập nhà cung cấp');
+    return structuredClone(receipt);
+  }
+
+  public async receiveSupplierInbound(
+    actor: AuthenticatedPrincipal,
+    input: CreateInboundReceiptRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<InboundReceipt>> {
+    this.assertWarehouseActor(actor);
+    const scopedKey = `${actor.accountId}:supplier-inbound:receive:${idempotencyKey}`;
+    const replay = this.replayInboundReceipt(scopedKey, requestHash);
+    if (replay) return { data: replay, replayed: true };
+    if (
+      [...this.inboundReceipts.values()].some(
+        (receipt) => receipt.referenceCode === input.referenceCode,
+      )
+    ) {
+      throw conflict('Mã tham chiếu phiếu nhập đã tồn tại');
+    }
+    const existingBagCodes = new Set(
+      [...this.inboundReceipts.values()].flatMap((receipt) =>
+        receipt.bags.map((bag) => bag.bagCode),
+      ),
+    );
+    if (input.bags.some((bag) => existingBagCodes.has(bag.bagCode))) {
+      throw conflict('Mã bao đã tồn tại trong phiếu nhập khác');
+    }
+    for (const bag of input.bags) {
+      const product = this.products.get(bag.productId);
+      if (!product || product.status !== 'ACTIVE') {
+        throw notFound('Phiếu nhập chứa mặt hàng không hoạt động');
+      }
+    }
+
+    const now = this.now().toISOString();
+    const id = randomUUID();
+    const totalWeightGrams = input.bags.reduce(
+      (total, bag) => total + kilogramsToGramsExact(bag.weightKg),
+      0n,
+    );
+    const receipt: InboundReceipt = {
+      id,
+      referenceCode: input.referenceCode,
+      supplierName: input.supplierName,
+      status: 'COST_PENDING',
+      bags: input.bags.map((bag) => ({
+        id: randomUUID(),
+        receiptId: id,
+        productId: bag.productId,
+        bagCode: bag.bagCode,
+        weightKg: gramsToKilogramsExact(kilogramsToGramsExact(bag.weightKg)),
+        createdAt: now,
+      })),
+      totalWeightKg: gramsToKilogramsExact(totalWeightGrams),
+      cost: null,
+      version: 0,
+      receivedByAccountId: actor.accountId,
+      receivedAt: input.receivedAt,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const quantityByProduct = new Map<string, number>();
+    for (const bag of input.bags) {
+      quantityByProduct.set(bag.productId, (quantityByProduct.get(bag.productId) ?? 0) + 1);
+    }
+    for (const [productId, quantity] of quantityByProduct) {
+      const current = this.warehouseBalances.get(productId) ?? {
+        onHandQuantity: 0,
+        reservedQuantity: 0,
+        version: 0,
+        updatedAt: now,
+      };
+      this.warehouseBalances.set(productId, {
+        ...current,
+        onHandQuantity: current.onHandQuantity + quantity,
+        version: current.version + 1,
+        updatedAt: now,
+      });
+    }
+    this.inboundReceipts.set(id, receipt);
+    this.rememberInboundReceipt(scopedKey, requestHash, receipt);
+    this.appendAudit(
+      actor,
+      context,
+      'SUPPLIER_INBOUND_RECEIVED',
+      'supplier_inbound_receipt',
+      id,
+      null,
+      receipt,
+      { bagCount: receipt.bags.length },
+    );
+    return { data: structuredClone(receipt), replayed: false };
+  }
+
+  public async confirmSupplierInboundCosts(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: ConfirmReceiptCostsRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<InboundReceipt>> {
+    this.assertWarehouseActor(actor);
+    const scopedKey = `${actor.accountId}:supplier-inbound:cost:${receiptId}:${idempotencyKey}`;
+    const replay = this.replayInboundReceipt(scopedKey, requestHash);
+    if (replay) return { data: replay, replayed: true };
+    const current = this.inboundReceipts.get(receiptId);
+    if (!current) throw notFound('Không tìm thấy phiếu nhập nhà cung cấp');
+    if (current.version !== input.expectedVersion) throw versionConflict();
+    if (current.status !== 'COST_PENDING') {
+      throw new ApiError('INVALID_STATE_TRANSITION', 'Phiếu nhập không còn chờ chốt chi phí', 409);
+    }
+    const receiptProductIds = new Set(current.bags.map((bag) => bag.productId));
+    const suppliedProductIds = new Set(input.productCosts.map((cost) => cost.productId));
+    if (
+      receiptProductIds.size !== suppliedProductIds.size ||
+      [...receiptProductIds].some((productId) => !suppliedProductIds.has(productId))
+    ) {
+      throw new ApiError(
+        'VALIDATION_ERROR',
+        'Chi phí phải bao gồm đúng mỗi mặt hàng trong phiếu nhập',
+        400,
+      );
+    }
+    const priceByProduct = new Map(
+      input.productCosts.map((cost) => [cost.productId, BigInt(cost.priceVndPerKg)]),
+    );
+    const goodsCostVnd = current.bags.reduce((total, bag) => {
+      const price = priceByProduct.get(bag.productId);
+      if (price === undefined) throw new Error('Validated supplier cost lost a product price.');
+      return total + calculateWeightedCostVnd(bag.weightKg, price);
+    }, 0n);
+    const totalCostVnd =
+      goodsCostVnd + BigInt(input.transportationFeeVnd) + BigInt(input.handlingFeeVnd);
+    if (
+      goodsCostVnd > BigInt(Number.MAX_SAFE_INTEGER) ||
+      totalCostVnd > BigInt(Number.MAX_SAFE_INTEGER)
+    ) {
+      throw new ApiError('VALIDATION_ERROR', 'Tổng chi phí vượt giới hạn VND an toàn', 400);
+    }
+    const now = this.now().toISOString();
+    const updated: InboundReceipt = {
+      ...current,
+      status: 'COST_CONFIRMED',
+      cost: {
+        productCosts: input.productCosts,
+        transportationFeeVnd: input.transportationFeeVnd,
+        handlingFeeVnd: input.handlingFeeVnd,
+        goodsCostVnd: Number(goodsCostVnd),
+        totalCostVnd: Number(totalCostVnd),
+        confirmedByAccountId: actor.accountId,
+        confirmedAt: now,
+      },
+      version: current.version + 1,
+      updatedAt: now,
+    };
+    this.inboundReceipts.set(receiptId, updated);
+    this.rememberInboundReceipt(scopedKey, requestHash, updated);
+    this.appendAudit(
+      actor,
+      context,
+      'SUPPLIER_INBOUND_COST_CONFIRMED',
+      'supplier_inbound_receipt',
+      receiptId,
+      current,
+      updated,
+    );
+    return { data: structuredClone(updated), replayed: false };
+  }
+
+  public async cancelSupplierInbound(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: CancelInboundReceiptRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<InboundReceipt>> {
+    this.assertWarehouseActor(actor);
+    const scopedKey = `${actor.accountId}:supplier-inbound:cancel:${receiptId}:${idempotencyKey}`;
+    const replay = this.replayInboundReceipt(scopedKey, requestHash);
+    if (replay) return { data: replay, replayed: true };
+    const current = this.inboundReceipts.get(receiptId);
+    if (!current) throw notFound('Không tìm thấy phiếu nhập nhà cung cấp');
+    if (current.version !== input.expectedVersion) throw versionConflict();
+    if (current.status !== 'COST_PENDING') {
+      throw new ApiError(
+        'INVALID_STATE_TRANSITION',
+        'Chỉ phiếu đang chờ chốt chi phí mới có thể hủy',
+        409,
+      );
+    }
+    const quantityByProduct = new Map<string, number>();
+    for (const bag of current.bags) {
+      quantityByProduct.set(bag.productId, (quantityByProduct.get(bag.productId) ?? 0) + 1);
+    }
+    for (const [productId, quantity] of quantityByProduct) {
+      const balance = this.warehouseBalances.get(productId);
+      if (!balance || balance.onHandQuantity - quantity < balance.reservedQuantity) {
+        throw conflict('Đã có tồn kho được giữ hoặc sử dụng; không thể hủy phiếu');
+      }
+    }
+    const now = this.now().toISOString();
+    for (const [productId, quantity] of quantityByProduct) {
+      const balance = this.warehouseBalances.get(productId);
+      if (!balance) throw new Error('Validated warehouse balance disappeared.');
+      this.warehouseBalances.set(productId, {
+        ...balance,
+        onHandQuantity: balance.onHandQuantity - quantity,
+        version: balance.version + 1,
+        updatedAt: now,
+      });
+    }
+    const updated: InboundReceipt = {
+      ...current,
+      status: 'CANCELLED',
+      version: current.version + 1,
+      updatedAt: now,
+    };
+    this.inboundReceipts.set(receiptId, updated);
+    this.rememberInboundReceipt(scopedKey, requestHash, updated);
+    this.appendAudit(
+      actor,
+      context,
+      'SUPPLIER_INBOUND_CANCELLED',
+      'supplier_inbound_receipt',
+      receiptId,
+      current,
+      updated,
+      { reason: input.reason },
+    );
     return { data: structuredClone(updated), replayed: false };
   }
 
@@ -1890,6 +2212,34 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     }
   }
 
+  private assertWarehouseActor(actor: AuthenticatedPrincipal): void {
+    if (actor.role === 'STORE') throw forbidden();
+  }
+
+  private replayInboundReceipt(scopedKey: string, requestHash: string): InboundReceipt | null {
+    const previous = this.inboundReceiptIdempotency.get(scopedKey);
+    if (!previous) return null;
+    if (previous.requestHash !== requestHash) {
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    }
+    return structuredClone(previous.response);
+  }
+
+  private rememberInboundReceipt(
+    scopedKey: string,
+    requestHash: string,
+    receipt: InboundReceipt,
+  ): void {
+    this.inboundReceiptIdempotency.set(scopedKey, {
+      requestHash,
+      response: structuredClone(receipt),
+    });
+  }
+
   private assertStoreMutationActor(actor: AuthenticatedPrincipal): void {
     if (actor.role !== 'STORE' || actor.storeId === null) throw forbidden();
   }
@@ -2118,6 +2468,12 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         unitLabel: 'bao',
         status: 'ACTIVE',
         createdAt: now,
+        updatedAt: now,
+      });
+      this.warehouseBalances.set(id, {
+        onHandQuantity: 0,
+        reservedQuantity: 0,
+        version: 0,
         updatedAt: now,
       });
     });

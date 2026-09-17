@@ -83,6 +83,30 @@ export type {
 } from './outbound-requests.js';
 
 export {
+  cancelSupplierInbound,
+  cancelSupplierInboundInTransaction,
+  confirmSupplierInboundCosts,
+  confirmSupplierInboundCostsInTransaction,
+  receiveSupplierInbound,
+  receiveSupplierInboundInTransaction,
+  SupplierInboundAuthorizationError,
+  SupplierInboundConflictError,
+  SupplierInboundNotFoundError,
+  SupplierInboundValidationError,
+} from './supplier-inbound.js';
+export type {
+  CancelledSupplierInbound,
+  CancelSupplierInboundInput,
+  ConfirmedSupplierInboundCosts,
+  ConfirmSupplierInboundCostsInput,
+  ReceivedSupplierInbound,
+  ReceiveSupplierInboundInput,
+  SupplierInboundBagInput,
+  SupplierInboundRequestContext,
+  SupplierProductCostInput,
+} from './supplier-inbound.js';
+
+export {
   calculateWeightedCostVnd,
   finalizeStoreReceipt,
   finalizeStoreReceiptInTransaction,
@@ -170,11 +194,16 @@ export type {
 
 export {
   applyWarehouseMovement,
+  loadWarehouseBalancesAt,
   recordWarehouseMovement,
   WarehouseBalanceViolationError,
   WarehouseMovementConflictError,
 } from './warehouse.js';
-export type { WarehouseMovementInput, WarehouseMovementResult } from './warehouse.js';
+export type {
+  HistoricalWarehouseBalance,
+  WarehouseMovementInput,
+  WarehouseMovementResult,
+} from './warehouse.js';
 
 export {
   cancelWaitTicket,

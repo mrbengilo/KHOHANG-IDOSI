@@ -2,6 +2,7 @@ import type {
   Account,
   AdminAuditLog,
   AuthenticatedPrincipal,
+  CancelInboundReceiptRequest,
   CancelWaitTicketRequest,
   CreateOrderSessionRequest,
   CreateProductConversionRequest,
@@ -9,12 +10,15 @@ import type {
   CreateStoreOrderRequest,
   CreateStoreRequest,
   CreateAccountRequest,
+  CreateInboundReceiptRequest,
   DeclareStoreReceiptRequest,
   DispatchWarehouseOutboundRequest,
   FinalizeReceiptRequest,
+  ConfirmReceiptCostsRequest,
   ListOrderSessionsQuery,
   ListAccountsQuery,
   ListAuditLogsQuery,
+  ListInboundReceiptsQuery,
   ListProductsQuery,
   ListReceiptsQuery,
   ListStoreInventoryBagLedgerQuery,
@@ -51,6 +55,7 @@ import type {
   ListWarehouseOutboundRequestsQuery,
   MonthlyOperationalReport,
   MonthlyOperationalReportQuery,
+  InboundReceipt,
   OperationalSettingsVersion,
   WaitTicket,
   WaitTicketHistory,
@@ -58,6 +63,7 @@ import type {
   OpenStoreInventoryBagRequest,
   CreateStoreOutboundRequest,
   ReviewStoreOutboundRequest,
+  WarehouseBalancesResponse,
   UpdateOperationalSettingsRequest,
 } from '@idosi/contracts';
 
@@ -197,6 +203,36 @@ export interface WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<OrderSession>>;
+
+  listWarehouseBalances(actor: AuthenticatedPrincipal): Promise<WarehouseBalancesResponse>;
+  listInboundReceipts(
+    actor: AuthenticatedPrincipal,
+    query: ListInboundReceiptsQuery,
+  ): Promise<Page<InboundReceipt>>;
+  getInboundReceipt(actor: AuthenticatedPrincipal, receiptId: string): Promise<InboundReceipt>;
+  receiveSupplierInbound(
+    actor: AuthenticatedPrincipal,
+    input: CreateInboundReceiptRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<InboundReceipt>>;
+  confirmSupplierInboundCosts(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: ConfirmReceiptCostsRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<InboundReceipt>>;
+  cancelSupplierInbound(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: CancelInboundReceiptRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<InboundReceipt>>;
 
   listProducts(query: ListProductsQuery): Promise<Page<Product>>;
   createProduct(
