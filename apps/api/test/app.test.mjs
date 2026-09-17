@@ -31,6 +31,127 @@ describe('KHOHANG-IDOSI API', () => {
     assert.ok(specification.json().paths['/api/v1/store-receipt-sources']);
     assert.ok(specification.json().paths['/api/v1/store-inventory-bags']);
     assert.ok(specification.json().paths['/api/v1/store-outbounds/{outboundId}/review']);
+    assert.ok(specification.json().paths['/api/v1/admin/operational-settings']);
+  });
+
+  test('versions operational settings for ADMIN without accepting or returning secrets', async () => {
+    await app.close();
+    app = await createApi({
+      repository,
+      corsOrigin: 'http://localhost:5173',
+      idosiIntegrationEndpoint:
+        'https://idosi.io.vn/api/integrations/warehouse/v1/order-statistics',
+      idosiIntegrationSecretConfigured: true,
+    });
+    const adminCookie = cookieOf(await login('admin'));
+    const storeCookie = cookieOf(await login('ds_nvt'));
+
+    const denied = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/operational-settings',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(denied.statusCode, 403);
+
+    const initial = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/operational-settings?historyLimit=10',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(initial.statusCode, 200);
+    assert.equal(initial.headers['cache-control'], 'no-store');
+    assert.equal(initial.json().data.current.version, 1);
+    assert.equal(initial.json().data.current.snapshotTime, '08:00');
+    assert.equal(initial.json().data.current.cutoffTime, '09:00');
+    assert.deepEqual(initial.json().data.integration, {
+      endpoint: 'https://idosi.io.vn/api/integrations/warehouse/v1/order-statistics',
+      status: 'CONFIGURED',
+    });
+    assert.equal(JSON.stringify(initial.json()).includes('integrationSecret'), false);
+    assert.equal(JSON.stringify(initial.json()).includes('secretConfigured'), false);
+
+    const invalidSchedule = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/operational-settings',
+      headers: { cookie: adminCookie },
+      payload: {
+        expectedVersion: 1,
+        timezone: 'Asia/Ho_Chi_Minh',
+        snapshotTime: '09:00',
+        cutoffTime: '08:00',
+        maxRequestsPerStore: 2,
+        policyVersion: 'ALLOC-v1.3',
+        idosiSyncIntervalMinutes: 15,
+      },
+    });
+    assert.equal(invalidSchedule.statusCode, 400);
+    assert.equal(invalidSchedule.json().error.code, 'VALIDATION_ERROR');
+
+    const secretInput = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/operational-settings',
+      headers: { cookie: adminCookie },
+      payload: {
+        expectedVersion: 1,
+        timezone: 'Asia/Ho_Chi_Minh',
+        snapshotTime: '08:00',
+        cutoffTime: '09:00',
+        maxRequestsPerStore: 2,
+        policyVersion: 'ALLOC-v1.3',
+        idosiSyncIntervalMinutes: 15,
+        integrationSecret: 'must-not-be-accepted',
+      },
+    });
+    assert.equal(secretInput.statusCode, 400);
+
+    const updated = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/operational-settings',
+      headers: { cookie: adminCookie, 'x-request-id': 'settings-update-request' },
+      payload: {
+        expectedVersion: 1,
+        timezone: 'Asia/Ho_Chi_Minh',
+        snapshotTime: '07:45',
+        cutoffTime: '08:45',
+        maxRequestsPerStore: 3,
+        policyVersion: 'ALLOC-v1.3',
+        idosiSyncIntervalMinutes: 30,
+      },
+    });
+    assert.equal(updated.statusCode, 200);
+    assert.equal(updated.json().data.current.version, 2);
+    assert.equal(updated.json().data.current.createdByAccountId, MEMORY_SEED_IDS.adminAccount);
+    assert.equal(updated.json().data.current.requestId, 'settings-update-request');
+    assert.deepEqual(
+      updated.json().data.history.map((item) => item.version),
+      [2, 1],
+    );
+
+    const stale = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/operational-settings',
+      headers: { cookie: adminCookie },
+      payload: {
+        expectedVersion: 1,
+        timezone: 'Asia/Ho_Chi_Minh',
+        snapshotTime: '08:00',
+        cutoffTime: '09:00',
+        maxRequestsPerStore: 2,
+        policyVersion: 'ALLOC-v1.4',
+        idosiSyncIntervalMinutes: 15,
+      },
+    });
+    assert.equal(stale.statusCode, 409);
+    assert.equal(stale.json().error.code, 'VERSION_CONFLICT');
+
+    const audit = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/audit-logs?action=OPERATIONAL_SETTINGS_VERSION_CREATED',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(audit.statusCode, 200);
+    assert.equal(audit.json().pagination.totalItems, 1);
+    assert.equal(audit.json().data[0].requestId, 'settings-update-request');
   });
 
   test('uses scrypt and issues an opaque HttpOnly session without exposing secrets', async () => {

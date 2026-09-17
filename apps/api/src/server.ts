@@ -26,6 +26,10 @@ const app = await createApi({
   ...(process.env.WEB_ORIGIN ? { corsOrigin: splitOrigins(process.env.WEB_ORIGIN) } : {}),
   secureCookies: environment === 'production',
   logger: { level: process.env.LOG_LEVEL?.trim() || 'info' },
+  ...(process.env.IDOSI_INTEGRATION_ENDPOINT?.trim()
+    ? { idosiIntegrationEndpoint: process.env.IDOSI_INTEGRATION_ENDPOINT.trim() }
+    : {}),
+  idosiIntegrationSecretConfigured: Boolean(process.env.IDOSI_INTEGRATION_SECRET?.trim()),
   // Only honor forwarding headers from loopback or RFC1918/ULA reverse proxies.
   trustProxy: ['loopback', 'uniquelocal'],
 });

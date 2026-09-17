@@ -27,6 +27,7 @@ import type {
   ListWaitTicketsQuery,
   MonthlyOperationalReport,
   MonthlyOperationalReportQuery,
+  OperationalSettingsVersion,
   OpenStoreInventoryBagRequest,
   Product,
   ProductConversion,
@@ -48,6 +49,7 @@ import type {
   UpdateProductRequest,
   UpdateAccountRequest,
   UpdateProductConversionRequest,
+  UpdateOperationalSettingsRequest,
   DeleteProductConversionRequest,
   WaitTicket,
   WaitTicketHistory,
@@ -77,6 +79,7 @@ import {
   orderRequestItems,
   orderRequests,
   orderSessions,
+  operationalSettingsVersions,
   outboundRequestLines,
   OrderRequestAuthorizationError,
   OrderSessionUnavailableError,
@@ -478,6 +481,79 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       data: rows.map(adminAuditDto),
       pagination: pagination(query.page, query.pageSize, totalRow?.value ?? 0),
     };
+  }
+
+  public async getOperationalSettings(
+    actor: AuthenticatedPrincipal,
+    historyLimit: number,
+  ): Promise<{
+    readonly current: OperationalSettingsVersion;
+    readonly history: readonly OperationalSettingsVersion[];
+  }> {
+    requirePostgresAdmin(actor);
+    const rows = await db
+      .select()
+      .from(operationalSettingsVersions)
+      .orderBy(desc(operationalSettingsVersions.version))
+      .limit(historyLimit);
+    const history = rows.map(operationalSettingsDto);
+    const current = history[0];
+    if (!current) throw new Error('Operational settings have not been initialized');
+    return { current, history };
+  }
+
+  public async updateOperationalSettings(
+    actor: AuthenticatedPrincipal,
+    input: UpdateOperationalSettingsRequest,
+    context: RequestContext,
+  ): Promise<OperationalSettingsVersion> {
+    requirePostgresAdmin(actor);
+    return db.transaction((tx) =>
+      withAdvisoryLock(tx, 'operational-settings', 'current', async () => {
+        const [currentRow] = await tx
+          .select()
+          .from(operationalSettingsVersions)
+          .orderBy(desc(operationalSettingsVersions.version))
+          .limit(1);
+        if (!currentRow) throw new Error('Operational settings have not been initialized');
+        if (currentRow.version !== input.expectedVersion) {
+          throw operationalSettingsVersionConflict();
+        }
+
+        const [createdRow] = await tx
+          .insert(operationalSettingsVersions)
+          .values({
+            version: currentRow.version + 1,
+            timezone: input.timezone,
+            snapshotTime: input.snapshotTime,
+            cutoffTime: input.cutoffTime,
+            maxRequestsPerStore: input.maxRequestsPerStore,
+            policyVersion: input.policyVersion,
+            idosiSyncIntervalMinutes: input.idosiSyncIntervalMinutes,
+            createdByUserId: actor.accountId,
+            requestId: context.requestId,
+          })
+          .returning();
+        if (!createdRow) throw new Error('Operational settings insert did not return a row');
+
+        const current = operationalSettingsDto(currentRow);
+        const created = operationalSettingsDto(createdRow);
+        await tx
+          .insert(auditLogs)
+          .values(
+            auditValue(
+              actor,
+              context,
+              'OPERATIONAL_SETTINGS_VERSION_CREATED',
+              'operational_settings_version',
+              created.id,
+              operationalSettingsJson(current),
+              operationalSettingsJson(created),
+            ),
+          );
+        return created;
+      }),
+    );
   }
 
   public async listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>> {
@@ -2220,6 +2296,25 @@ function adminAuditDto(row: typeof auditLogs.$inferSelect): AdminAuditLog {
   };
 }
 
+function operationalSettingsDto(
+  row: typeof operationalSettingsVersions.$inferSelect,
+): OperationalSettingsVersion {
+  return {
+    id: row.id,
+    version: row.version,
+    timezone: row.timezone as OperationalSettingsVersion['timezone'],
+    snapshotTime: row.snapshotTime.slice(0, 5),
+    cutoffTime: row.cutoffTime.slice(0, 5),
+    maxRequestsPerStore: row.maxRequestsPerStore,
+    policyVersion: row.policyVersion,
+    idosiSyncIntervalMinutes:
+      row.idosiSyncIntervalMinutes as OperationalSettingsVersion['idosiSyncIntervalMinutes'],
+    createdByAccountId: row.createdByUserId,
+    requestId: row.requestId,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
 function productDto(row: typeof products.$inferSelect): Product {
   return {
     id: row.id,
@@ -2612,6 +2707,22 @@ function accountJson(account: Account): JsonObject {
   };
 }
 
+function operationalSettingsJson(settings: OperationalSettingsVersion): JsonObject {
+  return {
+    id: settings.id,
+    version: settings.version,
+    timezone: settings.timezone,
+    snapshotTime: settings.snapshotTime,
+    cutoffTime: settings.cutoffTime,
+    maxRequestsPerStore: settings.maxRequestsPerStore,
+    policyVersion: settings.policyVersion,
+    idosiSyncIntervalMinutes: settings.idosiSyncIntervalMinutes,
+    createdByAccountId: settings.createdByAccountId,
+    requestId: settings.requestId,
+    createdAt: settings.createdAt,
+  };
+}
+
 function databaseAccountRole(role: Account['role']): 'admin' | 'htkd' | 'store' {
   return role.toLocaleLowerCase('en-US') as 'admin' | 'htkd' | 'store';
 }
@@ -2643,6 +2754,10 @@ function requireAccountStatusVersion(
 
 function accountVersionConflict(): ApiError {
   return new ApiError('VERSION_CONFLICT', 'Tài khoản đã thay đổi, vui lòng tải lại', 409);
+}
+
+function operationalSettingsVersionConflict(): ApiError {
+  return new ApiError('VERSION_CONFLICT', 'Cấu hình vận hành đã thay đổi, vui lòng tải lại', 409);
 }
 
 function productJson(product: Product): JsonObject {

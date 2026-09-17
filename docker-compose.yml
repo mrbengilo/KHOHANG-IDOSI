@@ -114,6 +114,8 @@ services:
       API_PORT: 3000
       API_STORAGE: postgres
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      IDOSI_INTEGRATION_ENDPOINT: ${IDOSI_INTEGRATION_ENDPOINT:-https://idosi.io.vn/api/integrations/warehouse/v1/order-statistics}
+      IDOSI_INTEGRATION_SECRET: ${IDOSI_INTEGRATION_SECRET:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: production
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
