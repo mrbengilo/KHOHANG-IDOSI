@@ -8,6 +8,8 @@ export interface WorkerConfig {
   readonly timeZone: string;
   readonly logLevel: LogLevel;
   readonly shutdownTimeoutMs: number;
+  readonly idosiIntegrationEndpoint: string;
+  readonly idosiIntegrationSecret: string;
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -46,7 +48,24 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       300_000,
       'WORKER_SHUTDOWN_TIMEOUT_MS',
     ),
+    idosiIntegrationEndpoint: integrationEndpoint(env.IDOSI_INTEGRATION_ENDPOINT),
+    idosiIntegrationSecret: env.IDOSI_INTEGRATION_SECRET?.trim() || '',
   };
+}
+
+function integrationEndpoint(raw: string | undefined): string {
+  const value = raw?.trim() || 'https://idosi.io.vn/api/integrations/warehouse/v1/order-statistics';
+  if (value.length > 2_048) throw new Error('IDOSI_INTEGRATION_ENDPOINT is too long.');
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error('IDOSI_INTEGRATION_ENDPOINT must be an absolute URL.');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('IDOSI_INTEGRATION_ENDPOINT must use HTTP or HTTPS.');
+  }
+  return parsed.toString();
 }
 
 function required(value: string | undefined, name: string): string {

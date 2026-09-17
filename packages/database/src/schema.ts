@@ -1803,6 +1803,117 @@ export const operationalSettingsVersions = pgTable(
   ],
 );
 
+/** Latest validated IDOSI aggregate for one store/filter scope. It never drives inventory. */
+export const idosiStatisticsSnapshots = pgTable(
+  'idosi_statistics_snapshots',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    scopeKey: text('scope_key').notNull(),
+    period: text('period').notNull(),
+    filterDate: date('filter_date'),
+    shiftId: text('shift_id'),
+    paymentMethod: text('payment_method'),
+    payload: jsonb('payload').$type<JsonObject>().notNull(),
+    sourceGeneratedAt: timestamp('source_generated_at', { withTimezone: true }).notNull(),
+    sourceRequestId: text('source_request_id').notNull(),
+    firstSyncedAt: timestamp('first_synced_at', { withTimezone: true }).notNull(),
+    lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }).notNull(),
+    syncedByUserId: uuid('synced_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+  },
+  (table) => [
+    uniqueIndex('idosi_statistics_snapshots_store_scope_uidx').on(table.storeId, table.scopeKey),
+    index('idosi_statistics_snapshots_store_period_idx').on(
+      table.storeId,
+      table.period,
+      table.lastSyncedAt,
+    ),
+    check(
+      'idosi_statistics_snapshots_period_format',
+      sql`${table.period} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`,
+    ),
+    check(
+      'idosi_statistics_snapshots_scope_not_blank',
+      sql`length(btrim(${table.scopeKey})) BETWEEN 1 AND 500`,
+    ),
+    check(
+      'idosi_statistics_snapshots_shift_not_blank',
+      sql`${table.shiftId} IS NULL OR length(btrim(${table.shiftId})) BETWEEN 1 AND 200`,
+    ),
+    check(
+      'idosi_statistics_snapshots_payment_method',
+      sql`${table.paymentMethod} IS NULL OR ${table.paymentMethod} IN ('cash', 'transfer')`,
+    ),
+    check(
+      'idosi_statistics_snapshots_sync_order',
+      sql`${table.lastSyncedAt} >= ${table.firstSyncedAt}`,
+    ),
+  ],
+);
+
+/** Completed sync attempts remain append-only evidence, including safe failure details. */
+export const idosiStatisticsSyncAttempts = pgTable(
+  'idosi_statistics_sync_attempts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    snapshotId: uuid('snapshot_id').references(() => idosiStatisticsSnapshots.id, {
+      onDelete: 'restrict',
+    }),
+    scopeKey: text('scope_key').notNull(),
+    period: text('period').notNull(),
+    source: text('source').notNull(),
+    status: text('status').notNull(),
+    errorCode: text('error_code'),
+    errorMessage: text('error_message'),
+    actorUserId: uuid('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
+    requestId: text('request_id').notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    index('idosi_statistics_sync_attempts_scope_completed_idx').on(
+      table.storeId,
+      table.scopeKey,
+      table.completedAt,
+    ),
+    index('idosi_statistics_sync_attempts_scheduler_idx').on(
+      table.period,
+      table.source,
+      table.completedAt,
+    ),
+    check(
+      'idosi_statistics_sync_attempts_scope_not_blank',
+      sql`length(btrim(${table.scopeKey})) BETWEEN 1 AND 500`,
+    ),
+    check(
+      'idosi_statistics_sync_attempts_period_format',
+      sql`${table.period} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`,
+    ),
+    check('idosi_statistics_sync_attempts_source', sql`${table.source} IN ('manual', 'scheduled')`),
+    check('idosi_statistics_sync_attempts_status', sql`${table.status} IN ('succeeded', 'failed')`),
+    check(
+      'idosi_statistics_sync_attempts_result',
+      sql`(${table.status} = 'succeeded' AND ${table.snapshotId} IS NOT NULL AND ${table.errorCode} IS NULL AND ${table.errorMessage} IS NULL)
+        OR (${table.status} = 'failed' AND ${table.snapshotId} IS NULL AND ${table.errorCode} IS NOT NULL AND ${table.errorMessage} IS NOT NULL)`,
+    ),
+    check(
+      'idosi_statistics_sync_attempts_time_order',
+      sql`${table.completedAt} >= ${table.startedAt}`,
+    ),
+    check(
+      'idosi_statistics_sync_attempts_request_id_not_blank',
+      sql`length(btrim(${table.requestId})) BETWEEN 1 AND 128`,
+    ),
+  ],
+);
+
 export const auditLogs = pgTable(
   'audit_logs',
   {

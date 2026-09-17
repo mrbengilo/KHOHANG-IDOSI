@@ -32,6 +32,7 @@
     "seed:production": "node --enable-source-maps dist/seed.js"
   },
   "dependencies": {
+    "@idosi/contracts": "0.1.0",
     "drizzle-orm": "^0.44.5",
     "pg": "^8.16.3"
   },
