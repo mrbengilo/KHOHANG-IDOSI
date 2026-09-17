@@ -6,6 +6,7 @@ import type { AppOutletContext } from '../components/AppShell';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { PageHeader } from '../components/PageHeader';
+import { WaitlistPanel } from '../components/WaitlistPanel';
 import {
   ApiClientError,
   listAccessibleStores,
@@ -230,7 +231,8 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
   const idempotencyKey = useRef<string | null>(null);
 
   const stores = storesQuery.data ?? [];
-  const activeProducts = (catalogQuery.data ?? []).filter((product) => product.status === 'ACTIVE');
+  const catalogProducts = catalogQuery.data ?? [];
+  const activeProducts = catalogProducts.filter((product) => product.status === 'ACTIVE');
   const sessions = sessionsQuery.data ?? [];
   const activeSession = sessions.find((session) => session.id === selectedSessionId) ?? sessions[0];
   const principalStoreId = sessionQuery.data?.principal.storeId ?? '';
@@ -250,8 +252,8 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
   const usedSlots = submittedRequests.filter((request) => request.status !== 'CANCELLED').length;
   const remainingSlots = Math.max(0, 2 - usedSlots);
   const productNameById = useMemo(
-    () => new Map(activeProducts.map((product) => [product.id, product.name])),
-    [activeProducts],
+    () => new Map(catalogProducts.map((product) => [product.id, product.name])),
+    [catalogProducts],
   );
   const isWholesale = role === 'STORE' && storeKind === 'WHOLESALE';
 
@@ -584,6 +586,14 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
           </article>
         ))}
       </section>
+
+      {role === 'STORE' && effectiveStoreId ? (
+        <WaitlistPanel
+          productNameById={productNameById}
+          role={role}
+          scopeStoreId={effectiveStoreId}
+        />
+      ) : null}
     </>
   );
 }

@@ -1,13 +1,16 @@
 import { ArrowRight, CheckCircle2, Clock3, Play, RotateCcw, ShieldCheck } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
+import { useOutletContext } from 'react-router-dom';
+import type { AppOutletContext } from '../components/AppShell';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
 import { PriorityOffer } from '../components/PriorityOffer';
 import { StatCard } from '../components/StatCard';
-import { UnavailableFeature } from '../components/UnavailableFeature';
-import { mockModeEnabled } from '../lib/api';
+import { WaitlistPanel } from '../components/WaitlistPanel';
+import { listAccessibleStores, listCatalog, mockModeEnabled } from '../lib/api';
 import { allocationRequests as seed } from '../lib/data';
 import type { AllocationRequest } from '../lib/types';
 
@@ -19,6 +22,7 @@ const statusText: Record<AllocationRequest['status'], string> = {
 };
 
 export function AllocationPage() {
+  const { role } = useOutletContext<AppOutletContext>();
   const [requests, setRequests] = useState(seed);
   const [filter, setFilter] = useState<'ALL' | AllocationRequest['status']>('ALL');
   const [runState, setRunState] = useState<'READY' | 'RUNNING' | 'DONE'>('DONE');
@@ -28,7 +32,7 @@ export function AllocationPage() {
     [filter, requests],
   );
 
-  if (!mockModeEnabled) return <UnavailableFeature title="Phân bổ hàng hóa" />;
+  if (!mockModeEnabled) return <ProductionAllocationOversight role={role} />;
 
   const rerun = () => {
     setRunState('RUNNING');
@@ -224,6 +228,58 @@ export function AllocationPage() {
           </div>
         )}
       </section>
+    </>
+  );
+}
+
+function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>) {
+  const catalogQuery = useQuery({ queryFn: listCatalog, queryKey: ['catalog'], retry: false });
+  const storesQuery = useQuery({
+    queryFn: listAccessibleStores,
+    queryKey: ['stores', 'accessible'],
+    retry: false,
+  });
+  const productNameById = useMemo(
+    () => new Map((catalogQuery.data ?? []).map((product) => [product.id, product.name])),
+    [catalogQuery.data],
+  );
+  const storeNameById = useMemo(
+    () => new Map((storesQuery.data ?? []).map((store) => [store.id, store.name])),
+    [storesQuery.data],
+  );
+  const contextError = catalogQuery.error ?? storesQuery.error;
+
+  return (
+    <>
+      <PageHeader
+        description="Dữ liệu phiếu chờ và lượt ưu tiên trong phạm vi được phân quyền"
+        title="Giám sát phân bổ hàng hóa"
+      />
+      {contextError ? (
+        <section className="panel form-error" role="alert">
+          <p>Không thể tải tên cửa hàng hoặc mặt hàng; mã định danh vẫn được giữ nguyên.</p>
+          <Button
+            onClick={() => {
+              void catalogQuery.refetch();
+              void storesQuery.refetch();
+            }}
+            tone="secondary"
+          >
+            <RotateCcw aria-hidden="true" size={16} /> Thử tải lại tên
+          </Button>
+        </section>
+      ) : null}
+      {catalogQuery.isPending || storesQuery.isPending ? (
+        <section aria-live="polite" className="panel">
+          Đang tải thông tin đối chiếu…
+        </section>
+      ) : null}
+      <WaitlistPanel
+        productNameById={productNameById}
+        role={role}
+        storeNameById={storeNameById}
+        title="Giám sát phiếu chờ"
+      />
     </>
   );
 }

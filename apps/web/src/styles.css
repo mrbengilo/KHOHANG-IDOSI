@@ -832,6 +832,16 @@ td small {
   font-weight: 700;
   padding: 3px 0;
 }
+.link-button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.98);
+}
+.link-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.link-button--danger {
+  color: var(--danger);
+}
 .table-actions button:last-child {
   color: var(--danger);
 }
@@ -885,6 +895,7 @@ td small {
 }
 .priority-offer__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 .priority-offer .button {
@@ -895,6 +906,32 @@ td small {
   border-color: rgba(255, 255, 255, 0.42);
   background: rgba(255, 255, 255, 0.12);
   color: white;
+}
+.priority-offer__error {
+  color: #fff7ed !important;
+  font-weight: 700;
+}
+.priority-offer__decline {
+  display: grid;
+  grid-column: 1 / -1;
+  width: min(100%, 420px);
+  gap: 6px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.12);
+  padding: 10px;
+}
+.priority-offer__decline label,
+.priority-offer__decline span {
+  font-size: 10px;
+  font-weight: 700;
+}
+.priority-offer__decline input {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  border-radius: 7px;
+  background: white;
+  color: var(--navy);
+  padding: 8px 10px;
 }
 
 .permission-card,
@@ -1134,8 +1171,16 @@ td small {
   margin-top: 5px;
 }
 .dialog__header button {
+  display: grid;
+  min-width: 44px;
+  min-height: 44px;
+  place-items: center;
   border: 0;
   background: transparent;
+  transition: transform 100ms ease;
+}
+.dialog__header button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.96);
 }
 .dialog__summary {
   display: flex;
@@ -1207,10 +1252,66 @@ td small {
   color: var(--muted);
   font-size: 10px;
 }
+.waitlist-panel {
+  margin-top: 20px;
+}
+.waitlist-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+}
+.waitlist-panel__actions .link-button {
+  min-height: 38px;
+}
+.waitlist-panel__error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.waitlist-dialog {
+  max-height: min(760px, calc(100vh - 36px));
+}
+.waitlist-dialog__body {
+  display: grid;
+  min-height: 0;
+  gap: 16px;
+  overflow-y: auto;
+}
+.waitlist-dialog__body section {
+  display: grid;
+  gap: 8px;
+}
+.waitlist-dialog__body h3 {
+  font-size: 13px;
+}
+.waitlist-dialog__body article {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 0;
+}
+.waitlist-dialog__body article span {
+  color: var(--muted);
+  font-size: 10px;
+  text-align: right;
+}
 .request-line button {
+  display: grid;
+  min-width: 44px;
+  min-height: 44px;
+  place-items: center;
   border: 0;
   background: transparent;
   color: var(--danger);
+  transition: transform 100ms ease;
+}
+.request-line button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.96);
 }
 .grouped-demand {
   display: flex;
@@ -2413,8 +2514,42 @@ td small {
     display: grid;
     grid-template-columns: 1fr 1fr;
   }
+  .priority-offer .button {
+    min-height: 44px;
+  }
   .priority-offer__actions .button:last-child {
     grid-column: 1 / -1;
+  }
+  .priority-offer__actions .priority-offer__open,
+  .priority-offer__decline {
+    grid-column: 1 / -1;
+  }
+  .priority-offer__decline {
+    width: 100%;
+  }
+  .waitlist-panel article {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .waitlist-panel article > div:first-child {
+    min-width: calc(100% - 100px);
+  }
+  .waitlist-panel__actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .waitlist-panel__actions .link-button {
+    min-height: 44px;
+  }
+  .waitlist-panel__error {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .waitlist-dialog__body article {
+    flex-direction: column;
+  }
+  .waitlist-dialog__body article span {
+    text-align: left;
   }
   .timeline-strip {
     grid-template-columns: 1fr;

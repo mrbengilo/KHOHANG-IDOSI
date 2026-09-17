@@ -1,12 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  cancelWaitTicket,
   declareStoreReceipt,
   finalizeStoreReceipt,
   getMonthlyOperationalReport,
   getStoreReceipt,
+  getWaitTicketHistory,
   listCatalog,
   listOpenOrderSessions,
+  listPriorityOffers,
   listStoreReceipts,
+  listWaitTickets,
+  respondPriorityOffer,
   returnStoreReceiptForCorrection,
   submitStoreOrderRequest,
   submitStoreReceipt,
@@ -326,5 +331,160 @@ describe('API projections', () => {
     expect(report.totals.vatCostVnd).toEqual(
       expect.objectContaining({ unavailableReason: 'VAT_NOT_CAPTURED', value: null }),
     );
+  });
+
+  it('validates waitlist payloads and sends exact idempotent mutation bodies', async () => {
+    const ticketId = '70000000-0000-4000-8000-000000000001';
+    const offerId = '71000000-0000-4000-8000-000000000001';
+    const sessionId = '10000000-0000-4000-8000-000000000001';
+    const storeId = '20000000-0000-4000-8000-000000000001';
+    const productId = '40000000-0000-4000-8000-000000000001';
+    const accountId = '50000000-0000-4000-8000-000000000001';
+    const ticket = {
+      createdAt: '2026-09-17T00:00:00.000Z',
+      fulfilled: { kind: 'UNIT', quantity: 0 },
+      id: ticketId,
+      mergedOrderId: null,
+      priority: 'P0A',
+      productId,
+      remaining: { kind: 'UNIT', quantity: 3 },
+      requested: { kind: 'UNIT', quantity: 3 },
+      sessionId,
+      status: 'OFFERED',
+      storeId,
+      updatedAt: '2026-09-17T00:05:00.000Z',
+    };
+    const offer = {
+      accepted: null,
+      expiresAt: '2026-09-17T01:00:00.000Z',
+      id: offerId,
+      offered: { kind: 'UNIT' as const, quantity: 3 },
+      offeredAt: '2026-09-17T00:05:00.000Z',
+      productId,
+      respondedAt: null,
+      status: 'PENDING',
+      storeId,
+      waitTicketId: ticketId,
+    };
+    const calls: Array<{ body: unknown; key: string | null; url: string }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        calls.push({
+          body: init?.body ? JSON.parse(String(init.body)) : null,
+          key: new Headers(init?.headers).get('idempotency-key'),
+          url,
+        });
+        if (url.includes('/history')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: {
+                  audit: [
+                    {
+                      action: 'PRIORITY_OFFER_CREATED',
+                      actorAccountId: accountId,
+                      actorRole: 'HTKD',
+                      actorStoreId: null,
+                      after: null,
+                      before: null,
+                      createdAt: '2026-09-17T00:05:00.000Z',
+                      entityId: offerId,
+                      entityType: 'PRIORITY_OFFER',
+                      id: '72000000-0000-4000-8000-000000000001',
+                      metadata: {},
+                      requestId: 'request-1',
+                    },
+                  ],
+                  offers: [offer],
+                  ticket,
+                },
+              }),
+              { status: 200 },
+            ),
+          );
+        }
+        if (url.includes('/priority-offers/') && init?.method === 'POST') {
+          const acceptedOffer = {
+            ...offer,
+            accepted: offer.offered,
+            respondedAt: '2026-09-17T00:10:00.000Z',
+            status: 'ACCEPTED',
+          };
+          return Promise.resolve(
+            new Response(JSON.stringify({ data: acceptedOffer }), { status: 200 }),
+          );
+        }
+        if (url.includes('/priority-offers')) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ data: [offer], pagination }), { status: 200 }),
+          );
+        }
+        if (url.endsWith('/cancel')) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ data: { ...ticket, status: 'CANCELLED' } }), {
+              status: 200,
+            }),
+          );
+        }
+        return Promise.resolve(
+          new Response(JSON.stringify({ data: [ticket], pagination }), { status: 200 }),
+        );
+      }),
+    );
+
+    await expect(listWaitTickets({ storeId })).resolves.toEqual([ticket]);
+    await expect(listPriorityOffers({ status: 'PENDING', storeId })).resolves.toEqual([offer]);
+    await expect(getWaitTicketHistory(ticketId, 25)).resolves.toEqual(
+      expect.objectContaining({ ticket: expect.objectContaining({ id: ticketId }) }),
+    );
+    await expect(
+      respondPriorityOffer(
+        offerId,
+        { accepted: offer.offered, action: 'ACCEPT' },
+        'priority-response-key',
+      ),
+    ).resolves.toEqual(expect.objectContaining({ status: 'ACCEPTED' }));
+    await expect(
+      cancelWaitTicket(ticketId, { reason: 'Cửa hàng không còn nhu cầu' }, 'ticket-cancel-key'),
+    ).resolves.toEqual(expect.objectContaining({ status: 'CANCELLED' }));
+
+    expect(calls.map((call) => call.url)).toEqual([
+      expect.stringContaining(`/wait-tickets?page=1&pageSize=100&storeId=${storeId}`),
+      expect.stringContaining(
+        `/priority-offers?page=1&pageSize=100&status=PENDING&storeId=${storeId}`,
+      ),
+      expect.stringContaining(`/wait-tickets/${ticketId}/history?limit=25`),
+      expect.stringContaining(`/priority-offers/${offerId}/respond`),
+      expect.stringContaining(`/wait-tickets/${ticketId}/cancel`),
+    ]);
+    expect(calls[3]).toEqual(
+      expect.objectContaining({
+        body: { accepted: { kind: 'UNIT', quantity: 3 }, action: 'ACCEPT' },
+        key: 'priority-response-key',
+      }),
+    );
+    expect(calls[4]).toEqual(
+      expect.objectContaining({
+        body: { reason: 'Cửa hàng không còn nhu cầu' },
+        key: 'ticket-cancel-key',
+      }),
+    );
+  });
+
+  it('rejects malformed waitlist responses instead of rendering invented state', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ data: [{ status: 'MADE_UP' }], pagination }), {
+            status: 200,
+          }),
+        ),
+      ),
+    );
+
+    await expect(listWaitTickets()).rejects.toThrow();
   });
 });

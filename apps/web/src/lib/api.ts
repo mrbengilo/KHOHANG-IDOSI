@@ -1,19 +1,27 @@
 import {
   ErrorEnvelopeSchema,
+  CancelWaitTicketRequestSchema,
   ListReceiptsResponseSchema,
+  ListPriorityOffersResponseSchema,
   GetSessionResponseSchema,
   ListProductConversionsResponseSchema,
   ListProductsResponseSchema,
   ListOrderSessionsResponseSchema,
   ListStoreOrderRequestsResponseSchema,
   ListStoresResponseSchema,
+  ListWaitTicketsResponseSchema,
   LoginResponseSchema,
   LogoutResponseSchema,
   MonthlyOperationalReportResponseSchema,
   ProductConversionResponseSchema,
   ProductResponseSchema,
+  RespondPriorityOfferRequestSchema,
+  RespondPriorityOfferResponseSchema,
   ReceiptResponseSchema,
   StoreOrderRequestResponseSchema,
+  WaitTicketHistoryResponseSchema,
+  WaitTicketResponseSchema,
+  type CancelWaitTicketRequest,
   type DeclareStoreReceiptRequest,
   type FinalizeReceiptRequest,
   type CreateProductConversionRequest,
@@ -22,8 +30,11 @@ import {
   type MonthlyOperationalReport,
   type MonthlyOperationalReportQuery,
   type OrderSession,
+  type PriorityOffer,
+  type PriorityOfferStatus,
   type Receipt,
   type ReceiptStatus,
+  type RespondPriorityOfferRequest,
   type ReturnReceiptForCorrectionRequest,
   type Session,
   type Store,
@@ -31,6 +42,9 @@ import {
   type SubmitStoreReceiptRequest,
   type UpdateProductConversionRequest,
   type StoreKind,
+  type WaitTicket,
+  type WaitTicketHistory,
+  type WaitTicketStatus,
 } from '@idosi/contracts';
 import { businessDate } from './business-time';
 import { shouldEnableMockMode } from './runtime-mode';
@@ -287,6 +301,81 @@ export async function submitStoreOrderRequest(
     method: 'POST',
   });
   return StoreOrderRequestResponseSchema.parse(payload).data;
+}
+
+interface WaitTicketFilters {
+  readonly priority?: WaitTicket['priority'];
+  readonly productId?: string;
+  readonly sessionId?: string;
+  readonly status?: WaitTicketStatus;
+  readonly storeId?: string;
+}
+
+export async function listWaitTickets(filters: WaitTicketFilters = {}): Promise<WaitTicket[]> {
+  const query = new URLSearchParams({ page: '1', pageSize: '100' });
+  if (filters.priority) query.set('priority', filters.priority);
+  if (filters.productId) query.set('productId', filters.productId);
+  if (filters.sessionId) query.set('sessionId', filters.sessionId);
+  if (filters.status) query.set('status', filters.status);
+  if (filters.storeId) query.set('storeId', filters.storeId);
+  const payload = await request(`/wait-tickets?${query.toString()}`);
+  return ListWaitTicketsResponseSchema.parse(payload).data;
+}
+
+interface PriorityOfferFilters {
+  readonly status?: PriorityOfferStatus;
+  readonly storeId?: string;
+  readonly waitTicketId?: string;
+}
+
+export async function listPriorityOffers(
+  filters: PriorityOfferFilters = {},
+): Promise<PriorityOffer[]> {
+  const query = new URLSearchParams({ page: '1', pageSize: '100' });
+  if (filters.status) query.set('status', filters.status);
+  if (filters.storeId) query.set('storeId', filters.storeId);
+  if (filters.waitTicketId) query.set('waitTicketId', filters.waitTicketId);
+  const payload = await request(`/priority-offers?${query.toString()}`);
+  return ListPriorityOffersResponseSchema.parse(payload).data;
+}
+
+export async function getWaitTicketHistory(
+  waitTicketId: string,
+  limit = 100,
+): Promise<WaitTicketHistory> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  const payload = await request(
+    `/wait-tickets/${encodeURIComponent(waitTicketId)}/history?${query.toString()}`,
+  );
+  return WaitTicketHistoryResponseSchema.parse(payload).data;
+}
+
+export async function cancelWaitTicket(
+  waitTicketId: string,
+  input: CancelWaitTicketRequest,
+  idempotencyKey: string,
+): Promise<WaitTicket> {
+  const validated = CancelWaitTicketRequestSchema.parse(input);
+  const payload = await request(`/wait-tickets/${encodeURIComponent(waitTicketId)}/cancel`, {
+    body: JSON.stringify(validated),
+    headers: { 'idempotency-key': idempotencyKey },
+    method: 'POST',
+  });
+  return WaitTicketResponseSchema.parse(payload).data;
+}
+
+export async function respondPriorityOffer(
+  offerId: string,
+  input: RespondPriorityOfferRequest,
+  idempotencyKey: string,
+): Promise<PriorityOffer> {
+  const validated = RespondPriorityOfferRequestSchema.parse(input);
+  const payload = await request(`/priority-offers/${encodeURIComponent(offerId)}/respond`, {
+    body: JSON.stringify(validated),
+    headers: { 'idempotency-key': idempotencyKey },
+    method: 'POST',
+  });
+  return RespondPriorityOfferResponseSchema.parse(payload).data;
 }
 
 interface ReceiptFilters {
