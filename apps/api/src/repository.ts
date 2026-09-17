@@ -30,6 +30,8 @@ import type {
   UpdateProductConversionRequest,
   DeleteProductConversionRequest,
   ListWaitTicketsQuery,
+  MonthlyOperationalReport,
+  MonthlyOperationalReportQuery,
   WaitTicket,
   WaitTicketHistory,
 } from '@idosi/contracts';
@@ -235,6 +237,11 @@ export interface WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<PriorityOffer>>;
+
+  getMonthlyOperationalReport(
+    actor: AuthenticatedPrincipal,
+    query: MonthlyOperationalReportQuery,
+  ): Promise<MonthlyOperationalReport>;
 
   getOrderStatistics(
     actor: AuthenticatedPrincipal,

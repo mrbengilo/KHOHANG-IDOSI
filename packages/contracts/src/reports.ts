@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import {
   EntityIdSchema,
+  IsoDateSchema,
   IsoDateTimeSchema,
   KilogramsDecimalSchema,
   MoneyVndSchema,
@@ -144,6 +145,167 @@ export type MonthlyReport = z.infer<typeof MonthlyReportSchema>;
 
 export const MonthlyReportResponseSchema = z.object({ data: MonthlyReportSchema }).strict();
 export type MonthlyReportResponse = z.infer<typeof MonthlyReportResponseSchema>;
+
+/**
+ * Exact non-negative integer encoded as JSON text. Operational report totals can exceed
+ * JavaScript's safe-integer range, so bigint-backed values must never be emitted as numbers.
+ */
+export const ReportExactIntegerSchema = z
+  .string()
+  .min(1)
+  .max(40)
+  .regex(/^(0|[1-9]\d*)$/, 'Expected a canonical non-negative integer string');
+export type ReportExactInteger = z.infer<typeof ReportExactIntegerSchema>;
+
+export const ReportMetricSourceSchema = z.enum([
+  'WAREHOUSE_RECEIPTS',
+  'STORE_RECEIPTS',
+  'STORE_OUTBOUNDS',
+  'WAREHOUSE_RECEIPTS_AND_STORE_OUTBOUNDS',
+  'STORE_RECEIPTS_AND_STORE_OUTBOUNDS',
+  'NOT_AVAILABLE',
+]);
+export type ReportMetricSource = z.infer<typeof ReportMetricSourceSchema>;
+
+export const ReportUnavailableReasonSchema = z.enum([
+  'MISSING_INBOUND_WEIGHT',
+  'MISSING_SALE_REVENUE',
+  'ZERO_INBOUND_WEIGHT',
+  'VAT_NOT_CAPTURED',
+  'COGS_NOT_RECORDED_PER_SALE',
+]);
+export type ReportUnavailableReason = z.infer<typeof ReportUnavailableReasonSchema>;
+
+function reportMetricSchema<TValue extends z.ZodTypeAny>(valueSchema: TValue) {
+  return z
+    .object({
+      value: valueSchema.nullable(),
+      unavailableReason: ReportUnavailableReasonSchema.nullable(),
+      source: ReportMetricSourceSchema,
+    })
+    .strict()
+    .superRefine((metric, context) => {
+      if (metric.value === null && metric.unavailableReason === null) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['unavailableReason'],
+          message: 'An unavailable metric requires a reason',
+        });
+      }
+      if (metric.value !== null && metric.unavailableReason !== null) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['unavailableReason'],
+          message: 'An available metric cannot have an unavailable reason',
+        });
+      }
+      if (metric.value !== null && metric.source === 'NOT_AVAILABLE') {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['source'],
+          message: 'An available metric requires a concrete data source',
+        });
+      }
+    });
+}
+
+/** JSON-safe representation of a bigint-backed operational metric. */
+export const ExactIntegerReportMetricSchema = reportMetricSchema(ReportExactIntegerSchema);
+export type ExactIntegerReportMetric = z.infer<typeof ExactIntegerReportMetricSchema>;
+
+/** Gross margin may be negative, so only integer/safe-number constraints apply here. */
+export const BasisPointsReportMetricSchema = reportMetricSchema(z.number().int().safe());
+export type BasisPointsReportMetric = z.infer<typeof BasisPointsReportMetricSchema>;
+
+export const MonthlyOperationalReportPeriodSchema = z
+  .object({
+    start: IsoDateTimeSchema,
+    endExclusive: IsoDateTimeSchema,
+    startBusinessDate: IsoDateSchema,
+    endBusinessDateExclusive: IsoDateSchema,
+    timeZone: z.literal('Asia/Ho_Chi_Minh'),
+  })
+  .strict();
+export type MonthlyOperationalReportPeriod = z.infer<typeof MonthlyOperationalReportPeriodSchema>;
+
+export const MonthlyOperationalReportCountsSchema = z
+  .object({
+    inboundReceipts: z.number().int().nonnegative().safe(),
+    outboundOrdersReceived: z.number().int().nonnegative().safe(),
+    allocationBatchesCompleted: z.number().int().nonnegative().safe(),
+    waitTicketsQueued: z.number().int().nonnegative().safe(),
+    approvedDiscountSales: z.number().int().nonnegative().safe(),
+  })
+  .strict();
+export type MonthlyOperationalReportCounts = z.infer<typeof MonthlyOperationalReportCountsSchema>;
+
+export const MonthlyOperationalReportTotalsSchema = z
+  .object({
+    inboundWeightGrams: ExactIntegerReportMetricSchema,
+    soldWeightGrams: ExactIntegerReportMetricSchema,
+    revenueVnd: ExactIntegerReportMetricSchema,
+    inboundGoodsCostVnd: ExactIntegerReportMetricSchema,
+    transportationFeeVnd: ExactIntegerReportMetricSchema,
+    handlingFeeVnd: ExactIntegerReportMetricSchema,
+    otherInboundCostVnd: ExactIntegerReportMetricSchema,
+    landedInboundCostVnd: ExactIntegerReportMetricSchema,
+    vatCostVnd: ExactIntegerReportMetricSchema,
+  })
+  .strict();
+export type MonthlyOperationalReportTotals = z.infer<typeof MonthlyOperationalReportTotalsSchema>;
+
+export const MonthlyOperationalReportRatiosSchema = z
+  .object({
+    averageInboundCostPerKgVnd: ExactIntegerReportMetricSchema,
+    revenuePerInboundKgVnd: ExactIntegerReportMetricSchema,
+    effectiveCostPerSoldKgVnd: ExactIntegerReportMetricSchema,
+    grossMarginBasisPoints: BasisPointsReportMetricSchema,
+  })
+  .strict();
+export type MonthlyOperationalReportRatios = z.infer<typeof MonthlyOperationalReportRatiosSchema>;
+
+export const MonthlyProductOperationalReportSchema = z
+  .object({
+    productId: EntityIdSchema,
+    sku: z.string().trim().min(1).max(80),
+    productName: z.string().trim().min(1).max(200),
+    inboundWeightGrams: ExactIntegerReportMetricSchema,
+    inboundGoodsCostVnd: ExactIntegerReportMetricSchema,
+    soldWeightGrams: ExactIntegerReportMetricSchema,
+    revenueVnd: ExactIntegerReportMetricSchema,
+  })
+  .strict();
+export type MonthlyProductOperationalReport = z.infer<typeof MonthlyProductOperationalReportSchema>;
+
+/**
+ * Source-backed operational report. This deliberately coexists with MonthlyReportSchema:
+ * the older projection models inventory movement while this projection mirrors verified
+ * transactional totals and explicitly records unavailable source data.
+ */
+export const MonthlyOperationalReportSchema = z
+  .object({
+    period: MonthlyOperationalReportPeriodSchema,
+    scope: ReportScopeSchema,
+    generatedAt: IsoDateTimeSchema,
+    dataOrigin: z.literal('LOCAL_TRANSACTIONAL_DATA'),
+    counts: MonthlyOperationalReportCountsSchema,
+    totals: MonthlyOperationalReportTotalsSchema,
+    ratios: MonthlyOperationalReportRatiosSchema,
+    products: z.array(MonthlyProductOperationalReportSchema),
+  })
+  .strict();
+export type MonthlyOperationalReport = z.infer<typeof MonthlyOperationalReportSchema>;
+
+export const MonthlyOperationalReportResponseSchema = z
+  .object({ data: MonthlyOperationalReportSchema })
+  .strict();
+export type MonthlyOperationalReportResponse = z.infer<
+  typeof MonthlyOperationalReportResponseSchema
+>;
+
+/** Uses the established month/scope query shape without breaking existing consumers. */
+export const MonthlyOperationalReportQuerySchema = MonthlyReportQuerySchema;
+export type MonthlyOperationalReportQuery = z.infer<typeof MonthlyOperationalReportQuerySchema>;
 
 export const ExportMonthlyReportQuerySchema = z
   .object({

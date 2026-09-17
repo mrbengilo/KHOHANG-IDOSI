@@ -672,6 +672,73 @@ describe('KHOHANG-IDOSI API', () => {
     );
   });
 
+  test('returns JSON-safe monthly reports and enforces report scopes', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const htkdCookie = cookieOf(await login('htkd'));
+
+    const allStores = await app.inject({
+      method: 'GET',
+      url: '/api/v1/reports/monthly?year=2026&month=9',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(allStores.statusCode, 200);
+    assert.equal(allStores.json().data.scope.kind, 'ALL');
+    assert.equal(allStores.json().data.dataOrigin, 'LOCAL_TRANSACTIONAL_DATA');
+    assert.equal(allStores.json().data.period.timeZone, 'Asia/Ho_Chi_Minh');
+    assert.equal(typeof allStores.json().data.totals.inboundWeightGrams.value, 'string');
+    assert.equal(allStores.json().data.totals.vatCostVnd.value, null);
+    assert.equal(allStores.json().data.totals.vatCostVnd.unavailableReason, 'VAT_NOT_CAPTURED');
+    assert.equal(allStores.json().data.ratios.effectiveCostPerSoldKgVnd.value, null);
+    assert.equal(
+      allStores.json().data.ratios.effectiveCostPerSoldKgVnd.unavailableReason,
+      'COGS_NOT_RECORDED_PER_SALE',
+    );
+
+    const ownStoreUrl =
+      `/api/v1/reports/monthly?year=2026&month=9&scopeKind=STORE` +
+      `&scopeId=${MEMORY_SEED_IDS.nvtStore}`;
+    const ownStore = await app.inject({
+      method: 'GET',
+      url: ownStoreUrl,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(ownStore.statusCode, 200);
+    assert.deepEqual(ownStore.json().data.scope, {
+      kind: 'STORE',
+      storeId: MEMORY_SEED_IDS.nvtStore,
+    });
+    assert.equal(ownStore.json().data.totals.inboundWeightGrams.source, 'STORE_RECEIPTS');
+
+    const htkdAssignedStore = await app.inject({
+      method: 'GET',
+      url: ownStoreUrl,
+      headers: { cookie: htkdCookie },
+    });
+    assert.equal(htkdAssignedStore.statusCode, 200);
+
+    for (const [cookie, url] of [
+      [storeCookie, '/api/v1/reports/monthly?year=2026&month=9'],
+      [htkdCookie, '/api/v1/reports/monthly?year=2026&month=9'],
+      [
+        storeCookie,
+        `/api/v1/reports/monthly?year=2026&month=9&scopeKind=STORE&scopeId=${MEMORY_SEED_IDS.bdStore}`,
+      ],
+    ]) {
+      const denied = await app.inject({ method: 'GET', url, headers: { cookie } });
+      assert.equal(denied.statusCode, 403);
+      assert.equal(denied.json().error.code, 'FORBIDDEN');
+    }
+
+    const malformed = await app.inject({
+      method: 'GET',
+      url: '/api/v1/reports/monthly?year=2026&month=13&scopeKind=STORE',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(malformed.statusCode, 400);
+    assert.equal(malformed.json().error.code, 'VALIDATION_ERROR');
+  });
+
   test('returns structured validation errors with the propagated request id', async () => {
     const response = await app.inject({
       method: 'POST',

@@ -15,6 +15,8 @@ import type {
   ListStoreOrderRequestsQuery,
   ListStoresQuery,
   ListWaitTicketsQuery,
+  MonthlyOperationalReport,
+  MonthlyOperationalReportQuery,
   Product,
   ProductConversion,
   PriorityOffer,
@@ -47,6 +49,7 @@ import {
   getWaitTicketHistory as getDatabaseWaitTicketHistory,
   listPriorityOffers as listDatabasePriorityOffers,
   listWaitTickets as listDatabaseWaitTickets,
+  loadMonthlyOperationalReport,
   orderRequestItems,
   orderRequests,
   orderSessions,
@@ -81,6 +84,7 @@ import {
   withAdvisoryLock,
   withSerializableTransaction,
   type JsonObject,
+  type MonthlyReportScope,
   type PriorityOfferRecord,
   type WaitTicketDatabaseStatus,
   type WaitTicketEffectiveStatus,
@@ -89,6 +93,7 @@ import {
 import { and, asc, count, desc, eq, gte, inArray, isNull, lt, lte, type SQL } from 'drizzle-orm';
 
 import { ApiError, conflict, forbidden, notFound, unauthenticated } from './errors.js';
+import { monthlyOperationalReportDto } from './monthly-report.js';
 import type {
   AccountCredentials,
   IdempotentResource,
@@ -1067,6 +1072,20 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     });
   }
 
+  public async getMonthlyOperationalReport(
+    actor: AuthenticatedPrincipal,
+    query: MonthlyOperationalReportQuery,
+  ): Promise<MonthlyOperationalReport> {
+    const scope = await this.authorizeMonthlyReportScope(actor, query);
+    return monthlyOperationalReportDto(
+      await loadMonthlyOperationalReport(db, {
+        year: query.year,
+        month: query.month,
+        scope,
+      }),
+    );
+  }
+
   public async getOrderStatistics(
     actor: AuthenticatedPrincipal,
     storeCode: string,
@@ -1283,6 +1302,37 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         ? 'expired'
         : offer.status;
     return priorityOfferDto({ ...offer, effectiveStatus });
+  }
+
+  private async authorizeMonthlyReportScope(
+    actor: AuthenticatedPrincipal,
+    query: MonthlyOperationalReportQuery,
+  ): Promise<MonthlyReportScope> {
+    if (query.scopeKind === 'ALL') {
+      if (actor.role !== 'ADMIN') throw forbidden();
+      return { kind: 'ALL' };
+    }
+    if (!query.scopeId) {
+      throw new ApiError('VALIDATION_ERROR', 'Phạm vi báo cáo thiếu mã định danh', 400);
+    }
+    if (query.scopeKind === 'GROUP') {
+      if (actor.role !== 'ADMIN') throw forbidden();
+      const [group] = await db
+        .select({ id: storeGroups.id })
+        .from(storeGroups)
+        .where(and(eq(storeGroups.id, query.scopeId), eq(storeGroups.isActive, true)))
+        .limit(1);
+      if (!group) throw notFound('Không tìm thấy nhóm cửa hàng');
+      return { kind: 'GROUP', id: group.id };
+    }
+    if (!canAccessStore(actor, query.scopeId)) throw forbidden();
+    const [store] = await db
+      .select({ id: stores.id })
+      .from(stores)
+      .where(and(eq(stores.id, query.scopeId), eq(stores.isActive, true), isNull(stores.deletedAt)))
+      .limit(1);
+    if (!store) throw notFound('Không tìm thấy cửa hàng');
+    return { kind: 'STORE', id: store.id };
   }
 }
 

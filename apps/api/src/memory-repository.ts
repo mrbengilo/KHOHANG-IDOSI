@@ -17,6 +17,8 @@ import type {
   ListStoreOrderRequestsQuery,
   ListStoresQuery,
   ListWaitTicketsQuery,
+  MonthlyOperationalReport,
+  MonthlyOperationalReportQuery,
   Product,
   ProductConversion,
   PriorityOffer,
@@ -40,9 +42,11 @@ import {
   STORE_GROUP_SEEDS,
   STORE_SEEDS,
 } from '@idosi/database/seed-data';
-import { calculateWeightedCostVnd } from '@idosi/database';
+import { calculateWeightedCostVnd, summarizeMonthlyReport } from '@idosi/database';
+import type { MonthlyReportScope } from '@idosi/database';
 
 import { ApiError, conflict, forbidden, notFound, unauthenticated } from './errors.js';
+import { monthlyOperationalReportDto } from './monthly-report.js';
 import type {
   AccountCredentials,
   OrderStatistics,
@@ -1039,6 +1043,45 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       updated,
     );
     return { data: structuredClone(updated), replayed: false };
+  }
+
+  public async getMonthlyOperationalReport(
+    actor: AuthenticatedPrincipal,
+    query: MonthlyOperationalReportQuery,
+  ): Promise<MonthlyOperationalReport> {
+    let scope: MonthlyReportScope;
+    if (query.scopeKind === 'ALL') {
+      scope = { kind: 'ALL' };
+    } else {
+      if (!query.scopeId) {
+        throw new ApiError('VALIDATION_ERROR', 'Phạm vi báo cáo thiếu mã định danh', 400);
+      }
+      scope = { kind: query.scopeKind, id: query.scopeId };
+    }
+    if (scope.kind === 'ALL' && actor.role !== 'ADMIN') throw forbidden();
+    if (scope.kind === 'GROUP') {
+      if (actor.role !== 'ADMIN') throw forbidden();
+      if (!this.storeGroupIds.has(scope.id)) throw notFound('Không tìm thấy nhóm cửa hàng');
+    }
+    if (scope.kind === 'STORE') {
+      if (!canAccessStore(actor, scope.id)) throw forbidden();
+      if (!this.stores.has(scope.id)) throw notFound('Không tìm thấy cửa hàng');
+    }
+    return monthlyOperationalReportDto(
+      summarizeMonthlyReport(
+        { year: query.year, month: query.month, scope },
+        {
+          inboundSource: scope.kind === 'ALL' ? 'WAREHOUSE_RECEIPTS' : 'STORE_RECEIPTS',
+          inboundHeaders: [],
+          inboundProducts: [],
+          sales: [],
+          outboundOrderIds: [],
+          allocationRunIds: [],
+          waitTicketIds: [],
+        },
+        this.now(),
+      ),
+    );
   }
 
   public async getOrderStatistics(

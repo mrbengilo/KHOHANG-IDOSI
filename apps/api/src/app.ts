@@ -19,6 +19,7 @@ import {
   ListStoresQuerySchema,
   ListWaitTicketsQuerySchema,
   LoginRequestSchema,
+  MonthlyOperationalReportQuerySchema,
   ProductParamsSchema,
   ProductConversionParamsSchema,
   PriorityOfferParamsSchema,
@@ -514,6 +515,14 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return reply.send({ data: result.data });
   });
 
+  app.get('/api/v1/reports/monthly', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = MonthlyOperationalReportQuerySchema.parse(request.query);
+    return {
+      data: await repository.getMonthlyOperationalReport(session.principal, query),
+    };
+  });
+
   app.get('/api/v1/integrations/warehouse/v1/order-statistics', async (request) => {
     const session = await authenticate(request, repository);
     const query = StatisticsQuerySchema.parse(request.query);
@@ -799,6 +808,12 @@ function openApiDocument(): Record<string, unknown> {
         post: {
           security: cookieSecurity,
           responses: { '200': { description: 'Accepted or declined priority offer' } },
+        },
+      },
+      '/api/v1/reports/monthly': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Source-backed monthly operational report' } },
         },
       },
       '/api/v1/integrations/warehouse/v1/order-statistics': {
