@@ -1481,7 +1481,16 @@ function openApiDocument(): Record<string, unknown> {
           summary: 'List persisted allocation results visible to the current store scope',
           security: cookieSecurity,
           parameters: [
-            { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+            {
+              name: 'page',
+              in: 'query',
+              schema: {
+                type: 'integer',
+                minimum: 1,
+                maximum: Number.MAX_SAFE_INTEGER,
+                default: 1,
+              },
+            },
             {
               name: 'pageSize',
               in: 'query',

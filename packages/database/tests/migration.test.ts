@@ -27,6 +27,10 @@ const storeGroupVersionMigration = readFileSync(
   new URL('../migrations/0006_store_group_versions.sql', import.meta.url),
   'utf8',
 );
+const allocationResultIndexMigration = readFileSync(
+  new URL('../migrations/0007_allocation_result_indexes.sql', import.meta.url),
+  'utf8',
+);
 const schemaSource = readFileSync(new URL('../src/schema.ts', import.meta.url), 'utf8');
 const seedDataSource = readFileSync(new URL('../src/seed-data.ts', import.meta.url), 'utf8');
 const storeOperationsSource = readFileSync(
@@ -77,10 +81,23 @@ const idosiStatisticsSnapshot = JSON.parse(
 const storeGroupVersionSnapshot = JSON.parse(
   readFileSync(new URL('../migrations/meta/0006_snapshot.json', import.meta.url), 'utf8'),
 ) as {
+  id: string;
   prevId: string;
   tables: Record<
     string,
     { columns: Record<string, unknown>; checkConstraints: Record<string, unknown> }
+  >;
+};
+const allocationResultIndexSnapshot = JSON.parse(
+  readFileSync(new URL('../migrations/meta/0007_snapshot.json', import.meta.url), 'utf8'),
+) as {
+  id: string;
+  prevId: string;
+  tables: Record<
+    string,
+    {
+      indexes: Record<string, { columns: { expression: string; asc: boolean; nulls: string }[] }>;
+    }
   >;
 };
 
@@ -138,7 +155,7 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(7);
+    expect(journal.entries).toHaveLength(8);
     expect(journal.entries[0]).toMatchObject({
       tag: '0000_initial',
       breakpoints: true,
@@ -167,6 +184,10 @@ describe('initial migration invariants', () => {
       tag: '0006_store_group_versions',
       breakpoints: true,
     });
+    expect(journal.entries[7]).toMatchObject({
+      tag: '0007_allocation_result_indexes',
+      breakpoints: true,
+    });
   });
 
   it('adds optimistic concurrency to store-group lifecycle changes', () => {
@@ -181,6 +202,27 @@ describe('initial migration invariants', () => {
     expect(
       storeGroupVersionSnapshot.tables['public.store_groups']?.checkConstraints,
     ).toHaveProperty('store_groups_version_nonnegative');
+  });
+
+  it('indexes allocation product and status filters in stable projection order', () => {
+    expect(allocationResultIndexMigration).toContain(
+      '"allocation_lines_product_created_id_idx" ON "allocation_lines" USING btree ("product_id","created_at" DESC NULLS LAST,"id")',
+    );
+    expect(allocationResultIndexMigration).toContain(
+      '"allocation_lines_status_created_id_idx" ON "allocation_lines" USING btree ("status","created_at" DESC NULLS LAST,"id")',
+    );
+    expect(allocationResultIndexSnapshot.prevId).toBe(storeGroupVersionSnapshot.id);
+    const indexes = allocationResultIndexSnapshot.tables['public.allocation_lines']?.indexes;
+    expect(indexes?.['allocation_lines_product_created_id_idx']?.columns).toEqual([
+      { expression: 'product_id', isExpression: false, asc: true, nulls: 'last' },
+      { expression: 'created_at', isExpression: false, asc: false, nulls: 'last' },
+      { expression: 'id', isExpression: false, asc: true, nulls: 'last' },
+    ]);
+    expect(indexes?.['allocation_lines_status_created_id_idx']?.columns).toEqual([
+      { expression: 'status', isExpression: false, asc: true, nulls: 'last' },
+      { expression: 'created_at', isExpression: false, asc: false, nulls: 'last' },
+      { expression: 'id', isExpression: false, asc: true, nulls: 'last' },
+    ]);
   });
 
   it('adds exact-cost transfer provenance and safe lifecycle constraints', () => {

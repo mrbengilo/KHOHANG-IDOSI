@@ -20,7 +20,7 @@ import {
   stores,
   users,
 } from '@idosi/database';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 
 import { createApi } from '../dist/app.js';
 import { PostgresWarehouseRepository } from '../dist/postgres-repository.js';
@@ -29,6 +29,18 @@ import { hashSessionToken } from '../dist/security.js';
 const describePostgres = process.env.RUN_POSTGRES_TESTS === '1' ? describe : describe.skip;
 
 describePostgres('allocation result projection on fresh PostgreSQL', () => {
+  test('installs indexes for filtered newest-first allocation result scans', async () => {
+    const indexes = await db.execute(sql`
+      SELECT indexname
+      FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND tablename = 'allocation_lines'
+    `);
+    const names = new Set(indexes.rows.map((row) => row.indexname));
+    assert.equal(names.has('allocation_lines_product_created_id_idx'), true);
+    assert.equal(names.has('allocation_lines_status_created_id_idx'), true);
+  });
+
   test('enforces ADMIN, assigned HTKD and own STORE scope through the API', async () => {
     if (!process.env.DATABASE_URL) {
       throw new Error('DATABASE_URL is required when RUN_POSTGRES_TESTS=1.');
@@ -53,6 +65,14 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
         totalPages: 2,
       });
       assert.equal(adminPage.json().data.length, 2);
+
+      const unsafePage = await app.inject({
+        method: 'GET',
+        url: `${baseUrl}&page=9007199254740992&pageSize=1`,
+        headers: { cookie: sessionCookie(fixture.tokens.admin) },
+      });
+      assert.equal(unsafePage.statusCode, 400);
+      assert.equal(unsafePage.json().error.code, 'VALIDATION_ERROR');
 
       const htkdPage = await app.inject({
         method: 'GET',
@@ -81,6 +101,7 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
           waitlistedQuantity: storePage.json().data[0].waitlistedQuantity,
           reasonCode: storePage.json().data[0].reasonCode,
           roundNumber: storePage.json().data[0].roundNumber,
+          rounds: storePage.json().data[0].rounds,
           status: storePage.json().data[0].status,
         },
         {
@@ -89,6 +110,13 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
           waitlistedQuantity: 0,
           reasonCode: 'ALLOCATED_BY_PRIORITY_ROUND_ROBIN',
           roundNumber: 1,
+          rounds: [
+            { roundNumber: 1, allocatedQuantity: 1 },
+            { roundNumber: 2, allocatedQuantity: 1 },
+            { roundNumber: 3, allocatedQuantity: 1 },
+            { roundNumber: 4, allocatedQuantity: 1 },
+            { roundNumber: 5, allocatedQuantity: 1 },
+          ],
           status: 'ALLOCATED',
         },
       );
@@ -252,6 +280,7 @@ async function createFixture() {
         status: 'allocated',
         requestStatus: 'allocated',
         reasonCode: 'ALLOCATED_BY_PRIORITY_ROUND_ROBIN',
+        policyRounds: [1, 2, 3, 4, 5],
       },
       {
         storeId: storeB.id,
@@ -261,6 +290,7 @@ async function createFixture() {
         status: 'partial',
         requestStatus: 'partially_allocated',
         reasonCode: 'PARTIAL_SNAPSHOT_STOCK',
+        policyRounds: [1, 2, 3],
       },
       {
         storeId: storeC.id,
@@ -270,6 +300,7 @@ async function createFixture() {
         status: 'waitlisted',
         requestStatus: 'waitlisted',
         reasonCode: 'INSUFFICIENT_SNAPSHOT_STOCK',
+        policyRounds: [],
       },
     ];
     for (const [index, input] of lineInputs.entries()) {
@@ -338,6 +369,7 @@ async function createFixture() {
         waitlistedQuantity: input.waitlisted,
         status: input.status,
         reasonCode: input.reasonCode,
+        decisionMetadata: { policyRounds: input.policyRounds },
         createdAt: allocationAt,
       });
     }

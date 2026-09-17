@@ -3588,6 +3588,7 @@ function allocationResultDto(record: AllocationResultRecord): AllocationResult {
     priority: record.priority,
     roundNumber: record.roundNumber,
     sequenceInRound: record.sequenceInRound,
+    rounds: record.rounds.map((round) => ({ ...round })),
     requestedQuantity: record.requestedQuantity,
     allocatedQuantity: record.allocatedQuantity,
     waitlistedQuantity: record.waitlistedQuantity,

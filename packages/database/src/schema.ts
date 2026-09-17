@@ -978,6 +978,16 @@ export const allocationLines = pgTable(
       table.sequenceInRound,
     ),
     index('allocation_lines_store_run_idx').on(table.storeId, table.allocationRunId),
+    index('allocation_lines_product_created_id_idx').on(
+      table.productId,
+      table.createdAt.desc(),
+      table.id.asc(),
+    ),
+    index('allocation_lines_status_created_id_idx').on(
+      table.status,
+      table.createdAt.desc(),
+      table.id.asc(),
+    ),
     check(
       'allocation_lines_exactly_one_source',
       sql`num_nonnulls(${table.orderRequestItemId}, ${table.waitTicketId}) = 1`,

@@ -139,6 +139,9 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
           requestedQuantity: allocationLines.requestedQuantity,
           allocatedQuantity: allocationLines.allocatedQuantity,
           waitlistedQuantity: allocationLines.waitlistedQuantity,
+          roundNumber: allocationLines.roundNumber,
+          sequenceInRound: allocationLines.sequenceInRound,
+          decisionMetadata: allocationLines.decisionMetadata,
         })
         .from(allocationLines)
         .where(eq(allocationLines.allocationRunId, allocation.resourceId))
@@ -147,6 +150,9 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
         requestedQuantity: 3,
         allocatedQuantity: 3,
         waitlistedQuantity: 0,
+        roundNumber: 1,
+        sequenceInRound: 1,
+        decisionMetadata: expect.objectContaining({ policyRounds: [1, 2, 3] }),
       });
       if (!allocationLine?.mergedOrderId) {
         throw new Error('Fresh allocation did not preserve merged-order provenance.');

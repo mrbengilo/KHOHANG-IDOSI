@@ -33,7 +33,12 @@ describe('KHOHANG-IDOSI API', () => {
     assert.ok(specification.json().paths['/api/v1/store-inventory-bags']);
     assert.ok(specification.json().paths['/api/v1/store-outbounds/{outboundId}/review']);
     assert.ok(specification.json().paths['/api/v1/order-sessions/{sessionId}/transition']);
-    assert.ok(specification.json().paths['/api/v1/allocations']);
+    const allocationList = specification.json().paths['/api/v1/allocations'];
+    assert.ok(allocationList);
+    assert.equal(
+      allocationList.get.parameters.find((parameter) => parameter.name === 'page').schema.maximum,
+      Number.MAX_SAFE_INTEGER,
+    );
     assert.ok(specification.json().paths['/api/v1/outbound-requests/{outboundRequestId}/dispatch']);
     assert.ok(specification.json().paths['/api/v1/store-transfers/destinations']);
     assert.ok(specification.json().paths['/api/v1/store-transfers/{transferId}/receive']);
@@ -486,6 +491,13 @@ describe('KHOHANG-IDOSI API', () => {
       priority: 'P1',
       roundNumber: 1,
       sequenceInRound: 1,
+      rounds: [
+        { roundNumber: 1, allocatedQuantity: 1 },
+        { roundNumber: 2, allocatedQuantity: 1 },
+        { roundNumber: 3, allocatedQuantity: 1 },
+        { roundNumber: 4, allocatedQuantity: 1 },
+        { roundNumber: 5, allocatedQuantity: 1 },
+      ],
       requestedQuantity: 5,
       allocatedQuantity: 5,
       waitlistedQuantity: 0,
@@ -547,6 +559,14 @@ describe('KHOHANG-IDOSI API', () => {
       headers: { cookie: adminCookie },
     });
     assert.equal(invalidStatus.statusCode, 400);
+
+    const unsafePage = await app.inject({
+      method: 'GET',
+      url: '/api/v1/allocations?page=9007199254740992&pageSize=1',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(unsafePage.statusCode, 400);
+    assert.equal(unsafePage.json().error.code, 'VALIDATION_ERROR');
   });
 
   test('blocks wholesale STORE actors and inactive stores from protected retail actions', async () => {
