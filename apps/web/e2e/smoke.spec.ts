@@ -18,7 +18,9 @@ test('mobile navigation remains usable at 390px', async ({ page }, testInfo) => 
   const primaryNavigation = page.getByRole('navigation', { name: 'Điều hướng chính' });
   await expect(primaryNavigation).toBeVisible();
   await primaryNavigation.getByRole('link', { name: 'Đặt hàng' }).click();
-  await expect(page.getByRole('heading', { name: /Yêu cầu|Đặt hàng/i })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { exact: true, name: 'Đặt hàng & kết quả' }),
+  ).toBeVisible();
   await expect
     .poll(() => page.evaluate(() => document.body.scrollWidth <= window.innerWidth))
     .toBe(true);
