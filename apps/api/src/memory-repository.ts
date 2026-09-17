@@ -91,6 +91,7 @@ import {
   calculateWeightedCostVnd,
   gramsToKilogramsExact,
   idosiStatisticsScopeKey,
+  isRequestDeadlineClosed,
   kilogramsToGramsExact,
   summarizeMonthlyReport,
 } from '@idosi/database';
@@ -1577,10 +1578,20 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       throw conflict('Chỉ có thể hủy yêu cầu chưa được gộp hoặc phân bổ');
     }
 
+    const session = this.orderSessions.get(current.sessionId);
+    const now = this.now();
+    if (
+      !session ||
+      session.status !== 'OPEN' ||
+      isRequestDeadlineClosed(new Date(session.requestClosesAt), now)
+    ) {
+      throw conflict('Đã quá thời hạn hủy yêu cầu trong phiên đặt hàng');
+    }
+
     const updated: StoreOrderRequest = {
       ...current,
       status: 'CANCELLED',
-      cancelledAt: this.now().toISOString(),
+      cancelledAt: now.toISOString(),
       cancellationReason: input.reason,
     };
     this.orderRequests.set(requestId, updated);

@@ -870,6 +870,57 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(audit.json().data[0].metadata.reason, 'Cửa hàng nhập nhầm nhu cầu');
   });
 
+  test('rejects cancellation at the request cutoff without changing the submitted request', async () => {
+    await app.close();
+    let currentTime = new Date('2026-09-17T05:00:00.000Z');
+    repository = await MemoryWarehouseRepository.create({
+      bootstrapPassword: PASSWORD,
+      now: () => currentTime,
+    });
+    app = await createApi({ repository, corsOrigin: 'http://localhost:5173' });
+
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const sessions = await app.inject({
+      method: 'GET',
+      url: '/api/v1/order-sessions?status=OPEN&page=1&pageSize=10',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(sessions.statusCode, 200);
+    const session = sessions.json().data[0];
+    assert.ok(session);
+
+    const productId = await firstProductId(storeCookie);
+    const created = await submitOrder(
+      storeCookie,
+      'cutoff-cancellation-request',
+      orderPayload(productId, 1),
+    );
+    assert.equal(created.statusCode, 201);
+
+    currentTime = new Date(session.requestClosesAt);
+    const rejected = await app.inject({
+      method: 'POST',
+      url: `/api/v1/order-requests/${created.json().data.id}/cancel`,
+      headers: { cookie: storeCookie, 'idempotency-key': 'cutoff-cancellation' },
+      payload: { reason: 'Không được phép hủy sau giờ chốt' },
+    });
+    assert.equal(rejected.statusCode, 409);
+    assert.equal(rejected.json().error.code, 'CONFLICT');
+
+    const persisted = await app.inject({
+      method: 'GET',
+      url:
+        `/api/v1/order-requests?sessionId=${session.id}` +
+        `&storeId=${MEMORY_SEED_IDS.nvtStore}&page=1&pageSize=20`,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(persisted.statusCode, 200);
+    assert.equal(
+      persisted.json().data.find((request) => request.id === created.json().data.id)?.status,
+      'SUBMITTED',
+    );
+  });
+
   test('keeps the maximum-two invariant under concurrent submissions', async () => {
     const cookie = cookieOf(await login('ds_nvt'));
     const productId = await firstProductId(cookie);

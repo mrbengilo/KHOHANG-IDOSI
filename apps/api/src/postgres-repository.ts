@@ -107,6 +107,7 @@ import {
   listWarehouseOutboundRequests as listDatabaseWarehouseOutboundRequests,
   loadMonthlyOperationalReport,
   loadIdosiStatisticsState as loadDatabaseIdosiStatisticsState,
+  isRequestDeadlineClosed,
   openStoreInventoryBag as openDatabaseStoreInventoryBag,
   orderRequestItems,
   orderRequests,
@@ -1597,6 +1598,26 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         },
         (tx) =>
           withAdvisoryLock(tx, 'order-request', requestId, async () => {
+            const [session] = await tx
+              .select({
+                status: orderSessions.status,
+                requestClosesAt: orderSessions.inventorySnapshotDueAt,
+                deletedAt: orderSessions.deletedAt,
+              })
+              .from(orderSessions)
+              .where(eq(orderSessions.id, current.sessionId))
+              .for('update')
+              .limit(1);
+            const now = new Date();
+            if (
+              !session ||
+              session.status !== 'open' ||
+              session.deletedAt !== null ||
+              isRequestDeadlineClosed(session.requestClosesAt, now)
+            ) {
+              throw conflict('Đã quá thời hạn hủy yêu cầu trong phiên đặt hàng');
+            }
+
             const [row] = await tx
               .select()
               .from(orderRequests)
@@ -1608,7 +1629,6 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
               throw conflict('Chỉ có thể hủy yêu cầu chưa được gộp hoặc phân bổ');
             }
 
-            const now = new Date();
             const [updated] = await tx
               .update(orderRequests)
               .set({
