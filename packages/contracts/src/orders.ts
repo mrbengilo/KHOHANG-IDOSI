@@ -170,6 +170,7 @@ export const CreateStoreOrderRequestItemSchema = z
   .object({
     productId: EntityIdSchema,
     quantity: PositiveUnitQuantitySchema.max(100_000),
+    note: z.string().trim().min(1).max(500).optional(),
   })
   .strict();
 export type CreateStoreOrderRequestItem = z.infer<typeof CreateStoreOrderRequestItemSchema>;
@@ -194,6 +195,7 @@ export const StoreOrderRequestSchema = z
     submittedByAccountId: EntityIdSchema,
     submittedAt: IsoDateTimeSchema,
     cancelledAt: IsoDateTimeSchema.nullable(),
+    cancellationReason: AuditReasonSchema.nullable().optional(),
   })
   .strict();
 export type StoreOrderRequest = z.infer<typeof StoreOrderRequestSchema>;

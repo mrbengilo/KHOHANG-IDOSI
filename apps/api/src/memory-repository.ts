@@ -5,6 +5,7 @@ import type {
   AdminAuditLog,
   AuthenticatedPrincipal,
   CancelInboundReceiptRequest,
+  CancelStoreOrderRequest,
   ConfirmReceiptCostsRequest,
   CancelWaitTicketRequest,
   CreateOrderSessionRequest,
@@ -1453,9 +1454,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     // No await occurs between counting and insertion: this is one atomic event-loop turn.
     const existing = [...this.orderRequests.values()].filter(
       (request) =>
-        request.sessionId === input.businessSessionId &&
-        request.storeId === input.storeId &&
-        request.status !== 'CANCELLED',
+        request.sessionId === input.businessSessionId && request.storeId === input.storeId,
     );
     if (existing.length >= 2) {
       throw new ApiError(
@@ -1476,10 +1475,12 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         productId: item.productId,
         requested: { kind: 'UNIT', quantity: item.quantity },
         priority: 'P1',
+        ...(item.note ? { note: item.note } : {}),
       })),
       submittedByAccountId: actor.accountId,
       submittedAt: now,
       cancelledAt: null,
+      cancellationReason: null,
     };
     this.orderRequests.set(request.id, request);
     this.idempotency.set(scopedKey, { requestHash, response: request });
@@ -1493,6 +1494,55 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       request,
     );
     return { data: request, replayed: false };
+  }
+
+  public async cancelOrderRequest(
+    actor: AuthenticatedPrincipal,
+    requestId: string,
+    input: CancelStoreOrderRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreOrderRequest>> {
+    const scopedKey = `${actor.accountId}:order-request:cancel:${requestId}:${idempotencyKey}`;
+    const previous = this.idempotency.get(scopedKey);
+    if (previous) {
+      if (previous.requestHash !== requestHash) {
+        throw new ApiError(
+          'IDEMPOTENCY_CONFLICT',
+          'Khóa idempotency đã được dùng cho nội dung khác',
+          409,
+        );
+      }
+      return { data: structuredClone(previous.response), replayed: true };
+    }
+
+    const current = this.orderRequests.get(requestId);
+    if (!current) throw notFound('Không tìm thấy yêu cầu đặt hàng');
+    if (!canAccessStore(actor, current.storeId)) throw forbidden();
+    if (current.status !== 'SUBMITTED') {
+      throw conflict('Chỉ có thể hủy yêu cầu chưa được gộp hoặc phân bổ');
+    }
+
+    const updated: StoreOrderRequest = {
+      ...current,
+      status: 'CANCELLED',
+      cancelledAt: this.now().toISOString(),
+      cancellationReason: input.reason,
+    };
+    this.orderRequests.set(requestId, updated);
+    this.idempotency.set(scopedKey, { requestHash, response: updated });
+    this.appendAudit(
+      actor,
+      context,
+      'ORDER_REQUEST_CANCELLED',
+      'order_request',
+      requestId,
+      current,
+      updated,
+      { reason: input.reason },
+    );
+    return { data: structuredClone(updated), replayed: false };
   }
 
   public async listWarehouseOutboundRequests(
