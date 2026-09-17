@@ -15,6 +15,9 @@ import type {
   ListAuditLogsQuery,
   ListProductsQuery,
   ListReceiptsQuery,
+  ListStoreInventoryBagLedgerQuery,
+  ListStoreInventoryBagsQuery,
+  ListStoreOutboundsQuery,
   ListStoreReceiptSourcesQuery,
   ListPriorityOffersQuery,
   ListProductConversionsQuery,
@@ -31,7 +34,10 @@ import type {
   ResetPasswordRequest,
   Session,
   Store,
+  StoreInventoryBag,
+  StoreInventoryBagLedgerEntry,
   StoreOrderRequest,
+  StoreOutbound,
   StoreReceiptSource,
   SubmitStoreReceiptRequest,
   UpdateProductRequest,
@@ -43,6 +49,9 @@ import type {
   MonthlyOperationalReportQuery,
   WaitTicket,
   WaitTicketHistory,
+  OpenStoreInventoryBagRequest,
+  CreateStoreOutboundRequest,
+  ReviewStoreOutboundRequest,
 } from '@idosi/contracts';
 
 export interface RequestContext {
@@ -247,6 +256,43 @@ export interface WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<Receipt>>;
+
+  listStoreInventoryBags(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreInventoryBagsQuery,
+  ): Promise<Page<StoreInventoryBag>>;
+  listStoreInventoryBagLedger(
+    actor: AuthenticatedPrincipal,
+    bagId: string,
+    query: ListStoreInventoryBagLedgerQuery,
+  ): Promise<Page<StoreInventoryBagLedgerEntry>>;
+  openStoreInventoryBag(
+    actor: AuthenticatedPrincipal,
+    bagId: string,
+    input: OpenStoreInventoryBagRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreInventoryBag>>;
+  listStoreOutbounds(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreOutboundsQuery,
+  ): Promise<Page<StoreOutbound>>;
+  createStoreOutbound(
+    actor: AuthenticatedPrincipal,
+    input: CreateStoreOutboundRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreOutbound>>;
+  reviewStoreOutbound(
+    actor: AuthenticatedPrincipal,
+    outboundId: string,
+    input: ReviewStoreOutboundRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreOutbound>>;
 
   listWaitTickets(
     actor: AuthenticatedPrincipal,

@@ -8,6 +8,7 @@ import type {
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
+  CreateStoreOutboundRequest,
   CreateStoreRequest,
   CreateAccountRequest,
   DeclareStoreReceiptRequest,
@@ -18,6 +19,9 @@ import type {
   ListProductsQuery,
   ListPriorityOffersQuery,
   ListReceiptsQuery,
+  ListStoreInventoryBagLedgerQuery,
+  ListStoreInventoryBagsQuery,
+  ListStoreOutboundsQuery,
   ListStoreReceiptSourcesQuery,
   ListProductConversionsQuery,
   ListStoreOrderRequestsQuery,
@@ -25,6 +29,7 @@ import type {
   ListWaitTicketsQuery,
   MonthlyOperationalReport,
   MonthlyOperationalReportQuery,
+  OpenStoreInventoryBagRequest,
   Product,
   ProductConversion,
   PriorityOffer,
@@ -32,10 +37,14 @@ import type {
   RespondPriorityOfferRequest,
   ReturnReceiptForCorrectionRequest,
   ResetPasswordRequest,
+  ReviewStoreOutboundRequest,
   OrderSession,
   Session,
   Store,
+  StoreInventoryBag,
+  StoreInventoryBagLedgerEntry,
   StoreOrderRequest,
+  StoreOutbound,
   StoreReceiptSource,
   SubmitStoreReceiptRequest,
   UpdateProductRequest,
@@ -51,7 +60,12 @@ import {
   STORE_GROUP_SEEDS,
   STORE_SEEDS,
 } from '@idosi/database/seed-data';
-import { calculateWeightedCostVnd, summarizeMonthlyReport } from '@idosi/database';
+import {
+  calculateWeightedCostVnd,
+  gramsToKilogramsExact,
+  kilogramsToGramsExact,
+  summarizeMonthlyReport,
+} from '@idosi/database';
 import type { MonthlyReportScope } from '@idosi/database';
 
 import { ApiError, conflict, forbidden, notFound, unauthenticated } from './errors.js';
@@ -80,6 +94,9 @@ export const MEMORY_SEED_IDS = {
   waitTicket: '13000000-0000-4000-8000-000000000001',
   cancellableWaitTicket: '13000000-0000-4000-8000-000000000002',
   priorityOffer: '14000000-0000-4000-8000-000000000001',
+  inventoryBag: '15000000-0000-4000-8000-000000000001',
+  inventoryLedger: '15100000-0000-4000-8000-000000000001',
+  sourceReceiptBag: '15200000-0000-4000-8000-000000000001',
   nvtStore: '20000000-0000-4000-8000-000000000007',
   bdStore: '20000000-0000-4000-8000-000000000008',
 } as const;
@@ -118,6 +135,12 @@ interface WaitMutationIdempotencyRecord {
   readonly requestHash: string;
   readonly resourceType: 'WAIT_TICKET' | 'PRIORITY_OFFER';
   readonly resourceId: string;
+}
+
+interface InventoryMutationIdempotencyRecord {
+  readonly requestHash: string;
+  readonly resourceType: 'STORE_INVENTORY_BAG' | 'STORE_OUTBOUND';
+  readonly response: StoreInventoryBag | StoreOutbound;
 }
 
 interface MemoryDispatchedOutbound {
@@ -168,6 +191,13 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly idempotency = new Map<string, IdempotencyRecord>();
   private readonly receiptIdempotency = new Map<string, ReceiptIdempotencyRecord>();
   private readonly waitMutationIdempotency = new Map<string, WaitMutationIdempotencyRecord>();
+  private readonly inventoryMutationIdempotency = new Map<
+    string,
+    InventoryMutationIdempotencyRecord
+  >();
+  private readonly inventoryBags = new Map<string, StoreInventoryBag>();
+  private readonly inventoryLedger = new Map<string, StoreInventoryBagLedgerEntry>();
+  private readonly storeOutbounds = new Map<string, StoreOutbound>();
   private readonly storeGroupIds = new Set<string>();
   private readonly audit: AuditRecord[] = [];
 
@@ -1047,6 +1077,250 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     return { data: structuredClone(updated), replayed: false };
   }
 
+  public async listStoreInventoryBags(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreInventoryBagsQuery,
+  ): Promise<Page<StoreInventoryBag>> {
+    this.assertRequestedStoreScope(actor, query.storeId);
+    const values = [...this.inventoryBags.values()]
+      .filter((bag) => canAccessStore(actor, bag.storeId))
+      .filter((bag) => query.storeId === undefined || bag.storeId === query.storeId)
+      .filter((bag) => query.productId === undefined || bag.productId === query.productId)
+      .filter((bag) => query.status === undefined || bag.status === query.status)
+      .filter(
+        (bag) =>
+          query.bagCode === undefined ||
+          bag.bagCode.toLocaleLowerCase('vi').includes(query.bagCode.toLocaleLowerCase('vi')),
+      )
+      .sort(
+        (left, right) =>
+          (right.receivedAt ?? '').localeCompare(left.receivedAt ?? '') ||
+          left.bagCode.localeCompare(right.bagCode),
+      );
+    return {
+      data: structuredClone(slicePage(values, query.page, query.pageSize)),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
+  }
+
+  public async listStoreInventoryBagLedger(
+    actor: AuthenticatedPrincipal,
+    bagId: string,
+    query: ListStoreInventoryBagLedgerQuery,
+  ): Promise<Page<StoreInventoryBagLedgerEntry>> {
+    const bag = this.requireInventoryBag(bagId);
+    if (!canAccessStore(actor, bag.storeId)) throw forbidden();
+    this.assertRequestedStoreScope(actor, query.storeId);
+    if (
+      (query.storeId !== undefined && query.storeId !== bag.storeId) ||
+      (query.productId !== undefined && query.productId !== bag.productId)
+    ) {
+      return { data: [], pagination: pagination(query.page, query.pageSize, 0) };
+    }
+    const values = [...this.inventoryLedger.values()]
+      .filter((entry) => entry.bagId === bag.id)
+      .sort(
+        (left, right) =>
+          right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
+      );
+    return {
+      data: structuredClone(slicePage(values, query.page, query.pageSize)),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
+  }
+
+  public async openStoreInventoryBag(
+    actor: AuthenticatedPrincipal,
+    bagId: string,
+    input: OpenStoreInventoryBagRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreInventoryBag>> {
+    this.assertStoreMutationActor(actor);
+    const scopedKey = `${actor.accountId}:inventory:open:${bagId}:${idempotencyKey}`;
+    const replay = this.replayInventoryMutation(scopedKey, requestHash, 'STORE_INVENTORY_BAG');
+    if (replay) return { data: replay as StoreInventoryBag, replayed: true };
+    const current = this.requireInventoryBag(bagId);
+    if (current.storeId !== actor.storeId) throw forbidden();
+    if (current.version !== input.expectedVersion || current.status !== 'AVAILABLE') {
+      throw versionConflict('Bao tồn kho đã thay đổi hoặc không thể mở');
+    }
+    const updated: StoreInventoryBag = {
+      ...current,
+      status: 'OPEN',
+      updatedAt: this.now().toISOString(),
+      version: current.version + 1,
+    };
+    this.inventoryBags.set(updated.id, updated);
+    this.rememberInventoryMutation(scopedKey, requestHash, 'STORE_INVENTORY_BAG', updated);
+    this.appendAudit(
+      actor,
+      context,
+      'STORE_INVENTORY_BAG_OPENED',
+      'store_inventory_bag',
+      updated.id,
+      current,
+      updated,
+    );
+    return { data: structuredClone(updated), replayed: false };
+  }
+
+  public async listStoreOutbounds(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreOutboundsQuery,
+  ): Promise<Page<StoreOutbound>> {
+    this.assertRequestedStoreScope(actor, query.storeId);
+    const values = [...this.storeOutbounds.values()]
+      .filter((outbound) => canAccessStore(actor, outbound.storeId))
+      .filter((outbound) => query.storeId === undefined || outbound.storeId === query.storeId)
+      .filter(
+        (outbound) =>
+          query.inventoryLotId === undefined || outbound.inventoryLotId === query.inventoryLotId,
+      )
+      .filter((outbound) => query.status === undefined || outbound.status === query.status)
+      .filter((outbound) => query.reason === undefined || outbound.reason === query.reason)
+      .sort(
+        (left, right) =>
+          right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
+      );
+    return {
+      data: structuredClone(slicePage(values, query.page, query.pageSize)),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
+  }
+
+  public async createStoreOutbound(
+    actor: AuthenticatedPrincipal,
+    input: CreateStoreOutboundRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreOutbound>> {
+    this.assertStoreMutationActor(actor);
+    if (actor.storeId !== input.storeId) throw forbidden();
+    const scopedKey = `${actor.accountId}:outbound:create:${input.storeId}:${idempotencyKey}`;
+    const replay = this.replayInventoryMutation(scopedKey, requestHash, 'STORE_OUTBOUND');
+    if (replay) return { data: replay as StoreOutbound, replayed: true };
+    const bag = this.requireInventoryBag(input.inventoryLotId);
+    if (bag.storeId !== input.storeId) throw forbidden();
+    if (
+      bag.version !== input.expectedInventoryVersion ||
+      (bag.status !== 'AVAILABLE' && bag.status !== 'OPEN')
+    ) {
+      throw versionConflict('Bao tồn kho đã thay đổi hoặc không còn khả dụng');
+    }
+    if (kilogramsToGramsExact(input.weightKg) > kilogramsToGramsExact(bag.remainingWeightKg)) {
+      throw insufficientStock();
+    }
+    const now = this.now().toISOString();
+    const created: StoreOutbound = {
+      id: randomUUID(),
+      storeId: input.storeId,
+      inventoryLotId: bag.id,
+      weightKg: input.weightKg,
+      reason: input.reason,
+      revenueVnd: input.revenueVnd,
+      status: 'PENDING',
+      createdByAccountId: actor.accountId,
+      reviewedByAccountId: null,
+      reviewNote: null,
+      version: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.storeOutbounds.set(created.id, created);
+    this.rememberInventoryMutation(scopedKey, requestHash, 'STORE_OUTBOUND', created);
+    this.appendAudit(
+      actor,
+      context,
+      'STORE_OUTBOUND_CREATED',
+      'store_outbound',
+      created.id,
+      null,
+      created,
+    );
+    return { data: structuredClone(created), replayed: false };
+  }
+
+  public async reviewStoreOutbound(
+    actor: AuthenticatedPrincipal,
+    outboundId: string,
+    input: ReviewStoreOutboundRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreOutbound>> {
+    if (actor.role === 'STORE') throw forbidden();
+    const scopedKey = `${actor.accountId}:outbound:review:${outboundId}:${idempotencyKey}`;
+    const replay = this.replayInventoryMutation(scopedKey, requestHash, 'STORE_OUTBOUND');
+    if (replay) return { data: replay as StoreOutbound, replayed: true };
+    const current = this.storeOutbounds.get(outboundId);
+    if (!current) throw notFound('Không tìm thấy phiếu xuất tại cửa hàng');
+    if (!canAccessStore(actor, current.storeId)) throw forbidden();
+    if (current.version !== input.expectedVersion || current.status !== 'PENDING') {
+      throw versionConflict('Phiếu xuất đã thay đổi hoặc không còn chờ duyệt');
+    }
+    if (input.decision === 'REJECT' && input.note === null) {
+      throw new ApiError('VALIDATION_ERROR', 'Từ chối phiếu xuất phải có lý do', 400);
+    }
+
+    if (input.decision === 'APPROVE') {
+      const bag = this.requireInventoryBag(current.inventoryLotId);
+      if (
+        bag.storeId !== current.storeId ||
+        (bag.status !== 'AVAILABLE' && bag.status !== 'OPEN')
+      ) {
+        throw versionConflict('Bao tồn kho không còn khả dụng');
+      }
+      const beforeGrams = kilogramsToGramsExact(bag.remainingWeightKg);
+      const outboundGrams = kilogramsToGramsExact(current.weightKg);
+      if (outboundGrams > beforeGrams) throw insufficientStock();
+      const afterGrams = beforeGrams - outboundGrams;
+      const now = this.now().toISOString();
+      const updatedBag: StoreInventoryBag = {
+        ...bag,
+        remainingWeightKg: gramsToKilogramsExact(afterGrams),
+        status: afterGrams === 0n ? 'EMPTY' : 'OPEN',
+        updatedAt: now,
+        version: bag.version + 1,
+      };
+      this.inventoryBags.set(updatedBag.id, updatedBag);
+      const ledger: StoreInventoryBagLedgerEntry = {
+        id: randomUUID(),
+        bagId: bag.id,
+        operation: 'CONSUME',
+        beforeWeightKg: bag.remainingWeightKg,
+        afterWeightKg: updatedBag.remainingWeightKg,
+        reason: `Duyệt phiếu xuất ${current.reason}`,
+        actorAccountId: actor.accountId,
+        createdAt: now,
+      };
+      this.inventoryLedger.set(ledger.id, ledger);
+    }
+
+    const updated: StoreOutbound = {
+      ...current,
+      status: input.decision === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+      reviewedByAccountId: actor.accountId,
+      reviewNote: input.note,
+      updatedAt: this.now().toISOString(),
+      version: current.version + 1,
+    };
+    this.storeOutbounds.set(updated.id, updated);
+    this.rememberInventoryMutation(scopedKey, requestHash, 'STORE_OUTBOUND', updated);
+    this.appendAudit(
+      actor,
+      context,
+      updated.status === 'APPROVED' ? 'STORE_OUTBOUND_APPROVED' : 'STORE_OUTBOUND_REJECTED',
+      'store_outbound',
+      updated.id,
+      current,
+      updated,
+    );
+    return { data: structuredClone(updated), replayed: false };
+  }
+
   public async listWaitTickets(
     actor: AuthenticatedPrincipal,
     query: ListWaitTicketsQuery,
@@ -1307,6 +1581,55 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (!account) throw notFound('Không tìm thấy tài khoản');
     account.status = status;
     account.sessionVersion += 1;
+  }
+
+  private assertRequestedStoreScope(
+    actor: AuthenticatedPrincipal,
+    requestedStoreId: string | undefined,
+  ): void {
+    if (requestedStoreId !== undefined && !canAccessStore(actor, requestedStoreId)) {
+      throw forbidden();
+    }
+  }
+
+  private assertStoreMutationActor(actor: AuthenticatedPrincipal): void {
+    if (actor.role !== 'STORE' || actor.storeId === null) throw forbidden();
+  }
+
+  private requireInventoryBag(bagId: string): StoreInventoryBag {
+    const bag = this.inventoryBags.get(bagId);
+    if (!bag) throw notFound('Không tìm thấy bao tồn kho');
+    return bag;
+  }
+
+  private replayInventoryMutation(
+    scopedKey: string,
+    requestHash: string,
+    resourceType: InventoryMutationIdempotencyRecord['resourceType'],
+  ): StoreInventoryBag | StoreOutbound | null {
+    const previous = this.inventoryMutationIdempotency.get(scopedKey);
+    if (!previous) return null;
+    if (previous.requestHash !== requestHash || previous.resourceType !== resourceType) {
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    }
+    return structuredClone(previous.response);
+  }
+
+  private rememberInventoryMutation(
+    scopedKey: string,
+    requestHash: string,
+    resourceType: InventoryMutationIdempotencyRecord['resourceType'],
+    response: StoreInventoryBag | StoreOutbound,
+  ): void {
+    this.inventoryMutationIdempotency.set(scopedKey, {
+      requestHash,
+      resourceType,
+      response: structuredClone(response),
+    });
   }
 
   private replayReceipt(scopedKey: string, requestHash: string): Receipt | null {
@@ -1599,6 +1922,32 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       },
     ];
     for (const account of seededAccounts) this.accounts.set(account.id, account);
+
+    this.inventoryBags.set(MEMORY_SEED_IDS.inventoryBag, {
+      id: MEMORY_SEED_IDS.inventoryBag,
+      storeId: nvtId,
+      productId: firstProduct.id,
+      sourceReceiptBagId: MEMORY_SEED_IDS.sourceReceiptBag,
+      outboundOrderId: MEMORY_SEED_IDS.outboundRequest,
+      bagCode: 'BAG-MEMORY-001',
+      originalWeightKg: '25.000',
+      receivedWeightKg: '24.500',
+      remainingWeightKg: '24.500',
+      status: 'AVAILABLE',
+      version: 0,
+      receivedAt: now,
+      updatedAt: now,
+    });
+    this.inventoryLedger.set(MEMORY_SEED_IDS.inventoryLedger, {
+      id: MEMORY_SEED_IDS.inventoryLedger,
+      bagId: MEMORY_SEED_IDS.inventoryBag,
+      operation: 'RECEIVE',
+      beforeWeightKg: '0',
+      afterWeightKg: '24.500',
+      reason: 'Nhập kho từ phiếu nhận đã hoàn tất',
+      actorAccountId: MEMORY_SEED_IDS.storeAccount,
+      createdAt: now,
+    });
   }
 
   private storeIdByCode(code: string): string {
@@ -1782,8 +2131,12 @@ function validateMemoryFinalization(input: FinalizeReceiptRequest, current: Rece
   }
 }
 
-function versionConflict(): ApiError {
-  return new ApiError('VERSION_CONFLICT', 'Phiếu nhận đã thay đổi, vui lòng tải lại', 409);
+function versionConflict(message = 'Phiếu nhận đã thay đổi, vui lòng tải lại'): ApiError {
+  return new ApiError('VERSION_CONFLICT', message, 409);
+}
+
+function insufficientStock(): ApiError {
+  return new ApiError('INSUFFICIENT_STOCK', 'Khối lượng xuất vượt quá tồn kho còn lại', 409);
 }
 
 function auditSnapshot(value: unknown): Record<string, unknown> | null {

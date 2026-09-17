@@ -6,6 +6,7 @@ import type {
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
+  CreateStoreOutboundRequest,
   CreateStoreRequest,
   CreateAccountRequest,
   DeclareStoreReceiptRequest,
@@ -16,6 +17,9 @@ import type {
   ListPriorityOffersQuery,
   ListProductsQuery,
   ListReceiptsQuery,
+  ListStoreInventoryBagLedgerQuery,
+  ListStoreInventoryBagsQuery,
+  ListStoreOutboundsQuery,
   ListStoreReceiptSourcesQuery,
   ListProductConversionsQuery,
   ListStoreOrderRequestsQuery,
@@ -23,6 +27,7 @@ import type {
   ListWaitTicketsQuery,
   MonthlyOperationalReport,
   MonthlyOperationalReportQuery,
+  OpenStoreInventoryBagRequest,
   Product,
   ProductConversion,
   PriorityOffer,
@@ -30,10 +35,14 @@ import type {
   RespondPriorityOfferRequest,
   ReturnReceiptForCorrectionRequest,
   ResetPasswordRequest,
+  ReviewStoreOutboundRequest,
   OrderSession,
   Session,
   Store,
+  StoreInventoryBag,
+  StoreInventoryBagLedgerEntry,
   StoreOrderRequest,
+  StoreOutbound,
   StoreReceiptSource,
   SubmitStoreReceiptRequest,
   UpdateProductRequest,
@@ -48,6 +57,7 @@ import {
   auditLogs,
   cancelWaitTicket as cancelDatabaseWaitTicket,
   closeDatabase,
+  createStoreOutbound as createDatabaseStoreOutbound,
   dailyPriorityOffers,
   declareStoreReceipt as declareDatabaseStoreReceipt,
   db,
@@ -57,12 +67,17 @@ import {
   finalizeStoreReceipt as finalizeDatabaseStoreReceipt,
   getWaitTicketHistory as getDatabaseWaitTicketHistory,
   listPriorityOffers as listDatabasePriorityOffers,
+  listStoreInventoryBags as listDatabaseStoreInventoryBags,
+  listStoreInventoryLedger as listDatabaseStoreInventoryLedger,
+  listStoreOutbounds as listDatabaseStoreOutbounds,
   listStoreReceiptSources as listDatabaseStoreReceiptSources,
   listWaitTickets as listDatabaseWaitTickets,
   loadMonthlyOperationalReport,
+  openStoreInventoryBag as openDatabaseStoreInventoryBag,
   orderRequestItems,
   orderRequests,
   orderSessions,
+  outboundRequestLines,
   OrderRequestAuthorizationError,
   OrderSessionUnavailableError,
   pool,
@@ -70,8 +85,10 @@ import {
   products,
   RequestLimitExceededError,
   respondPriorityOffer as respondDatabasePriorityOffer,
+  reviewStoreOutbound as reviewDatabaseStoreOutbound,
   sessions,
   StoreOperationConflictError,
+  StoreInventoryAuthorizationError,
   StoreOperationValidationError,
   StoreReceiptAuthorizationError,
   storeReceiptBags,
@@ -97,6 +114,8 @@ import {
   type MonthlyReportScope,
   type PriorityOfferRecord,
   type StoreReceiptSourceRecord,
+  type StoreInventoryBagRecord,
+  type StoreInventoryLedgerRecord,
   type WaitTicketDatabaseStatus,
   type WaitTicketEffectiveStatus,
   type WaitTicketRecord,
@@ -1243,6 +1262,183 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     }
   }
 
+  public async listStoreInventoryBags(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreInventoryBagsQuery,
+  ): Promise<Page<StoreInventoryBag>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const filters = {
+      page: query.page,
+      pageSize: query.pageSize,
+      ...(query.productId === undefined ? {} : { productId: query.productId }),
+      ...(query.status === undefined ? {} : { status: databaseInventoryStatus(query.status) }),
+      ...(query.bagCode === undefined ? {} : { bagCode: query.bagCode }),
+    };
+    if (actor.role === 'ADMIN') {
+      return inventoryBagPage(
+        await listDatabaseStoreInventoryBags(db, {
+          ...filters,
+          ...(query.storeId === undefined ? {} : { storeId: query.storeId }),
+        }),
+      );
+    }
+    if (actor.role === 'STORE') {
+      if (actor.storeId === null) return emptyPage(query.page, query.pageSize);
+      return inventoryBagPage(
+        await listDatabaseStoreInventoryBags(db, { ...filters, storeId: actor.storeId }),
+      );
+    }
+    if (query.storeId !== undefined) {
+      return inventoryBagPage(
+        await listDatabaseStoreInventoryBags(db, { ...filters, storeId: query.storeId }),
+      );
+    }
+    return listAssignedStoreInventoryBags(actor.assignedStoreIds, query);
+  }
+
+  public async listStoreInventoryBagLedger(
+    actor: AuthenticatedPrincipal,
+    bagId: string,
+    query: ListStoreInventoryBagLedgerQuery,
+  ): Promise<Page<StoreInventoryBagLedgerEntry>> {
+    const bag = await this.inventoryBagDto(bagId);
+    if (!canAccessStore(actor, bag.storeId)) throw forbidden();
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    if (
+      (query.storeId !== undefined && query.storeId !== bag.storeId) ||
+      (query.productId !== undefined && query.productId !== bag.productId)
+    ) {
+      return emptyPage(query.page, query.pageSize);
+    }
+    return inventoryLedgerPage(
+      await listDatabaseStoreInventoryLedger(db, {
+        page: query.page,
+        pageSize: query.pageSize,
+        bagId,
+        storeId: bag.storeId,
+        ...(query.productId === undefined ? {} : { productId: query.productId }),
+      }),
+    );
+  }
+
+  public async openStoreInventoryBag(
+    actor: AuthenticatedPrincipal,
+    bagId: string,
+    input: OpenStoreInventoryBagRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreInventoryBag>> {
+    if (actor.role !== 'STORE' || actor.storeId === null) throw forbidden();
+    const storeId = actor.storeId;
+    const current = await this.inventoryBagDto(bagId);
+    if (current.storeId !== storeId) throw forbidden();
+    return withStoreInventoryErrors(async () => {
+      const result = await openDatabaseStoreInventoryBag(db, {
+        bagId,
+        storeId,
+        expectedVersion: input.expectedVersion,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.bagId;
+      if (!resourceId) throw new Error('Idempotent inventory opening has no resource id');
+      return { data: await this.inventoryBagDto(resourceId), replayed: result.replayed };
+    });
+  }
+
+  public async listStoreOutbounds(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreOutboundsQuery,
+  ): Promise<Page<StoreOutbound>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const filters = {
+      page: query.page,
+      pageSize: query.pageSize,
+      ...(query.inventoryLotId === undefined ? {} : { inventoryBagId: query.inventoryLotId }),
+      ...(query.status === undefined ? {} : { status: databaseOutboundStatus(query.status) }),
+      ...(query.reason === undefined ? {} : { reason: databaseOutboundReason(query.reason) }),
+    } as const;
+    if (actor.role === 'ADMIN') {
+      return storeOutboundPage(
+        await listDatabaseStoreOutbounds(db, {
+          ...filters,
+          ...(query.storeId === undefined ? {} : { storeId: query.storeId }),
+        }),
+      );
+    }
+    if (actor.role === 'STORE') {
+      if (actor.storeId === null) return emptyPage(query.page, query.pageSize);
+      return storeOutboundPage(
+        await listDatabaseStoreOutbounds(db, { ...filters, storeId: actor.storeId }),
+      );
+    }
+    if (query.storeId !== undefined) {
+      return storeOutboundPage(
+        await listDatabaseStoreOutbounds(db, { ...filters, storeId: query.storeId }),
+      );
+    }
+    return listAssignedStoreOutbounds(actor.assignedStoreIds, query);
+  }
+
+  public async createStoreOutbound(
+    actor: AuthenticatedPrincipal,
+    input: CreateStoreOutboundRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreOutbound>> {
+    if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
+    const bag = await this.inventoryBagDto(input.inventoryLotId);
+    if (bag.storeId !== actor.storeId) throw forbidden();
+    return withStoreInventoryErrors(async () => {
+      const result = await createDatabaseStoreOutbound(db, {
+        storeId: input.storeId,
+        inventoryBagId: input.inventoryLotId,
+        expectedInventoryVersion: input.expectedInventoryVersion,
+        weightKg: input.weightKg,
+        reason: databaseOutboundReason(input.reason),
+        revenueVnd: input.revenueVnd === null ? null : BigInt(input.revenueVnd),
+        createdByUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.outboundId;
+      if (!resourceId) throw new Error('Idempotent store outbound creation has no resource id');
+      return { data: await this.storeOutboundDto(resourceId), replayed: result.replayed };
+    });
+  }
+
+  public async reviewStoreOutbound(
+    actor: AuthenticatedPrincipal,
+    outboundId: string,
+    input: ReviewStoreOutboundRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    _context: RequestContext,
+  ): Promise<IdempotentResource<StoreOutbound>> {
+    if (actor.role === 'STORE') throw forbidden();
+    const current = await this.storeOutboundDto(outboundId);
+    if (!canAccessStore(actor, current.storeId)) throw forbidden();
+    return withStoreInventoryErrors(async () => {
+      const result = await reviewDatabaseStoreOutbound(db, {
+        outboundId,
+        expectedVersion: input.expectedVersion,
+        reviewedByUserId: actor.accountId,
+        decision: input.decision === 'APPROVE' ? 'approve' : 'reject',
+        note: input.note,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.outboundId;
+      if (!resourceId) throw new Error('Idempotent store outbound review has no resource id');
+      return { data: await this.storeOutboundDto(resourceId), replayed: result.replayed };
+    });
+  }
+
   public async listWaitTickets(
     actor: AuthenticatedPrincipal,
     query: ListWaitTicketsQuery,
@@ -1614,6 +1810,49 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     return priorityOfferDto({ ...offer, effectiveStatus });
   }
 
+  private async inventoryBagDto(bagId: string): Promise<StoreInventoryBag> {
+    const [row] = await db
+      .select({
+        bag: storeInventoryBags,
+        outboundRequestId: outboundRequestLines.outboundRequestId,
+      })
+      .from(storeInventoryBags)
+      .innerJoin(
+        outboundRequestLines,
+        eq(outboundRequestLines.id, storeInventoryBags.outboundRequestLineId),
+      )
+      .where(eq(storeInventoryBags.id, bagId))
+      .limit(1);
+    if (!row) throw notFound('Không tìm thấy bao tồn kho');
+    return inventoryBagDto({
+      id: row.bag.id,
+      bagCode: row.bag.bagCode,
+      storeId: row.bag.storeId,
+      productId: row.bag.productId,
+      sourceStoreReceiptBagId: row.bag.sourceStoreReceiptBagId,
+      outboundRequestId: row.outboundRequestId,
+      status: row.bag.status,
+      initialWeightKg: row.bag.initialWeightKg,
+      currentWeightKg: row.bag.currentWeightKg,
+      costVnd: row.bag.costVnd,
+      version: row.bag.version,
+      receivedAt: row.bag.receivedAt,
+      openedAt: row.bag.openedAt,
+      depletedAt: row.bag.depletedAt,
+      updatedAt: row.bag.updatedAt,
+    });
+  }
+
+  private async storeOutboundDto(outboundId: string): Promise<StoreOutbound> {
+    const [outbound] = await db
+      .select()
+      .from(storeOutbounds)
+      .where(and(eq(storeOutbounds.id, outboundId), isNull(storeOutbounds.deletedAt)))
+      .limit(1);
+    if (!outbound) throw notFound('Không tìm thấy phiếu xuất tại cửa hàng');
+    return storeOutboundDto(outbound);
+  }
+
   private async authorizeMonthlyReportScope(
     actor: AuthenticatedPrincipal,
     query: MonthlyOperationalReportQuery,
@@ -1717,6 +1956,216 @@ async function listAssignedStoreReceiptSources(
     data: records.slice(start, start + query.pageSize).map(receiptSourceDto),
     pagination: pagination(query.page, query.pageSize, totalItems),
   };
+}
+
+function inventoryBagDto(record: StoreInventoryBagRecord): StoreInventoryBag {
+  return {
+    id: record.id,
+    storeId: record.storeId,
+    productId: record.productId,
+    sourceReceiptBagId: record.sourceStoreReceiptBagId,
+    outboundOrderId: record.outboundRequestId,
+    bagCode: record.bagCode,
+    originalWeightKg: record.initialWeightKg,
+    receivedWeightKg: record.initialWeightKg,
+    remainingWeightKg: record.currentWeightKg,
+    status: inventoryBagStatus(record.status),
+    version: record.version,
+    receivedAt: record.receivedAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+  };
+}
+
+function inventoryBagPage(
+  page: Awaited<ReturnType<typeof listDatabaseStoreInventoryBags>>,
+): Page<StoreInventoryBag> {
+  return { data: page.data.map(inventoryBagDto), pagination: page.pagination };
+}
+
+function inventoryLedgerDto(record: StoreInventoryLedgerRecord): StoreInventoryBagLedgerEntry {
+  return {
+    id: record.id,
+    bagId: record.bagId,
+    operation: record.eventType.toUpperCase() as StoreInventoryBagLedgerEntry['operation'],
+    beforeWeightKg: record.weightBeforeKg,
+    afterWeightKg: record.weightAfterKg,
+    reason: record.reason,
+    actorAccountId: record.actorUserId,
+    createdAt: record.occurredAt.toISOString(),
+  };
+}
+
+function inventoryLedgerPage(
+  page: Awaited<ReturnType<typeof listDatabaseStoreInventoryLedger>>,
+): Page<StoreInventoryBagLedgerEntry> {
+  return { data: page.data.map(inventoryLedgerDto), pagination: page.pagination };
+}
+
+function storeOutboundDto(row: typeof storeOutbounds.$inferSelect): StoreOutbound {
+  return {
+    id: row.id,
+    storeId: row.storeId,
+    inventoryLotId: row.storeInventoryBagId,
+    weightKg: row.weightKg,
+    reason: row.reason.toUpperCase() as StoreOutbound['reason'],
+    revenueVnd: row.revenueVnd === null ? null : safeVnd(row.revenueVnd),
+    status: row.status.toUpperCase() as StoreOutbound['status'],
+    createdByAccountId: row.createdByUserId,
+    reviewedByAccountId: row.reviewedByUserId,
+    reviewNote: row.reviewNote,
+    version: row.version,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function storeOutboundPage(
+  page: Awaited<ReturnType<typeof listDatabaseStoreOutbounds>>,
+): Page<StoreOutbound> {
+  return { data: page.data.map(storeOutboundDto), pagination: page.pagination };
+}
+
+async function listAssignedStoreInventoryBags(
+  assignedStoreIds: readonly string[],
+  query: ListStoreInventoryBagsQuery,
+): Promise<Page<StoreInventoryBag>> {
+  return listAssignedStorePages(
+    assignedStoreIds,
+    query.page,
+    query.pageSize,
+    async (storeId, page, pageSize) =>
+      inventoryBagPage(
+        await listDatabaseStoreInventoryBags(db, {
+          storeId,
+          page,
+          pageSize,
+          ...(query.productId === undefined ? {} : { productId: query.productId }),
+          ...(query.status === undefined ? {} : { status: databaseInventoryStatus(query.status) }),
+          ...(query.bagCode === undefined ? {} : { bagCode: query.bagCode }),
+        }),
+      ),
+    (left, right) =>
+      (right.receivedAt ?? '').localeCompare(left.receivedAt ?? '') ||
+      left.bagCode.localeCompare(right.bagCode),
+  );
+}
+
+async function listAssignedStoreOutbounds(
+  assignedStoreIds: readonly string[],
+  query: ListStoreOutboundsQuery,
+): Promise<Page<StoreOutbound>> {
+  return listAssignedStorePages(
+    assignedStoreIds,
+    query.page,
+    query.pageSize,
+    async (storeId, page, pageSize) =>
+      storeOutboundPage(
+        await listDatabaseStoreOutbounds(db, {
+          storeId,
+          page,
+          pageSize,
+          ...(query.inventoryLotId === undefined ? {} : { inventoryBagId: query.inventoryLotId }),
+          ...(query.status === undefined ? {} : { status: databaseOutboundStatus(query.status) }),
+          ...(query.reason === undefined ? {} : { reason: databaseOutboundReason(query.reason) }),
+        }),
+      ),
+    (left, right) =>
+      right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
+  );
+}
+
+async function listAssignedStorePages<T>(
+  assignedStoreIds: readonly string[],
+  page: number,
+  pageSize: number,
+  fetchPage: (storeId: string, page: number, pageSize: number) => Promise<Page<T>>,
+  compare: (left: T, right: T) => number,
+): Promise<Page<T>> {
+  const storeIds = [...new Set(assignedStoreIds)];
+  if (storeIds.length === 0) return emptyPage(page, pageSize);
+  const requestedEnd = page * pageSize;
+  if (!Number.isSafeInteger(requestedEnd)) {
+    throw new ApiError('VALIDATION_ERROR', 'Trang yêu cầu vượt quá giới hạn an toàn', 400);
+  }
+  const fetchPageSize = Math.min(100, requestedEnd);
+  const storePages = await Promise.all(
+    storeIds.map(async (storeId) => {
+      const first = await fetchPage(storeId, 1, fetchPageSize);
+      const records = [...first.data];
+      const needed = Math.min(first.pagination.totalItems, requestedEnd);
+      for (let nextPage = 2; records.length < needed; nextPage += 1) {
+        const next = await fetchPage(storeId, nextPage, fetchPageSize);
+        if (next.data.length === 0) break;
+        records.push(...next.data);
+      }
+      return { records, totalItems: first.pagination.totalItems };
+    }),
+  );
+  const totalItems = storePages.reduce((sum, storePage) => sum + storePage.totalItems, 0);
+  const records = storePages.flatMap((storePage) => storePage.records).sort(compare);
+  const start = (page - 1) * pageSize;
+  return {
+    data: records.slice(start, start + pageSize),
+    pagination: pagination(page, pageSize, totalItems),
+  };
+}
+
+function emptyPage<T>(page: number, pageSize: number): Page<T> {
+  return { data: [], pagination: pagination(page, pageSize, 0) };
+}
+
+function databaseInventoryStatus(
+  status: StoreInventoryBag['status'],
+): typeof storeInventoryBags.$inferSelect.status {
+  switch (status) {
+    case 'IN_TRANSIT':
+      return 'in_transit';
+    case 'AVAILABLE':
+      return 'available';
+    case 'OPEN':
+      return 'opened';
+    case 'EMPTY':
+      return 'depleted';
+    case 'QUARANTINED':
+      return 'quarantined';
+    case 'RETURNED':
+      return 'returned';
+    case 'LOST':
+      return 'lost';
+  }
+}
+
+function inventoryBagStatus(
+  status: typeof storeInventoryBags.$inferSelect.status,
+): StoreInventoryBag['status'] {
+  switch (status) {
+    case 'in_transit':
+      return 'IN_TRANSIT';
+    case 'available':
+      return 'AVAILABLE';
+    case 'opened':
+      return 'OPEN';
+    case 'depleted':
+      return 'EMPTY';
+    case 'quarantined':
+      return 'QUARANTINED';
+    case 'returned':
+      return 'RETURNED';
+    case 'lost':
+      return 'LOST';
+  }
+}
+
+function databaseOutboundReason(
+  reason: StoreOutbound['reason'],
+): typeof storeOutbounds.$inferSelect.reason {
+  return reason.toLocaleLowerCase('en-US') as typeof storeOutbounds.$inferSelect.reason;
+}
+
+function databaseOutboundStatus(
+  status: StoreOutbound['status'],
+): typeof storeOutbounds.$inferSelect.status {
+  return status.toLocaleLowerCase('en-US') as typeof storeOutbounds.$inferSelect.status;
 }
 
 function sessionDto(stored: typeof sessions.$inferSelect, account: AccountCredentials): Session {
@@ -2021,6 +2470,35 @@ async function withWaitErrors<T>(operation: () => Promise<T>): Promise<T> {
     }
     if (error instanceof WaitTicketConflictError || error instanceof PriorityOfferConflictError) {
       throw conflict(error.message);
+    }
+    if (error instanceof IdempotencyConflictError) {
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    }
+    if (error instanceof IdempotencyInProgressError) {
+      throw conflict('Yêu cầu cùng khóa idempotency đang được xử lý');
+    }
+    throw error;
+  }
+}
+
+async function withStoreInventoryErrors<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error: unknown) {
+    if (error instanceof StoreInventoryAuthorizationError) throw forbidden();
+    if (error instanceof StoreOperationValidationError) {
+      if (/exceeds the remaining bag weight/iu.test(error.message)) {
+        throw new ApiError('INSUFFICIENT_STOCK', 'Khối lượng xuất vượt quá tồn kho còn lại', 409);
+      }
+      if (/not assigned|not an active admin or HTKD/iu.test(error.message)) throw forbidden();
+      throw new ApiError('VALIDATION_ERROR', error.message, 400);
+    }
+    if (error instanceof StoreOperationConflictError) {
+      throw new ApiError('VERSION_CONFLICT', 'Dữ liệu tồn kho đã thay đổi, vui lòng tải lại', 409);
     }
     if (error instanceof IdempotencyConflictError) {
       throw new ApiError(

@@ -7,6 +7,7 @@ import {
   CreateProductRequestSchema,
   CreateProductConversionRequestSchema,
   CreateStoreOrderRequestSchema,
+  CreateStoreOutboundRequestSchema,
   CreateStoreRequestSchema,
   DeclareStoreReceiptRequestSchema,
   FinalizeReceiptRequestSchema,
@@ -19,20 +20,27 @@ import {
   ListProductsQuerySchema,
   ListProductConversionsQuerySchema,
   ListReceiptsQuerySchema,
+  ListStoreInventoryBagLedgerQuerySchema,
+  ListStoreInventoryBagsQuerySchema,
+  ListStoreOutboundsQuerySchema,
   ListStoreReceiptSourcesQuerySchema,
   ListStoreOrderRequestsQuerySchema,
   ListStoresQuerySchema,
   ListWaitTicketsQuerySchema,
   LoginRequestSchema,
   MonthlyOperationalReportQuerySchema,
+  OpenStoreInventoryBagRequestSchema,
   ProductParamsSchema,
   ProductConversionParamsSchema,
   PriorityOfferParamsSchema,
   ReceiptParamsSchema,
   ResetPasswordRequestSchema,
+  ReviewStoreOutboundRequestSchema,
   ReturnReceiptForCorrectionRequestSchema,
   RespondPriorityOfferRequestSchema,
   SubmitStoreReceiptRequestSchema,
+  StoreInventoryBagParamsSchema,
+  StoreOutboundParamsSchema,
   WaitTicketHistoryQuerySchema,
   WaitTicketParamsSchema,
   DeleteProductConversionRequestSchema,
@@ -531,6 +539,77 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return reply.send({ data: result.data });
   });
 
+  app.get('/api/v1/store-inventory-bags', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = ListStoreInventoryBagsQuerySchema.parse(request.query);
+    return repository.listStoreInventoryBags(session.principal, query);
+  });
+
+  app.get('/api/v1/store-inventory-bags/:bagId/ledger', async (request) => {
+    const session = await authenticate(request, repository);
+    const { bagId } = StoreInventoryBagParamsSchema.parse(request.params);
+    const query = ListStoreInventoryBagLedgerQuerySchema.parse(request.query);
+    return repository.listStoreInventoryBagLedger(session.principal, bagId, query);
+  });
+
+  app.post('/api/v1/store-inventory-bags/:bagId/open', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { bagId } = StoreInventoryBagParamsSchema.parse(request.params);
+    const input = OpenStoreInventoryBagRequestSchema.parse(request.body);
+    const result = await repository.openStoreInventoryBag(
+      session.principal,
+      bagId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'OPEN_STORE_INVENTORY_BAG', bagId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.get('/api/v1/store-outbounds', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = ListStoreOutboundsQuerySchema.parse(request.query);
+    return repository.listStoreOutbounds(session.principal, query);
+  });
+
+  app.post('/api/v1/store-outbounds', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = CreateStoreOutboundRequestSchema.parse(request.body);
+    const result = await repository.createStoreOutbound(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CREATE_STORE_OUTBOUND', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
+  });
+
+  app.post('/api/v1/store-outbounds/:outboundId/review', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { outboundId } = StoreOutboundParamsSchema.parse(request.params);
+    const input = ReviewStoreOutboundRequestSchema.parse(request.body);
+    const result = await repository.reviewStoreOutbound(
+      session.principal,
+      outboundId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'REVIEW_STORE_OUTBOUND', outboundId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
   app.get('/api/v1/wait-tickets', async (request) => {
     const session = await authenticate(request, repository);
     const query = ListWaitTicketsQuerySchema.parse(request.query);
@@ -548,6 +627,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.post('/api/v1/wait-tickets/:waitTicketId/cancel', async (request, reply) => {
     const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
     const headers = IdempotencyHeadersSchema.parse(request.headers);
     const { waitTicketId } = WaitTicketParamsSchema.parse(request.params);
     const input = CancelWaitTicketRequestSchema.parse(request.body);
@@ -886,6 +966,49 @@ function openApiDocument(): Record<string, unknown> {
         post: {
           security: cookieSecurity,
           responses: { '200': { description: 'Finalized receipt and inventory' } },
+        },
+      },
+      '/api/v1/store-inventory-bags': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Scoped store inventory bags' } },
+        },
+      },
+      '/api/v1/store-inventory-bags/{bagId}/ledger': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Auditable inventory bag ledger' } },
+        },
+      },
+      '/api/v1/store-inventory-bags/{bagId}/open': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Opened or replayed inventory bag mutation' } },
+        },
+      },
+      '/api/v1/store-outbounds': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Scoped store outbounds' } },
+        },
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '201': { description: 'Created or replayed store outbound' } },
+        },
+      },
+      '/api/v1/store-outbounds/{outboundId}/review': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Approved, rejected or replayed store outbound' } },
         },
       },
       '/api/v1/wait-tickets': {
