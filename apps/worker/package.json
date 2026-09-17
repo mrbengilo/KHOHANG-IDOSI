@@ -1,0 +1,29 @@
+{
+  "name": "@idosi/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/server.js",
+  "types": "./dist/server.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx watch src/server.ts",
+    "start": "node --enable-source-maps dist/server.js",
+    "test": "vitest run --pool=threads --maxWorkers=1 --no-file-parallelism",
+    "test:coverage": "vitest run --coverage --pool=threads --maxWorkers=1 --no-file-parallelism",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@idosi/database": "0.1.0",
+    "@idosi/domain": "0.1.0",
+    "drizzle-orm": "^0.44.5"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}

@@ -1,0 +1,299 @@
+name: khohang-idosi
+
+x-json-logging: &json-logging
+  driver: json-file
+  options:
+    max-file: '5'
+    max-size: 10m
+
+x-node-security: &node-security
+  cap_drop:
+    - ALL
+  init: true
+  pids_limit: 256
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+
+services:
+  db:
+    image: ${POSTGRES_IMAGE:-postgres:17.6-bookworm}
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_DB: ${POSTGRES_DB:-idosi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_USER: ${POSTGRES_USER:-idosi}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    logging: *json-logging
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    shm_size: 256mb
+    stop_grace_period: 60s
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - data
+
+  migrate:
+    # The migration target intentionally has its own immutable image name. Using
+    # the API tag for two different build targets makes one target overwrite the
+    # other locally and cannot be represented correctly in an image registry.
+    image: ${IMAGE_PREFIX:?IMAGE_PREFIX is required}-migrate:${IMAGE_TAG:?IMAGE_TAG must be an immutable commit SHA}
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      target: migration
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      MIGRATION_DB_LOCK_TIMEOUT_MS: ${MIGRATION_DB_LOCK_TIMEOUT_MS:-10000}
+      MIGRATION_LOCK_TIMEOUT_SECONDS: ${MIGRATION_LOCK_TIMEOUT_SECONDS:-300}
+      MIGRATION_STATEMENT_TIMEOUT_MS: ${MIGRATION_STATEMENT_TIMEOUT_MS:-300000}
+      NODE_ENV: production
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    depends_on:
+      db:
+        condition: service_healthy
+    logging: *json-logging
+    pull_policy: always
+    restart: 'no'
+    <<: *node-security
+    networks:
+      - data
+
+  bootstrap-admin:
+    # Administrator creation is deliberately opt-in so the bootstrap password
+    # never becomes a long-lived service secret. Run this service once through
+    # the `bootstrap` profile after supplying the three BOOTSTRAP_ADMIN values.
+    profiles:
+      - bootstrap
+    image: ${IMAGE_PREFIX:?IMAGE_PREFIX is required}-api:${IMAGE_TAG:?IMAGE_TAG must be an immutable commit SHA}
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      target: runtime
+    command:
+      - node
+      - --enable-source-maps
+      - apps/api/dist/bootstrap-admin.js
+    environment:
+      BOOTSTRAP_ADMIN_DISPLAY_NAME: ${BOOTSTRAP_ADMIN_DISPLAY_NAME:-Administrator}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      NODE_ENV: production
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    logging: *json-logging
+    pull_policy: always
+    restart: 'no'
+    <<: *node-security
+    networks:
+      - data
+
+  api:
+    image: ${IMAGE_PREFIX:?IMAGE_PREFIX is required}-api:${IMAGE_TAG:?IMAGE_TAG must be an immutable commit SHA}
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      target: runtime
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: 3000
+      API_STORAGE: postgres
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: production
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+      WEB_ORIGIN: ${WEB_ORIGIN:?WEB_ORIGIN is required}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - '3000'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging: *json-logging
+    pull_policy: always
+    restart: unless-stopped
+    stop_grace_period: 30s
+    <<: *node-security
+    networks:
+      - edge
+      - data
+
+  worker:
+    image: ${IMAGE_PREFIX:?IMAGE_PREFIX is required}-worker:${IMAGE_TAG:?IMAGE_TAG must be an immutable commit SHA}
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+      target: runtime
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: production
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+      WORKER_STORAGE: postgres
+      # Human-confirmation offers are time-sensitive; historical catch-up is
+      # opt-in only and disabled by default.
+      WORKER_CATCH_UP_DAYS: ${WORKER_CATCH_UP_DAYS:-0}
+      WORKER_HEALTH_HOST: 0.0.0.0
+      WORKER_HEALTH_PORT: 3001
+      WORKER_POLL_MS: ${WORKER_POLL_MS:-30000}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3001/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging: *json-logging
+    pull_policy: always
+    restart: unless-stopped
+    stop_grace_period: 60s
+    <<: *node-security
+    networks:
+      - data
+
+  web:
+    image: ${IMAGE_PREFIX:?IMAGE_PREFIX is required}-web:${IMAGE_TAG:?IMAGE_TAG must be an immutable commit SHA}
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      target: runtime
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+        VITE_ENABLE_MOCK_FALLBACK: 'false'
+    environment:
+      NODE_ENV: production
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: 8080
+      WEB_ROOT: /app/public
+    expose:
+      - '8080'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8080/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: *json-logging
+    pull_policy: always
+    restart: unless-stopped
+    stop_grace_period: 20s
+    <<: *node-security
+    networks:
+      - edge
+
+  caddy-storage-init:
+    image: ${CADDY_IMAGE:-caddy:2.10.2-alpine}
+    user: '0:0'
+    entrypoint: ['/bin/sh', '-ceu']
+    command:
+      - |
+        mkdir -p /data/caddy /config/caddy
+        chown -R 65532:65532 /data /config
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: 'no'
+
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2.10.2-alpine}
+    user: '65532:65532'
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?APP_DOMAIN is required}
+    depends_on:
+      api:
+        condition: service_healthy
+      caddy-storage-init:
+        condition: service_completed_successfully
+      web:
+        condition: service_healthy
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:2019/healthz']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: *json-logging
+    pids_limit: 128
+    ports:
+      - ${HTTP_BIND_ADDRESS:-0.0.0.0}:${HTTP_PORT:-80}:8080
+      - ${HTTPS_BIND_ADDRESS:-0.0.0.0}:${HTTPS_PORT:-443}:8443
+      - ${HTTPS_BIND_ADDRESS:-0.0.0.0}:${HTTPS_PORT:-443}:8443/udp
+    read_only: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - edge
+
+networks:
+  data:
+    internal: true
+  edge:
+
+volumes:
+  caddy-config:
+  caddy-data:
+  postgres-data:

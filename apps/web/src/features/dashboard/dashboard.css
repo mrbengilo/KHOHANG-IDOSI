@@ -1,0 +1,144 @@
+.dashboard-page .button,
+.dashboard-page input,
+.dashboard-page select {
+  min-height: 44px;
+}
+
+.dashboard-filters {
+  align-items: end;
+}
+
+.dashboard-filters__source {
+  min-height: 44px;
+}
+
+.dashboard-source-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #bbf7d0;
+  border-radius: 12px;
+  background: #f0fdf4;
+  color: #166534;
+  margin-bottom: 20px;
+  padding: 10px 14px;
+}
+
+.dashboard-source-strip > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.dashboard-source-strip small {
+  color: #4b5563;
+  font-size: 10px;
+  margin-left: auto;
+}
+
+.dashboard-message {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.dashboard-message > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dashboard-message span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.dashboard-message .button__spinner {
+  position: static;
+  flex: 0 0 auto;
+}
+
+.dashboard-message--error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: var(--danger);
+}
+
+.dashboard-message--warning {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: var(--warning);
+}
+
+.dashboard-permission {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.dashboard-permission > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dashboard-operations {
+  align-items: stretch;
+}
+
+.dashboard-operations > .panel {
+  min-height: 100%;
+}
+
+.dashboard-activity {
+  overflow: hidden;
+}
+
+.dashboard-data-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 10px;
+  line-height: 1.55;
+  margin-top: 14px;
+  padding: 11px 13px;
+}
+
+@media (max-width: 760px) {
+  .dashboard-source-strip {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .dashboard-source-strip small {
+    margin-left: 0;
+  }
+
+  .dashboard-message {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .dashboard-message .button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-page *,
+  .dashboard-page *::before,
+  .dashboard-page *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
