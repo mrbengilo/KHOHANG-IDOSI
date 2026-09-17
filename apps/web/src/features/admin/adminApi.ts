@@ -1,25 +1,39 @@
 import {
   CreateAccountResponseSchema,
+  CreateStoreGroupRequestSchema,
+  CreateStoreRequestSchema,
   ErrorEnvelopeSchema,
   GetSessionResponseSchema,
   ListAccountsResponseSchema,
   ListAuditLogsResponseSchema,
+  ListStoreGroupsResponseSchema,
   ListStoresResponseSchema,
   OperationalSettingsOverviewResponseSchema,
   ResetPasswordResponseSchema,
+  StoreGroupResponseSchema,
+  StoreResponseSchema,
   UpdateAccountResponseSchema,
+  UpdateStoreGroupRequestSchema,
+  UpdateStoreRequestSchema,
   type Account,
   type AdminAuditLog,
   type CreateAccountRequest,
+  type CreateStoreGroupRequest,
+  type CreateStoreRequest,
   type ListAccountsQuery,
   type ListAuditLogsQuery,
+  type ListStoreGroupsQuery,
+  type ListStoresQuery,
   type PaginationMeta,
   type OperationalSettingsOverview,
   type ResetPasswordRequest,
   type Session,
   type Store,
+  type StoreGroup,
   type UpdateAccountRequest,
   type UpdateOperationalSettingsRequest,
+  type UpdateStoreGroupRequest,
+  type UpdateStoreRequest,
 } from '@idosi/contracts';
 import { reportUnauthorizedResponse } from '../../lib/session-expiry';
 
@@ -162,6 +176,68 @@ export async function updateAdminOperationalSettings(
 export async function listActiveStoresForAccounts(): Promise<readonly Store[]> {
   const payload = await requestAdminApi('/stores?page=1&pageSize=100&status=ACTIVE');
   return ListStoresResponseSchema.parse(payload).data;
+}
+
+export async function listAdminStores(query: ListStoresQuery): Promise<AdminPage<Store>> {
+  const payload = await requestAdminApi(`/stores?${queryString(query)}`);
+  return ListStoresResponseSchema.parse(payload);
+}
+
+export async function listAdminStoreGroups(
+  query: ListStoreGroupsQuery,
+): Promise<AdminPage<StoreGroup>> {
+  const payload = await requestAdminApi(`/store-groups?${queryString(query)}`);
+  return ListStoreGroupsResponseSchema.parse(payload);
+}
+
+export async function createAdminStoreGroup(
+  input: CreateStoreGroupRequest,
+  idempotencyKey: string,
+): Promise<StoreGroup> {
+  const payload = await requestAdminApi('/store-groups', {
+    body: JSON.stringify(CreateStoreGroupRequestSchema.parse(input)),
+    headers: { 'Idempotency-Key': idempotencyKey },
+    method: 'POST',
+  });
+  return StoreGroupResponseSchema.parse(payload).data;
+}
+
+export async function updateAdminStoreGroup(
+  groupId: string,
+  input: UpdateStoreGroupRequest,
+  idempotencyKey: string,
+): Promise<StoreGroup> {
+  const payload = await requestAdminApi(`/store-groups/${encodeURIComponent(groupId)}`, {
+    body: JSON.stringify(UpdateStoreGroupRequestSchema.parse(input)),
+    headers: { 'Idempotency-Key': idempotencyKey },
+    method: 'PATCH',
+  });
+  return StoreGroupResponseSchema.parse(payload).data;
+}
+
+export async function createAdminStore(
+  input: CreateStoreRequest,
+  idempotencyKey: string,
+): Promise<Store> {
+  const payload = await requestAdminApi('/stores', {
+    body: JSON.stringify(CreateStoreRequestSchema.parse(input)),
+    headers: { 'Idempotency-Key': idempotencyKey },
+    method: 'POST',
+  });
+  return StoreResponseSchema.parse(payload).data;
+}
+
+export async function updateAdminStore(
+  storeId: string,
+  input: UpdateStoreRequest,
+  idempotencyKey: string,
+): Promise<Store> {
+  const payload = await requestAdminApi(`/stores/${encodeURIComponent(storeId)}`, {
+    body: JSON.stringify(UpdateStoreRequestSchema.parse(input)),
+    headers: { 'Idempotency-Key': idempotencyKey },
+    method: 'PATCH',
+  });
+  return StoreResponseSchema.parse(payload).data;
 }
 
 export function adminErrorMessage(error: unknown): string {
