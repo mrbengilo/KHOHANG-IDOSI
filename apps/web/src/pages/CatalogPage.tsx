@@ -25,6 +25,7 @@ import { businessDate } from '../lib/business-time';
 import { kilogramsToGrams, normalizeKilograms } from '../lib/conversions';
 import { productConversions as seed } from '../lib/data';
 import { shouldEnableMockMode } from '../lib/runtime-mode';
+import { useDialogAccessibility } from '../lib/use-dialog-accessibility';
 
 const catalogMockMode = shouldEnableMockMode(
   import.meta.env.DEV,
@@ -847,6 +848,7 @@ interface ConversionDialogProps {
 }
 
 function ConversionDialog({ busy, draft, onChange, onClose, onSubmit }: ConversionDialogProps) {
+  const dialogRef = useDialogAccessibility<HTMLFormElement>(busy ? undefined : onClose);
   const normalizedWeight = normalizeKilograms(draft.weightKilograms);
   const quantity = Number(draft.itemQuantity);
   const preview =
@@ -881,17 +883,16 @@ function ConversionDialog({ busy, draft, onChange, onClose, onSubmit }: Conversi
   return (
     <div className="dialog-backdrop">
       <form
+        ref={dialogRef}
         aria-labelledby="catalog-dialog-title"
         aria-modal="true"
         className="dialog catalog-dialog"
-        onKeyDown={(event) => {
-          if (event.key === 'Escape' && !busy) onClose();
-        }}
         onSubmit={(event) => {
           event.preventDefault();
           onSubmit();
         }}
         role="dialog"
+        tabIndex={-1}
       >
         <div className="dialog__header">
           <div>
@@ -1004,9 +1005,11 @@ interface RetireDialogProps {
 }
 
 function RetireDialog({ busy, draft, onChange, onClose, onSubmit }: RetireDialogProps) {
+  const dialogRef = useDialogAccessibility<HTMLFormElement>(busy ? undefined : onClose);
   return (
     <div className="dialog-backdrop">
       <form
+        ref={dialogRef}
         aria-labelledby="retire-dialog-title"
         aria-modal="true"
         className="dialog catalog-retire"
@@ -1015,6 +1018,7 @@ function RetireDialog({ busy, draft, onChange, onClose, onSubmit }: RetireDialog
           onSubmit();
         }}
         role="dialog"
+        tabIndex={-1}
       >
         <div className="dialog__header">
           <div>
@@ -1075,14 +1079,17 @@ function HistoryDialog({
   onSelect,
   productId,
 }: HistoryDialogProps) {
+  const dialogRef = useDialogAccessibility(onClose);
   const product = entries.find((entry) => entry.product.id === productId)?.product;
   return (
     <div className="dialog-backdrop">
       <section
+        ref={dialogRef}
         aria-labelledby="history-dialog-title"
         aria-modal="true"
         className="dialog catalog-history"
         role="dialog"
+        tabIndex={-1}
       >
         <div className="dialog__header">
           <div>
