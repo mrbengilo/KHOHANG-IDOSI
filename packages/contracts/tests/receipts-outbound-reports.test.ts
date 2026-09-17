@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  CancelInboundReceiptRequestSchema,
   CreateInboundReceiptRequestSchema,
   CreateOutboundLineSchema,
   DeclareStoreReceiptRequestSchema,
@@ -63,6 +64,20 @@ describe('receipt, outbound and report contracts', () => {
       ReceiptCostConfirmationSchema.safeParse({
         ...confirmation,
         transportationFeeVnd: 100_000.5,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('requires an optimistic version when cancelling supplier stock', () => {
+    expect(
+      CancelInboundReceiptRequestSchema.safeParse({
+        reason: 'Nhà cung cấp giao nhầm lô hàng',
+        expectedVersion: 0,
+      }).success,
+    ).toBe(true);
+    expect(
+      CancelInboundReceiptRequestSchema.safeParse({
+        reason: 'Nhà cung cấp giao nhầm lô hàng',
       }).success,
     ).toBe(false);
   });

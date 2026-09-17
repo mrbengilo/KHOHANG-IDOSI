@@ -168,7 +168,12 @@ export const ConfirmReceiptCostsRequestSchema = z
   .strict();
 export type ConfirmReceiptCostsRequest = z.infer<typeof ConfirmReceiptCostsRequestSchema>;
 
-export const CancelInboundReceiptRequestSchema = z.object({ reason: AuditReasonSchema }).strict();
+export const CancelInboundReceiptRequestSchema = z
+  .object({
+    reason: AuditReasonSchema,
+    expectedVersion: z.number().int().nonnegative(),
+  })
+  .strict();
 export type CancelInboundReceiptRequest = z.infer<typeof CancelInboundReceiptRequestSchema>;
 
 export const InboundReceiptParamsSchema = z.object({ receiptId: EntityIdSchema }).strict();
