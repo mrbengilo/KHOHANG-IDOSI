@@ -375,7 +375,7 @@ function AdminStoresContent() {
         actions={
           <>
             <Button
-              className="admin-clickable"
+              className="admin-clickable store-lifecycle-add-group"
               disabled={busy}
               onClick={() => {
                 setNotice(null);

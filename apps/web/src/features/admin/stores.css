@@ -125,6 +125,12 @@
   }
 }
 
+@media (max-width: 620px) {
+  .page-header__actions .store-lifecycle-add-group {
+    display: inline-flex;
+  }
+}
+
 @media (max-width: 420px) {
   .store-lifecycle-summary > span {
     padding: 12px;
