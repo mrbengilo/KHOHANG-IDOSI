@@ -245,6 +245,62 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
 
   await page.getByRole('link', { name: 'Tài khoản' }).click();
   await expect(page.getByRole('heading', { name: 'Tài khoản & phân quyền' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
+  const htkdForm = page.locator('#admin-create-account');
+  const htkdUsername = `live.htkd.${runSuffix}.${testInfo.retry}`.slice(0, 80);
+  const htkdPassword = 'Live-htkd-password-2026!';
+  await htkdForm.getByLabel('Tên đăng nhập').fill(htkdUsername);
+  await htkdForm.getByLabel('Tên hiển thị').fill('Live PostgreSQL HTKD');
+  await htkdForm.getByLabel('Vai trò').selectOption('HTKD');
+  await htkdForm.getByLabel('Mật khẩu ban đầu').fill(htkdPassword);
+  await htkdForm.getByLabel('Nhập lại mật khẩu').fill(htkdPassword);
+  const htkdResponsePromise = page.waitForResponse(
+    (response) =>
+      response.url() === `${apiOrigin}/api/v1/admin/accounts` &&
+      response.request().method() === 'POST',
+  );
+  await htkdForm.getByRole('button', { exact: true, name: 'Tạo tài khoản' }).click();
+  const htkdResponse = await htkdResponsePromise;
+  expect(htkdResponse.status()).toBe(201);
+  const htkdAccount = (await htkdResponse.json()) as { data: { id: string } };
+  const htkdRow = page.getByRole('row').filter({ hasText: htkdUsername });
+  await expect(htkdRow).toBeVisible();
+  await htkdRow.getByRole('button', { name: 'Phân công cửa hàng' }).click();
+  await expect(page.getByRole('heading', { name: 'Phân công cửa hàng HTKD' })).toBeVisible();
+  await page.getByRole('checkbox', { name: /DS_BMT/u }).check();
+  await page.getByRole('checkbox', { name: /DS_CT/u }).check();
+  await page.getByLabel('Lý do thay đổi').fill('Kiểm thử phân công HTKD với PostgreSQL');
+  const assignResponsePromise = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/admin/accounts/${htkdAccount.data.id}/assignments`) &&
+      response.request().method() === 'PUT',
+  );
+  await page.getByRole('button', { name: 'Lưu phân công' }).click();
+  expect((await assignResponsePromise).status()).toBe(200);
+  await expect(page.getByText('Đã lưu 2 cửa hàng đang phụ trách.')).toBeVisible();
+
+  const persistedAssignments = await page
+    .context()
+    .request.get(`${apiOrigin}/api/v1/admin/accounts/${htkdAccount.data.id}/assignments`);
+  expect(persistedAssignments.status()).toBe(200);
+  const persistedAssignmentPayload = (await persistedAssignments.json()) as {
+    data: { assignments: Array<{ storeId: string }> };
+  };
+  expect(persistedAssignmentPayload.data.assignments).toHaveLength(2);
+
+  await page.getByRole('button', { name: 'Bỏ chọn tất cả' }).click();
+  await page.getByLabel('Lý do thay đổi').fill('Thu hồi toàn bộ phạm vi kiểm thử');
+  const clearResponsePromise = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/admin/accounts/${htkdAccount.data.id}/assignments`) &&
+      response.request().method() === 'PUT',
+  );
+  await page.getByRole('button', { name: 'Lưu phân công' }).click();
+  expect((await clearResponsePromise).status()).toBe(200);
+  await expect(page.getByText('Đã thu hồi toàn bộ quyền theo cửa hàng.')).toBeVisible();
+  await page.getByRole('button', { name: 'Đóng biểu mẫu phân công cửa hàng' }).click();
+
   await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
   const accountForm = page.locator('#admin-create-account');
   const storeUsername = `live.store.${runSuffix}.${testInfo.retry}`.slice(0, 80);

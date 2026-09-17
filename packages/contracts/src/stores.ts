@@ -141,7 +141,7 @@ export const HtkdAssignmentSchema = z
     htkdAccountId: EntityIdSchema,
     storeId: EntityIdSchema,
     assignedAt: IsoDateTimeSchema,
-    assignedByAccountId: EntityIdSchema,
+    assignedByAccountId: EntityIdSchema.nullable(),
     revokedAt: IsoDateTimeSchema.nullable(),
     revokedByAccountId: EntityIdSchema.nullable(),
   })
@@ -150,7 +150,6 @@ export type HtkdAssignment = z.infer<typeof HtkdAssignmentSchema>;
 
 const UniqueStoreIdsSchema = z
   .array(EntityIdSchema)
-  .min(1)
   .max(500)
   .refine((storeIds) => new Set(storeIds).size === storeIds.length, 'Store IDs must be unique');
 
@@ -159,6 +158,7 @@ export const ReplaceHtkdAssignmentsRequestSchema = z
   .object({
     storeIds: UniqueStoreIdsSchema,
     reason: AuditReasonSchema,
+    expectedSessionVersion: z.number().int().nonnegative(),
   })
   .strict();
 export type ReplaceHtkdAssignmentsRequest = z.infer<typeof ReplaceHtkdAssignmentsRequestSchema>;
@@ -171,6 +171,7 @@ export const HtkdAssignmentsResponseSchema = z
     data: z
       .object({
         htkdAccountId: EntityIdSchema,
+        sessionVersion: z.number().int().nonnegative(),
         assignments: z.array(HtkdAssignmentSchema),
       })
       .strict(),

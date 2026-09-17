@@ -4,6 +4,7 @@ import {
   CreateStoreRequestSchema,
   ErrorEnvelopeSchema,
   GetSessionResponseSchema,
+  HtkdAssignmentsResponseSchema,
   ListAccountsResponseSchema,
   ListAuditLogsResponseSchema,
   ListStoreGroupsResponseSchema,
@@ -20,6 +21,7 @@ import {
   type CreateAccountRequest,
   type CreateStoreGroupRequest,
   type CreateStoreRequest,
+  type HtkdAssignmentsResponse,
   type ListAccountsQuery,
   type ListAuditLogsQuery,
   type ListStoreGroupsQuery,
@@ -27,6 +29,7 @@ import {
   type PaginationMeta,
   type OperationalSettingsOverview,
   type ResetPasswordRequest,
+  type ReplaceHtkdAssignmentsRequest,
   type Session,
   type Store,
   type StoreGroup,
@@ -147,6 +150,26 @@ export async function resetAdminAccountPassword(
   return ResetPasswordResponseSchema.parse(payload).data;
 }
 
+export async function getAdminHtkdAssignments(
+  htkdAccountId: string,
+): Promise<HtkdAssignmentsResponse['data']> {
+  const payload = await requestAdminApi(
+    `/admin/accounts/${encodeURIComponent(htkdAccountId)}/assignments`,
+  );
+  return HtkdAssignmentsResponseSchema.parse(payload).data;
+}
+
+export async function replaceAdminHtkdAssignments(
+  htkdAccountId: string,
+  input: ReplaceHtkdAssignmentsRequest,
+): Promise<HtkdAssignmentsResponse['data']> {
+  const payload = await requestAdminApi(
+    `/admin/accounts/${encodeURIComponent(htkdAccountId)}/assignments`,
+    { body: JSON.stringify(input), method: 'PUT' },
+  );
+  return HtkdAssignmentsResponseSchema.parse(payload).data;
+}
+
 export async function listAdminAuditLogs(
   query: ListAuditLogsQuery,
 ): Promise<AdminPage<AdminAuditLog>> {
@@ -174,7 +197,7 @@ export async function updateAdminOperationalSettings(
 }
 
 export async function listActiveStoresForAccounts(): Promise<readonly Store[]> {
-  const payload = await requestAdminApi('/stores?page=1&pageSize=100&status=ACTIVE');
+  const payload = await requestAdminApi('/stores?page=1&pageSize=100&kind=RETAIL&status=ACTIVE');
   return ListStoresResponseSchema.parse(payload).data;
 }
 
@@ -238,6 +261,17 @@ export async function updateAdminStore(
     method: 'PATCH',
   });
   return StoreResponseSchema.parse(payload).data;
+}
+
+export async function listActiveRetailStoresForAccounts(query: {
+  readonly page: number;
+  readonly pageSize: number;
+  readonly search?: string;
+}): Promise<AdminPage<Store>> {
+  const payload = await requestAdminApi(
+    `/stores?${queryString({ ...query, kind: 'RETAIL', status: 'ACTIVE' })}`,
+  );
+  return ListStoresResponseSchema.parse(payload);
 }
 
 export function adminErrorMessage(error: unknown): string {
