@@ -36,6 +36,7 @@ COPY packages/domain ./packages/domain
 COPY packages/ui ./packages/ui
 
 RUN test "${VITE_ENABLE_MOCK_FALLBACK}" = "false" \
+    && npm -w @idosi/contracts run build \
     && npm -w @idosi/web run build
 
 FROM ${NODE_IMAGE} AS runtime
