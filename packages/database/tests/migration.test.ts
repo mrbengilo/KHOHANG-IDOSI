@@ -11,6 +11,10 @@ const waitOfferMigration = readFileSync(
   new URL('../migrations/0002_wait_offer_history_index.sql', import.meta.url),
   'utf8',
 );
+const storeTransferMigration = readFileSync(
+  new URL('../migrations/0003_store_transfers.sql', import.meta.url),
+  'utf8',
+);
 const schemaSource = readFileSync(new URL('../src/schema.ts', import.meta.url), 'utf8');
 const seedDataSource = readFileSync(new URL('../src/seed-data.ts', import.meta.url), 'utf8');
 const storeOperationsSource = readFileSync(
@@ -91,7 +95,7 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(3);
+    expect(journal.entries).toHaveLength(4);
     expect(journal.entries[0]).toMatchObject({
       tag: '0000_initial',
       breakpoints: true,
@@ -104,6 +108,29 @@ describe('initial migration invariants', () => {
       tag: '0002_wait_offer_history_index',
       breakpoints: true,
     });
+    expect(journal.entries[3]).toMatchObject({
+      tag: '0003_store_transfers',
+      breakpoints: true,
+    });
+  });
+
+  it('adds exact-cost transfer provenance and safe lifecycle constraints', () => {
+    expect(storeTransferMigration).toContain(
+      `CREATE TYPE "public"."store_transfer_status" AS ENUM('draft', 'in_transit', 'received', 'cancelled')`,
+    );
+    expect(storeTransferMigration).toContain('CREATE TABLE "store_transfers"');
+    expect(storeTransferMigration).toContain('"weight_kg" numeric(14, 3) NOT NULL');
+    expect(storeTransferMigration).toContain('"cost_vnd" bigint');
+    expect(storeTransferMigration).toContain('"store_transfers_distinct_stores"');
+    expect(storeTransferMigration).toContain('"store_transfers_dispatch_state"');
+    expect(storeTransferMigration).toContain('"store_transfers_receive_state"');
+    expect(storeTransferMigration).toContain('"store_inventory_bags_exactly_one_provenance"');
+    expect(storeTransferMigration).toContain(
+      '"store_inventory_bags_source_inventory_bag_id_store_inventory_bags_id_fk"',
+    );
+    expect(storeTransferMigration).toContain(
+      '"store_inventory_bags_source_transfer_id_store_transfers_id_fk"',
+    );
   });
 
   it('indexes priority-offer history without losing the migration snapshot chain', () => {
