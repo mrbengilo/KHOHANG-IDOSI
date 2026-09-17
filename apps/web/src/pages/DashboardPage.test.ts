@@ -171,6 +171,7 @@ describe('dashboard state and actions', () => {
     expect(dashboardRouteForAction('PRIMARY', 'STORE', 'RETAIL')).toBe('/receive');
     expect(dashboardRouteForAction('PRIMARY', 'STORE', 'WHOLESALE')).toBe('/requests');
     expect(dashboardRouteForAction('WAITING', 'HTKD', null)).toBe('/allocations');
+    expect(dashboardRouteForAction('WAITING', 'STORE', 'RETAIL')).toBe('/requests');
   });
 
   it('formats backend integers without losing precision', () => {
