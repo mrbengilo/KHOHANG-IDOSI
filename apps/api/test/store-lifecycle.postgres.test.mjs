@@ -55,6 +55,31 @@ describePostgres('PostgreSQL store lifecycle repository', () => {
     assert.equal(replayedGroup.replayed, true);
     assert.deepEqual(replayedGroup.data, createdGroup.data);
 
+    const searchContext = { ...context, requestId: `store-search-${suffix}` };
+    const literalSearchGroup = await repository.createStoreGroup(
+      actor,
+      { code: `LIT_${suffix}`, name: `Literal %_${suffix}` },
+      `literal-search-create-${suffix}`,
+      `literal-search-create-hash-${suffix}`,
+      searchContext,
+    );
+    await repository.createStoreGroup(
+      actor,
+      { code: `DEC_${suffix}`, name: `Literal AX${suffix}` },
+      `search-decoy-create-${suffix}`,
+      `search-decoy-create-hash-${suffix}`,
+      searchContext,
+    );
+    const literalSearch = await repository.listStoreGroups(actor, {
+      page: 1,
+      pageSize: 100,
+      search: `%_${suffix}`,
+    });
+    assert.deepEqual(
+      literalSearch.data.map((group) => group.id),
+      [literalSearchGroup.data.id],
+    );
+
     const createdStore = await repository.createStore(
       actor,
       {

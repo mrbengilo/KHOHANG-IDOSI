@@ -1428,7 +1428,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       predicates.push(eq(storeGroups.isActive, query.status === 'ACTIVE'));
     }
     if (query.search !== undefined) {
-      const pattern = `%${query.search}%`;
+      const pattern = `%${escapeLike(query.search)}%`;
       predicates.push(or(ilike(storeGroups.code, pattern), ilike(storeGroups.name, pattern))!);
     }
     const where = and(...predicates);
@@ -4143,6 +4143,10 @@ function accountVersionConflict(): ApiError {
 
 function storeLifecycleVersionConflict(): ApiError {
   return new ApiError('VERSION_CONFLICT', 'Dữ liệu cửa hàng đã thay đổi, vui lòng tải lại', 409);
+}
+
+function escapeLike(value: string): string {
+  return value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_');
 }
 
 function operationalSettingsVersionConflict(): ApiError {

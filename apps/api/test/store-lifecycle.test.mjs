@@ -173,6 +173,32 @@ describe('store and store-group lifecycle API', () => {
     assert.equal(specification.paths['/api/v1/stores'].post.parameters[0].name, 'idempotency-key');
   });
 
+  test('treats percent and underscore as literal store-group search text', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const literal = await mutate(
+      adminCookie,
+      'POST',
+      '/api/v1/store-groups',
+      'literal-search-group',
+      { code: 'LITERAL_SEARCH', name: 'Nhóm ký tự %_LITERAL' },
+    );
+    await mutate(adminCookie, 'POST', '/api/v1/store-groups', 'search-decoy-group', {
+      code: 'SEARCH_DECOY',
+      name: 'Nhóm ký tự AXLITERAL',
+    });
+
+    const groups = await app.inject({
+      method: 'GET',
+      url: `/api/v1/store-groups?search=${encodeURIComponent('%_LITERAL')}`,
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(groups.statusCode, 200);
+    assert.deepEqual(
+      groups.json().data.map((group) => group.id),
+      [literal.json().data.id],
+    );
+  });
+
   async function login(username) {
     return app.inject({
       method: 'POST',
