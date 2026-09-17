@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   declareStoreReceipt,
   finalizeStoreReceipt,
+  getMonthlyOperationalReport,
   getStoreReceipt,
   listCatalog,
   listOpenOrderSessions,
@@ -246,5 +247,84 @@ describe('API projections', () => {
       expect.stringContaining(`/store-receipts/${receiptId}/return`),
       expect.stringContaining(`/store-receipts/${receiptId}/finalize`),
     ]);
+  });
+
+  it('loads a scoped monthly report and preserves exact integer totals as strings', async () => {
+    const storeId = '20000000-0000-4000-8000-000000000001';
+    const available = (value: string, source = 'WAREHOUSE_RECEIPTS') => ({
+      source,
+      unavailableReason: null,
+      value,
+    });
+    const unavailable = (reason: string) => ({
+      source: 'NOT_AVAILABLE',
+      unavailableReason: reason,
+      value: null,
+    });
+    const fetchMock = vi.fn((_input: string | URL | Request) =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            data: {
+              counts: {
+                allocationBatchesCompleted: 1,
+                approvedDiscountSales: 0,
+                inboundReceipts: 2,
+                outboundOrdersReceived: 3,
+                waitTicketsQueued: 0,
+              },
+              dataOrigin: 'LOCAL_TRANSACTIONAL_DATA',
+              generatedAt: '2026-09-17T03:00:00.000Z',
+              period: {
+                endBusinessDateExclusive: '2026-10-01',
+                endExclusive: '2026-09-30T17:00:00.000Z',
+                start: '2026-08-31T17:00:00.000Z',
+                startBusinessDate: '2026-09-01',
+                timeZone: 'Asia/Ho_Chi_Minh',
+              },
+              products: [],
+              ratios: {
+                averageInboundCostPerKgVnd: available('22000'),
+                effectiveCostPerSoldKgVnd: unavailable('COGS_NOT_RECORDED_PER_SALE'),
+                grossMarginBasisPoints: unavailable('COGS_NOT_RECORDED_PER_SALE'),
+                revenuePerInboundKgVnd: available(
+                  '31000',
+                  'WAREHOUSE_RECEIPTS_AND_STORE_OUTBOUNDS',
+                ),
+              },
+              scope: { kind: 'STORE', storeId },
+              totals: {
+                handlingFeeVnd: available('120000'),
+                inboundGoodsCostVnd: available('9007199254740993'),
+                inboundWeightGrams: available('41000000'),
+                landedInboundCostVnd: available('9007199255360993'),
+                otherInboundCostVnd: available('0'),
+                revenueVnd: available('1271000000', 'STORE_OUTBOUNDS'),
+                soldWeightGrams: available('18000000', 'STORE_OUTBOUNDS'),
+                transportationFeeVnd: available('500000'),
+                vatCostVnd: unavailable('VAT_NOT_CAPTURED'),
+              },
+            },
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const report = await getMonthlyOperationalReport({
+      month: 9,
+      scopeId: storeId,
+      scopeKind: 'STORE',
+      year: 2026,
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      `/reports/monthly?month=9&scopeKind=STORE&year=2026&scopeId=${storeId}`,
+    );
+    expect(report.totals.inboundGoodsCostVnd.value).toBe('9007199254740993');
+    expect(report.totals.vatCostVnd).toEqual(
+      expect.objectContaining({ unavailableReason: 'VAT_NOT_CAPTURED', value: null }),
+    );
   });
 });

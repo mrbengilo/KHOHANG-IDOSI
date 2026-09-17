@@ -9,6 +9,7 @@ import {
   ListStoresResponseSchema,
   LoginResponseSchema,
   LogoutResponseSchema,
+  MonthlyOperationalReportResponseSchema,
   ProductConversionResponseSchema,
   ProductResponseSchema,
   ReceiptResponseSchema,
@@ -18,6 +19,8 @@ import {
   type CreateProductConversionRequest,
   type CreateStoreOrderRequest,
   type LoginRequest,
+  type MonthlyOperationalReport,
+  type MonthlyOperationalReportQuery,
   type OrderSession,
   type Receipt,
   type ReceiptStatus,
@@ -240,6 +243,19 @@ export async function getStoreKind(storeId: string): Promise<StoreKind> {
 export async function listAccessibleStores(): Promise<Store[]> {
   const payload = await request('/stores?page=1&pageSize=100');
   return ListStoresResponseSchema.parse(payload).data;
+}
+
+export async function getMonthlyOperationalReport(
+  input: MonthlyOperationalReportQuery,
+): Promise<MonthlyOperationalReport> {
+  const query = new URLSearchParams({
+    month: String(input.month),
+    scopeKind: input.scopeKind,
+    year: String(input.year),
+  });
+  if (input.scopeId) query.set('scopeId', input.scopeId);
+  const payload = await request(`/reports/monthly?${query.toString()}`);
+  return MonthlyOperationalReportResponseSchema.parse(payload).data;
 }
 
 export async function listOpenOrderSessions(): Promise<OrderSession[]> {

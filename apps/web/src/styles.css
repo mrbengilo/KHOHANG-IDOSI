@@ -1697,6 +1697,186 @@ td small {
   font-style: normal;
 }
 
+.report-controls {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.55fr) minmax(240px, 0.8fr) minmax(280px, 1.65fr);
+  align-items: end;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.report-controls > label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.report-controls input,
+.report-controls select {
+  width: 100%;
+  min-height: 42px;
+}
+
+.report-controls__source {
+  display: flex;
+  min-height: 62px;
+  align-items: center;
+  gap: 11px;
+  border-left: 1px solid var(--border);
+  color: var(--brand);
+  padding-left: 16px;
+}
+
+.report-controls__source div {
+  display: grid;
+  gap: 3px;
+}
+
+.report-controls__source strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.report-controls__source span {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.report-message {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.report-message > div {
+  display: grid;
+  flex: 1;
+  gap: 3px;
+}
+
+.report-message span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.report-message--error {
+  border-color: #fecaca;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.report-message--error span {
+  color: var(--danger);
+}
+
+.report-message .button__spinner {
+  position: static;
+  flex: 0 0 auto;
+  color: var(--brand);
+}
+
+.report-period-note {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: #f8fafc;
+  padding: 11px 14px;
+}
+
+.report-period-note > div {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+}
+
+.report-period-note span,
+.report-period-note small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.report-stats {
+  margin-top: 14px;
+}
+
+.report-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.7fr) minmax(360px, 1.3fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.report-counts dl {
+  display: grid;
+  gap: 3px;
+}
+
+.report-counts dl > div,
+.report-ratio-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-radius: 8px;
+  padding: 9px 10px;
+}
+
+.report-counts dl > div:nth-child(odd),
+.report-ratio-row:nth-child(even) {
+  background: #f8fafc;
+}
+
+.report-counts dt,
+.report-ratio-row > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.report-counts dd {
+  color: var(--navy);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.report-metric {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  text-align: right;
+}
+
+.report-metric strong {
+  color: var(--navy);
+  font-size: 12px;
+}
+
+.report-metric small {
+  max-width: 240px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.report-metric--unavailable strong,
+.report-metric--unavailable small {
+  color: var(--warning);
+}
+
+.report-products {
+  margin-top: 12px;
+}
+
+.report-products td {
+  vertical-align: top;
+}
+
 .cost-layout > div {
   display: flex;
   flex-direction: column;
@@ -2011,6 +2191,16 @@ td small {
   .login-page {
     grid-template-columns: 1fr 1fr;
   }
+  .report-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .report-controls__source {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--border);
+    border-left: 0;
+    padding-top: 12px;
+    padding-left: 0;
+  }
 }
 
 @media (max-width: 820px) {
@@ -2073,6 +2263,13 @@ td small {
   .page-header__actions {
     max-width: 48%;
     overflow-x: auto;
+  }
+  .report-detail-grid {
+    grid-template-columns: 1fr;
+  }
+  .report-period-note {
+    align-items: flex-start;
+    flex-wrap: wrap;
   }
   .table-actions button {
     min-height: 44px;
@@ -2363,6 +2560,27 @@ td small {
   }
   .page-header__actions .button {
     padding: 9px 11px;
+  }
+  .report-controls {
+    grid-template-columns: 1fr;
+  }
+  .report-controls__source {
+    grid-column: auto;
+  }
+  .report-message {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .report-message .button {
+    width: 100%;
+  }
+  .report-ratio-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .report-metric {
+    justify-items: start;
+    text-align: left;
   }
   .priority-offer {
     grid-template-columns: 1fr;

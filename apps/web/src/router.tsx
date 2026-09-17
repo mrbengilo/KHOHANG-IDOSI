@@ -34,7 +34,7 @@ const TransfersPage = lazy(() =>
   import('./pages/OperationsPages').then((module) => ({ default: module.TransfersPage })),
 );
 const ReportsPage = lazy(() =>
-  import('./pages/OperationsPages').then((module) => ({ default: module.ReportsPage })),
+  import('./pages/ReportsPage').then((module) => ({ default: module.ReportsPage })),
 );
 const CostPage = lazy(() =>
   import('./pages/OperationsPages').then((module) => ({ default: module.CostPage })),
