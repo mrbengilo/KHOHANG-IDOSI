@@ -10,6 +10,7 @@ export * from './products.js';
 export * from './receipts.js';
 export * from './reports.js';
 export * from './store-inventory.js';
+export * from './store-transfers.js';
 export * from './stores.js';
 export * from './waitlist.js';
 export * from './warehouse.js';

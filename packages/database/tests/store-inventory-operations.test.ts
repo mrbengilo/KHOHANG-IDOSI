@@ -29,7 +29,7 @@ describe('store inventory operations', () => {
     const total = queries.total.toSQL();
     const rows = queries.rows.toSQL();
     for (const sql of [total.sql, rows.sql]) {
-      expect(sql).toContain('inner join "outbound_request_lines"');
+      expect(sql).toContain('left join "outbound_request_lines"');
       expect(sql).toContain('"store_inventory_bags"."store_id"');
       expect(sql).toContain('"store_inventory_bags"."product_id"');
       expect(sql).toContain('"store_inventory_bags"."status"');
