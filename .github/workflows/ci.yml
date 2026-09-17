@@ -125,6 +125,7 @@ jobs:
           bash -n infra/scripts/backup-db.sh
           bash -n infra/scripts/restore-db.sh
           bash -n infra/scripts/rollback.sh
+          bash infra/scripts/tests/deployment-scripts.test.sh
           node --check infra/scripts/run-migrations.mjs
           node --check infra/web-server.mjs
           docker compose --file docker-compose.yml config --quiet

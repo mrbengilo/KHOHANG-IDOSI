@@ -49,7 +49,9 @@ tạo backup đã kiểm tra checksum:
 
 ```bash
 sudo install -d -m 700 /var/backups/khohang-idosi
-sudo ./infra/scripts/backup-db.sh --output-dir /var/backups/khohang-idosi
+sudo ./infra/scripts/backup-db.sh \
+  --env-file /etc/khohang-idosi/production.env \
+  --output-dir /var/backups/khohang-idosi
 ```
 
 Lần triển khai đầu tiên chưa có database đang chạy thì bỏ qua bước backup.
@@ -64,6 +66,9 @@ VPS build ảnh bất biến từ đúng checkout; `--pull never` ngăn Compose 
 set -euo pipefail
 env_file=/etc/khohang-idosi/production.env
 
+# Tải trước các ảnh bên thứ ba. Các lệnh `--pull never` bên dưới sau đó chỉ dùng
+# đúng ảnh ứng dụng đã build tại commit phát hành và không truy cập registry.
+docker compose --env-file "$env_file" pull db caddy caddy-storage-init
 docker compose --env-file "$env_file" build --pull api migrate worker web
 docker compose --env-file "$env_file" up --detach --pull never --wait db
 docker compose --env-file "$env_file" run --rm --no-deps --pull never migrate
@@ -111,14 +116,22 @@ không tự restore database:
 
 ```bash
 ./infra/scripts/rollback.sh \
+  --env-file /etc/khohang-idosi/production.env \
+  --image-source local \
   --from-tag <CURRENT_FULL_SHA> \
   --to-tag <PREVIOUS_VERIFIED_FULL_SHA> \
   --confirm-forward-compatible-db \
   --yes
 ```
 
+Dùng `--image-source local` khi ảnh được build ngay trên VPS như quy trình ở trên. Nếu dùng registry,
+đổi thành `--image-source registry`; script sẽ tải và kiểm tra cả ảnh đích lẫn ảnh khôi phục trước
+khi thay container. Ở chế độ local, script không truy cập registry và dừng trước khi thay container
+nếu thiếu bất kỳ ảnh nào.
+
 Nếu cần phục hồi dữ liệu, dùng `restore-db.sh` vào một database mới, xác minh độc lập rồi mới đổi
-`DATABASE_URL`; không restore đè trực tiếp database đang chạy.
+`DATABASE_URL`; không restore đè trực tiếp database đang chạy. Luôn truyền
+`--env-file /etc/khohang-idosi/production.env` cho cả `restore-db.sh` để Compose có đủ biến nội suy.
 
 ## Gate dừng triển khai
 

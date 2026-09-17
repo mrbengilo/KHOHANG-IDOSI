@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+: "${FAKE_DOCKER_LOG:?FAKE_DOCKER_LOG is required}"
+
+printf 'TAG=%q|ARGS=' "${IMAGE_TAG:-}" >>"$FAKE_DOCKER_LOG"
+printf '%q ' "$@" >>"$FAKE_DOCKER_LOG"
+printf '\n' >>"$FAKE_DOCKER_LOG"
+
+if [[ "${1:-}" == image && "${2:-}" == inspect ]]; then
+  image="${*: -1}"
+  if [[ -n "${FAKE_MISSING_IMAGE_PATTERN:-}" && "$image" == *"$FAKE_MISSING_IMAGE_PATTERN"* ]]; then
+    exit 1
+  fi
+  printf 'sha256:fake-image-id\n'
+  exit 0
+fi
+
+[[ "${1:-}" == compose ]] || {
+  printf 'unexpected fake docker command: %s\n' "$*" >&2
+  exit 64
+}
+
+command_name=""
+for argument in "$@"; do
+  case "$argument" in
+    version|ps|exec|config|pull|up)
+      command_name="$argument"
+      break
+      ;;
+  esac
+done
+
+case "$command_name" in
+  version)
+    exit 0
+    ;;
+  ps)
+    printf 'db\n'
+    exit 0
+    ;;
+  exec)
+    joined_arguments="$*"
+    if [[ "$joined_arguments" == *pg_dump* ]]; then
+      printf 'fake-custom-format-backup'
+    elif [[ "$joined_arguments" == *'printf "%s" "$POSTGRES_DB"'* ]]; then
+      printf 'idosi'
+    elif [[ "$joined_arguments" == *'SELECT current_database()'* ]]; then
+      printf 'idosi_restore|2026-09-17 00:00:00+00\n'
+    fi
+    exit 0
+    ;;
+  config)
+    service="${*: -1}"
+    printf '%s-%s:%s\n' "${FAKE_IMAGE_PREFIX:-local/khohang-idosi}" "$service" "${IMAGE_TAG:?IMAGE_TAG is required}"
+    exit 0
+    ;;
+  pull)
+    exit 0
+    ;;
+  up)
+    if [[ -n "${FAKE_FAIL_TAG:-}" && "${IMAGE_TAG:-}" == "$FAKE_FAIL_TAG" ]]; then
+      exit 1
+    fi
+    exit 0
+    ;;
+  *)
+    printf 'unsupported fake docker compose command: %s\n' "$*" >&2
+    exit 64
+    ;;
+esac
