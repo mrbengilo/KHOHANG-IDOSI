@@ -54,11 +54,11 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
       }
 
       // This PostgreSQL instance is shared by every workspace test in CI. Use
-      // a unique historical date so another integration suite cannot leave a
+      // a unique reserved date so another integration suite cannot leave a
       // same-day session behind before the worker suite starts.
       const runKey = randomUUID();
       const dateOffset = Number.parseInt(runKey.replaceAll('-', '').slice(0, 8), 16) % 365;
-      const businessDate = new Date(Date.UTC(1900, 0, 1 + dateOffset)).toISOString().slice(0, 10);
+      const businessDate = new Date(Date.UTC(2040, 0, 1 + dateOffset)).toISOString().slice(0, 10);
       const now = new Date(`${businessDate}T12:00:00+07:00`);
       const requestOpensAt = new Date(`${businessDate}T00:00:00+07:00`);
       const requestClosesAt = new Date(`${businessDate}T23:59:58+07:00`);
