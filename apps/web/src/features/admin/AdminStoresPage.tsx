@@ -40,6 +40,14 @@ import './stores.css';
 const groupQueryKey = ['admin', 'store-groups'] as const;
 const storeQueryKey = ['admin', 'stores'] as const;
 const auditQueryKey = ['admin', 'audit-logs'] as const;
+const dependentStoreQueryKeys = [
+  ['admin', 'active-stores'],
+  ['admin', 'active-retail-store-choices'],
+  ['dashboard', 'bootstrap'],
+  ['stores', 'accessible'],
+  ['store-transfer-destinations'],
+  ['store-kind'],
+] as const;
 const pageSize = 20;
 
 const groupStatusLabel: Record<StoreGroupStatus, string> = {
@@ -56,6 +64,18 @@ const kindLabel: Record<StoreKind, string> = {
   RETAIL: 'Bán lẻ',
   WHOLESALE: 'Bán sỉ',
 };
+
+function confirmGroupDeactivation(group: StoreGroup): boolean {
+  return window.confirm(
+    `Ngừng nhóm ${group.code}? Các cửa hàng đang hoạt động phải được chuyển hoặc ngừng trước.`,
+  );
+}
+
+function confirmStoreDeactivation(store: Store): boolean {
+  return window.confirm(
+    `Ngừng cửa hàng ${store.code}? Các thao tác bán lẻ sẽ bị chặn ngay lập tức.`,
+  );
+}
 
 export interface StoreGroupFilters {
   readonly search: string;
@@ -250,6 +270,7 @@ function AdminStoresContent() {
       queryClient.invalidateQueries({ queryKey: groupQueryKey }),
       queryClient.invalidateQueries({ queryKey: storeQueryKey }),
       queryClient.invalidateQueries({ queryKey: auditQueryKey }),
+      ...dependentStoreQueryKeys.map((queryKey) => queryClient.invalidateQueries({ queryKey })),
     ]);
   };
 
@@ -305,6 +326,13 @@ function AdminStoresContent() {
       setNotice({ message: parsed.error ?? 'Thông tin nhóm chưa hợp lệ.', tone: 'error' });
       return;
     }
+    if (
+      group?.status === 'ACTIVE' &&
+      (parsed.input as UpdateStoreGroupRequest).status === 'INACTIVE' &&
+      !confirmGroupDeactivation(group)
+    ) {
+      return;
+    }
     const fingerprint = JSON.stringify({ groupId: group?.id ?? null, input: parsed.input });
     await runMutation(
       group ? `group:${group.id}` : 'group:create',
@@ -329,6 +357,13 @@ function AdminStoresContent() {
       setNotice({ message: parsed.error ?? 'Thông tin cửa hàng chưa hợp lệ.', tone: 'error' });
       return;
     }
+    if (
+      store?.status === 'ACTIVE' &&
+      (parsed.input as UpdateStoreRequest).status === 'INACTIVE' &&
+      !confirmStoreDeactivation(store)
+    ) {
+      return;
+    }
     const fingerprint = JSON.stringify({ input: parsed.input, storeId: store?.id ?? null });
     await runMutation(
       store ? `store:${store.id}` : 'store:create',
@@ -347,12 +382,7 @@ function AdminStoresContent() {
 
   const changeGroupStatus = async (group: StoreGroup) => {
     const status: StoreGroupStatus = group.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
-    if (
-      status === 'INACTIVE' &&
-      !window.confirm(
-        `Ngừng nhóm ${group.code}? Các cửa hàng đang hoạt động phải được chuyển hoặc ngừng trước.`,
-      )
-    ) {
+    if (status === 'INACTIVE' && !confirmGroupDeactivation(group)) {
       return;
     }
     const input: UpdateStoreGroupRequest = { expectedVersion: group.version, status };
@@ -365,10 +395,7 @@ function AdminStoresContent() {
 
   const changeStoreStatus = async (store: Store) => {
     const status: StoreStatus = store.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
-    if (
-      status === 'INACTIVE' &&
-      !window.confirm(`Ngừng cửa hàng ${store.code}? Các thao tác bán lẻ sẽ bị chặn ngay lập tức.`)
-    ) {
+    if (status === 'INACTIVE' && !confirmStoreDeactivation(store)) {
       return;
     }
     const input: UpdateStoreRequest = { expectedVersion: store.version, status };
@@ -689,6 +716,7 @@ function StoreGroupEditor({
     name: group?.name ?? '',
     status: group?.status ?? 'ACTIVE',
   });
+  const deactivating = group?.status === 'ACTIVE' && draft.status === 'INACTIVE';
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     void onSave(draft, group);
@@ -709,6 +737,7 @@ function StoreGroupEditor({
         <label className="admin-field">
           <span>Mã nhóm</span>
           <input
+            autoFocus={!group}
             disabled={busy || Boolean(group)}
             maxLength={40}
             onChange={(event) => setDraft((current) => ({ ...current, code: event.target.value }))}
@@ -719,6 +748,7 @@ function StoreGroupEditor({
         <label className="admin-field">
           <span>Tên nhóm</span>
           <input
+            autoFocus={Boolean(group)}
             disabled={busy}
             maxLength={120}
             onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
@@ -748,8 +778,13 @@ function StoreGroupEditor({
           <Button disabled={busy} onClick={onCancel} tone="secondary">
             Hủy
           </Button>
-          <Button busy={busy} className="admin-clickable" type="submit">
-            {group ? 'Lưu thay đổi' : 'Tạo nhóm'}
+          <Button
+            busy={busy}
+            className="admin-clickable"
+            tone={deactivating ? 'danger' : 'primary'}
+            type="submit"
+          >
+            {deactivating ? 'Xác nhận ngừng' : group ? 'Lưu thay đổi' : 'Tạo nhóm'}
           </Button>
         </div>
       </form>
@@ -779,6 +814,7 @@ function StoreEditor({
     name: store?.name ?? '',
     status: store?.status ?? 'ACTIVE',
   });
+  const deactivating = store?.status === 'ACTIVE' && draft.status === 'INACTIVE';
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     void onSave(draft, store);
@@ -799,6 +835,7 @@ function StoreEditor({
         <label className="admin-field">
           <span>Mã cửa hàng</span>
           <input
+            autoFocus={!store}
             disabled={busy || Boolean(store)}
             maxLength={40}
             onChange={(event) => setDraft((current) => ({ ...current, code: event.target.value }))}
@@ -809,6 +846,7 @@ function StoreEditor({
         <label className="admin-field">
           <span>Tên cửa hàng</span>
           <input
+            autoFocus={Boolean(store)}
             disabled={busy}
             maxLength={160}
             onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
@@ -887,8 +925,13 @@ function StoreEditor({
           <Button disabled={busy} onClick={onCancel} tone="secondary">
             Hủy
           </Button>
-          <Button busy={busy} className="admin-clickable" type="submit">
-            {store ? 'Lưu thay đổi' : 'Tạo cửa hàng'}
+          <Button
+            busy={busy}
+            className="admin-clickable"
+            tone={deactivating ? 'danger' : 'primary'}
+            type="submit"
+          >
+            {deactivating ? 'Xác nhận ngừng' : store ? 'Lưu thay đổi' : 'Tạo cửa hàng'}
           </Button>
         </div>
       </form>

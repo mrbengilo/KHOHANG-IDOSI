@@ -218,6 +218,22 @@ test('store administration stays responsive with visible button feedback at 390p
         .filter((box) => box.width < 44 || box.height < 44),
     );
   expect(undersizedTargets).toEqual([]);
+
+  await page.getByRole('button', { name: 'Đóng biểu mẫu' }).click();
+  await page.getByRole('button', { name: `Chỉnh sửa cửa hàng ${mockStore.code}` }).click();
+  const storeEditor = page.locator('#store-editor');
+  await expect(storeEditor).toBeInViewport();
+  await expect(storeEditor.getByLabel('Tên cửa hàng')).toBeFocused();
+  await storeEditor.getByLabel('Trạng thái').selectOption('INACTIVE');
+  const dangerousSave = storeEditor.getByRole('button', { name: 'Xác nhận ngừng' });
+  await expect(dangerousSave).toHaveClass(/button--danger/u);
+  const dismissedConfirmation = page.waitForEvent('dialog').then(async (dialog) => {
+    expect(dialog.message()).toContain(mockStore.code);
+    await dialog.dismiss();
+  });
+  await dangerousSave.click();
+  await dismissedConfirmation;
+  await expect(storeEditor).toBeVisible();
 });
 
 test('wholesale routes fail closed for retail-only operations', async ({ page }, testInfo) => {
