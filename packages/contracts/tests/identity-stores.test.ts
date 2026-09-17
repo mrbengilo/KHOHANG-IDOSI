@@ -66,7 +66,13 @@ describe('identity and store-scope contracts', () => {
 
   it('rejects empty account patches', () => {
     expect(UpdateAccountRequestSchema.safeParse({}).success).toBe(false);
-    expect(UpdateAccountRequestSchema.safeParse({ status: 'LOCKED' }).success).toBe(true);
+    expect(UpdateAccountRequestSchema.safeParse({ status: 'LOCKED' }).success).toBe(false);
+    expect(
+      UpdateAccountRequestSchema.safeParse({
+        status: 'LOCKED',
+        expectedSessionVersion: 0,
+      }).success,
+    ).toBe(true);
   });
 
   it('rejects duplicate stores in an HTKD assignment replacement', () => {
