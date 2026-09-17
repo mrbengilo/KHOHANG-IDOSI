@@ -171,6 +171,7 @@ describe('dashboard state and actions', () => {
     expect(dashboardRouteForAction('PRIMARY', 'STORE', 'RETAIL')).toBe('/receive');
     expect(dashboardRouteForAction('PRIMARY', 'STORE', 'WHOLESALE')).toBe('/requests');
     expect(dashboardRouteForAction('WAITING', 'HTKD', null)).toBe('/allocations');
+    expect(dashboardRouteForAction('WAITING', 'STORE', 'RETAIL')).toBe('/requests');
   });
 
   it('formats backend integers without losing precision', () => {
@@ -185,7 +186,13 @@ describe('dashboard API integration', () => {
       const url = String(input);
       expect(init).toMatchObject({ cache: 'no-store', credentials: 'include' });
       if (url.includes('/auth/session')) return jsonResponse({ data: sessionFor('HTKD') });
-      if (url.includes('/stores?')) return jsonResponse(page(stores.slice(0, 1)));
+      if (url.includes('/stores?')) {
+        const pageNumber = url.includes('page=2') ? 2 : 1;
+        return jsonResponse({
+          data: [stores[pageNumber - 1]],
+          pagination: { page: pageNumber, pageSize: 100, totalItems: 101, totalPages: 2 },
+        });
+      }
       if (url.includes('/reports/monthly?')) return jsonResponse({ data: report });
       return jsonResponse(page([]));
     });
@@ -193,7 +200,7 @@ describe('dashboard API integration', () => {
 
     await expect(loadDashboardBootstrap()).resolves.toEqual({
       session: sessionFor('HTKD'),
-      stores: stores.slice(0, 1),
+      stores,
     });
     await expect(
       loadDashboardSnapshot({ month: 9, scope: { kind: 'STORE', storeId }, year: 2026 }),
@@ -209,6 +216,7 @@ describe('dashboard API integration', () => {
     const urls = fetchMock.mock.calls.map(([url]) => String(url));
     expect(urls.some((url) => url.includes('/auth/session'))).toBe(true);
     expect(urls.some((url) => url.includes('/stores?'))).toBe(true);
+    expect(urls.some((url) => url.includes('/stores?page=2'))).toBe(true);
     expect(urls.some((url) => url.includes('/reports/monthly?'))).toBe(true);
     expect(urls.some((url) => url.includes('/store-receipts?'))).toBe(true);
     expect(urls.some((url) => url.includes('/wait-tickets?'))).toBe(true);

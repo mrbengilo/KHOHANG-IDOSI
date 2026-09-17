@@ -109,7 +109,9 @@ function basisPointMetricValue(metric: BasisPointsReportMetric): string {
 }
 
 function csvCell(value: string | number): string {
-  return `"${String(value).replace(/"/g, '""')}"`;
+  const rawValue = String(value);
+  const safeValue = /^[\t\r ]*[=+\-@]/u.test(rawValue) ? `'${rawValue}` : rawValue;
+  return `"${safeValue.replace(/"/g, '""')}"`;
 }
 
 export function buildMonthlyReportCsv(report: MonthlyOperationalReport): string {

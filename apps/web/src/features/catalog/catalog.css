@@ -1,0 +1,249 @@
+.catalog-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid;
+  border-radius: 10px;
+  margin: 12px 0;
+  padding: 11px 12px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.catalog-notice--success {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.catalog-notice--error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.catalog-notice button {
+  display: grid;
+  min-width: 44px;
+  min-height: 44px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  transition:
+    background 120ms ease,
+    transform 100ms ease;
+}
+
+.catalog-notice button:hover {
+  background: rgb(255 255 255 / 60%);
+}
+
+.catalog-notice button:active {
+  transform: translateY(1px) scale(0.96);
+}
+
+.catalog-state {
+  display: grid;
+  min-height: 190px;
+  place-items: center;
+  align-content: center;
+  gap: 9px;
+  text-align: center;
+}
+
+.catalog-state p {
+  max-width: 640px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.catalog-state--error {
+  border-color: #fecaca;
+  background: #fffafa;
+}
+
+.catalog-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #c7d2fe;
+  border-top-color: var(--brand);
+  border-radius: 999px;
+  animation: catalog-spin 700ms linear infinite;
+}
+
+.catalog-empty-filter {
+  min-height: 140px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.catalog-missing {
+  color: #b45309;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.catalog-actions button {
+  min-height: 44px;
+  border-radius: 7px;
+  padding: 8px 6px;
+  transition:
+    background 120ms ease,
+    transform 100ms ease;
+}
+
+.catalog-actions button:hover:not(:disabled) {
+  background: #eef2ff;
+}
+
+.catalog-actions button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.97);
+}
+
+.catalog-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.catalog-actions .catalog-action--danger {
+  color: var(--danger);
+}
+
+.catalog-actions button:last-child {
+  color: var(--brand-dark);
+}
+
+.catalog-dialog {
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+}
+
+.catalog-dialog__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.catalog-dialog__wide {
+  grid-column: 1 / -1;
+}
+
+.catalog-dialog textarea,
+.catalog-retire textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 9px 10px;
+  font: inherit;
+}
+
+.catalog-dialog textarea:focus,
+.catalog-retire textarea:focus {
+  border-color: var(--brand);
+  outline: 0;
+  box-shadow: 0 0 0 3px rgb(79 70 229 / 15%);
+}
+
+.catalog-history {
+  width: min(100%, 760px);
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+}
+
+.catalog-history__state {
+  display: flex;
+  min-height: 96px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.catalog-history__state--error {
+  flex-direction: column;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.catalog-history__list {
+  display: grid;
+  gap: 10px;
+}
+
+.catalog-history__list article {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  padding: 13px;
+}
+
+.catalog-history__list article > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.catalog-history__list dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.catalog-history__list dl > div {
+  display: grid;
+  gap: 3px;
+}
+
+.catalog-history__list dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.catalog-history__list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
+@keyframes catalog-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 680px) {
+  .catalog-dialog__grid,
+  .catalog-history__list dl {
+    grid-template-columns: 1fr;
+  }
+
+  .catalog-dialog__wide {
+    grid-column: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .catalog-spinner {
+    animation-duration: 1.6s;
+  }
+
+  .catalog-actions button,
+  .catalog-notice button {
+    transition: none;
+  }
+}

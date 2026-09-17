@@ -1,3 +1,4 @@
+-- Store transfer schema follows the operational settings migration.
 CREATE TYPE "public"."store_transfer_status" AS ENUM('draft', 'in_transit', 'received', 'cancelled');
 
 ALTER TABLE "store_inventory_bags" ALTER COLUMN "source_store_receipt_bag_id" DROP NOT NULL;

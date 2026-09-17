@@ -45,7 +45,9 @@ const AuditPage = lazy(() =>
   import('./features/admin/AuditLogPage').then((module) => ({ default: module.AuditLogPage })),
 );
 const SettingsPage = lazy(() =>
-  import('./pages/AdminPages').then((module) => ({ default: module.SettingsPage })),
+  import('./features/admin/AdminSettingsPage').then((module) => ({
+    default: module.AdminSettingsPage,
+  })),
 );
 const LoginPage = lazy(() =>
   import('./pages/LoginPage').then((module) => ({ default: module.LoginPage })),

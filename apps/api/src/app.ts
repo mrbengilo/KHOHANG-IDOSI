@@ -11,6 +11,7 @@ import {
   CreateStoreRequestSchema,
   DeclareStoreReceiptRequestSchema,
   FinalizeReceiptRequestSchema,
+  GetOperationalSettingsQuerySchema,
   IdempotencyHeadersSchema,
   IsoDateSchema,
   ListOrderSessionsQuerySchema,
@@ -53,6 +54,7 @@ import {
   ReceiveStoreTransferRequestSchema,
   CancelStoreTransferRequestSchema,
   StoreTransferParamsSchema,
+  UpdateOperationalSettingsRequestSchema,
   type ApiErrorCode,
   type AuthenticatedPrincipal,
   type Session,
@@ -79,6 +81,8 @@ import {
 const SESSION_COOKIE = 'idosi_session';
 const DEFAULT_SESSION_TTL_MS = 12 * 60 * 60 * 1_000;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const DEFAULT_IDOSI_INTEGRATION_ENDPOINT =
+  'https://idosi.io.vn/api/integrations/warehouse/v1/order-statistics';
 
 const StatisticsQuerySchema = z
   .object({
@@ -100,6 +104,8 @@ export interface CreateApiOptions {
   readonly logger?: boolean | { readonly level: string };
   readonly trustProxy?: FastifyServerOptions['trustProxy'];
   readonly loginRateLimit?: LoginRateLimitOptions;
+  readonly idosiIntegrationEndpoint?: string;
+  readonly idosiIntegrationSecretConfigured?: boolean;
 }
 
 export async function createApi(options: CreateApiOptions = {}): Promise<FastifyInstance> {
@@ -110,6 +116,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
   }
   const dummyPasswordHash = await hashPassword(randomUUID());
   const loginRateLimiter = new LoginRateLimiter(options.loginRateLimit);
+  const idosiIntegration = integrationStatus(options);
   const fastifyOptions: FastifyServerOptions = {
     logger: options.logger ?? false,
     bodyLimit: 1_048_576,
@@ -294,6 +301,25 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     const query = ListAuditLogsQuerySchema.parse(request.query);
     reply.header('cache-control', 'no-store');
     return repository.listAuditLogs(session.principal, query);
+  });
+
+  app.get('/api/v1/admin/operational-settings', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const query = GetOperationalSettingsQuerySchema.parse(request.query);
+    const settings = await repository.getOperationalSettings(session.principal, query.historyLimit);
+    reply.header('cache-control', 'no-store');
+    return { data: { ...settings, integration: idosiIntegration } };
+  });
+
+  app.put('/api/v1/admin/operational-settings', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const input = UpdateOperationalSettingsRequestSchema.parse(request.body);
+    await repository.updateOperationalSettings(session.principal, input, requestContext(request));
+    const settings = await repository.getOperationalSettings(session.principal, 10);
+    reply.header('cache-control', 'no-store');
+    return { data: { ...settings, integration: idosiIntegration } };
   });
 
   app.get('/api/v1/products', async (request) => {
@@ -852,7 +878,7 @@ function applyCors(
   if (!isAllowedOrigin(requestOrigin, configuredOrigin)) return;
   reply.header('access-control-allow-origin', requestOrigin);
   reply.header('access-control-allow-credentials', 'true');
-  reply.header('access-control-allow-methods', 'GET,POST,PATCH,DELETE,OPTIONS');
+  reply.header('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
   reply.header('access-control-allow-headers', 'content-type,idempotency-key,x-request-id');
   reply.header('vary', 'Origin');
 }
@@ -865,6 +891,27 @@ function isAllowedOrigin(
     ? configuredOrigin
     : [configuredOrigin ?? 'http://localhost:5173'];
   return allowed.includes(requestOrigin);
+}
+
+function integrationStatus(options: CreateApiOptions): {
+  readonly endpoint: string;
+  readonly status: 'CONFIGURED' | 'NOT_CONFIGURED';
+} {
+  const endpoint = options.idosiIntegrationEndpoint?.trim() || DEFAULT_IDOSI_INTEGRATION_ENDPOINT;
+  if (endpoint.length > 2_048) throw new Error('IDOSI integration endpoint is too long');
+  let parsed: URL;
+  try {
+    parsed = new URL(endpoint);
+  } catch {
+    throw new Error('IDOSI integration endpoint must be an absolute URL');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('IDOSI integration endpoint must use HTTP or HTTPS');
+  }
+  return {
+    endpoint,
+    status: options.idosiIntegrationSecretConfigured ? 'CONFIGURED' : 'NOT_CONFIGURED',
+  };
 }
 
 function zodFieldErrors(error: ZodError): Record<string, string[]> {
@@ -952,6 +999,21 @@ function openApiDocument(): Record<string, unknown> {
           responses: { '200': { description: 'Filtered immutable audit history (ADMIN only)' } },
         },
       },
+      '/api/v1/admin/operational-settings': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'Current and versioned operational settings (ADMIN only)' },
+          },
+        },
+        put: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'Created immutable operational settings version (ADMIN only)' },
+            '409': { description: 'Optimistic settings version conflict' },
+          },
+        },
+      },
       '/api/v1/products': {
         get: { security: cookieSecurity, responses: { '200': { description: 'Products' } } },
         post: {
@@ -972,7 +1034,9 @@ function openApiDocument(): Record<string, unknown> {
         },
         post: {
           security: cookieSecurity,
-          responses: { '201': { description: 'Initial conversion' } },
+          responses: {
+            '201': { description: 'Initial or resumed immutable conversion version' },
+          },
         },
       },
       '/api/v1/product-conversions': {

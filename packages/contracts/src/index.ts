@@ -4,6 +4,7 @@ export * from './admin-audit.js';
 export * from './common.js';
 export * from './identity.js';
 export * from './orders.js';
+export * from './operational-settings.js';
 export * from './outbound.js';
 export * from './products.js';
 export * from './receipts.js';

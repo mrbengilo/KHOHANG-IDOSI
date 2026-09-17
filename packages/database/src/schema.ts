@@ -13,6 +13,7 @@ import {
   pgTable,
   smallint,
   text,
+  time,
   timestamp,
   uniqueIndex,
   uuid,
@@ -1749,6 +1750,55 @@ export const storeOutbounds = pgTable(
     check(
       'store_outbounds_rejection_note',
       sql`${table.status} <> 'rejected' OR length(btrim(${table.reviewNote})) >= 3`,
+    ),
+  ],
+);
+
+/** Append-only operational policy snapshots. The highest version is current. */
+export const operationalSettingsVersions = pgTable(
+  'operational_settings_versions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    version: integer('version').notNull(),
+    timezone: text('timezone').notNull(),
+    snapshotTime: time('snapshot_time', { precision: 0 }).notNull(),
+    cutoffTime: time('cutoff_time', { precision: 0 }).notNull(),
+    maxRequestsPerStore: integer('max_requests_per_store').notNull(),
+    policyVersion: text('policy_version').notNull(),
+    idosiSyncIntervalMinutes: integer('idosi_sync_interval_minutes').notNull(),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    requestId: text('request_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('operational_settings_versions_version_uidx').on(table.version),
+    index('operational_settings_versions_created_idx').on(table.createdAt),
+    check('operational_settings_versions_version_positive', sql`${table.version} > 0`),
+    check(
+      'operational_settings_versions_timezone_supported',
+      sql`${table.timezone} = 'Asia/Ho_Chi_Minh'`,
+    ),
+    check(
+      'operational_settings_versions_cutoff_after_snapshot',
+      sql`${table.cutoffTime} > ${table.snapshotTime}`,
+    ),
+    check(
+      'operational_settings_versions_request_limit',
+      sql`${table.maxRequestsPerStore} BETWEEN 1 AND 10`,
+    ),
+    check(
+      'operational_settings_versions_policy_not_blank',
+      sql`length(btrim(${table.policyVersion})) BETWEEN 3 AND 64`,
+    ),
+    check(
+      'operational_settings_versions_sync_interval',
+      sql`${table.idosiSyncIntervalMinutes} IN (15, 30)`,
+    ),
+    check(
+      'operational_settings_versions_request_id_not_blank',
+      sql`length(btrim(${table.requestId})) BETWEEN 1 AND 128`,
     ),
   ],
 );

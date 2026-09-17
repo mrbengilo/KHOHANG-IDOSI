@@ -111,6 +111,32 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
   return payload;
 }
 
+interface ParsedPage<T> {
+  readonly data: T[];
+  readonly pagination: { readonly totalPages: number };
+}
+
+function paginatedQuery(filters: URLSearchParams, page: number): string {
+  const query = new URLSearchParams({ page: String(page), pageSize: '100' });
+  for (const [key, value] of filters) query.append(key, value);
+  return query.toString();
+}
+
+async function listAllPages<T>(
+  path: string,
+  filters: URLSearchParams,
+  parse: (payload: unknown) => ParsedPage<T>,
+): Promise<T[]> {
+  const first = parse(await request(`${path}?${paginatedQuery(filters, 1)}`));
+  if (first.pagination.totalPages <= 1) return first.data;
+  const remaining = await Promise.all(
+    Array.from({ length: first.pagination.totalPages - 1 }, async (_, index) =>
+      parse(await request(`${path}?${paginatedQuery(filters, index + 2)}`)),
+    ),
+  );
+  return [first, ...remaining].flatMap((page) => page.data);
+}
+
 export async function getSession(): Promise<Session | null> {
   try {
     const payload = await request('/auth/session');
@@ -247,16 +273,16 @@ export async function setCatalogProductStatus(
 }
 
 export async function getStoreKind(storeId: string): Promise<StoreKind> {
-  const payload = await request('/stores?page=1&pageSize=100');
-  const stores = ListStoresResponseSchema.parse(payload).data;
+  const stores = await listAccessibleStores();
   const store = stores.find((candidate) => candidate.id === storeId);
   if (!store) throw new ApiClientError('Không tìm thấy cửa hàng của tài khoản.', 404, 'NOT_FOUND');
   return store.kind;
 }
 
 export async function listAccessibleStores(): Promise<Store[]> {
-  const payload = await request('/stores?page=1&pageSize=100');
-  return ListStoresResponseSchema.parse(payload).data;
+  return listAllPages('/stores', new URLSearchParams(), (payload) =>
+    ListStoresResponseSchema.parse(payload),
+  );
 }
 
 export async function getMonthlyOperationalReport(
@@ -273,8 +299,9 @@ export async function getMonthlyOperationalReport(
 }
 
 export async function listOpenOrderSessions(): Promise<OrderSession[]> {
-  const payload = await request('/order-sessions?status=OPEN&page=1&pageSize=100');
-  return ListOrderSessionsResponseSchema.parse(payload).data;
+  return listAllPages('/order-sessions', new URLSearchParams({ status: 'OPEN' }), (payload) =>
+    ListOrderSessionsResponseSchema.parse(payload),
+  );
 }
 
 export async function listStoreOrderRequests(
@@ -312,14 +339,15 @@ interface WaitTicketFilters {
 }
 
 export async function listWaitTickets(filters: WaitTicketFilters = {}): Promise<WaitTicket[]> {
-  const query = new URLSearchParams({ page: '1', pageSize: '100' });
+  const query = new URLSearchParams();
   if (filters.priority) query.set('priority', filters.priority);
   if (filters.productId) query.set('productId', filters.productId);
   if (filters.sessionId) query.set('sessionId', filters.sessionId);
   if (filters.status) query.set('status', filters.status);
   if (filters.storeId) query.set('storeId', filters.storeId);
-  const payload = await request(`/wait-tickets?${query.toString()}`);
-  return ListWaitTicketsResponseSchema.parse(payload).data;
+  return listAllPages('/wait-tickets', query, (payload) =>
+    ListWaitTicketsResponseSchema.parse(payload),
+  );
 }
 
 interface PriorityOfferFilters {
@@ -331,12 +359,13 @@ interface PriorityOfferFilters {
 export async function listPriorityOffers(
   filters: PriorityOfferFilters = {},
 ): Promise<PriorityOffer[]> {
-  const query = new URLSearchParams({ page: '1', pageSize: '100' });
+  const query = new URLSearchParams();
   if (filters.status) query.set('status', filters.status);
   if (filters.storeId) query.set('storeId', filters.storeId);
   if (filters.waitTicketId) query.set('waitTicketId', filters.waitTicketId);
-  const payload = await request(`/priority-offers?${query.toString()}`);
-  return ListPriorityOffersResponseSchema.parse(payload).data;
+  return listAllPages('/priority-offers', query, (payload) =>
+    ListPriorityOffersResponseSchema.parse(payload),
+  );
 }
 
 export async function getWaitTicketHistory(
@@ -384,11 +413,12 @@ interface ReceiptFilters {
 }
 
 export async function listStoreReceipts(filters: ReceiptFilters = {}): Promise<Receipt[]> {
-  const query = new URLSearchParams({ page: '1', pageSize: '100' });
+  const query = new URLSearchParams();
   if (filters.status) query.set('status', filters.status);
   if (filters.storeId) query.set('storeId', filters.storeId);
-  const payload = await request(`/store-receipts?${query.toString()}`);
-  return ListReceiptsResponseSchema.parse(payload).data;
+  return listAllPages('/store-receipts', query, (payload) =>
+    ListReceiptsResponseSchema.parse(payload),
+  );
 }
 
 export async function getStoreReceipt(receiptId: string): Promise<Receipt> {

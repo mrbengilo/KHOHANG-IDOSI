@@ -33,6 +33,127 @@ describe('KHOHANG-IDOSI API', () => {
     assert.ok(specification.json().paths['/api/v1/store-outbounds/{outboundId}/review']);
     assert.ok(specification.json().paths['/api/v1/store-transfers/destinations']);
     assert.ok(specification.json().paths['/api/v1/store-transfers/{transferId}/receive']);
+    assert.ok(specification.json().paths['/api/v1/admin/operational-settings']);
+  });
+
+  test('versions operational settings for ADMIN without accepting or returning secrets', async () => {
+    await app.close();
+    app = await createApi({
+      repository,
+      corsOrigin: 'http://localhost:5173',
+      idosiIntegrationEndpoint:
+        'https://idosi.io.vn/api/integrations/warehouse/v1/order-statistics',
+      idosiIntegrationSecretConfigured: true,
+    });
+    const adminCookie = cookieOf(await login('admin'));
+    const storeCookie = cookieOf(await login('ds_nvt'));
+
+    const denied = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/operational-settings',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(denied.statusCode, 403);
+
+    const initial = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/operational-settings?historyLimit=10',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(initial.statusCode, 200);
+    assert.equal(initial.headers['cache-control'], 'no-store');
+    assert.equal(initial.json().data.current.version, 1);
+    assert.equal(initial.json().data.current.snapshotTime, '08:00');
+    assert.equal(initial.json().data.current.cutoffTime, '09:00');
+    assert.deepEqual(initial.json().data.integration, {
+      endpoint: 'https://idosi.io.vn/api/integrations/warehouse/v1/order-statistics',
+      status: 'CONFIGURED',
+    });
+    assert.equal(JSON.stringify(initial.json()).includes('integrationSecret'), false);
+    assert.equal(JSON.stringify(initial.json()).includes('secretConfigured'), false);
+
+    const invalidSchedule = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/operational-settings',
+      headers: { cookie: adminCookie },
+      payload: {
+        expectedVersion: 1,
+        timezone: 'Asia/Ho_Chi_Minh',
+        snapshotTime: '09:00',
+        cutoffTime: '08:00',
+        maxRequestsPerStore: 2,
+        policyVersion: 'ALLOC-v1.3',
+        idosiSyncIntervalMinutes: 15,
+      },
+    });
+    assert.equal(invalidSchedule.statusCode, 400);
+    assert.equal(invalidSchedule.json().error.code, 'VALIDATION_ERROR');
+
+    const secretInput = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/operational-settings',
+      headers: { cookie: adminCookie },
+      payload: {
+        expectedVersion: 1,
+        timezone: 'Asia/Ho_Chi_Minh',
+        snapshotTime: '08:00',
+        cutoffTime: '09:00',
+        maxRequestsPerStore: 2,
+        policyVersion: 'ALLOC-v1.3',
+        idosiSyncIntervalMinutes: 15,
+        integrationSecret: 'must-not-be-accepted',
+      },
+    });
+    assert.equal(secretInput.statusCode, 400);
+
+    const updated = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/operational-settings',
+      headers: { cookie: adminCookie, 'x-request-id': 'settings-update-request' },
+      payload: {
+        expectedVersion: 1,
+        timezone: 'Asia/Ho_Chi_Minh',
+        snapshotTime: '07:45',
+        cutoffTime: '08:45',
+        maxRequestsPerStore: 3,
+        policyVersion: 'ALLOC-v1.3',
+        idosiSyncIntervalMinutes: 30,
+      },
+    });
+    assert.equal(updated.statusCode, 200);
+    assert.equal(updated.json().data.current.version, 2);
+    assert.equal(updated.json().data.current.createdByAccountId, MEMORY_SEED_IDS.adminAccount);
+    assert.equal(updated.json().data.current.requestId, 'settings-update-request');
+    assert.deepEqual(
+      updated.json().data.history.map((item) => item.version),
+      [2, 1],
+    );
+
+    const stale = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/operational-settings',
+      headers: { cookie: adminCookie },
+      payload: {
+        expectedVersion: 1,
+        timezone: 'Asia/Ho_Chi_Minh',
+        snapshotTime: '08:00',
+        cutoffTime: '09:00',
+        maxRequestsPerStore: 2,
+        policyVersion: 'ALLOC-v1.4',
+        idosiSyncIntervalMinutes: 15,
+      },
+    });
+    assert.equal(stale.statusCode, 409);
+    assert.equal(stale.json().error.code, 'VERSION_CONFLICT');
+
+    const audit = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/audit-logs?action=OPERATIONAL_SETTINGS_VERSION_CREATED',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(audit.statusCode, 200);
+    assert.equal(audit.json().pagination.totalItems, 1);
+    assert.equal(audit.json().data[0].requestId, 'settings-update-request');
   });
 
   test('uses scrypt and issues an opaque HttpOnly session without exposing secrets', async () => {
@@ -356,6 +477,157 @@ describe('KHOHANG-IDOSI API', () => {
       cancelledFuture.json().data.some((item) => item.productId === bedding.id),
       false,
     );
+  });
+
+  test('resumes a retired conversion history with one optimistic immutable append', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const products = await app.inject({
+      method: 'GET',
+      url: '/api/v1/products?pageSize=100',
+      headers: { cookie: adminCookie },
+    });
+    const product = products.json().data[0];
+    assert.ok(product);
+
+    const initialHistory = await app.inject({
+      method: 'GET',
+      url: `/api/v1/products/${product.id}/conversions?includeRetired=true`,
+      headers: { cookie: adminCookie },
+    });
+    const initial = initialHistory.json().data[0];
+    assert.equal(initial.version, 1);
+
+    const retired = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/products/${product.id}/conversions/${initial.id}`,
+      headers: { cookie: adminCookie },
+      payload: { expectedVersion: 1, reason: 'Tạm ngừng định mức để kiểm kê lại' },
+    });
+    assert.equal(retired.statusCode, 200);
+    assert.notEqual(retired.json().data.retiredAt, null);
+
+    const resumedPayload = {
+      itemQuantity: initial.itemQuantity,
+      weightKilograms: initial.weightKilograms,
+      effectiveFrom: '2099-01-01',
+      effectiveTo: null,
+      reason: 'Khôi phục định mức sau khi kiểm kê',
+      expectedVersion: 1,
+    };
+    const missingExpectation = await app.inject({
+      method: 'POST',
+      url: `/api/v1/products/${product.id}/conversions`,
+      headers: { cookie: adminCookie },
+      payload: { ...resumedPayload, expectedVersion: undefined },
+    });
+    assert.equal(missingExpectation.statusCode, 409);
+    assert.equal(missingExpectation.json().error.code, 'VERSION_CONFLICT');
+
+    const invalidDate = await app.inject({
+      method: 'POST',
+      url: `/api/v1/products/${product.id}/conversions`,
+      headers: { cookie: adminCookie },
+      payload: { ...resumedPayload, effectiveFrom: initial.effectiveFrom },
+    });
+    assert.equal(invalidDate.statusCode, 400);
+    assert.equal(invalidDate.json().error.code, 'VALIDATION_ERROR');
+
+    const attempts = await Promise.all(
+      ['resume-conversion-a', 'resume-conversion-b'].map((requestId) =>
+        app.inject({
+          method: 'POST',
+          url: `/api/v1/products/${product.id}/conversions`,
+          headers: { cookie: adminCookie, 'x-request-id': requestId },
+          payload: resumedPayload,
+        }),
+      ),
+    );
+    assert.equal(attempts.filter((response) => response.statusCode === 201).length, 1);
+    assert.equal(attempts.filter((response) => response.statusCode === 409).length, 1);
+    const createdResponse = attempts.find((response) => response.statusCode === 201);
+    const conflictedResponse = attempts.find((response) => response.statusCode === 409);
+    assert.ok(createdResponse);
+    assert.ok(conflictedResponse);
+    assert.equal(conflictedResponse.json().error.code, 'VERSION_CONFLICT');
+    const created = createdResponse.json().data;
+    assert.equal(created.version, 2);
+    assert.equal(created.retiredAt, null);
+
+    const activeAppend = await app.inject({
+      method: 'POST',
+      url: `/api/v1/products/${product.id}/conversions`,
+      headers: { cookie: adminCookie },
+      payload: { ...resumedPayload, effectiveFrom: '2099-01-02', expectedVersion: 2 },
+    });
+    assert.equal(activeAppend.statusCode, 409);
+    assert.equal(activeAppend.json().error.code, 'CONFLICT');
+
+    const finalHistory = await app.inject({
+      method: 'GET',
+      url: `/api/v1/products/${product.id}/conversions?includeRetired=true`,
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(finalHistory.json().data.length, 2);
+    assert.deepEqual(
+      finalHistory.json().data.find((conversion) => conversion.version === 1),
+      retired.json().data,
+    );
+
+    const audit = await app.inject({
+      method: 'GET',
+      url:
+        '/api/v1/admin/audit-logs?action=PRODUCT_CONVERSION_APPENDED' +
+        `&entityType=product_conversion&entityId=${created.id}`,
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(audit.statusCode, 200);
+    assert.equal(audit.json().pagination.totalItems, 1);
+    assert.equal(audit.json().data[0].before.version, 1);
+    assert.notEqual(audit.json().data[0].before.retiredAt, null);
+    assert.equal(audit.json().data[0].after.version, 2);
+  });
+
+  test('creates an initial conversion against the zero-version baseline', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const productResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/products',
+      headers: { cookie: adminCookie },
+      payload: {
+        sku: 'CATALOG_LIFECYCLE_TEST',
+        name: 'Mặt hàng kiểm thử vòng đời',
+        measurement: 'UNIT',
+        unitLabel: 'cái',
+      },
+    });
+    assert.equal(productResponse.statusCode, 201);
+    const product = productResponse.json().data;
+    const payload = {
+      itemQuantity: 2,
+      weightKilograms: '1.000',
+      effectiveFrom: '2026-09-18',
+      effectiveTo: null,
+      reason: 'Khởi tạo định mức có chốt phiên bản',
+      expectedVersion: 0,
+    };
+
+    const created = await app.inject({
+      method: 'POST',
+      url: `/api/v1/products/${product.id}/conversions`,
+      headers: { cookie: adminCookie },
+      payload,
+    });
+    assert.equal(created.statusCode, 201);
+    assert.equal(created.json().data.version, 1);
+
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/api/v1/products/${product.id}/conversions`,
+      headers: { cookie: adminCookie },
+      payload,
+    });
+    assert.equal(replay.statusCode, 409);
+    assert.equal(replay.json().error.code, 'VERSION_CONFLICT');
   });
 
   test('lists only authorized dispatched sources that do not have a receipt', async () => {
