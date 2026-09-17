@@ -82,6 +82,7 @@ export const ApiErrorCodeSchema = z.enum([
   'VALIDATION_ERROR',
   'UNAUTHENTICATED',
   'FORBIDDEN',
+  'RATE_LIMITED',
   'NOT_FOUND',
   'CONFLICT',
   'ACCOUNT_INACTIVE',

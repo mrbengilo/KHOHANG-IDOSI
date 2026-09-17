@@ -32,11 +32,13 @@ export interface CreateOrderRequestInput {
 export interface SubmitOrderRequestInput extends CreateOrderRequestInput {
   readonly idempotencyKey: string;
   readonly requestHash: string;
+  readonly onCreated?: (tx: Transaction, request: CreatedOrderRequest) => Promise<void>;
 }
 
 export interface CreatedOrderRequest {
   readonly id: string;
   readonly requestNumber: number;
+  readonly submittedAt: Date;
 }
 
 export class RequestLimitExceededError extends Error {
@@ -160,7 +162,11 @@ export async function createOrderRequest(
               submittedAt: now,
               notes: input.notes ?? null,
             })
-            .returning({ id: orderRequests.id, requestNumber: orderRequests.requestNumber });
+            .returning({
+              id: orderRequests.id,
+              requestNumber: orderRequests.requestNumber,
+              submittedAt: orderRequests.submittedAt,
+            });
 
           if (!createdRequest) {
             throw new Error('Order request insert returned no row.');
@@ -176,7 +182,7 @@ export async function createOrderRequest(
             })),
           );
 
-          return createdRequest;
+          return { ...createdRequest, submittedAt: createdRequest.submittedAt ?? now };
         },
       );
     },
@@ -196,6 +202,7 @@ export async function submitOrderRequest(
     },
     async (tx) => {
       const created = await createOrderRequest(tx, input);
+      await input.onCreated?.(tx, created);
       const responseBody: JsonObject = {
         orderRequestId: created.id,
         requestNumber: created.requestNumber,
