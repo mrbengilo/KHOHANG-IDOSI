@@ -187,14 +187,17 @@ async function createFixture() {
       { userId: htkdUser.id, storeId: storeB.id, assignedByUserId: administrator.id },
     ]);
 
-    const openedAt = new Date('2026-09-17T00:00:00.000Z');
-    const snapshotAt = new Date('2026-09-17T01:00:00.000Z');
-    const allocationAt = new Date('2026-09-17T02:00:00.000Z');
+    // Keep this fixture away from today's business date because the worker's live
+    // PostgreSQL pipeline deliberately creates the one non-cancelled session for today.
+    const businessDate = '2000-01-01';
+    const openedAt = new Date(`${businessDate}T00:00:00.000Z`);
+    const snapshotAt = new Date(`${businessDate}T01:00:00.000Z`);
+    const allocationAt = new Date(`${businessDate}T02:00:00.000Z`);
     const [session] = await tx
       .insert(orderSessions)
       .values({
         code: `ALLOC-${suffix}`,
-        businessDate: '2026-09-17',
+        businessDate,
         status: 'completed',
         inventorySnapshotDueAt: snapshotAt,
         requestDeadlineAt: allocationAt,
@@ -210,7 +213,7 @@ async function createFixture() {
       .insert(inventorySnapshots)
       .values({
         orderSessionId: session.id,
-        businessDate: '2026-09-17',
+        businessDate,
         snapshotType: 'pre_allocation',
         status: 'completed',
         capturedAt: snapshotAt,
