@@ -49,6 +49,25 @@ export type {
   WaitShortageMergePlan,
 } from './store-operations.js';
 
+export {
+  declareStoreReceipt,
+  declareStoreReceiptInTransaction,
+  returnStoreReceiptForCorrection,
+  returnStoreReceiptForCorrectionInTransaction,
+  StoreReceiptAuthorizationError,
+  submitStoreReceipt,
+  submitStoreReceiptInTransaction,
+  validateStoreReceiptDeclaration,
+} from './store-receipt-workflow.js';
+export type {
+  DeclareStoreReceiptInput,
+  DeclareStoreReceiptLineInput,
+  DispatchedStoreReceiptLine,
+  ReturnStoreReceiptForCorrectionInput,
+  StoreReceiptWorkflowResult,
+  SubmitStoreReceiptInput,
+} from './store-receipt-workflow.js';
+
 export * from './schema.js';
 export {
   PRODUCT_CONVERSION_SEEDS,
