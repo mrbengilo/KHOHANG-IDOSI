@@ -1,6 +1,15 @@
 export { closeDatabase, createDatabase, db, pool } from './client.js';
 export type { Database, DatabaseClient } from './client.js';
 
+export { listAllocationResults } from './allocation-results.js';
+export type {
+  AllocationResultDatabaseStatus,
+  AllocationResultPage,
+  AllocationResultPriority,
+  AllocationResultRecord,
+  ListAllocationResultsInput,
+} from './allocation-results.js';
+
 export {
   IdempotencyConflictError,
   IdempotencyInProgressError,

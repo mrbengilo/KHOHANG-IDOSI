@@ -1,6 +1,7 @@
 import type {
   Account,
   AdminAuditLog,
+  AllocationResult,
   AuthenticatedPrincipal,
   CancelInboundReceiptRequest,
   CancelStoreOrderRequest,
@@ -18,6 +19,7 @@ import type {
   ConfirmReceiptCostsRequest,
   ListOrderSessionsQuery,
   ListAccountsQuery,
+  ListAllocationsQuery,
   ListAuditLogsQuery,
   ListInboundReceiptsQuery,
   ListProductsQuery,
@@ -261,6 +263,10 @@ export interface WarehouseRepository {
   ): Promise<void>;
 
   listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>>;
+  listAllocations(
+    actor: AuthenticatedPrincipal,
+    query: ListAllocationsQuery,
+  ): Promise<Page<AllocationResult>>;
   createOrderSession(
     actor: AuthenticatedPrincipal,
     input: CreateOrderSessionRequest,

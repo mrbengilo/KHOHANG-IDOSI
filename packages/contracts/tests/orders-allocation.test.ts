@@ -3,10 +3,12 @@ import { describe, expect, it } from 'vitest';
 import {
   AllocationLineSchema,
   CancelStoreOrderRequestSchema,
+  AllocationResultSchema,
   CreateOrderSessionRequestSchema,
   CreateStoreOrderRequestSchema,
   CreateWarehouseAdjustmentRequestSchema,
   PriorityOfferSchema,
+  ListAllocationsQuerySchema,
   StoreOrderRequestSchema,
   TransitionOrderSessionRequestSchema,
   WarehouseBalanceSchema,
@@ -21,6 +23,7 @@ const IDS = {
   line: '66666666-6666-4666-8666-666666666666',
   offer: '77777777-7777-4777-8777-777777777777',
   ticket: '88888888-8888-4888-8888-888888888888',
+  run: '99999999-9999-4999-8999-999999999999',
 };
 
 describe('order, allocation and wait-list contracts', () => {
@@ -214,6 +217,32 @@ describe('order, allocation and wait-list contracts', () => {
         status: 'RESERVED',
       }).success,
     ).toBe(false);
+  });
+
+  it('models persisted allocation result quantities and database-backed statuses', () => {
+    const result = {
+      id: IDS.line,
+      allocationRunId: IDS.run,
+      sessionId: IDS.session,
+      mergedOrderId: IDS.order,
+      storeId: IDS.store,
+      productId: IDS.product,
+      priority: 'P1',
+      roundNumber: 2,
+      sequenceInRound: 3,
+      requestedQuantity: 5,
+      allocatedQuantity: 3,
+      waitlistedQuantity: 2,
+      status: 'PARTIAL',
+      reasonCode: 'PARTIAL_SNAPSHOT_STOCK',
+      createdAt: '2026-09-10T09:00:00Z',
+    };
+    expect(AllocationResultSchema.safeParse(result).success).toBe(true);
+    expect(AllocationResultSchema.safeParse({ ...result, allocatedQuantity: 4 }).success).toBe(
+      false,
+    );
+    expect(ListAllocationsQuerySchema.parse({ status: 'WAITLISTED' }).status).toBe('WAITLISTED');
+    expect(ListAllocationsQuerySchema.safeParse({ status: 'RESERVED' }).success).toBe(false);
   });
 
   it('requires offer expiry after creation and accepted amount for accepted offers', () => {

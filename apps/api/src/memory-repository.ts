@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type {
   Account,
   AdminAuditLog,
+  AllocationResult,
   AuthenticatedPrincipal,
   CancelInboundReceiptRequest,
   CancelStoreOrderRequest,
@@ -22,6 +23,7 @@ import type {
   InboundReceipt,
   ListOrderSessionsQuery,
   ListAccountsQuery,
+  ListAllocationsQuery,
   ListAuditLogsQuery,
   ListInboundReceiptsQuery,
   ListProductsQuery,
@@ -139,11 +141,16 @@ export const MEMORY_SEED_IDS = {
   cancellableWaitTicket: '13000000-0000-4000-8000-000000000002',
   priorityOffer: '14000000-0000-4000-8000-000000000001',
   operationalSettings: '14500000-0000-4000-8000-000000000001',
+  allocationRun: '11000000-0000-4000-8000-100000000001',
+  allocationLine: '11000000-0000-4000-8000-300000000001',
+  bdAllocationLine: '11000000-0000-4000-8000-300000000004',
+  unassignedAllocationLine: '11000000-0000-4000-8000-300000000005',
   inventoryBag: '15000000-0000-4000-8000-000000000001',
   inventoryLedger: '15100000-0000-4000-8000-000000000001',
   sourceReceiptBag: '15200000-0000-4000-8000-000000000001',
   nvtStore: '20000000-0000-4000-8000-000000000007',
   bdStore: '20000000-0000-4000-8000-000000000008',
+  ctStore: '20000000-0000-4000-8000-000000000006',
 } as const;
 
 interface MutableAccount extends AccountCredentials {
@@ -243,6 +250,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly stores = new Map<string, Store>();
   private readonly orderSessions = new Map<string, OrderSession>();
   private readonly products = new Map<string, Product>();
+  private readonly allocationResults = new Map<string, AllocationResult>();
   private readonly productConversions = new Map<string, ProductConversion>();
   private readonly orderRequests = new Map<string, StoreOrderRequest>();
   private readonly inboundReceipts = new Map<string, InboundReceipt>();
@@ -692,6 +700,28 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       .sort((left, right) => right.businessDate.localeCompare(left.businessDate));
     return {
       data: slicePage(values, query.page, query.pageSize),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
+  }
+
+  public async listAllocations(
+    actor: AuthenticatedPrincipal,
+    query: ListAllocationsQuery,
+  ): Promise<Page<AllocationResult>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const values = [...this.allocationResults.values()]
+      .filter((result) => canAccessStore(actor, result.storeId))
+      .filter((result) => query.sessionId === undefined || result.sessionId === query.sessionId)
+      .filter((result) => query.storeId === undefined || result.storeId === query.storeId)
+      .filter((result) => query.productId === undefined || result.productId === query.productId)
+      .filter((result) => query.status === undefined || result.status === query.status)
+      .filter((result) => query.priority === undefined || result.priority === query.priority)
+      .sort(
+        (left, right) =>
+          right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id),
+      );
+    return {
+      data: slicePage(values, query.page, query.pageSize).map((result) => structuredClone(result)),
       pagination: pagination(query.page, query.pageSize, values.length),
     };
   }
@@ -3093,18 +3123,73 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
 
     const nvtId = this.storeIdByCode('DS_NVT');
     const bdId = this.storeIdByCode('DS_BD');
+    const ctId = this.storeIdByCode('DS_CT');
     const seededProducts = [...this.products.values()].sort((left, right) =>
       left.sku.localeCompare(right.sku),
     );
     const firstProduct = seededProducts[0];
     const secondProduct = seededProducts[1];
     if (!firstProduct || !secondProduct) throw new Error('Memory catalog requires two products');
+    const allocationResults: AllocationResult[] = [
+      {
+        id: MEMORY_SEED_IDS.allocationLine,
+        allocationRunId: MEMORY_SEED_IDS.allocationRun,
+        sessionId: MEMORY_SEED_IDS.orderSession,
+        mergedOrderId: '11000000-0000-4000-8000-400000000001',
+        storeId: nvtId,
+        productId: firstProduct.id,
+        priority: 'P1',
+        roundNumber: 1,
+        sequenceInRound: 1,
+        requestedQuantity: 5,
+        allocatedQuantity: 5,
+        waitlistedQuantity: 0,
+        status: 'ALLOCATED',
+        reasonCode: 'ALLOCATED_BY_PRIORITY_ROUND_ROBIN',
+        createdAt: now,
+      },
+      {
+        id: MEMORY_SEED_IDS.bdAllocationLine,
+        allocationRunId: MEMORY_SEED_IDS.allocationRun,
+        sessionId: MEMORY_SEED_IDS.orderSession,
+        mergedOrderId: '11000000-0000-4000-8000-400000000002',
+        storeId: bdId,
+        productId: secondProduct.id,
+        priority: 'P2',
+        roundNumber: 1,
+        sequenceInRound: 2,
+        requestedQuantity: 3,
+        allocatedQuantity: 2,
+        waitlistedQuantity: 1,
+        status: 'PARTIAL',
+        reasonCode: 'PARTIAL_SNAPSHOT_STOCK',
+        createdAt: now,
+      },
+      {
+        id: MEMORY_SEED_IDS.unassignedAllocationLine,
+        allocationRunId: MEMORY_SEED_IDS.allocationRun,
+        sessionId: MEMORY_SEED_IDS.orderSession,
+        mergedOrderId: '11000000-0000-4000-8000-400000000003',
+        storeId: ctId,
+        productId: firstProduct.id,
+        priority: 'P3',
+        roundNumber: 1,
+        sequenceInRound: 3,
+        requestedQuantity: 4,
+        allocatedQuantity: 0,
+        waitlistedQuantity: 4,
+        status: 'WAITLISTED',
+        reasonCode: 'INSUFFICIENT_SNAPSHOT_STOCK',
+        createdAt: now,
+      },
+    ];
+    for (const result of allocationResults) this.allocationResults.set(result.id, result);
     this.dispatchedOutbounds.set(MEMORY_SEED_IDS.outboundRequest, {
       id: MEMORY_SEED_IDS.outboundRequest,
       storeId: nvtId,
       requestNumber: 'OUT-MEMORY-001',
       orderSessionId: MEMORY_SEED_IDS.orderSession,
-      allocationRunId: '11000000-0000-4000-8000-100000000001',
+      allocationRunId: MEMORY_SEED_IDS.allocationRun,
       status: 'DISPATCHED',
       requestedByAccountId: MEMORY_SEED_IDS.storeAccount,
       dispatchedByAccountId: MEMORY_SEED_IDS.htkdAccount,
@@ -3112,7 +3197,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       lines: [
         {
           id: '11000000-0000-4000-8000-200000000001',
-          allocationLineId: '11000000-0000-4000-8000-300000000001',
+          allocationLineId: MEMORY_SEED_IDS.allocationLine,
           productId: firstProduct.id,
           requestedUnits: 5,
           approvedUnits: 5,
@@ -3131,7 +3216,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       storeId: nvtId,
       requestNumber: 'OUT-MEMORY-002',
       orderSessionId: MEMORY_SEED_IDS.orderSession,
-      allocationRunId: '11000000-0000-4000-8000-100000000001',
+      allocationRunId: MEMORY_SEED_IDS.allocationRun,
       status: 'DISPATCHED',
       requestedByAccountId: MEMORY_SEED_IDS.storeAccount,
       dispatchedByAccountId: MEMORY_SEED_IDS.htkdAccount,
@@ -3158,7 +3243,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       storeId: nvtId,
       requestNumber: 'OUT-MEMORY-003',
       orderSessionId: MEMORY_SEED_IDS.orderSession,
-      allocationRunId: '11000000-0000-4000-8000-100000000001',
+      allocationRunId: MEMORY_SEED_IDS.allocationRun,
       status: 'RESERVED',
       requestedByAccountId: MEMORY_SEED_IDS.storeAccount,
       dispatchedByAccountId: null,
