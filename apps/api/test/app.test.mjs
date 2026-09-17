@@ -325,7 +325,7 @@ describe('KHOHANG-IDOSI API', () => {
     );
   });
 
-  test('blocks wholesale and inactive STORE accounts from every retail-only mutation', async () => {
+  test('blocks wholesale and inactive STORE accounts from protected retail workflow actions', async () => {
     const storeCookie = cookieOf(await login('ds_nvt'));
     const products = await app.inject({
       method: 'GET',
@@ -337,6 +337,7 @@ describe('KHOHANG-IDOSI API', () => {
     assert.ok(secondProduct);
 
     repository.setStoreOperationEligibility(MEMORY_SEED_IDS.nvtStore, { kind: 'WHOLESALE' });
+    const unknownTransferId = '10000000-0000-4000-8000-999999999998';
 
     const attempts = [
       () => submitOrder(storeCookie, 'wholesale-order-request', orderPayload(firstProduct.id, 1)),
@@ -389,6 +390,42 @@ describe('KHOHANG-IDOSI API', () => {
           'wholesale-offer-response',
           { action: 'ACCEPT', accepted: { kind: 'UNIT', quantity: 3 } },
         ),
+      () =>
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/store-transfers/destinations',
+          headers: { cookie: storeCookie },
+        }),
+      () =>
+        mutateTransfer(storeCookie, '/api/v1/store-transfers', 'wholesale-transfer-create', {
+          sourceStoreId: MEMORY_SEED_IDS.nvtStore,
+          destinationStoreId: MEMORY_SEED_IDS.bdStore,
+          sourceInventoryBagId: MEMORY_SEED_IDS.inventoryBag,
+          weightKg: '1.000',
+          expectedSourceBagVersion: 0,
+          note: 'Bổ sung tồn kho cửa hàng Bình Dương',
+        }),
+      () =>
+        mutateTransfer(
+          storeCookie,
+          `/api/v1/store-transfers/${unknownTransferId}/dispatch`,
+          'wholesale-transfer-dispatch',
+          { expectedVersion: 0, expectedSourceBagVersion: 0 },
+        ),
+      () =>
+        mutateTransfer(
+          storeCookie,
+          `/api/v1/store-transfers/${unknownTransferId}/receive`,
+          'wholesale-transfer-receive',
+          { expectedVersion: 0 },
+        ),
+      () =>
+        mutateTransfer(
+          storeCookie,
+          `/api/v1/store-transfers/${unknownTransferId}/cancel`,
+          'wholesale-transfer-cancel',
+          { expectedVersion: 0, reason: 'Cửa hàng không còn nhu cầu điều chuyển' },
+        ),
     ];
 
     for (const attempt of attempts) {
@@ -410,6 +447,17 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(inactive.statusCode, 403);
     assert.equal(inactive.json().error.code, 'FORBIDDEN');
     assert.equal(inactive.json().error.message, RETAIL_STORE_OPERATION_FORBIDDEN_MESSAGE);
+    const inactiveTransferDestinations = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-transfers/destinations',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(inactiveTransferDestinations.statusCode, 403);
+    assert.equal(inactiveTransferDestinations.json().error.code, 'FORBIDDEN');
+    assert.equal(
+      inactiveTransferDestinations.json().error.message,
+      RETAIL_STORE_OPERATION_FORBIDDEN_MESSAGE,
+    );
   });
 
   test('lists the open order session and rejects an unknown session', async () => {

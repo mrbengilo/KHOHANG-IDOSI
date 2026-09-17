@@ -1948,7 +1948,9 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
   public async listStoreTransferDestinations(
     actor: AuthenticatedPrincipal,
   ): Promise<readonly Store[]> {
-    if (actor.role !== 'STORE' || actor.storeId === null) throw forbidden();
+    await this.authorizeRetailStoreOperation(actor);
+    const storeId = actor.storeId;
+    if (storeId === null) throw forbidden();
     const rows = await db
       .select()
       .from(stores)
@@ -1957,7 +1959,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
           isNull(stores.deletedAt),
           eq(stores.isActive, true),
           eq(stores.kind, 'retail'),
-          ne(stores.id, actor.storeId),
+          ne(stores.id, storeId),
         ),
       )
       .orderBy(asc(stores.displayOrder), asc(stores.code));
@@ -1971,7 +1973,8 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<StoreTransfer>> {
-    if (actor.role !== 'STORE' || actor.storeId !== input.sourceStoreId) throw forbidden();
+    await this.authorizeRetailStoreOperation(actor);
+    if (actor.storeId !== input.sourceStoreId) throw forbidden();
     return withStoreTransferErrors(async () => {
       const result = await createDatabaseStoreTransfer(db, {
         ...input,
@@ -1994,7 +1997,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<StoreTransfer>> {
-    if (actor.role !== 'STORE' || actor.storeId === null) throw forbidden();
+    await this.authorizeRetailStoreOperation(actor);
     const current = await this.storeTransferDto(transferId);
     if (current.sourceStoreId !== actor.storeId) throw forbidden();
     return withStoreTransferErrors(async () => {
@@ -2020,7 +2023,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<StoreTransfer>> {
-    if (actor.role !== 'STORE' || actor.storeId === null) throw forbidden();
+    await this.authorizeRetailStoreOperation(actor);
     const current = await this.storeTransferDto(transferId);
     if (current.destinationStoreId !== actor.storeId) throw forbidden();
     return withStoreTransferErrors(async () => {
@@ -2046,7 +2049,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<StoreTransfer>> {
-    if (actor.role !== 'STORE' || actor.storeId === null) throw forbidden();
+    await this.authorizeRetailStoreOperation(actor);
     const current = await this.storeTransferDto(transferId);
     if (current.sourceStoreId !== actor.storeId) throw forbidden();
     return withStoreTransferErrors(async () => {

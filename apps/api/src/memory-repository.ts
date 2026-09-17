@@ -2012,7 +2012,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   public async listStoreTransferDestinations(
     actor: AuthenticatedPrincipal,
   ): Promise<readonly Store[]> {
-    this.assertStoreMutationActor(actor);
+    await this.authorizeRetailStoreOperation(actor);
     return structuredClone(
       [...this.stores.values()]
         .filter(
@@ -2030,7 +2030,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<StoreTransfer>> {
-    this.assertStoreMutationActor(actor);
+    await this.authorizeRetailStoreOperation(actor);
     if (actor.storeId !== input.sourceStoreId) throw forbidden();
     const scopedKey = `${actor.accountId}:transfer:create:${input.sourceStoreId}:${idempotencyKey}`;
     const replay = this.replayTransferMutation(scopedKey, requestHash);
@@ -2103,7 +2103,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<StoreTransfer>> {
-    this.assertStoreMutationActor(actor);
+    await this.authorizeRetailStoreOperation(actor);
     const scopedKey = `${actor.accountId}:transfer:dispatch:${transferId}:${idempotencyKey}`;
     const replay = this.replayTransferMutation(scopedKey, requestHash);
     if (replay) return { data: replay, replayed: true };
@@ -2189,7 +2189,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<StoreTransfer>> {
-    this.assertStoreMutationActor(actor);
+    await this.authorizeRetailStoreOperation(actor);
     const scopedKey = `${actor.accountId}:transfer:receive:${transferId}:${idempotencyKey}`;
     const replay = this.replayTransferMutation(scopedKey, requestHash);
     if (replay) return { data: replay, replayed: true };
@@ -2265,7 +2265,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<StoreTransfer>> {
-    this.assertStoreMutationActor(actor);
+    await this.authorizeRetailStoreOperation(actor);
     const scopedKey = `${actor.accountId}:transfer:cancel:${transferId}:${idempotencyKey}`;
     const replay = this.replayTransferMutation(scopedKey, requestHash);
     if (replay) return { data: replay, replayed: true };
@@ -2611,10 +2611,6 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       requestHash,
       response: structuredClone(receipt),
     });
-  }
-
-  private assertStoreMutationActor(actor: AuthenticatedPrincipal): void {
-    if (actor.role !== 'STORE' || actor.storeId === null) throw forbidden();
   }
 
   private requireInventoryBag(bagId: string): StoreInventoryBag {
