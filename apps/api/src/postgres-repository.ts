@@ -63,6 +63,12 @@ import type {
   WaitTicket,
   WaitTicketHistory,
   WarehouseOutboundRequest,
+  StoreTransfer,
+  ListStoreTransfersQuery,
+  CreateStoreTransferRequest,
+  DispatchStoreTransferRequest,
+  ReceiveStoreTransferRequest,
+  CancelStoreTransferRequest,
   WarehouseBalancesResponse,
 } from '@idosi/contracts';
 import {
@@ -148,6 +154,14 @@ import {
   WarehouseOutboundConflictError,
   WarehouseOutboundNotFoundError,
   WarehouseOutboundValidationError,
+  cancelStoreTransfer as cancelDatabaseStoreTransfer,
+  createStoreTransfer as createDatabaseStoreTransfer,
+  dispatchStoreTransfer as dispatchDatabaseStoreTransfer,
+  listStoreTransfers as listDatabaseStoreTransfers,
+  receiveStoreTransfer as receiveDatabaseStoreTransfer,
+  StoreTransferAuthorizationError,
+  StoreTransferNotFoundError,
+  storeTransfers,
   withAdvisoryLock,
   withSerializableTransaction,
   type JsonObject,
@@ -175,6 +189,7 @@ import {
   isNull,
   lt,
   lte,
+  ne,
   or,
   type SQL,
 } from 'drizzle-orm';
@@ -1864,6 +1879,167 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     });
   }
 
+  public async listStoreTransfers(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreTransfersQuery,
+  ): Promise<Page<StoreTransfer>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const filters = {
+      page: query.page,
+      pageSize: query.pageSize,
+      ...(query.sourceStoreId === undefined ? {} : { sourceStoreId: query.sourceStoreId }),
+      ...(query.destinationStoreId === undefined
+        ? {}
+        : { destinationStoreId: query.destinationStoreId }),
+      ...(query.productId === undefined ? {} : { productId: query.productId }),
+      ...(query.status === undefined ? {} : { status: databaseTransferStatus(query.status) }),
+    } as const;
+    if (actor.role === 'ADMIN') {
+      return storeTransferPage(
+        await listDatabaseStoreTransfers(db, {
+          ...filters,
+          ...(query.storeId === undefined ? {} : { storeId: query.storeId }),
+        }),
+      );
+    }
+    if (actor.role === 'STORE') {
+      if (actor.storeId === null) return emptyPage(query.page, query.pageSize);
+      return storeTransferPage(
+        await listDatabaseStoreTransfers(db, { ...filters, storeId: actor.storeId }),
+      );
+    }
+    if (query.storeId !== undefined) {
+      return storeTransferPage(
+        await listDatabaseStoreTransfers(db, { ...filters, storeId: query.storeId }),
+      );
+    }
+    return storeTransferPage(
+      await listDatabaseStoreTransfers(db, {
+        ...filters,
+        storeIds: [...new Set(actor.assignedStoreIds)],
+      }),
+    );
+  }
+
+  public async listStoreTransferDestinations(
+    actor: AuthenticatedPrincipal,
+  ): Promise<readonly Store[]> {
+    if (actor.role !== 'STORE' || actor.storeId === null) throw forbidden();
+    const rows = await db
+      .select()
+      .from(stores)
+      .where(
+        and(
+          isNull(stores.deletedAt),
+          eq(stores.isActive, true),
+          eq(stores.kind, 'retail'),
+          ne(stores.id, actor.storeId),
+        ),
+      )
+      .orderBy(asc(stores.displayOrder), asc(stores.code));
+    return rows.map(storeDto);
+  }
+
+  public async createStoreTransfer(
+    actor: AuthenticatedPrincipal,
+    input: CreateStoreTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreTransfer>> {
+    if (actor.role !== 'STORE' || actor.storeId !== input.sourceStoreId) throw forbidden();
+    return withStoreTransferErrors(async () => {
+      const result = await createDatabaseStoreTransfer(db, {
+        ...input,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.transferId;
+      if (!resourceId) throw new Error('Idempotent transfer creation has no resource id');
+      return { data: await this.storeTransferDto(resourceId), replayed: result.replayed };
+    });
+  }
+
+  public async dispatchStoreTransfer(
+    actor: AuthenticatedPrincipal,
+    transferId: string,
+    input: DispatchStoreTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreTransfer>> {
+    if (actor.role !== 'STORE' || actor.storeId === null) throw forbidden();
+    const current = await this.storeTransferDto(transferId);
+    if (current.sourceStoreId !== actor.storeId) throw forbidden();
+    return withStoreTransferErrors(async () => {
+      const result = await dispatchDatabaseStoreTransfer(db, {
+        transferId,
+        ...input,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.transferId;
+      if (!resourceId) throw new Error('Idempotent transfer dispatch has no resource id');
+      return { data: await this.storeTransferDto(resourceId), replayed: result.replayed };
+    });
+  }
+
+  public async receiveStoreTransfer(
+    actor: AuthenticatedPrincipal,
+    transferId: string,
+    input: ReceiveStoreTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreTransfer>> {
+    if (actor.role !== 'STORE' || actor.storeId === null) throw forbidden();
+    const current = await this.storeTransferDto(transferId);
+    if (current.destinationStoreId !== actor.storeId) throw forbidden();
+    return withStoreTransferErrors(async () => {
+      const result = await receiveDatabaseStoreTransfer(db, {
+        transferId,
+        ...input,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.transferId;
+      if (!resourceId) throw new Error('Idempotent transfer receipt has no resource id');
+      return { data: await this.storeTransferDto(resourceId), replayed: result.replayed };
+    });
+  }
+
+  public async cancelStoreTransfer(
+    actor: AuthenticatedPrincipal,
+    transferId: string,
+    input: CancelStoreTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreTransfer>> {
+    if (actor.role !== 'STORE' || actor.storeId === null) throw forbidden();
+    const current = await this.storeTransferDto(transferId);
+    if (current.sourceStoreId !== actor.storeId) throw forbidden();
+    return withStoreTransferErrors(async () => {
+      const result = await cancelDatabaseStoreTransfer(db, {
+        transferId,
+        ...input,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.transferId;
+      if (!resourceId) throw new Error('Idempotent transfer cancellation has no resource id');
+      return { data: await this.storeTransferDto(resourceId), replayed: result.replayed };
+    });
+  }
+
   public async listWaitTickets(
     actor: AuthenticatedPrincipal,
     query: ListWaitTicketsQuery,
@@ -2349,7 +2525,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         outboundRequestId: outboundRequestLines.outboundRequestId,
       })
       .from(storeInventoryBags)
-      .innerJoin(
+      .leftJoin(
         outboundRequestLines,
         eq(outboundRequestLines.id, storeInventoryBags.outboundRequestLineId),
       )
@@ -2362,6 +2538,8 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       storeId: row.bag.storeId,
       productId: row.bag.productId,
       sourceStoreReceiptBagId: row.bag.sourceStoreReceiptBagId,
+      sourceTransferId: row.bag.sourceTransferId,
+      sourceInventoryBagId: row.bag.sourceInventoryBagId,
       outboundRequestId: row.outboundRequestId,
       status: row.bag.status,
       initialWeightKg: row.bag.initialWeightKg,
@@ -2383,6 +2561,16 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       .limit(1);
     if (!outbound) throw notFound('Không tìm thấy phiếu xuất tại cửa hàng');
     return storeOutboundDto(outbound);
+  }
+
+  private async storeTransferDto(transferId: string): Promise<StoreTransfer> {
+    const [transfer] = await db
+      .select()
+      .from(storeTransfers)
+      .where(eq(storeTransfers.id, transferId))
+      .limit(1);
+    if (!transfer) throw notFound('Không tìm thấy phiếu chuyển kho');
+    return storeTransferDto(transfer);
   }
 
   private async authorizeMonthlyReportScope(
@@ -2497,6 +2685,8 @@ function inventoryBagDto(record: StoreInventoryBagRecord): StoreInventoryBag {
     productId: record.productId,
     sourceReceiptBagId: record.sourceStoreReceiptBagId,
     outboundOrderId: record.outboundRequestId,
+    sourceTransferId: record.sourceTransferId,
+    sourceInventoryBagId: record.sourceInventoryBagId,
     bagCode: record.bagCode,
     originalWeightKg: record.initialWeightKg,
     receivedWeightKg: record.initialWeightKg,
@@ -2555,6 +2745,38 @@ function storeOutboundPage(
   page: Awaited<ReturnType<typeof listDatabaseStoreOutbounds>>,
 ): Page<StoreOutbound> {
   return { data: page.data.map(storeOutboundDto), pagination: page.pagination };
+}
+
+function storeTransferDto(row: typeof storeTransfers.$inferSelect): StoreTransfer {
+  return {
+    id: row.id,
+    transferNumber: row.transferNumber,
+    sourceStoreId: row.sourceStoreId,
+    destinationStoreId: row.destinationStoreId,
+    sourceInventoryBagId: row.sourceInventoryBagId,
+    destinationInventoryBagId: row.destinationInventoryBagId,
+    productId: row.productId,
+    weightKg: row.weightKg,
+    costVnd: row.costVnd === null ? null : safeVnd(row.costVnd),
+    status: row.status.toUpperCase() as StoreTransfer['status'],
+    note: row.note,
+    cancellationReason: row.cancellationReason,
+    version: row.version,
+    createdByAccountId: row.createdByUserId,
+    dispatchedByAccountId: row.dispatchedByUserId,
+    receivedByAccountId: row.receivedByUserId,
+    createdAt: row.createdAt.toISOString(),
+    dispatchedAt: row.dispatchedAt?.toISOString() ?? null,
+    receivedAt: row.receivedAt?.toISOString() ?? null,
+    cancelledAt: row.cancelledAt?.toISOString() ?? null,
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function storeTransferPage(
+  page: Awaited<ReturnType<typeof listDatabaseStoreTransfers>>,
+): Page<StoreTransfer> {
+  return { data: page.data.map(storeTransferDto), pagination: page.pagination };
 }
 
 async function listAssignedStoreInventoryBags(
@@ -2698,6 +2920,12 @@ function databaseOutboundStatus(
   status: StoreOutbound['status'],
 ): typeof storeOutbounds.$inferSelect.status {
   return status.toLocaleLowerCase('en-US') as typeof storeOutbounds.$inferSelect.status;
+}
+
+function databaseTransferStatus(
+  status: StoreTransfer['status'],
+): typeof storeTransfers.$inferSelect.status {
+  return status.toLocaleLowerCase('en-US') as typeof storeTransfers.$inferSelect.status;
 }
 
 function sessionDto(stored: typeof sessions.$inferSelect, account: AccountCredentials): Session {
@@ -3187,6 +3415,40 @@ async function withStoreInventoryErrors<T>(operation: () => Promise<T>): Promise
     }
     if (error instanceof StoreOperationConflictError) {
       throw new ApiError('VERSION_CONFLICT', 'Dữ liệu tồn kho đã thay đổi, vui lòng tải lại', 409);
+    }
+    if (error instanceof IdempotencyConflictError) {
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    }
+    if (error instanceof IdempotencyInProgressError) {
+      throw conflict('Yêu cầu cùng khóa idempotency đang được xử lý');
+    }
+    throw error;
+  }
+}
+
+async function withStoreTransferErrors<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error: unknown) {
+    if (error instanceof StoreTransferAuthorizationError) throw forbidden();
+    if (error instanceof StoreTransferNotFoundError)
+      throw notFound('Không tìm thấy phiếu chuyển kho');
+    if (error instanceof StoreOperationValidationError) {
+      if (/exceeds available inventory/iu.test(error.message)) {
+        throw new ApiError('INSUFFICIENT_STOCK', 'Khối lượng chuyển vượt tồn kho khả dụng', 409);
+      }
+      throw new ApiError('VALIDATION_ERROR', error.message, 400);
+    }
+    if (error instanceof StoreOperationConflictError) {
+      throw new ApiError(
+        'VERSION_CONFLICT',
+        'Phiếu chuyển hoặc tồn kho đã thay đổi, vui lòng tải lại',
+        409,
+      );
     }
     if (error instanceof IdempotencyConflictError) {
       throw new ApiError(

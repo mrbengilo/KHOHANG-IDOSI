@@ -28,8 +28,10 @@ export const StoreInventoryBagSchema = z
     id: EntityIdSchema,
     storeId: EntityIdSchema,
     productId: EntityIdSchema,
-    sourceReceiptBagId: EntityIdSchema,
-    outboundOrderId: EntityIdSchema,
+    sourceReceiptBagId: EntityIdSchema.nullable(),
+    outboundOrderId: EntityIdSchema.nullable(),
+    sourceTransferId: EntityIdSchema.nullable().default(null),
+    sourceInventoryBagId: EntityIdSchema.nullable().default(null),
     bagCode: z.string().trim().min(1).max(100),
     originalWeightKg: PositiveKilogramsDecimalSchema,
     receivedWeightKg: KilogramsDecimalSchema,
@@ -41,6 +43,20 @@ export const StoreInventoryBagSchema = z
   })
   .strict()
   .superRefine((bag, context) => {
+    if ((bag.sourceReceiptBagId === null) === (bag.sourceTransferId === null)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['sourceTransferId'],
+        message: 'Inventory bag must have exactly one receipt or transfer provenance source',
+      });
+    }
+    if (bag.sourceTransferId !== null && bag.sourceInventoryBagId === null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['sourceInventoryBagId'],
+        message: 'Transfer inventory must retain its physical parent bag',
+      });
+    }
     const isEmpty = /^0(?:\.0{1,3})?$/.test(bag.remainingWeightKg);
     if (bag.status === 'EMPTY' && !isEmpty) {
       context.addIssue({

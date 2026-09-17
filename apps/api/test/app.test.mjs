@@ -33,6 +33,8 @@ describe('KHOHANG-IDOSI API', () => {
     assert.ok(specification.json().paths['/api/v1/store-outbounds/{outboundId}/review']);
     assert.ok(specification.json().paths['/api/v1/order-sessions/{sessionId}/transition']);
     assert.ok(specification.json().paths['/api/v1/outbound-requests/{outboundRequestId}/dispatch']);
+    assert.ok(specification.json().paths['/api/v1/store-transfers/destinations']);
+    assert.ok(specification.json().paths['/api/v1/store-transfers/{transferId}/receive']);
     assert.ok(specification.json().paths['/api/v1/warehouse-balances']);
     assert.ok(specification.json().paths['/api/v1/inbound-receipts']);
     assert.ok(specification.json().paths['/api/v1/inbound-receipts/{receiptId}/confirm-costs']);
@@ -1286,6 +1288,190 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(ledger.json().data[0].operation, 'RECEIVE');
   });
 
+  test('moves one exact-cost lot only after source dispatch and destination confirmation', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const createdDestinationAccount = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/accounts',
+      headers: { cookie: adminCookie },
+      payload: {
+        username: 'ds_bd',
+        displayName: 'Cửa hàng DS BD',
+        password: PASSWORD,
+        role: 'STORE',
+        storeId: MEMORY_SEED_IDS.bdStore,
+      },
+    });
+    assert.equal(createdDestinationAccount.statusCode, 201);
+
+    const sourceCookie = cookieOf(await login('ds_nvt'));
+    const destinationCookie = cookieOf(await login('ds_bd'));
+    const destinationDirectory = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-transfers/destinations',
+      headers: { cookie: sourceCookie },
+    });
+    assert.equal(destinationDirectory.statusCode, 200);
+    assert.ok(
+      destinationDirectory.json().data.some((store) => store.id === MEMORY_SEED_IDS.bdStore),
+    );
+    assert.ok(
+      destinationDirectory
+        .json()
+        .data.every(
+          (store) =>
+            store.id !== MEMORY_SEED_IDS.nvtStore &&
+            store.kind === 'RETAIL' &&
+            store.status === 'ACTIVE',
+        ),
+    );
+    const createPayload = {
+      sourceStoreId: MEMORY_SEED_IDS.nvtStore,
+      destinationStoreId: MEMORY_SEED_IDS.bdStore,
+      sourceInventoryBagId: MEMORY_SEED_IDS.inventoryBag,
+      weightKg: '5.000',
+      expectedSourceBagVersion: 0,
+      note: 'Bổ sung tồn kho cửa hàng Bình Dương',
+    };
+    const created = await mutateTransfer(
+      sourceCookie,
+      '/api/v1/store-transfers',
+      'transfer-create-0001',
+      createPayload,
+    );
+    assert.equal(created.statusCode, 201);
+    assert.equal(created.json().data.status, 'DRAFT');
+    assert.equal(created.json().data.costVnd, null);
+    const transferId = created.json().data.id;
+
+    const replayedCreate = await mutateTransfer(
+      sourceCookie,
+      '/api/v1/store-transfers',
+      'transfer-create-0001',
+      createPayload,
+    );
+    assert.equal(replayedCreate.statusCode, 201);
+    assert.equal(replayedCreate.headers['idempotency-replayed'], 'true');
+    assert.equal(replayedCreate.json().data.id, transferId);
+
+    const destinationCannotDispatch = await mutateTransfer(
+      destinationCookie,
+      `/api/v1/store-transfers/${transferId}/dispatch`,
+      'transfer-wrong-dispatch',
+      { expectedVersion: 0, expectedSourceBagVersion: 0 },
+    );
+    assert.equal(destinationCannotDispatch.statusCode, 403);
+
+    const dispatched = await mutateTransfer(
+      sourceCookie,
+      `/api/v1/store-transfers/${transferId}/dispatch`,
+      'transfer-dispatch-0001',
+      { expectedVersion: 0, expectedSourceBagVersion: 0 },
+    );
+    assert.equal(dispatched.statusCode, 200);
+    assert.equal(dispatched.json().data.status, 'IN_TRANSIT');
+    assert.equal(dispatched.json().data.costVnd, 500_000);
+
+    const sourceInventory = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-inventory-bags',
+      headers: { cookie: sourceCookie },
+    });
+    assert.equal(sourceInventory.json().data[0].remainingWeightKg, '19.500');
+    assert.equal(sourceInventory.json().data[0].version, 1);
+
+    const sourceCannotReceive = await mutateTransfer(
+      sourceCookie,
+      `/api/v1/store-transfers/${transferId}/receive`,
+      'transfer-wrong-receive',
+      { expectedVersion: 1 },
+    );
+    assert.equal(sourceCannotReceive.statusCode, 403);
+
+    const received = await mutateTransfer(
+      destinationCookie,
+      `/api/v1/store-transfers/${transferId}/receive`,
+      'transfer-receive-0001',
+      { expectedVersion: 1 },
+    );
+    assert.equal(received.statusCode, 200);
+    assert.equal(received.json().data.status, 'RECEIVED');
+    assert.ok(received.json().data.destinationInventoryBagId);
+
+    const replayedReceipt = await mutateTransfer(
+      destinationCookie,
+      `/api/v1/store-transfers/${transferId}/receive`,
+      'transfer-receive-0001',
+      { expectedVersion: 1 },
+    );
+    assert.equal(replayedReceipt.statusCode, 200);
+    assert.equal(replayedReceipt.headers['idempotency-replayed'], 'true');
+    assert.equal(
+      replayedReceipt.json().data.destinationInventoryBagId,
+      received.json().data.destinationInventoryBagId,
+    );
+
+    const destinationInventory = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-inventory-bags',
+      headers: { cookie: destinationCookie },
+    });
+    assert.equal(destinationInventory.statusCode, 200);
+    assert.equal(destinationInventory.json().pagination.totalItems, 1);
+    assert.equal(destinationInventory.json().data[0].remainingWeightKg, '5.000');
+    assert.equal(destinationInventory.json().data[0].sourceTransferId, transferId);
+    assert.equal(
+      destinationInventory.json().data[0].sourceInventoryBagId,
+      MEMORY_SEED_IDS.inventoryBag,
+    );
+
+    const destinationLedger = await app.inject({
+      method: 'GET',
+      url: `/api/v1/store-inventory-bags/${received.json().data.destinationInventoryBagId}/ledger`,
+      headers: { cookie: destinationCookie },
+    });
+    assert.equal(destinationLedger.statusCode, 200);
+    assert.equal(destinationLedger.json().data[0].operation, 'RECEIVE');
+
+    const oversight = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-transfers?status=RECEIVED',
+      headers: { cookie: cookieOf(await login('htkd')) },
+    });
+    assert.equal(oversight.statusCode, 200);
+    assert.equal(oversight.json().pagination.totalItems, 1);
+    assert.equal(oversight.json().data[0].id, transferId);
+
+    const concurrentDraft = await mutateTransfer(
+      sourceCookie,
+      '/api/v1/store-transfers',
+      'transfer-create-concurrent',
+      {
+        ...createPayload,
+        weightKg: '1.000',
+        expectedSourceBagVersion: 1,
+      },
+    );
+    assert.equal(concurrentDraft.statusCode, 201);
+    const concurrentId = concurrentDraft.json().data.id;
+    const concurrentDispatches = await Promise.all([
+      mutateTransfer(
+        sourceCookie,
+        `/api/v1/store-transfers/${concurrentId}/dispatch`,
+        'transfer-dispatch-concurrent-a',
+        { expectedVersion: 0, expectedSourceBagVersion: 1 },
+      ),
+      mutateTransfer(
+        sourceCookie,
+        `/api/v1/store-transfers/${concurrentId}/dispatch`,
+        'transfer-dispatch-concurrent-b',
+        { expectedVersion: 0, expectedSourceBagVersion: 1 },
+      ),
+    ]);
+    assert.equal(concurrentDispatches.filter((response) => response.statusCode === 200).length, 1);
+    assert.equal(concurrentDispatches.filter((response) => response.statusCode === 409).length, 1);
+  });
+
   test('lists and filters store-scoped wait tickets, offers and history', async () => {
     const storeCookie = cookieOf(await login('ds_nvt'));
 
@@ -1943,6 +2129,15 @@ describe('KHOHANG-IDOSI API', () => {
   async function mutateReceipt(cookie, method, url, idempotencyKey, payload) {
     return app.inject({
       method,
+      url,
+      headers: { cookie, 'idempotency-key': idempotencyKey },
+      payload,
+    });
+  }
+
+  async function mutateTransfer(cookie, url, idempotencyKey, payload) {
+    return app.inject({
+      method: 'POST',
       url,
       headers: { cookie, 'idempotency-key': idempotencyKey },
       payload,

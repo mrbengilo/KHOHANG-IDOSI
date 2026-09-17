@@ -163,6 +163,26 @@ export {
   openStoreInventoryBag,
   StoreInventoryAuthorizationError,
 } from './store-inventory-operations.js';
+
+export {
+  allocateTransferCostVnd,
+  cancelStoreTransfer,
+  createStoreTransfer,
+  dispatchStoreTransfer,
+  listStoreTransfers,
+  receiveStoreTransfer,
+  StoreTransferAuthorizationError,
+  StoreTransferNotFoundError,
+} from './store-transfer-operations.js';
+export type {
+  CancelStoreTransferInput,
+  CreateStoreTransferInput,
+  DispatchStoreTransferInput,
+  ReceiveStoreTransferInput,
+  StoreTransferMutationResult,
+  StoreTransferPage,
+  StoreTransferPageInput,
+} from './store-transfer-operations.js';
 export type {
   CreatedStoreOutbound,
   CreateStoreOutboundInput,

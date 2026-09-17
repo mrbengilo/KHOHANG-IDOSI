@@ -65,6 +65,12 @@ import type {
   WaitTicket,
   WaitTicketHistory,
   WarehouseOutboundRequest,
+  StoreTransfer,
+  ListStoreTransfersQuery,
+  CreateStoreTransferRequest,
+  DispatchStoreTransferRequest,
+  ReceiveStoreTransferRequest,
+  CancelStoreTransferRequest,
   WarehouseBalancesResponse,
 } from '@idosi/contracts';
 import {
@@ -74,6 +80,7 @@ import {
   STORE_SEEDS,
 } from '@idosi/database/seed-data';
 import {
+  allocateTransferCostVnd,
   calculateWeightedCostVnd,
   gramsToKilogramsExact,
   kilogramsToGramsExact,
@@ -180,6 +187,11 @@ interface WarehouseOutboundMutationIdempotencyRecord {
   readonly response: WarehouseOutboundRequest;
 }
 
+interface TransferMutationIdempotencyRecord {
+  readonly requestHash: string;
+  readonly response: StoreTransfer;
+}
+
 interface AuditRecord {
   readonly id: string;
   readonly action: string;
@@ -229,8 +241,14 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     WarehouseOutboundMutationIdempotencyRecord
   >();
   private readonly inventoryBags = new Map<string, StoreInventoryBag>();
+  private readonly inventoryBagCosts = new Map<string, bigint>();
   private readonly inventoryLedger = new Map<string, StoreInventoryBagLedgerEntry>();
   private readonly storeOutbounds = new Map<string, StoreOutbound>();
+  private readonly storeTransfers = new Map<string, StoreTransfer>();
+  private readonly transferMutationIdempotency = new Map<
+    string,
+    TransferMutationIdempotencyRecord
+  >();
   private readonly warehouseBalances = new Map<string, MemoryWarehouseBalance>();
   private readonly storeGroupIds = new Set<string>();
   private readonly audit: AuditRecord[] = [];
@@ -1941,6 +1959,336 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     return { data: structuredClone(updated), replayed: false };
   }
 
+  public async listStoreTransfers(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreTransfersQuery,
+  ): Promise<Page<StoreTransfer>> {
+    for (const requestedStoreId of [query.storeId, query.sourceStoreId, query.destinationStoreId]) {
+      this.assertRequestedStoreScope(actor, requestedStoreId);
+    }
+    const values = [...this.storeTransfers.values()]
+      .filter(
+        (transfer) =>
+          canAccessStore(actor, transfer.sourceStoreId) ||
+          canAccessStore(actor, transfer.destinationStoreId),
+      )
+      .filter(
+        (transfer) =>
+          query.storeId === undefined ||
+          transfer.sourceStoreId === query.storeId ||
+          transfer.destinationStoreId === query.storeId,
+      )
+      .filter(
+        (transfer) =>
+          query.sourceStoreId === undefined || transfer.sourceStoreId === query.sourceStoreId,
+      )
+      .filter(
+        (transfer) =>
+          query.destinationStoreId === undefined ||
+          transfer.destinationStoreId === query.destinationStoreId,
+      )
+      .filter((transfer) => query.productId === undefined || transfer.productId === query.productId)
+      .filter((transfer) => query.status === undefined || transfer.status === query.status)
+      .sort(
+        (left, right) =>
+          right.createdAt.localeCompare(left.createdAt) ||
+          right.transferNumber.localeCompare(left.transferNumber),
+      );
+    return {
+      data: structuredClone(slicePage(values, query.page, query.pageSize)),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
+  }
+
+  public async listStoreTransferDestinations(
+    actor: AuthenticatedPrincipal,
+  ): Promise<readonly Store[]> {
+    this.assertStoreMutationActor(actor);
+    return structuredClone(
+      [...this.stores.values()]
+        .filter(
+          (store) =>
+            store.id !== actor.storeId && store.kind === 'RETAIL' && store.status === 'ACTIVE',
+        )
+        .sort((left, right) => left.code.localeCompare(right.code)),
+    );
+  }
+
+  public async createStoreTransfer(
+    actor: AuthenticatedPrincipal,
+    input: CreateStoreTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreTransfer>> {
+    this.assertStoreMutationActor(actor);
+    if (actor.storeId !== input.sourceStoreId) throw forbidden();
+    const scopedKey = `${actor.accountId}:transfer:create:${input.sourceStoreId}:${idempotencyKey}`;
+    const replay = this.replayTransferMutation(scopedKey, requestHash);
+    if (replay) return { data: replay, replayed: true };
+    if (input.sourceStoreId === input.destinationStoreId) {
+      throw new ApiError('VALIDATION_ERROR', 'Cửa hàng nguồn và đích phải khác nhau', 400);
+    }
+    const destination = this.stores.get(input.destinationStoreId);
+    if (!destination || destination.status !== 'ACTIVE' || destination.kind !== 'RETAIL') {
+      throw new ApiError(
+        'VALIDATION_ERROR',
+        'Cửa hàng đích phải là cửa hàng lẻ đang hoạt động',
+        400,
+      );
+    }
+    const bag = this.requireInventoryBag(input.sourceInventoryBagId);
+    if (bag.storeId !== input.sourceStoreId) throw forbidden();
+    if (
+      bag.version !== input.expectedSourceBagVersion ||
+      (bag.status !== 'AVAILABLE' && bag.status !== 'OPEN')
+    ) {
+      throw versionConflict('Bao nguồn đã thay đổi hoặc không còn khả dụng');
+    }
+    if (kilogramsToGramsExact(input.weightKg) > kilogramsToGramsExact(bag.remainingWeightKg)) {
+      throw insufficientStock();
+    }
+    const now = this.now().toISOString();
+    const transfer: StoreTransfer = {
+      id: randomUUID(),
+      transferNumber: `TR-${now.slice(0, 10).replaceAll('-', '')}-${randomUUID().slice(0, 8).toUpperCase()}`,
+      sourceStoreId: input.sourceStoreId,
+      destinationStoreId: input.destinationStoreId,
+      sourceInventoryBagId: bag.id,
+      destinationInventoryBagId: null,
+      productId: bag.productId,
+      weightKg: input.weightKg,
+      costVnd: null,
+      status: 'DRAFT',
+      note: input.note,
+      cancellationReason: null,
+      version: 0,
+      createdByAccountId: actor.accountId,
+      dispatchedByAccountId: null,
+      receivedByAccountId: null,
+      createdAt: now,
+      dispatchedAt: null,
+      receivedAt: null,
+      cancelledAt: null,
+      updatedAt: now,
+    };
+    this.storeTransfers.set(transfer.id, transfer);
+    this.rememberTransferMutation(scopedKey, requestHash, transfer);
+    this.appendAudit(
+      actor,
+      context,
+      'STORE_TRANSFER_CREATED',
+      'store_transfer',
+      transfer.id,
+      null,
+      transfer,
+    );
+    return { data: structuredClone(transfer), replayed: false };
+  }
+
+  public async dispatchStoreTransfer(
+    actor: AuthenticatedPrincipal,
+    transferId: string,
+    input: DispatchStoreTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreTransfer>> {
+    this.assertStoreMutationActor(actor);
+    const scopedKey = `${actor.accountId}:transfer:dispatch:${transferId}:${idempotencyKey}`;
+    const replay = this.replayTransferMutation(scopedKey, requestHash);
+    if (replay) return { data: replay, replayed: true };
+    const current = this.requireTransfer(transferId);
+    if (actor.storeId !== current.sourceStoreId) throw forbidden();
+    if (current.status !== 'DRAFT' || current.version !== input.expectedVersion) {
+      throw versionConflict('Phiếu chuyển đã thay đổi hoặc không thể xuất');
+    }
+    const bag = this.requireInventoryBag(current.sourceInventoryBagId);
+    if (
+      bag.storeId !== current.sourceStoreId ||
+      bag.version !== input.expectedSourceBagVersion ||
+      (bag.status !== 'AVAILABLE' && bag.status !== 'OPEN')
+    ) {
+      throw versionConflict('Bao nguồn đã thay đổi hoặc không còn khả dụng');
+    }
+    const beforeGrams = kilogramsToGramsExact(bag.remainingWeightKg);
+    const movedGrams = kilogramsToGramsExact(current.weightKg);
+    if (movedGrams > beforeGrams) throw insufficientStock();
+    const sourceCost = this.inventoryBagCosts.get(bag.id) ?? 0n;
+    const { movedCostVnd: transferCost, remainingCostVnd } = allocateTransferCostVnd(
+      sourceCost,
+      beforeGrams,
+      movedGrams,
+    );
+    if (transferCost > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new ApiError('VALIDATION_ERROR', 'Giá vốn chuyển vượt giới hạn an toàn', 400);
+    }
+    const afterGrams = beforeGrams - movedGrams;
+    const now = this.now().toISOString();
+    const updatedBag: StoreInventoryBag = {
+      ...bag,
+      remainingWeightKg: gramsToKilogramsExact(afterGrams),
+      status: afterGrams === 0n ? 'EMPTY' : 'OPEN',
+      version: bag.version + 1,
+      updatedAt: now,
+    };
+    this.inventoryBags.set(bag.id, updatedBag);
+    this.inventoryBagCosts.set(bag.id, remainingCostVnd);
+    const ledger: StoreInventoryBagLedgerEntry = {
+      id: randomUUID(),
+      bagId: bag.id,
+      operation: 'CONSUME',
+      beforeWeightKg: bag.remainingWeightKg,
+      afterWeightKg: updatedBag.remainingWeightKg,
+      reason: `Chuyển kho đến ${current.destinationStoreId}`,
+      actorAccountId: actor.accountId,
+      createdAt: now,
+    };
+    this.inventoryLedger.set(ledger.id, ledger);
+    const updated: StoreTransfer = {
+      ...current,
+      costVnd: Number(transferCost),
+      status: 'IN_TRANSIT',
+      dispatchedByAccountId: actor.accountId,
+      dispatchedAt: now,
+      version: current.version + 1,
+      updatedAt: now,
+    };
+    this.storeTransfers.set(updated.id, updated);
+    this.rememberTransferMutation(scopedKey, requestHash, updated);
+    this.appendAudit(
+      actor,
+      context,
+      'STORE_TRANSFER_DISPATCHED',
+      'store_transfer',
+      updated.id,
+      current,
+      updated,
+      {
+        sourceInventoryBagVersion: updatedBag.version,
+        remainingSourceCostVnd: remainingCostVnd.toString(),
+      },
+    );
+    return { data: structuredClone(updated), replayed: false };
+  }
+
+  public async receiveStoreTransfer(
+    actor: AuthenticatedPrincipal,
+    transferId: string,
+    input: ReceiveStoreTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreTransfer>> {
+    this.assertStoreMutationActor(actor);
+    const scopedKey = `${actor.accountId}:transfer:receive:${transferId}:${idempotencyKey}`;
+    const replay = this.replayTransferMutation(scopedKey, requestHash);
+    if (replay) return { data: replay, replayed: true };
+    const current = this.requireTransfer(transferId);
+    if (actor.storeId !== current.destinationStoreId) throw forbidden();
+    if (
+      current.status !== 'IN_TRANSIT' ||
+      current.version !== input.expectedVersion ||
+      current.costVnd === null
+    ) {
+      throw versionConflict('Phiếu chuyển đã thay đổi hoặc không thể nhận');
+    }
+    const now = this.now().toISOString();
+    const destinationBagId = randomUUID();
+    const destinationBag: StoreInventoryBag = {
+      id: destinationBagId,
+      storeId: current.destinationStoreId,
+      productId: current.productId,
+      sourceReceiptBagId: null,
+      outboundOrderId: null,
+      sourceTransferId: current.id,
+      sourceInventoryBagId: current.sourceInventoryBagId,
+      bagCode: `TR-${current.transferNumber}-${destinationBagId.slice(0, 8).toUpperCase()}`,
+      originalWeightKg: current.weightKg,
+      receivedWeightKg: current.weightKg,
+      remainingWeightKg: current.weightKg,
+      status: 'AVAILABLE',
+      version: 0,
+      receivedAt: now,
+      updatedAt: now,
+    };
+    this.inventoryBags.set(destinationBag.id, destinationBag);
+    this.inventoryBagCosts.set(destinationBag.id, BigInt(current.costVnd));
+    const ledger: StoreInventoryBagLedgerEntry = {
+      id: randomUUID(),
+      bagId: destinationBag.id,
+      operation: 'RECEIVE',
+      beforeWeightKg: '0.000',
+      afterWeightKg: destinationBag.remainingWeightKg,
+      reason: `Nhận chuyển kho từ ${current.sourceStoreId}`,
+      actorAccountId: actor.accountId,
+      createdAt: now,
+    };
+    this.inventoryLedger.set(ledger.id, ledger);
+    const updated: StoreTransfer = {
+      ...current,
+      destinationInventoryBagId: destinationBag.id,
+      status: 'RECEIVED',
+      receivedByAccountId: actor.accountId,
+      receivedAt: now,
+      version: current.version + 1,
+      updatedAt: now,
+    };
+    this.storeTransfers.set(updated.id, updated);
+    this.rememberTransferMutation(scopedKey, requestHash, updated);
+    this.appendAudit(
+      actor,
+      context,
+      'STORE_TRANSFER_RECEIVED',
+      'store_transfer',
+      updated.id,
+      current,
+      updated,
+    );
+    return { data: structuredClone(updated), replayed: false };
+  }
+
+  public async cancelStoreTransfer(
+    actor: AuthenticatedPrincipal,
+    transferId: string,
+    input: CancelStoreTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreTransfer>> {
+    this.assertStoreMutationActor(actor);
+    const scopedKey = `${actor.accountId}:transfer:cancel:${transferId}:${idempotencyKey}`;
+    const replay = this.replayTransferMutation(scopedKey, requestHash);
+    if (replay) return { data: replay, replayed: true };
+    const current = this.requireTransfer(transferId);
+    if (actor.storeId !== current.sourceStoreId) throw forbidden();
+    if (current.status !== 'DRAFT' || current.version !== input.expectedVersion) {
+      throw versionConflict('Chỉ có thể hủy phiếu chuyển nháp hiện hành');
+    }
+    const now = this.now().toISOString();
+    const updated: StoreTransfer = {
+      ...current,
+      status: 'CANCELLED',
+      cancellationReason: input.reason,
+      cancelledAt: now,
+      version: current.version + 1,
+      updatedAt: now,
+    };
+    this.storeTransfers.set(updated.id, updated);
+    this.rememberTransferMutation(scopedKey, requestHash, updated);
+    this.appendAudit(
+      actor,
+      context,
+      'STORE_TRANSFER_CANCELLED',
+      'store_transfer',
+      updated.id,
+      current,
+      updated,
+      { reason: input.reason },
+    );
+    return { data: structuredClone(updated), replayed: false };
+  }
+
   public async listWaitTickets(
     actor: AuthenticatedPrincipal,
     query: ListWaitTicketsQuery,
@@ -2248,6 +2596,36 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const bag = this.inventoryBags.get(bagId);
     if (!bag) throw notFound('Không tìm thấy bao tồn kho');
     return bag;
+  }
+
+  private requireTransfer(transferId: string): StoreTransfer {
+    const transfer = this.storeTransfers.get(transferId);
+    if (!transfer) throw notFound('Không tìm thấy phiếu chuyển kho');
+    return transfer;
+  }
+
+  private replayTransferMutation(scopedKey: string, requestHash: string): StoreTransfer | null {
+    const previous = this.transferMutationIdempotency.get(scopedKey);
+    if (!previous) return null;
+    if (previous.requestHash !== requestHash) {
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    }
+    return structuredClone(previous.response);
+  }
+
+  private rememberTransferMutation(
+    scopedKey: string,
+    requestHash: string,
+    response: StoreTransfer,
+  ): void {
+    this.transferMutationIdempotency.set(scopedKey, {
+      requestHash,
+      response: structuredClone(response),
+    });
   }
 
   private replayInventoryMutation(
@@ -2721,6 +3099,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       productId: firstProduct.id,
       sourceReceiptBagId: MEMORY_SEED_IDS.sourceReceiptBag,
       outboundOrderId: MEMORY_SEED_IDS.outboundRequest,
+      sourceTransferId: null,
+      sourceInventoryBagId: null,
       bagCode: 'BAG-MEMORY-001',
       originalWeightKg: '25.000',
       receivedWeightKg: '24.500',
@@ -2730,6 +3110,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       receivedAt: now,
       updatedAt: now,
     });
+    this.inventoryBagCosts.set(MEMORY_SEED_IDS.inventoryBag, 2_450_000n);
     this.inventoryLedger.set(MEMORY_SEED_IDS.inventoryLedger, {
       id: MEMORY_SEED_IDS.inventoryLedger,
       bagId: MEMORY_SEED_IDS.inventoryBag,
