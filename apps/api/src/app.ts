@@ -11,6 +11,8 @@ import {
   CreateStoreRequestSchema,
   DeclareStoreReceiptRequestSchema,
   FinalizeReceiptRequestSchema,
+  fetchIdosiOrderStatistics,
+  GetIdosiStatisticsQuerySchema,
   GetOperationalSettingsQuerySchema,
   IdempotencyHeadersSchema,
   IsoDateSchema,
@@ -40,6 +42,7 @@ import {
   ReturnReceiptForCorrectionRequestSchema,
   RespondPriorityOfferRequestSchema,
   SubmitStoreReceiptRequestSchema,
+  SyncIdosiStatisticsRequestSchema,
   StoreInventoryBagParamsSchema,
   StoreOutboundParamsSchema,
   WaitTicketHistoryQuerySchema,
@@ -51,6 +54,10 @@ import {
   UpdateOperationalSettingsRequestSchema,
   type ApiErrorCode,
   type AuthenticatedPrincipal,
+  IdosiGatewayError,
+  type IdosiFetch,
+  type IdosiStatisticsScope,
+  type IdosiStatisticsState,
   type Session,
 } from '@idosi/contracts';
 import Fastify, {
@@ -64,7 +71,12 @@ import { z, ZodError } from 'zod';
 import { ApiError, forbidden, unauthenticated } from './errors.js';
 import { MemoryWarehouseRepository } from './memory-repository.js';
 import { LoginRateLimiter, type LoginRateLimitOptions } from './rate-limit.js';
-import type { AccountCredentials, RequestContext, WarehouseRepository } from './repository.js';
+import type {
+  AccountCredentials,
+  PersistedIdosiStatisticsState,
+  RequestContext,
+  WarehouseRepository,
+} from './repository.js';
 import {
   hashCanonicalRequest,
   hashPassword,
@@ -100,6 +112,8 @@ export interface CreateApiOptions {
   readonly loginRateLimit?: LoginRateLimitOptions;
   readonly idosiIntegrationEndpoint?: string;
   readonly idosiIntegrationSecretConfigured?: boolean;
+  readonly idosiIntegrationSecret?: string;
+  readonly idosiFetch?: IdosiFetch;
 }
 
 export async function createApi(options: CreateApiOptions = {}): Promise<FastifyInstance> {
@@ -111,6 +125,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
   const dummyPasswordHash = await hashPassword(randomUUID());
   const loginRateLimiter = new LoginRateLimiter(options.loginRateLimit);
   const idosiIntegration = integrationStatus(options);
+  const idosiIntegrationSecret = options.idosiIntegrationSecret?.trim() ?? '';
   const fastifyOptions: FastifyServerOptions = {
     logger: options.logger ?? false,
     bodyLimit: 1_048_576,
@@ -314,6 +329,64 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     const settings = await repository.getOperationalSettings(session.principal, 10);
     reply.header('cache-control', 'no-store');
     return { data: { ...settings, integration: idosiIntegration } };
+  });
+
+  app.get('/api/v1/integrations/idosi/order-statistics', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    const scope = GetIdosiStatisticsQuerySchema.parse(request.query);
+    const persisted = await repository.getIdosiStatisticsState(session.principal, scope);
+    reply.header('cache-control', 'no-store');
+    return { data: idosiStatisticsState(scope, persisted, idosiIntegration.status) };
+  });
+
+  app.post('/api/v1/integrations/idosi/order-statistics/sync', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    const scope = SyncIdosiStatisticsRequestSchema.parse(request.body);
+    if (!idosiIntegrationSecret) {
+      throw new ApiError(
+        'INTEGRATION_NOT_CONFIGURED',
+        'Tích hợp IDOSI chưa được cấu hình khóa trên máy chủ.',
+        503,
+      );
+    }
+    const target = await repository.resolveIdosiStatisticsTarget(session.principal, scope.storeId);
+    const startedAt = new Date();
+    try {
+      const payload = await fetchIdosiOrderStatistics({
+        endpoint: idosiIntegration.endpoint,
+        secret: idosiIntegrationSecret,
+        storeCode: target.storeCode,
+        scope: externalIdosiScope(scope),
+        requestId: request.id,
+        ...(options.idosiFetch ? { fetch: options.idosiFetch } : {}),
+      });
+      await repository.recordIdosiStatisticsSuccess(
+        session.principal,
+        scope,
+        payload,
+        startedAt,
+        new Date(),
+        requestContext(request),
+      );
+    } catch (error) {
+      if (!(error instanceof IdosiGatewayError)) throw error;
+      await repository.recordIdosiStatisticsFailure(
+        session.principal,
+        scope,
+        error.code,
+        error.message,
+        startedAt,
+        new Date(),
+        requestContext(request),
+      );
+      if (error.code === 'IDOSI_RESPONSE_INVALID' || error.code === 'IDOSI_RESPONSE_TOO_LARGE') {
+        throw new ApiError('INTEGRATION_RESPONSE_INVALID', error.message, 502);
+      }
+      throw new ApiError('INTEGRATION_UNAVAILABLE', error.message, 502);
+    }
+    const persisted = await repository.getIdosiStatisticsState(session.principal, scope);
+    reply.header('cache-control', 'no-store');
+    return { data: idosiStatisticsState(scope, persisted, idosiIntegration.status) };
   });
 
   app.get('/api/v1/products', async (request) => {
@@ -822,8 +895,34 @@ function integrationStatus(options: CreateApiOptions): {
   }
   return {
     endpoint,
-    status: options.idosiIntegrationSecretConfigured ? 'CONFIGURED' : 'NOT_CONFIGURED',
+    status:
+      options.idosiIntegrationSecret?.trim() || options.idosiIntegrationSecretConfigured
+        ? 'CONFIGURED'
+        : 'NOT_CONFIGURED',
   };
+}
+
+function externalIdosiScope(scope: IdosiStatisticsScope): Omit<IdosiStatisticsScope, 'storeId'> {
+  return {
+    period: scope.period,
+    date: scope.date,
+    shiftId: scope.shiftId,
+    paymentMethod: scope.paymentMethod,
+  };
+}
+
+function idosiStatisticsState(
+  scope: IdosiStatisticsScope,
+  persisted: PersistedIdosiStatisticsState,
+  integrationStatus: 'CONFIGURED' | 'NOT_CONFIGURED',
+): IdosiStatisticsState {
+  const freshness =
+    persisted.snapshot === null
+      ? 'EMPTY'
+      : persisted.latestAttempt?.status === 'FAILED'
+        ? 'STALE'
+        : 'CURRENT';
+  return { scope, integrationStatus, freshness, ...persisted };
 }
 
 function zodFieldErrors(error: ZodError): Record<string, string[]> {
@@ -1109,6 +1208,22 @@ function openApiDocument(): Record<string, unknown> {
         get: {
           security: cookieSecurity,
           responses: { '200': { description: 'Source-backed monthly operational report' } },
+        },
+      },
+      '/api/v1/integrations/idosi/order-statistics': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Latest scoped IDOSI aggregate snapshot' } },
+        },
+      },
+      '/api/v1/integrations/idosi/order-statistics/sync': {
+        post: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'Validated IDOSI aggregate snapshot upserted by scope' },
+            '502': { description: 'IDOSI upstream unavailable or invalid' },
+            '503': { description: 'IDOSI server secret not configured' },
+          },
         },
       },
       '/api/v1/integrations/warehouse/v1/order-statistics': {

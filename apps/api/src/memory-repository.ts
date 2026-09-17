@@ -29,6 +29,10 @@ import type {
   ListWaitTicketsQuery,
   MonthlyOperationalReport,
   MonthlyOperationalReportQuery,
+  IdosiOrderStatisticsPayload,
+  IdosiStatisticsAttempt,
+  IdosiStatisticsScope,
+  IdosiStatisticsSnapshot,
   OperationalSettingsVersion,
   OpenStoreInventoryBagRequest,
   Product,
@@ -65,6 +69,7 @@ import {
 import {
   calculateWeightedCostVnd,
   gramsToKilogramsExact,
+  idosiStatisticsScopeKey,
   kilogramsToGramsExact,
   summarizeMonthlyReport,
 } from '@idosi/database';
@@ -75,6 +80,7 @@ import { sanitizeAuditObject } from './audit-sanitization.js';
 import { monthlyOperationalReportDto } from './monthly-report.js';
 import type {
   AccountCredentials,
+  IdosiStatisticsTarget,
   OrderStatistics,
   IdempotentResource,
   Page,
@@ -204,6 +210,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly storeGroupIds = new Set<string>();
   private readonly audit: AuditRecord[] = [];
   private readonly operationalSettings: OperationalSettingsVersion[] = [];
+  private readonly idosiStatisticsSnapshots = new Map<string, IdosiStatisticsSnapshot>();
+  private readonly idosiStatisticsAttempts = new Map<string, IdosiStatisticsAttempt>();
 
   private constructor(now: () => Date) {
     this.now = now;
@@ -487,6 +495,121 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       { previousVersion: current.version, version: created.version },
     );
     return structuredClone(created);
+  }
+
+  public async resolveIdosiStatisticsTarget(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+  ): Promise<IdosiStatisticsTarget> {
+    const store = this.stores.get(storeId);
+    if (!store) throw notFound('Không tìm thấy cửa hàng');
+    if (!canAccessStore(actor, store.id)) throw forbidden('Không có quyền xem cửa hàng này');
+    if (store.status !== 'ACTIVE') throw conflict('Cửa hàng đã ngừng hoạt động');
+    if (store.kind !== 'RETAIL') {
+      throw conflict('Đồng bộ doanh thu chỉ áp dụng cho cửa hàng bán lẻ');
+    }
+    return { storeId: store.id, storeCode: store.code, storeName: store.name };
+  }
+
+  public async getIdosiStatisticsState(actor: AuthenticatedPrincipal, scope: IdosiStatisticsScope) {
+    await this.resolveIdosiStatisticsTarget(actor, scope.storeId);
+    const key = memoryIdosiScopeKey(scope);
+    return {
+      snapshot: this.idosiStatisticsSnapshots.get(key) ?? null,
+      latestAttempt: this.idosiStatisticsAttempts.get(key) ?? null,
+    };
+  }
+
+  public async recordIdosiStatisticsSuccess(
+    actor: AuthenticatedPrincipal,
+    scope: IdosiStatisticsScope,
+    payload: IdosiOrderStatisticsPayload,
+    startedAt: Date,
+    completedAt: Date,
+    context: RequestContext,
+  ): Promise<void> {
+    const target = await this.resolveIdosiStatisticsTarget(actor, scope.storeId);
+    assertMemorySyncTimes(startedAt, completedAt);
+    const key = memoryIdosiScopeKey(scope);
+    const current = this.idosiStatisticsSnapshots.get(key);
+    let snapshot = current;
+    if (!current || payload.generatedAt >= current.payload.generatedAt) {
+      snapshot = Object.freeze({
+        id: current?.id ?? randomUUID(),
+        storeId: scope.storeId,
+        scopeKey: idosiStatisticsScopeKey(scope),
+        payload: structuredClone(payload),
+        firstSyncedAt: current?.firstSyncedAt ?? completedAt.toISOString(),
+        lastSyncedAt: completedAt.toISOString(),
+      });
+      this.idosiStatisticsSnapshots.set(key, snapshot);
+    }
+    if (!snapshot) throw new Error('IDOSI memory snapshot was not created');
+    const attempt: IdosiStatisticsAttempt = Object.freeze({
+      id: randomUUID(),
+      source: 'MANUAL',
+      status: 'SUCCEEDED',
+      errorCode: null,
+      errorMessage: null,
+      startedAt: startedAt.toISOString(),
+      completedAt: completedAt.toISOString(),
+    });
+    this.idosiStatisticsAttempts.set(key, attempt);
+    this.appendAudit(
+      actor,
+      context,
+      'IDOSI_STATISTICS_SYNC_SUCCEEDED',
+      'idosi_statistics_snapshot',
+      snapshot.id,
+      null,
+      {
+        storeCode: target.storeCode,
+        scopeKey: snapshot.scopeKey,
+        source: 'MANUAL',
+        sourceGeneratedAt: payload.generatedAt,
+        orders: payload.totals.orders,
+        revenueVnd: payload.totals.revenue,
+      },
+      { attemptId: attempt.id },
+    );
+  }
+
+  public async recordIdosiStatisticsFailure(
+    actor: AuthenticatedPrincipal,
+    scope: IdosiStatisticsScope,
+    errorCode: string,
+    errorMessage: string,
+    startedAt: Date,
+    completedAt: Date,
+    context: RequestContext,
+  ): Promise<void> {
+    const target = await this.resolveIdosiStatisticsTarget(actor, scope.storeId);
+    assertMemorySyncTimes(startedAt, completedAt);
+    const key = memoryIdosiScopeKey(scope);
+    const attempt: IdosiStatisticsAttempt = Object.freeze({
+      id: randomUUID(),
+      source: 'MANUAL',
+      status: 'FAILED',
+      errorCode: boundedMemorySyncText(errorCode, 100, 'IDOSI_SYNC_FAILED'),
+      errorMessage: boundedMemorySyncText(errorMessage, 1_000, 'Đồng bộ IDOSI thất bại.'),
+      startedAt: startedAt.toISOString(),
+      completedAt: completedAt.toISOString(),
+    });
+    this.idosiStatisticsAttempts.set(key, attempt);
+    this.appendAudit(
+      actor,
+      context,
+      'IDOSI_STATISTICS_SYNC_FAILED',
+      'idosi_statistics_sync_attempt',
+      attempt.id,
+      null,
+      {
+        storeCode: target.storeCode,
+        scopeKey: idosiStatisticsScopeKey(scope),
+        source: 'MANUAL',
+        errorCode: attempt.errorCode,
+      },
+    );
   }
 
   public async listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>> {
@@ -2191,6 +2314,24 @@ function emptyStatistics(storeCode: string, from: string, to: string, now: Date)
     products: [],
     generatedAt: now.toISOString(),
   };
+}
+
+function memoryIdosiScopeKey(scope: IdosiStatisticsScope): string {
+  return `${scope.storeId}:${idosiStatisticsScopeKey(scope)}`;
+}
+
+function assertMemorySyncTimes(startedAt: Date, completedAt: Date): void {
+  if (
+    Number.isNaN(startedAt.getTime()) ||
+    Number.isNaN(completedAt.getTime()) ||
+    completedAt < startedAt
+  ) {
+    throw new RangeError('IDOSI sync attempt timestamps are invalid');
+  }
+}
+
+function boundedMemorySyncText(value: string, maximum: number, fallback: string): string {
+  return (value.trim() || fallback).slice(0, maximum);
 }
 
 function retirementDate(effectiveFrom: string, now: Date): string {

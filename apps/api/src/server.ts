@@ -29,7 +29,9 @@ const app = await createApi({
   ...(process.env.IDOSI_INTEGRATION_ENDPOINT?.trim()
     ? { idosiIntegrationEndpoint: process.env.IDOSI_INTEGRATION_ENDPOINT.trim() }
     : {}),
-  idosiIntegrationSecretConfigured: Boolean(process.env.IDOSI_INTEGRATION_SECRET?.trim()),
+  ...(process.env.IDOSI_INTEGRATION_SECRET?.trim()
+    ? { idosiIntegrationSecret: process.env.IDOSI_INTEGRATION_SECRET.trim() }
+    : {}),
   // Only honor forwarding headers from loopback or RFC1918/ULA reverse proxies.
   trustProxy: ['loopback', 'uniquelocal'],
 });

@@ -15,6 +15,10 @@ const operationalSettingsMigration = readFileSync(
   new URL('../migrations/0003_operational_settings_versions.sql', import.meta.url),
   'utf8',
 );
+const idosiStatisticsMigration = readFileSync(
+  new URL('../migrations/0004_idosi_statistics_snapshots.sql', import.meta.url),
+  'utf8',
+);
 const schemaSource = readFileSync(new URL('../src/schema.ts', import.meta.url), 'utf8');
 const seedDataSource = readFileSync(new URL('../src/seed-data.ts', import.meta.url), 'utf8');
 const storeOperationsSource = readFileSync(
@@ -101,7 +105,7 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(4);
+    expect(journal.entries).toHaveLength(5);
     expect(journal.entries[0]).toMatchObject({
       tag: '0000_initial',
       breakpoints: true,
@@ -118,6 +122,20 @@ describe('initial migration invariants', () => {
       tag: '0003_operational_settings_versions',
       breakpoints: true,
     });
+    expect(journal.entries[4]).toMatchObject({
+      tag: '0004_idosi_statistics_snapshots',
+      breakpoints: true,
+    });
+  });
+
+  it('stores one replaceable IDOSI aggregate per scope without touching inventory tables', () => {
+    expect(idosiStatisticsMigration).toContain('CREATE TABLE "idosi_statistics_snapshots"');
+    expect(idosiStatisticsMigration).toContain('CREATE TABLE "idosi_statistics_sync_attempts"');
+    expect(idosiStatisticsMigration).toContain('"idosi_statistics_snapshots_store_scope_uidx"');
+    expect(idosiStatisticsMigration).toContain('idosi_statistics_sync_attempts_immutable');
+    expect(idosiStatisticsMigration).not.toMatch(/store_inventory|warehouse_balance/iu);
+    expect(schemaSource).toContain('idosiStatisticsSnapshots');
+    expect(schemaSource).toContain('idosiStatisticsSyncAttempts');
   });
 
   it('indexes priority-offer history without losing the migration snapshot chain', () => {

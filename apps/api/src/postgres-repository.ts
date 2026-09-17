@@ -27,6 +27,8 @@ import type {
   ListWaitTicketsQuery,
   MonthlyOperationalReport,
   MonthlyOperationalReportQuery,
+  IdosiOrderStatisticsPayload,
+  IdosiStatisticsScope,
   OperationalSettingsVersion,
   OpenStoreInventoryBagRequest,
   Product,
@@ -75,6 +77,7 @@ import {
   listStoreReceiptSources as listDatabaseStoreReceiptSources,
   listWaitTickets as listDatabaseWaitTickets,
   loadMonthlyOperationalReport,
+  loadIdosiStatisticsState as loadDatabaseIdosiStatisticsState,
   openStoreInventoryBag as openDatabaseStoreInventoryBag,
   orderRequestItems,
   orderRequests,
@@ -86,6 +89,8 @@ import {
   pool,
   productConversions,
   products,
+  recordIdosiStatisticsFailure as recordDatabaseIdosiStatisticsFailure,
+  recordIdosiStatisticsSuccess as recordDatabaseIdosiStatisticsSuccess,
   RequestLimitExceededError,
   respondPriorityOffer as respondDatabasePriorityOffer,
   reviewStoreOutbound as reviewDatabaseStoreOutbound,
@@ -144,6 +149,7 @@ import { ApiError, conflict, forbidden, notFound, unauthenticated } from './erro
 import { monthlyOperationalReportDto } from './monthly-report.js';
 import type {
   AccountCredentials,
+  IdosiStatisticsTarget,
   IdempotentResource,
   OrderStatistics,
   Page,
@@ -554,6 +560,91 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         return created;
       }),
     );
+  }
+
+  public async resolveIdosiStatisticsTarget(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+  ): Promise<IdosiStatisticsTarget> {
+    const [store] = await db
+      .select({
+        id: stores.id,
+        code: stores.code,
+        name: stores.name,
+        kind: stores.kind,
+        isActive: stores.isActive,
+      })
+      .from(stores)
+      .where(and(eq(stores.id, storeId), isNull(stores.deletedAt)))
+      .limit(1);
+    if (!store) throw notFound('Không tìm thấy cửa hàng');
+    if (!canAccessStore(actor, store.id)) throw forbidden('Không có quyền xem cửa hàng này');
+    if (!store.isActive) throw conflict('Cửa hàng đã ngừng hoạt động');
+    if (store.kind !== 'retail') {
+      throw conflict('Đồng bộ doanh thu chỉ áp dụng cho cửa hàng bán lẻ');
+    }
+    return { storeId: store.id, storeCode: store.code, storeName: store.name };
+  }
+
+  public async getIdosiStatisticsState(actor: AuthenticatedPrincipal, scope: IdosiStatisticsScope) {
+    await this.resolveIdosiStatisticsTarget(actor, scope.storeId);
+    return loadDatabaseIdosiStatisticsState(db, scope);
+  }
+
+  public async recordIdosiStatisticsSuccess(
+    actor: AuthenticatedPrincipal,
+    scope: IdosiStatisticsScope,
+    payload: IdosiOrderStatisticsPayload,
+    startedAt: Date,
+    completedAt: Date,
+    context: RequestContext,
+  ): Promise<void> {
+    const target = await this.resolveIdosiStatisticsTarget(actor, scope.storeId);
+    await recordDatabaseIdosiStatisticsSuccess(db, {
+      target,
+      scope,
+      payload,
+      source: 'MANUAL',
+      startedAt,
+      completedAt,
+      context: {
+        actor: {
+          userId: actor.accountId,
+          role: databaseAccountRole(actor.role),
+          storeId: actor.storeId,
+        },
+        ...context,
+      },
+    });
+  }
+
+  public async recordIdosiStatisticsFailure(
+    actor: AuthenticatedPrincipal,
+    scope: IdosiStatisticsScope,
+    errorCode: string,
+    errorMessage: string,
+    startedAt: Date,
+    completedAt: Date,
+    context: RequestContext,
+  ): Promise<void> {
+    const target = await this.resolveIdosiStatisticsTarget(actor, scope.storeId);
+    await recordDatabaseIdosiStatisticsFailure(db, {
+      target,
+      scope,
+      source: 'MANUAL',
+      errorCode,
+      errorMessage,
+      startedAt,
+      completedAt,
+      context: {
+        actor: {
+          userId: actor.accountId,
+          role: databaseAccountRole(actor.role),
+          storeId: actor.storeId,
+        },
+        ...context,
+      },
+    });
   }
 
   public async listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>> {

@@ -93,6 +93,9 @@ export const ApiErrorCodeSchema = z.enum([
   'INSUFFICIENT_STOCK',
   'INVALID_STATE_TRANSITION',
   'VERSION_CONFLICT',
+  'INTEGRATION_NOT_CONFIGURED',
+  'INTEGRATION_UNAVAILABLE',
+  'INTEGRATION_RESPONSE_INVALID',
   'INTERNAL_ERROR',
 ]);
 export type ApiErrorCode = z.infer<typeof ApiErrorCodeSchema>;
