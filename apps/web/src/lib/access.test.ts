@@ -4,6 +4,8 @@ import { canAccessRoute } from './access';
 describe('route access policy', () => {
   it('keeps admin-only screens unavailable to stores', () => {
     expect(canAccessRoute('/users', 'STORE', 'RETAIL')).toBe(false);
+    expect(canAccessRoute('/stores', 'HTKD', null)).toBe(false);
+    expect(canAccessRoute('/stores', 'ADMIN', null)).toBe(true);
     expect(canAccessRoute('/audit', 'HTKD', null)).toBe(false);
     expect(canAccessRoute('/catalog', 'HTKD', null)).toBe(true);
   });

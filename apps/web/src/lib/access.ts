@@ -36,6 +36,7 @@ export const routeAccessPolicies = {
   '/catalog': { roles: ['ADMIN', 'HTKD'] },
   '/costs': { roles: ['ADMIN', 'HTKD'] },
   '/reports': { roles: ['ADMIN', 'HTKD'] },
+  '/stores': { roles: ['ADMIN'] },
   '/users': { roles: ['ADMIN'] },
   '/audit': { roles: ['ADMIN'] },
   '/settings': { roles: ['ADMIN'] },
