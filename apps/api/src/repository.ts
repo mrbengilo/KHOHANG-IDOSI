@@ -15,6 +15,7 @@ import type {
   ListAuditLogsQuery,
   ListProductsQuery,
   ListReceiptsQuery,
+  ListStoreReceiptSourcesQuery,
   ListPriorityOffersQuery,
   ListProductConversionsQuery,
   ListStoreOrderRequestsQuery,
@@ -31,6 +32,7 @@ import type {
   Session,
   Store,
   StoreOrderRequest,
+  StoreReceiptSource,
   SubmitStoreReceiptRequest,
   UpdateProductRequest,
   UpdateAccountRequest,
@@ -209,6 +211,10 @@ export interface WarehouseRepository {
   ): Promise<SubmittedOrderRequest>;
 
   listReceipts(actor: AuthenticatedPrincipal, query: ListReceiptsQuery): Promise<Page<Receipt>>;
+  listStoreReceiptSources(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreReceiptSourcesQuery,
+  ): Promise<Page<StoreReceiptSource>>;
   getReceipt(actor: AuthenticatedPrincipal, receiptId: string): Promise<Receipt>;
   declareStoreReceipt(
     actor: AuthenticatedPrincipal,

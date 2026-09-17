@@ -16,6 +16,7 @@ import type {
   ListPriorityOffersQuery,
   ListProductsQuery,
   ListReceiptsQuery,
+  ListStoreReceiptSourcesQuery,
   ListProductConversionsQuery,
   ListStoreOrderRequestsQuery,
   ListStoresQuery,
@@ -33,6 +34,7 @@ import type {
   Session,
   Store,
   StoreOrderRequest,
+  StoreReceiptSource,
   SubmitStoreReceiptRequest,
   UpdateProductRequest,
   UpdateAccountRequest,
@@ -55,6 +57,7 @@ import {
   finalizeStoreReceipt as finalizeDatabaseStoreReceipt,
   getWaitTicketHistory as getDatabaseWaitTicketHistory,
   listPriorityOffers as listDatabasePriorityOffers,
+  listStoreReceiptSources as listDatabaseStoreReceiptSources,
   listWaitTickets as listDatabaseWaitTickets,
   loadMonthlyOperationalReport,
   orderRequestItems,
@@ -93,6 +96,7 @@ import {
   type JsonObject,
   type MonthlyReportScope,
   type PriorityOfferRecord,
+  type StoreReceiptSourceRecord,
   type WaitTicketDatabaseStatus,
   type WaitTicketEffectiveStatus,
   type WaitTicketRecord,
@@ -1065,6 +1069,47 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     };
   }
 
+  public async listStoreReceiptSources(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreReceiptSourcesQuery,
+  ): Promise<Page<StoreReceiptSource>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+
+    if (actor.role === 'ADMIN') {
+      return receiptSourcePage(
+        await listDatabaseStoreReceiptSources(db, {
+          page: query.page,
+          pageSize: query.pageSize,
+          ...(query.storeId === undefined ? {} : { storeId: query.storeId }),
+        }),
+      );
+    }
+
+    if (actor.role === 'STORE') {
+      if (actor.storeId === null) {
+        return { data: [], pagination: pagination(query.page, query.pageSize, 0) };
+      }
+      return receiptSourcePage(
+        await listDatabaseStoreReceiptSources(db, {
+          page: query.page,
+          pageSize: query.pageSize,
+          storeId: actor.storeId,
+        }),
+      );
+    }
+
+    if (query.storeId !== undefined) {
+      return receiptSourcePage(
+        await listDatabaseStoreReceiptSources(db, {
+          page: query.page,
+          pageSize: query.pageSize,
+          storeId: query.storeId,
+        }),
+      );
+    }
+    return listAssignedStoreReceiptSources(actor.assignedStoreIds, query);
+  }
+
   public async getReceipt(actor: AuthenticatedPrincipal, receiptId: string): Promise<Receipt> {
     const receipt = await this.receiptDto(receiptId);
     if (!canAccessStore(actor, receipt.storeId)) throw forbidden();
@@ -1599,6 +1644,79 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     if (!store) throw notFound('Không tìm thấy cửa hàng');
     return { kind: 'STORE', id: store.id };
   }
+}
+
+function receiptSourceDto(source: StoreReceiptSourceRecord): StoreReceiptSource {
+  return {
+    id: source.id,
+    requestNumber: source.requestNumber,
+    storeId: source.storeId,
+    dispatchedAt: source.dispatchedAt.toISOString(),
+    lines: source.lines.map((line) => ({
+      productId: line.productId,
+      approvedUnits: line.approvedUnits,
+      dispatchedUnits: line.dispatchedUnits,
+    })),
+  };
+}
+
+function receiptSourcePage(
+  page: Awaited<ReturnType<typeof listDatabaseStoreReceiptSources>>,
+): Page<StoreReceiptSource> {
+  return {
+    data: page.data.map(receiptSourceDto),
+    pagination: page.pagination,
+  };
+}
+
+async function listAssignedStoreReceiptSources(
+  assignedStoreIds: readonly string[],
+  query: ListStoreReceiptSourcesQuery,
+): Promise<Page<StoreReceiptSource>> {
+  const storeIds = [...new Set(assignedStoreIds)];
+  if (storeIds.length === 0) {
+    return { data: [], pagination: pagination(query.page, query.pageSize, 0) };
+  }
+
+  const requestedEnd = query.page * query.pageSize;
+  if (!Number.isSafeInteger(requestedEnd)) {
+    throw new ApiError('VALIDATION_ERROR', 'Trang yêu cầu vượt quá giới hạn an toàn', 400);
+  }
+  const fetchPageSize = Math.min(100, requestedEnd);
+  const storePages = await Promise.all(
+    storeIds.map(async (storeId) => {
+      const first = await listDatabaseStoreReceiptSources(db, {
+        page: 1,
+        pageSize: fetchPageSize,
+        storeId,
+      });
+      const records = [...first.data];
+      const needed = Math.min(first.pagination.totalItems, requestedEnd);
+      for (let page = 2; records.length < needed; page += 1) {
+        const next = await listDatabaseStoreReceiptSources(db, {
+          page,
+          pageSize: fetchPageSize,
+          storeId,
+        });
+        if (next.data.length === 0) break;
+        records.push(...next.data);
+      }
+      return { records, totalItems: first.pagination.totalItems };
+    }),
+  );
+  const totalItems = storePages.reduce((sum, storePage) => sum + storePage.totalItems, 0);
+  const records = storePages
+    .flatMap((storePage) => storePage.records)
+    .sort(
+      (left, right) =>
+        right.dispatchedAt.getTime() - left.dispatchedAt.getTime() ||
+        right.id.localeCompare(left.id),
+    );
+  const start = (query.page - 1) * query.pageSize;
+  return {
+    data: records.slice(start, start + query.pageSize).map(receiptSourceDto),
+    pagination: pagination(query.page, query.pageSize, totalItems),
+  };
 }
 
 function sessionDto(stored: typeof sessions.$inferSelect, account: AccountCredentials): Session {

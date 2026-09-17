@@ -28,6 +28,7 @@ describe('KHOHANG-IDOSI API', () => {
     const specification = await app.inject({ method: 'GET', url: '/openapi.json' });
     assert.equal(specification.statusCode, 200);
     assert.equal(specification.json().openapi, '3.1.0');
+    assert.ok(specification.json().paths['/api/v1/store-receipt-sources']);
   });
 
   test('uses scrypt and issues an opaque HttpOnly session without exposing secrets', async () => {
@@ -172,6 +173,13 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(denied.json().error.code, 'FORBIDDEN');
 
     const htkdCookie = cookieOf(await login('htkd'));
+    const allAssigned = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-receipt-sources?pageSize=10',
+      headers: { cookie: htkdCookie },
+    });
+    assert.equal(allAssigned.statusCode, 200);
+    assert.equal(allAssigned.json().pagination.totalItems, 1);
     const assigned = await app.inject({
       method: 'GET',
       url: '/api/v1/stores?pageSize=100',
@@ -346,6 +354,92 @@ describe('KHOHANG-IDOSI API', () => {
     );
   });
 
+  test('lists only authorized dispatched sources that do not have a receipt', async () => {
+    const unauthenticated = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-receipt-sources',
+    });
+    assert.equal(unauthenticated.statusCode, 401);
+
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const storeSources = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-receipt-sources?page=1&pageSize=10',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(storeSources.statusCode, 200);
+    assert.equal(storeSources.json().pagination.totalItems, 1);
+    assert.equal(storeSources.json().data.length, 1);
+    const [source] = storeSources.json().data;
+    assert.equal(source.id, MEMORY_SEED_IDS.secondOutboundRequest);
+    assert.notEqual(source.id, MEMORY_SEED_IDS.outboundRequest);
+    assert.equal(source.requestNumber, 'OUT-MEMORY-002');
+    assert.equal(source.storeId, MEMORY_SEED_IDS.nvtStore);
+    assert.equal(Number.isNaN(Date.parse(source.dispatchedAt)), false);
+    assert.deepEqual(Object.keys(source).sort(), [
+      'dispatchedAt',
+      'id',
+      'lines',
+      'requestNumber',
+      'storeId',
+    ]);
+    assert.equal(source.lines.length, 1);
+    assert.deepEqual(Object.keys(source.lines[0]).sort(), [
+      'approvedUnits',
+      'dispatchedUnits',
+      'productId',
+    ]);
+    assert.equal(source.lines[0].approvedUnits, 2);
+    assert.equal(source.lines[0].dispatchedUnits, 2);
+
+    const storeOverride = await app.inject({
+      method: 'GET',
+      url: `/api/v1/store-receipt-sources?storeId=${MEMORY_SEED_IDS.bdStore}`,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(storeOverride.statusCode, 403);
+
+    const htkdCookie = cookieOf(await login('htkd'));
+    const assigned = await app.inject({
+      method: 'GET',
+      url: `/api/v1/store-receipt-sources?storeId=${MEMORY_SEED_IDS.nvtStore}`,
+      headers: { cookie: htkdCookie },
+    });
+    assert.equal(assigned.statusCode, 200);
+    assert.equal(assigned.json().pagination.totalItems, 1);
+    const unassignedStore = '20000000-0000-4000-8000-000000000009';
+    const htkdDenied = await app.inject({
+      method: 'GET',
+      url: `/api/v1/store-receipt-sources?storeId=${unassignedStore}`,
+      headers: { cookie: htkdCookie },
+    });
+    assert.equal(htkdDenied.statusCode, 403);
+
+    const adminCookie = cookieOf(await login('admin'));
+    const adminSources = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-receipt-sources?pageSize=100',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(adminSources.statusCode, 200);
+    assert.equal(adminSources.json().pagination.totalItems, 1);
+    const adminFiltered = await app.inject({
+      method: 'GET',
+      url: `/api/v1/store-receipt-sources?storeId=${MEMORY_SEED_IDS.bdStore}`,
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(adminFiltered.statusCode, 200);
+    assert.equal(adminFiltered.json().pagination.totalItems, 0);
+
+    const invalidPagination = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-receipt-sources?pageSize=101',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(invalidPagination.statusCode, 400);
+    assert.equal(invalidPagination.json().error.code, 'VALIDATION_ERROR');
+  });
+
   test('runs the auditable store receipt lifecycle with scopes, versions and idempotency', async () => {
     const storeCookie = cookieOf(await login('ds_nvt'));
     const htkdCookie = cookieOf(await login('htkd'));
@@ -375,6 +469,14 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(declared.json().data.version, 0);
     assert.equal(declared.json().data.outboundRequestId, MEMORY_SEED_IDS.secondOutboundRequest);
     const receiptId = declared.json().data.id;
+
+    const sourcesAfterDeclaration = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-receipt-sources?pageSize=100',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(sourcesAfterDeclaration.statusCode, 200);
+    assert.equal(sourcesAfterDeclaration.json().pagination.totalItems, 0);
 
     const declarationReplay = await mutateReceipt(
       storeCookie,

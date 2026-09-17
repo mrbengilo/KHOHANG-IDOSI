@@ -19,6 +19,7 @@ import {
   ListProductsQuerySchema,
   ListProductConversionsQuerySchema,
   ListReceiptsQuerySchema,
+  ListStoreReceiptSourcesQuerySchema,
   ListStoreOrderRequestsQuerySchema,
   ListStoresQuerySchema,
   ListWaitTicketsQuerySchema,
@@ -423,6 +424,12 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     const session = await authenticate(request, repository);
     const query = ListReceiptsQuerySchema.parse(request.query);
     return repository.listReceipts(session.principal, query);
+  });
+
+  app.get('/api/v1/store-receipt-sources', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = ListStoreReceiptSourcesQuerySchema.parse(request.query);
+    return repository.listStoreReceiptSources(session.principal, query);
   });
 
   app.get('/api/v1/store-receipts/:receiptId', async (request) => {
@@ -847,6 +854,14 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: { '201': { description: 'Declared store receipt' } },
+        },
+      },
+      '/api/v1/store-receipt-sources': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'Scoped dispatched requests eligible for store receipt' },
+          },
         },
       },
       '/api/v1/store-receipts/{receiptId}': {

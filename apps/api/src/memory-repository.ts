@@ -18,6 +18,7 @@ import type {
   ListProductsQuery,
   ListPriorityOffersQuery,
   ListReceiptsQuery,
+  ListStoreReceiptSourcesQuery,
   ListProductConversionsQuery,
   ListStoreOrderRequestsQuery,
   ListStoresQuery,
@@ -35,6 +36,7 @@ import type {
   Session,
   Store,
   StoreOrderRequest,
+  StoreReceiptSource,
   SubmitStoreReceiptRequest,
   UpdateProductRequest,
   UpdateAccountRequest,
@@ -120,7 +122,13 @@ interface WaitMutationIdempotencyRecord {
 
 interface MemoryDispatchedOutbound {
   readonly storeId: string;
-  readonly lines: readonly { readonly productId: string; readonly approvedUnits: number }[];
+  readonly requestNumber: string;
+  readonly dispatchedAt: string;
+  readonly lines: readonly {
+    readonly productId: string;
+    readonly approvedUnits: number;
+    readonly dispatchedUnits: number;
+  }[];
 }
 
 interface AuditRecord {
@@ -787,6 +795,35 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     return { data: request, replayed: false };
   }
 
+  public async listStoreReceiptSources(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreReceiptSourcesQuery,
+  ): Promise<Page<StoreReceiptSource>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const declaredOutboundIds = new Set(
+      [...this.receipts.values()].map((receipt) => receipt.outboundRequestId),
+    );
+    const values = [...this.dispatchedOutbounds.entries()]
+      .filter(([outboundRequestId]) => !declaredOutboundIds.has(outboundRequestId))
+      .filter(([, outbound]) => canAccessStore(actor, outbound.storeId))
+      .filter(([, outbound]) => query.storeId === undefined || outbound.storeId === query.storeId)
+      .sort(
+        ([leftId, left], [rightId, right]) =>
+          right.dispatchedAt.localeCompare(left.dispatchedAt) || rightId.localeCompare(leftId),
+      )
+      .map(([id, outbound]): StoreReceiptSource => ({
+        id,
+        requestNumber: outbound.requestNumber,
+        storeId: outbound.storeId,
+        dispatchedAt: outbound.dispatchedAt,
+        lines: outbound.lines.map((line) => ({ ...line })),
+      }));
+    return {
+      data: slicePage(values, query.page, query.pageSize),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
+  }
+
   public async listReceipts(
     actor: AuthenticatedPrincipal,
     query: ListReceiptsQuery,
@@ -1444,11 +1481,15 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (!firstProduct || !secondProduct) throw new Error('Memory catalog requires two products');
     this.dispatchedOutbounds.set(MEMORY_SEED_IDS.outboundRequest, {
       storeId: nvtId,
-      lines: [{ productId: firstProduct.id, approvedUnits: 5 }],
+      requestNumber: 'OUT-MEMORY-001',
+      dispatchedAt: now,
+      lines: [{ productId: firstProduct.id, approvedUnits: 5, dispatchedUnits: 5 }],
     });
     this.dispatchedOutbounds.set(MEMORY_SEED_IDS.secondOutboundRequest, {
       storeId: nvtId,
-      lines: [{ productId: secondProduct.id, approvedUnits: 2 }],
+      requestNumber: 'OUT-MEMORY-002',
+      dispatchedAt: now,
+      lines: [{ productId: secondProduct.id, approvedUnits: 2, dispatchedUnits: 2 }],
     });
     this.receipts.set(MEMORY_SEED_IDS.storeReceipt, {
       id: MEMORY_SEED_IDS.storeReceipt,
