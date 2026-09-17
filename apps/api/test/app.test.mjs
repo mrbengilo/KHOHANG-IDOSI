@@ -909,21 +909,14 @@ describe('KHOHANG-IDOSI API', () => {
     const url = `/api/v1/priority-offers/${MEMORY_SEED_IDS.priorityOffer}/respond`;
     const acceptance = { action: 'ACCEPT', accepted: { kind: 'UNIT', quantity: 3 } };
 
-    const htkdDenied = await mutateWait(
-      htkdCookie,
-      url,
-      'wait-offer-htkd-denied',
-      acceptance,
-    );
+    const htkdDenied = await mutateWait(htkdCookie, url, 'wait-offer-htkd-denied', acceptance);
     assert.equal(htkdDenied.statusCode, 403);
     assert.equal(htkdDenied.json().error.code, 'FORBIDDEN');
 
-    const partialAcceptance = await mutateWait(
-      storeCookie,
-      url,
-      'wait-offer-partial',
-      { action: 'ACCEPT', accepted: { kind: 'UNIT', quantity: 2 } },
-    );
+    const partialAcceptance = await mutateWait(storeCookie, url, 'wait-offer-partial', {
+      action: 'ACCEPT',
+      accepted: { kind: 'UNIT', quantity: 2 },
+    });
     assert.equal(partialAcceptance.statusCode, 400);
     assert.equal(partialAcceptance.json().error.code, 'VALIDATION_ERROR');
 
@@ -965,8 +958,7 @@ describe('KHOHANG-IDOSI API', () => {
       history
         .json()
         .data.audit.some(
-          (event) =>
-            event.action === 'PRIORITY_OFFER_ACCEPTED' && event.actorRole === 'STORE',
+          (event) => event.action === 'PRIORITY_OFFER_ACCEPTED' && event.actorRole === 'STORE',
         ),
       true,
     );
@@ -988,33 +980,20 @@ describe('KHOHANG-IDOSI API', () => {
       assert.equal(denied.json().error.code, 'FORBIDDEN');
     }
 
-    const cancelled = await mutateWait(
-      storeCookie,
-      url,
-      'wait-ticket-cancel-0001',
-      payload,
-    );
+    const cancelled = await mutateWait(storeCookie, url, 'wait-ticket-cancel-0001', payload);
     assert.equal(cancelled.statusCode, 200);
     assert.equal(cancelled.headers['idempotency-replayed'], 'false');
     assert.equal(cancelled.json().data.id, MEMORY_SEED_IDS.cancellableWaitTicket);
     assert.equal(cancelled.json().data.status, 'CANCELLED');
 
-    const replay = await mutateWait(
-      storeCookie,
-      url,
-      'wait-ticket-cancel-0001',
-      payload,
-    );
+    const replay = await mutateWait(storeCookie, url, 'wait-ticket-cancel-0001', payload);
     assert.equal(replay.statusCode, 200);
     assert.equal(replay.headers['idempotency-replayed'], 'true');
     assert.deepEqual(replay.json().data, cancelled.json().data);
 
-    const keyConflict = await mutateWait(
-      storeCookie,
-      url,
-      'wait-ticket-cancel-0001',
-      { reason: 'Thay đổi lý do hủy phiếu chờ' },
-    );
+    const keyConflict = await mutateWait(storeCookie, url, 'wait-ticket-cancel-0001', {
+      reason: 'Thay đổi lý do hủy phiếu chờ',
+    });
     assert.equal(keyConflict.statusCode, 409);
     assert.equal(keyConflict.json().error.code, 'IDEMPOTENCY_CONFLICT');
 
