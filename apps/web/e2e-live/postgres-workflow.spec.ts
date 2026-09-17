@@ -99,7 +99,7 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
       response.url() === `${apiOrigin}/api/v1/admin/accounts` &&
       response.request().method() === 'POST',
   );
-  await accountForm.getByRole('button', { name: 'Tạo tài khoản' }).click();
+  await accountForm.getByRole('button', { exact: true, name: 'Tạo tài khoản' }).click();
   expect((await accountResponsePromise).status()).toBe(201);
   await expect(page.getByText(`Đã tạo tài khoản ${storeUsername}.`)).toBeVisible();
 
