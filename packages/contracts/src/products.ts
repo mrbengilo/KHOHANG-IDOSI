@@ -158,6 +158,11 @@ export const CreateProductConversionRequestSchema = z
     itemQuantity: ProductConversionItemQuantitySchema,
     weightKilograms: ProductConversionWeightKilogramsSchema,
     reason: AuditReasonSchema,
+    /**
+     * Compare-and-append guard. Omit (or send zero) for the first conversion; when history
+     * exists this must match the latest immutable version before a retired series can resume.
+     */
+    expectedVersion: z.number().int().nonnegative().safe().optional(),
   })
   .strict()
   .refine(hasOrderedConversionPeriod, {

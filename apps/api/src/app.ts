@@ -946,7 +946,9 @@ function openApiDocument(): Record<string, unknown> {
         },
         post: {
           security: cookieSecurity,
-          responses: { '201': { description: 'Initial conversion' } },
+          responses: {
+            '201': { description: 'Initial or resumed immutable conversion version' },
+          },
         },
       },
       '/api/v1/product-conversions': {

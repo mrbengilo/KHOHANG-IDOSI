@@ -111,7 +111,7 @@ export function dashboardRouteForAction(
   role: Role,
   storeKind: StoreKind | null,
 ): string {
-  if (action === 'WAITING') return '/allocations';
+  if (action === 'WAITING') return role === 'STORE' ? '/requests' : '/allocations';
   if (role === 'STORE') return storeKind === 'WHOLESALE' ? '/requests' : '/receive';
   return '/reports';
 }
@@ -436,6 +436,7 @@ export function DashboardPage() {
       {!roleMismatch && viewState === 'READY' && bootstrap && snapshotQuery.data ? (
         <DashboardContent
           onNavigate={(target) => navigate(target)}
+          role={sessionRole}
           scope={scope as DashboardScope}
           snapshot={snapshotQuery.data}
           storeKind={effectiveStoreKind}
@@ -543,12 +544,14 @@ function DashboardMessage({
 
 function DashboardContent({
   onNavigate,
+  role,
   scope,
   snapshot,
   storeKind,
   stores,
 }: {
   readonly onNavigate: (target: string) => void;
+  readonly role: Role;
   readonly scope: DashboardScope;
   readonly snapshot: DashboardSnapshot;
   readonly storeKind: StoreKind | null;
@@ -693,8 +696,12 @@ function DashboardContent({
             value={String(openSessions.length)}
           />
           <Button
-            aria-label="Mở trang phân bổ và danh sách chờ"
-            onClick={() => onNavigate('/allocations')}
+            aria-label={
+              role === 'STORE'
+                ? 'Mở trang yêu cầu và danh sách chờ'
+                : 'Mở trang phân bổ và danh sách chờ'
+            }
+            onClick={() => onNavigate(dashboardRouteForAction('WAITING', role, storeKind))}
             tone="secondary"
           >
             Xem việc chờ <ArrowRight aria-hidden="true" size={16} />

@@ -617,14 +617,41 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     context: RequestContext,
   ): Promise<ProductConversion> {
     if (!this.products.has(productId)) throw notFound('Không tìm thấy mặt hàng');
-    if ([...this.productConversions.values()].some((item) => item.productId === productId)) {
-      throw conflict('Mặt hàng đã có lịch sử quy đổi; hãy tạo phiên bản kế tiếp bằng PATCH');
+    const latest = [...this.productConversions.values()]
+      .filter((item) => item.productId === productId)
+      .sort((left, right) => right.version - left.version)[0];
+    if (!latest && input.expectedVersion !== undefined && input.expectedVersion !== 0) {
+      throw new ApiError('VERSION_CONFLICT', 'Phiên bản tỷ lệ quy đổi đã thay đổi', 409);
+    }
+    if (latest) {
+      if (input.expectedVersion !== latest.version) {
+        throw new ApiError('VERSION_CONFLICT', 'Phiên bản tỷ lệ quy đổi đã thay đổi', 409);
+      }
+      if (latest.retiredAt === null) {
+        throw conflict(
+          'Tỷ lệ quy đổi hiện tại vẫn hoạt động; hãy tạo phiên bản kế tiếp bằng PATCH',
+        );
+      }
+      if (
+        input.effectiveFrom <= latest.effectiveFrom ||
+        (latest.effectiveTo !== null && input.effectiveFrom < latest.effectiveTo)
+      ) {
+        throw new ApiError(
+          'VALIDATION_ERROR',
+          'Ngày hiệu lực phải sau phiên bản gần nhất và không trước ngày phiên bản đó kết thúc',
+          400,
+        );
+      }
     }
     const conversion: ProductConversion = {
       id: randomUUID(),
       productId,
-      version: 1,
-      ...input,
+      version: (latest?.version ?? 0) + 1,
+      itemQuantity: input.itemQuantity,
+      weightKilograms: input.weightKilograms,
+      effectiveFrom: input.effectiveFrom,
+      effectiveTo: input.effectiveTo,
+      reason: input.reason,
       createdByAccountId: actor.accountId,
       createdAt: this.now().toISOString(),
       retiredAt: null,
@@ -635,10 +662,10 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     this.appendAudit(
       actor,
       context,
-      'PRODUCT_CONVERSION_CREATED',
+      latest ? 'PRODUCT_CONVERSION_APPENDED' : 'PRODUCT_CONVERSION_CREATED',
       'product_conversion',
       conversion.id,
-      null,
+      latest ?? null,
       conversion,
     );
     return conversion;
