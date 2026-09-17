@@ -11,6 +11,28 @@ test('admin can review the dashboard and updated product catalog', async ({ page
   await expect(page.getByText('1 cái × 3 = 3,000 kg')).toBeVisible();
 });
 
+test('catalog dialog traps focus, closes with Escape, and restores its trigger', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-1440', 'desktop-only assertion');
+  await page.goto('/catalog');
+  const trigger = page.getByRole('button', { exact: true, name: 'Thêm mặt hàng' }).first();
+  await trigger.click();
+
+  const dialog = page.getByRole('dialog', { name: 'Thêm mặt hàng và hệ số' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel('Mã SKU')).toBeFocused();
+
+  const closeButton = dialog.getByRole('button', { name: 'Đóng' });
+  await closeButton.focus();
+  await page.keyboard.press('Shift+Tab');
+  await expect(dialog.getByRole('button', { name: /Lưu phiên bản/ })).toBeFocused();
+
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+});
+
 test('mobile navigation remains usable at 390px', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile-390', 'mobile-only assertion');
   await page.goto('/');

@@ -7,7 +7,7 @@ import type {
 } from '@idosi/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ban, Clock3, History, RotateCcw, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   ApiClientError,
   cancelWaitTicket,
@@ -17,6 +17,7 @@ import {
   respondPriorityOffer,
 } from '../lib/api';
 import { useSession } from '../lib/auth';
+import { useDialogAccessibility } from '../lib/use-dialog-accessibility';
 import { retainIdempotencyForExactRetry, type RetryAttempt } from '../lib/idempotency-retry';
 import type { Role } from '../lib/types';
 import { Badge } from './Badge';
@@ -404,16 +405,18 @@ function HistoryDialog({
   onRetry,
   productNameById,
 }: HistoryDialogProps) {
-  useDialogEscape(onClose);
+  const dialogRef = useDialogAccessibility(onClose);
   const titleId = 'wait-ticket-history-title';
 
   return (
     <div className="dialog-backdrop">
       <section
+        ref={dialogRef}
         aria-labelledby={titleId}
         aria-modal="true"
         className="dialog waitlist-dialog"
         role="dialog"
+        tabIndex={-1}
       >
         <div className="dialog__header">
           <div>
@@ -508,13 +511,20 @@ function CancelDialog({
   productName,
   reason,
 }: CancelDialogProps) {
-  useDialogEscape(busy ? undefined : onCancel);
+  const dialogRef = useDialogAccessibility(busy ? undefined : onCancel);
   const titleId = 'cancel-wait-ticket-title';
   const reasonErrorId = 'cancel-wait-ticket-reason-error';
 
   return (
     <div className="dialog-backdrop">
-      <section aria-labelledby={titleId} aria-modal="true" className="dialog" role="dialog">
+      <section
+        ref={dialogRef}
+        aria-labelledby={titleId}
+        aria-modal="true"
+        className="dialog"
+        role="dialog"
+        tabIndex={-1}
+      >
         <div className="dialog__header">
           <div>
             <h2 id={titleId}>Hủy phiếu chờ</h2>
@@ -565,15 +575,4 @@ function CancelDialog({
       </section>
     </div>
   );
-}
-
-function useDialogEscape(onClose: (() => void) | undefined) {
-  useEffect(() => {
-    if (!onClose) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [onClose]);
 }
