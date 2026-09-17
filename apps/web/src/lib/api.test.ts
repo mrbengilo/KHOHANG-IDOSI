@@ -66,6 +66,64 @@ describe('API projections', () => {
     ]);
   });
 
+  it('loads every catalog page so allocation rows always have a product label', async () => {
+    const product = (id: string, sku: string, name: string) => ({
+      createdAt: '2026-09-17T00:00:00.000Z',
+      id,
+      measurement: 'UNIT' as const,
+      name,
+      sku,
+      status: 'ACTIVE' as const,
+      unitLabel: 'cái',
+      updatedAt: '2026-09-17T00:00:00.000Z',
+    });
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('/product-conversions')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [],
+              pagination: { page: 1, pageSize: 100, totalItems: 0, totalPages: 0 },
+            }),
+            { status: 200 },
+          ),
+        );
+      }
+      const secondPage = url.includes('page=2');
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            data: [
+              secondPage
+                ? product('00000000-0000-4000-8000-000000000002', 'SKU-002', 'Trang hai')
+                : product('00000000-0000-4000-8000-000000000001', 'SKU-001', 'Trang một'),
+            ],
+            pagination: {
+              page: secondPage ? 2 : 1,
+              pageSize: 100,
+              totalItems: 2,
+              totalPages: 2,
+            },
+          }),
+          { status: 200 },
+        ),
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(listCatalog()).resolves.toEqual([
+      expect.objectContaining({ name: 'Trang một' }),
+      expect.objectContaining({ name: 'Trang hai' }),
+    ]);
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('/products?page=1&pageSize=100'),
+        expect.stringContaining('/products?page=2&pageSize=100'),
+      ]),
+    );
+  });
+
   it('loads the active order session and sends an explicit idempotency key', async () => {
     const sessionId = '10000000-0000-4000-8000-000000000001';
     const storeId = '20000000-0000-4000-8000-000000000001';

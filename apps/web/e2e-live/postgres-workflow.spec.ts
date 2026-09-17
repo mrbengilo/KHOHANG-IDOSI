@@ -78,10 +78,21 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
       response.url().includes('sessionId=') &&
       response.request().method() === 'GET',
   );
-  await sessionRow.getByRole('button', { name: `Xem kết quả phiên ${businessDate}` }).click();
+  const sessionResultsButton = sessionRow.getByRole('button', {
+    name: `Xem kết quả phiên ${businessDate}`,
+  });
+  await sessionResultsButton.click();
   expect((await scopedResultsPromise).status()).toBe(200);
   await expect(page.getByRole('heading', { name: 'Kết quả phân bổ đã lưu' })).toBeFocused();
   await expect(page.getByText('Chưa có kết quả phân bổ phù hợp')).toBeVisible();
+  const repeatedScopedResultsPromise = page.waitForResponse(
+    (response) =>
+      response.url().includes(`${apiOrigin}/api/v1/allocations?`) &&
+      response.url().includes('sessionId=') &&
+      response.request().method() === 'GET',
+  );
+  await sessionResultsButton.click();
+  expect((await repeatedScopedResultsPromise).status()).toBe(200);
   await sessionRow.getByRole('button', { name: 'Hủy phiên' }).click();
   const cancellationForm = page.locator('.allocation-cancel-form');
   await cancellationForm
@@ -125,7 +136,8 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
       response.request().method() === 'POST',
   );
   await accountForm.getByRole('button', { exact: true, name: 'Tạo tài khoản' }).click();
-  expect((await accountResponsePromise).status()).toBe(201);
+  const accountResponse = await accountResponsePromise;
+  expect(accountResponse.status()).toBe(201);
   await expect(page.getByText(`Đã tạo tài khoản ${storeUsername}.`)).toBeVisible();
 
   const logoutResponsePromise = page.waitForResponse(
@@ -143,6 +155,15 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
     .context()
     .request.get(`${apiOrigin}/api/v1/admin/accounts?page=1&pageSize=20`);
   expect(forbiddenAdminApi.status()).toBe(403);
+  const storeAllocationResponsePromise = page.waitForResponse(
+    (response) =>
+      response.url().includes(`${apiOrigin}/api/v1/allocations?`) &&
+      response.request().method() === 'GET',
+  );
+  await page.getByRole('link', { name: 'Phân bổ hàng hóa' }).click();
+  expect((await storeAllocationResponsePromise).status()).toBe(200);
+  await expect(page.getByRole('heading', { name: 'Giám sát phân bổ hàng hóa' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Kết quả phân bổ đã lưu' })).toBeVisible();
   await page.goto('/users');
   await expect(page).toHaveURL(/\/$/u);
   await expect(page.getByRole('heading', { name: 'Tổng quan cửa hàng' })).toBeVisible();

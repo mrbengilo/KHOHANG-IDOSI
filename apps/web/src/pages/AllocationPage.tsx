@@ -323,8 +323,9 @@ export function allocationResultsViewState(input: {
   readonly resultCount: number;
 }): AllocationResultsViewState {
   if (input.isPending) return 'LOADING';
+  if (input.resultCount > 0) return 'READY';
   if (input.hasError) return 'ERROR';
-  return input.resultCount === 0 ? 'EMPTY' : 'READY';
+  return 'EMPTY';
 }
 
 function allocationRoundText(result: AllocationResult): string {
@@ -554,6 +555,10 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
     setAllocationSessionId(sessionId);
     setAllocationStatus('');
     setAllocationStoreId('');
+    void queryClient.invalidateQueries({
+      exact: true,
+      queryKey: ['allocation-results', 1, sessionId, '', ''],
+    });
     window.requestAnimationFrame(() => {
       allocationResultsHeadingRef.current?.focus();
       allocationResultsHeadingRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -810,8 +815,8 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
           <div>
             <h2 id="order-session-heading">Phiên nhận đơn và phân bổ</h2>
             <p>
-              Admin vận hành trạng thái có khóa phiên bản; HTKD theo dõi dữ liệu trong phạm vi được
-              cấp.
+              Admin vận hành trạng thái có khóa phiên bản; HTKD và cửa hàng theo dõi dữ liệu đúng
+              phạm vi được cấp.
             </p>
           </div>
           {role === 'ADMIN' ? (
@@ -1047,6 +1052,17 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
         {allocationViewState === 'ERROR' ? (
           <div className="allocation-session-state allocation-session-state--error" role="alert">
             <span>Không thể tải kết quả phân bổ. Dữ liệu phiên và phiếu chờ vẫn được giữ lại.</span>
+            <Button onClick={() => void allocationQuery.refetch()} tone="secondary">
+              <RotateCcw aria-hidden="true" size={16} /> Thử lại
+            </Button>
+          </div>
+        ) : null}
+        {allocationViewState === 'READY' && allocationQuery.isError ? (
+          <div className="allocation-session-state allocation-session-state--error" role="alert">
+            <span>
+              Không thể cập nhật kết quả mới nhất. Bảng bên dưới vẫn là dữ liệu đã xác nhận gần
+              nhất.
+            </span>
             <Button onClick={() => void allocationQuery.refetch()} tone="secondary">
               <RotateCcw aria-hidden="true" size={16} /> Thử lại
             </Button>

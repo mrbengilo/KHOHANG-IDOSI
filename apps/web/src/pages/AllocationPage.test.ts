@@ -84,5 +84,8 @@ describe('production allocation session helpers', () => {
     expect(allocationResultsViewState({ hasError: false, isPending: false, resultCount: 1 })).toBe(
       'READY',
     );
+    expect(allocationResultsViewState({ hasError: true, isPending: false, resultCount: 2 })).toBe(
+      'READY',
+    );
   });
 });

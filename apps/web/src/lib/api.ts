@@ -172,14 +172,16 @@ export async function logout(): Promise<void> {
 
 export async function listCatalog(): Promise<CatalogProduct[]> {
   const effectiveAt = businessDate();
-  const [productsPayload, conversionsPayload] = await Promise.all([
-    request('/products?page=1&pageSize=100'),
-    request(
-      `/product-conversions?page=1&pageSize=100&includeRetired=false&effectiveAt=${effectiveAt}`,
+  const [products, conversions] = await Promise.all([
+    listAllPages('/products', new URLSearchParams(), (payload) =>
+      ListProductsResponseSchema.parse(payload),
+    ),
+    listAllPages(
+      '/product-conversions',
+      new URLSearchParams({ effectiveAt, includeRetired: 'false' }),
+      (payload) => ListProductConversionsResponseSchema.parse(payload),
     ),
   ]);
-  const products = ListProductsResponseSchema.parse(productsPayload).data;
-  const conversions = ListProductConversionsResponseSchema.parse(conversionsPayload).data;
 
   return products.map((product) => {
     const conversion = conversions
