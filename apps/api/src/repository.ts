@@ -4,6 +4,7 @@ import type {
   AllocationResult,
   AuthenticatedPrincipal,
   CancelInboundReceiptRequest,
+  CancelStoreOrderRequest,
   CancelWaitTicketRequest,
   CreateOrderSessionRequest,
   CreateProductConversionRequest,
@@ -421,6 +422,14 @@ export interface WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<SubmittedOrderRequest>;
+  cancelOrderRequest(
+    actor: AuthenticatedPrincipal,
+    requestId: string,
+    input: CancelStoreOrderRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreOrderRequest>>;
 
   listWarehouseOutboundRequests(
     actor: AuthenticatedPrincipal,

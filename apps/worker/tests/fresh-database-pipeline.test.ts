@@ -9,6 +9,7 @@ import {
   listStoreReceiptSources,
   listWarehouseOutboundRequests,
   mergedOrderItems,
+  orderSessions,
   products,
   reservations,
   stores,
@@ -32,6 +33,8 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
       max: 2,
       application_name: 'idosi-fresh-pipeline-integration-test',
     });
+    let cleanupSessionId: string | null = null;
+    let cleanupActorId: string | null = null;
 
     try {
       const [administrator] = await client.db
@@ -53,6 +56,11 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
         throw new Error('Reference seed and administrator bootstrap must run before this test.');
       }
 
+      // Request acceptance is deliberately checked against the real clock, so
+      // this end-to-end database fixture must use today's Ho Chi Minh date.
+      // The session is soft-deleted in finally so the later live browser suite
+      // can create its own same-day session in this shared CI database.
+      const runKey = randomUUID();
       const now = new Date();
       const businessDate = hoChiMinhDate(now);
       const requestOpensAt = new Date(`${businessDate}T00:00:00+07:00`);
@@ -63,7 +71,6 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
           'Integration test started during the final two seconds of the business day.',
         );
       }
-      const runKey = randomUUID();
       const sessionResult = await createOrderSession(client.db, {
         businessDate,
         requestOpensAt,
@@ -77,6 +84,8 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
       });
       if (sessionResult.replayed) throw new Error('Fresh session unexpectedly replayed.');
       const sessionId = sessionResult.value.id;
+      cleanupSessionId = sessionId;
+      cleanupActorId = administrator.id;
 
       const opened = await transitionOrderSession(client.db, {
         orderSessionId: sessionId,
@@ -225,6 +234,12 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
         lines: [{ productId: product.id, approvedUnits: 3, dispatchedUnits: 3 }],
       });
     } finally {
+      if (cleanupSessionId && cleanupActorId) {
+        await client.db
+          .update(orderSessions)
+          .set({ deletedAt: new Date(), deletedByUserId: cleanupActorId })
+          .where(eq(orderSessions.id, cleanupSessionId));
+      }
       await client.close();
     }
   }, 30_000);
