@@ -16,7 +16,7 @@ const RequestsPage = lazy(() =>
   import('./pages/RequestsPage').then((module) => ({ default: module.RequestsPage })),
 );
 const ReceivePage = lazy(() =>
-  import('./pages/OperationsPages').then((module) => ({ default: module.ReceivePage })),
+  import('./pages/ReceivePage').then((module) => ({ default: module.ReceivePage })),
 );
 const InventoryPage = lazy(() =>
   import('./pages/OperationsPages').then((module) => ({ default: module.InventoryPage })),

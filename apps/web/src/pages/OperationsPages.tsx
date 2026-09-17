@@ -4,7 +4,6 @@ import {
   CircleCheck,
   CircleDollarSign,
   CloudDownload,
-  FileCheck2,
   PackageOpen,
   Plus,
   Scale,
@@ -22,92 +21,6 @@ import { mockModeEnabled } from '../lib/api';
 import { estimateKilograms, itemsPerKilogram, kilogramsPerItem } from '../lib/conversions';
 import { inventoryLedger, productConversions } from '../lib/data';
 import { formatKg, formatPercent, formatVnd } from '../lib/format';
-
-export function ReceivePage() {
-  const [mode, setMode] = useState<'EXACT' | 'SHORT' | 'WRONG'>('EXACT');
-  const [actual, setActual] = useState(5);
-  const [done, setDone] = useState(false);
-
-  if (!mockModeEnabled) return <UnavailableFeature title="Xác nhận nhận hàng" />;
-
-  return (
-    <>
-      <PageHeader
-        description="Phiếu PB-GV-260912-032 • 5 bao Đồ nam • cửa hàng Gò Vấp"
-        title="Xác nhận nhận hàng"
-      />
-      <div className="stats-grid stats-grid--small">
-        <StatCard detail="Theo phiếu phân bổ" label="Số dự kiến" tone="info" value="5 bao" />
-        <StatCard detail="Mã bao 014–018" label="Khối lượng dự kiến" value="474 kg" />
-        <StatCard
-          detail="Chỉ cộng tồn sau xác nhận"
-          label="Trạng thái"
-          tone="warning"
-          value="Chờ nhận"
-        />
-        <StatCard detail="HTKD Nguyễn An" label="Người phụ trách" value="09:05" />
-      </div>
-      <section className="panel receive-grid">
-        <div>
-          <h2>Khai thực nhận</h2>
-          <p>Cửa hàng khai đúng thực tế. HTKD không thể âm thầm thay đổi số đã khai.</p>
-          <div className="choice-grid">
-            {(['EXACT', 'SHORT', 'WRONG'] as const).map((value) => (
-              <label className={mode === value ? 'selected' : ''} key={value}>
-                <input
-                  checked={mode === value}
-                  name="receive-mode"
-                  onChange={() => setMode(value)}
-                  type="radio"
-                />
-                <strong>
-                  {value === 'EXACT'
-                    ? 'Nhận đủ'
-                    : value === 'SHORT'
-                      ? 'Nhận thiếu'
-                      : 'Sai mặt hàng / hư hỏng'}
-                </strong>
-                <span>
-                  {value === 'EXACT'
-                    ? 'Đúng 5 bao theo phiếu'
-                    : value === 'SHORT'
-                      ? 'Tạo/cập nhật phiếu chờ ưu tiên'
-                      : 'Đưa phần sai vào khu cách ly'}
-                </span>
-              </label>
-            ))}
-          </div>
-        </div>
-        <div className="receive-form">
-          <label>
-            Số bao thực nhận
-            <input
-              max="5"
-              min="0"
-              onChange={(event) => setActual(event.target.valueAsNumber || 0)}
-              type="number"
-              value={actual}
-            />
-          </label>
-          <label>
-            Ghi chú / bằng chứng
-            <textarea placeholder="Mô tả chênh lệch, tình trạng niêm phong…" rows={4} />
-          </label>
-          <div className="document-summary">
-            <span>Được cộng tồn</span>
-            <strong>{mode === 'WRONG' ? 0 : actual} bao</strong>
-            <span>Khu cách ly / chờ xử lý</span>
-            <strong>{mode === 'EXACT' ? 0 : Math.max(0, 5 - actual)} bao</strong>
-          </div>
-          <Button disabled={done} onClick={() => setDone(true)}>
-            {done ? <CircleCheck size={17} /> : <FileCheck2 size={17} />}{' '}
-            {done ? 'Đã ghi nhận thực nhận' : 'Xác nhận thực nhận'}
-          </Button>
-        </div>
-      </section>
-    </>
-  );
-}
 
 export function InventoryPage() {
   const [query, setQuery] = useState('');

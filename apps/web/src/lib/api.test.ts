@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { listCatalog, listOpenOrderSessions, submitStoreOrderRequest } from './api';
+import {
+  declareStoreReceipt,
+  finalizeStoreReceipt,
+  getStoreReceipt,
+  listCatalog,
+  listOpenOrderSessions,
+  listStoreReceipts,
+  returnStoreReceiptForCorrection,
+  submitStoreOrderRequest,
+  submitStoreReceipt,
+} from './api';
 
 const pagination = { page: 1, pageSize: 100, totalItems: 1, totalPages: 1 };
 
@@ -111,5 +121,130 @@ describe('API projections', () => {
         'request-key-2026',
       ),
     ).resolves.toEqual(expect.objectContaining({ requestSequence: 1, status: 'SUBMITTED' }));
+  });
+
+  it('loads receipt detail and sends every receipt transition with idempotency', async () => {
+    const receiptId = '70000000-0000-4000-8000-000000000001';
+    const storeId = '20000000-0000-4000-8000-000000000001';
+    const outboundRequestId = '30000000-0000-4000-8000-000000000001';
+    const productId = '40000000-0000-4000-8000-000000000001';
+    const accountId = '50000000-0000-4000-8000-000000000001';
+    const requestedUrls: string[] = [];
+    const mutationRequests: Array<{ body: unknown; key: string | null; url: string }> = [];
+    const receipt = (status: 'DRAFT' | 'PENDING_HTKD' | 'RETURNED' | 'FINALIZED') => ({
+      createdAt: '2026-09-17T00:00:00.000Z',
+      declaredByAccountId: accountId,
+      discrepancyNote: 'Thiếu một bao khi giao nhận',
+      freightVnd: status === 'FINALIZED' ? 100_000 : 0,
+      handlingVnd: status === 'FINALIZED' ? 50_000 : 0,
+      id: receiptId,
+      lines: [
+        {
+          approvedUnits: 2,
+          bagWeightsKg: status === 'FINALIZED' ? ['92.500'] : [],
+          pricePerKgVnd: status === 'FINALIZED' ? 25_000 : null,
+          productId,
+          receivedUnits: 1,
+        },
+      ],
+      outboundRequestId,
+      receiptNumber: 'SR-2026-0001',
+      reviewNote: status === 'RETURNED' ? 'Bổ sung bằng chứng' : null,
+      reviewedByAccountId: status === 'FINALIZED' ? accountId : null,
+      status,
+      storeId,
+      totalCostVnd: status === 'FINALIZED' ? 2_462_500 : null,
+      updatedAt: '2026-09-17T00:10:00.000Z',
+      version: status === 'DRAFT' ? 0 : 1,
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        requestedUrls.push(url);
+        if (init?.method === 'POST') {
+          mutationRequests.push({
+            body: JSON.parse(String(init.body)),
+            key: new Headers(init.headers).get('idempotency-key'),
+            url,
+          });
+        }
+        const status = url.endsWith('/submit')
+          ? 'PENDING_HTKD'
+          : url.endsWith('/return')
+            ? 'RETURNED'
+            : url.endsWith('/finalize')
+              ? 'FINALIZED'
+              : 'DRAFT';
+        const payload =
+          init?.method !== 'POST' && url.includes('/store-receipts?')
+            ? { data: [receipt('DRAFT')], pagination }
+            : { data: receipt(status) };
+        return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }));
+      }),
+    );
+
+    await expect(listStoreReceipts({ status: 'DRAFT', storeId })).resolves.toHaveLength(1);
+    await expect(getStoreReceipt(receiptId)).resolves.toEqual(
+      expect.objectContaining({ id: receiptId, receiptNumber: 'SR-2026-0001' }),
+    );
+    await declareStoreReceipt(
+      {
+        discrepancyNote: 'Thiếu một bao khi giao nhận',
+        lines: [{ approvedUnits: 2, productId, receivedUnits: 1 }],
+        outboundRequestId,
+        storeId,
+      },
+      'receipt-declare-key',
+    );
+    await submitStoreReceipt(
+      receiptId,
+      {
+        discrepancyNote: 'Thiếu một bao khi giao nhận',
+        expectedVersion: 0,
+        lines: [{ approvedUnits: 2, productId, receivedUnits: 1 }],
+      },
+      'receipt-submit-key',
+    );
+    await returnStoreReceiptForCorrection(
+      receiptId,
+      { expectedVersion: 1, reason: 'Bổ sung bằng chứng' },
+      'receipt-return-key',
+    );
+    await finalizeStoreReceipt(
+      receiptId,
+      {
+        expectedVersion: 1,
+        freightVnd: 100_000,
+        handlingVnd: 50_000,
+        lines: [
+          {
+            approvedUnits: 2,
+            bagWeightsKg: ['92.500'],
+            pricePerKgVnd: 25_000,
+            productId,
+            receivedUnits: 1,
+          },
+        ],
+      },
+      'receipt-finalize-key',
+    );
+
+    expect(requestedUrls[0]).toContain(
+      `/store-receipts?page=1&pageSize=100&status=DRAFT&storeId=${storeId}`,
+    );
+    expect(requestedUrls[1]).toContain(`/store-receipts/${receiptId}`);
+    expect(mutationRequests.map((request) => request.key)).toEqual([
+      'receipt-declare-key',
+      'receipt-submit-key',
+      'receipt-return-key',
+      'receipt-finalize-key',
+    ]);
+    expect(mutationRequests.map((request) => request.url)).toEqual([
+      expect.stringMatching(/\/store-receipts$/),
+      expect.stringContaining(`/store-receipts/${receiptId}/submit`),
+      expect.stringContaining(`/store-receipts/${receiptId}/return`),
+      expect.stringContaining(`/store-receipts/${receiptId}/finalize`),
+    ]);
   });
 });

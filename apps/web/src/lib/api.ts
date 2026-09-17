@@ -1,5 +1,6 @@
 import {
   ErrorEnvelopeSchema,
+  ListReceiptsResponseSchema,
   GetSessionResponseSchema,
   ListProductConversionsResponseSchema,
   ListProductsResponseSchema,
@@ -10,14 +11,21 @@ import {
   LogoutResponseSchema,
   ProductConversionResponseSchema,
   ProductResponseSchema,
+  ReceiptResponseSchema,
   StoreOrderRequestResponseSchema,
+  type DeclareStoreReceiptRequest,
+  type FinalizeReceiptRequest,
   type CreateProductConversionRequest,
   type CreateStoreOrderRequest,
   type LoginRequest,
   type OrderSession,
+  type Receipt,
+  type ReceiptStatus,
+  type ReturnReceiptForCorrectionRequest,
   type Session,
   type Store,
   type StoreOrderRequest,
+  type SubmitStoreReceiptRequest,
   type UpdateProductConversionRequest,
   type StoreKind,
 } from '@idosi/contracts';
@@ -263,4 +271,78 @@ export async function submitStoreOrderRequest(
     method: 'POST',
   });
   return StoreOrderRequestResponseSchema.parse(payload).data;
+}
+
+interface ReceiptFilters {
+  readonly status?: ReceiptStatus;
+  readonly storeId?: string;
+}
+
+export async function listStoreReceipts(filters: ReceiptFilters = {}): Promise<Receipt[]> {
+  const query = new URLSearchParams({ page: '1', pageSize: '100' });
+  if (filters.status) query.set('status', filters.status);
+  if (filters.storeId) query.set('storeId', filters.storeId);
+  const payload = await request(`/store-receipts?${query.toString()}`);
+  return ListReceiptsResponseSchema.parse(payload).data;
+}
+
+export async function getStoreReceipt(receiptId: string): Promise<Receipt> {
+  const payload = await request(`/store-receipts/${encodeURIComponent(receiptId)}`);
+  return ReceiptResponseSchema.parse(payload).data;
+}
+
+async function mutateStoreReceipt(
+  path: string,
+  input: unknown,
+  idempotencyKey: string,
+): Promise<Receipt> {
+  const payload = await request(path, {
+    body: JSON.stringify(input),
+    headers: { 'idempotency-key': idempotencyKey },
+    method: 'POST',
+  });
+  return ReceiptResponseSchema.parse(payload).data;
+}
+
+export function declareStoreReceipt(
+  input: DeclareStoreReceiptRequest,
+  idempotencyKey: string,
+): Promise<Receipt> {
+  return mutateStoreReceipt('/store-receipts', input, idempotencyKey);
+}
+
+export function submitStoreReceipt(
+  receiptId: string,
+  input: SubmitStoreReceiptRequest,
+  idempotencyKey: string,
+): Promise<Receipt> {
+  return mutateStoreReceipt(
+    `/store-receipts/${encodeURIComponent(receiptId)}/submit`,
+    input,
+    idempotencyKey,
+  );
+}
+
+export function returnStoreReceiptForCorrection(
+  receiptId: string,
+  input: ReturnReceiptForCorrectionRequest,
+  idempotencyKey: string,
+): Promise<Receipt> {
+  return mutateStoreReceipt(
+    `/store-receipts/${encodeURIComponent(receiptId)}/return`,
+    input,
+    idempotencyKey,
+  );
+}
+
+export function finalizeStoreReceipt(
+  receiptId: string,
+  input: FinalizeReceiptRequest,
+  idempotencyKey: string,
+): Promise<Receipt> {
+  return mutateStoreReceipt(
+    `/store-receipts/${encodeURIComponent(receiptId)}/finalize`,
+    input,
+    idempotencyKey,
+  );
 }
