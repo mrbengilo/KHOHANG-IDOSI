@@ -13,6 +13,41 @@ export interface DialogProps {
   readonly danger?: boolean;
 }
 
+function focusElement(element: HTMLElement | null): boolean {
+  if (!element?.isConnected || element.hidden || element.getAttribute('aria-hidden') === 'true') {
+    return false;
+  }
+
+  element.focus({ preventScroll: true });
+  return document.activeElement === element;
+}
+
+function restoreDialogFocus(previousFocus: HTMLElement | null): void {
+  if (focusElement(previousFocus)) return;
+
+  const fallback = [
+    '[data-dialog-focus-fallback]',
+    'main h1',
+    '[role="main"] h1',
+    'main',
+    '[role="main"]',
+  ]
+    .map((selector) => document.querySelector<HTMLElement>(selector))
+    .find((element): element is HTMLElement => element !== null);
+  if (!fallback) return;
+
+  const previousTabIndex = fallback.getAttribute('tabindex');
+  if (previousTabIndex === null) fallback.tabIndex = -1;
+  const focused = focusElement(fallback);
+  if (previousTabIndex === null) {
+    if (focused) {
+      fallback.addEventListener('blur', () => fallback.removeAttribute('tabindex'), { once: true });
+    } else {
+      fallback.removeAttribute('tabindex');
+    }
+  }
+}
+
 export function Dialog({
   children,
   danger = false,
@@ -68,13 +103,15 @@ export function Dialog({
       if (!first || !last) {
         event.preventDefault();
         panel.focus();
-      } else if (
-        event.shiftKey &&
-        (document.activeElement === first || document.activeElement === panel)
-      ) {
+        return;
+      }
+
+      const focused = document.activeElement;
+      const focusedIndex = focused instanceof HTMLElement ? focusable.indexOf(focused) : -1;
+      if (event.shiftKey && (focused === first || focusedIndex === -1)) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && (focused === last || focusedIndex === -1)) {
         event.preventDefault();
         first.focus();
       }
@@ -85,7 +122,7 @@ export function Dialog({
     return () => {
       document.removeEventListener('keydown', onKeyDown);
       document.body.classList.remove('idosi-dialog-open');
-      previousFocusRef.current?.focus();
+      restoreDialogFocus(previousFocusRef.current);
     };
   }, [open]);
 
