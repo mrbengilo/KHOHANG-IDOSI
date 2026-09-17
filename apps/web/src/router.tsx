@@ -40,10 +40,12 @@ const CostPage = lazy(() =>
   import('./pages/OperationsPages').then((module) => ({ default: module.CostPage })),
 );
 const UsersPage = lazy(() =>
-  import('./pages/AdminPages').then((module) => ({ default: module.UsersPage })),
+  import('./features/admin/AdminUsersPage').then((module) => ({
+    default: module.AdminUsersPage,
+  })),
 );
 const AuditPage = lazy(() =>
-  import('./pages/AdminPages').then((module) => ({ default: module.AuditPage })),
+  import('./features/admin/AuditLogPage').then((module) => ({ default: module.AuditLogPage })),
 );
 const SettingsPage = lazy(() =>
   import('./pages/AdminPages').then((module) => ({ default: module.SettingsPage })),
