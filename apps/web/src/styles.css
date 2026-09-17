@@ -1035,6 +1035,134 @@ td small {
   font-size: 12px;
 }
 
+.allocation-session-notice {
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0 0 16px;
+  padding: 11px 13px;
+}
+
+.allocation-session-notice--success {
+  border-color: #86efac;
+  background: var(--success-soft);
+  color: #166534;
+}
+
+.allocation-session-notice--error {
+  border-color: #fecaca;
+  background: var(--danger-soft);
+  color: #991b1b;
+}
+
+.allocation-session-form,
+.allocation-session-console,
+.allocation-cancel-form {
+  margin-bottom: 18px;
+}
+
+.allocation-session-form {
+  border-color: #c7d2fe;
+  background: #fafaff;
+}
+
+.allocation-session-form__grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.allocation-session-form__grid label,
+.allocation-cancel-form label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.allocation-session-form__wide {
+  grid-column: 1 / -1;
+}
+
+.allocation-session-form__warning {
+  border-radius: 8px;
+  background: var(--warning-soft);
+  color: #9a3412;
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0 0 12px;
+  padding: 9px 11px;
+}
+
+.allocation-session-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.allocation-session-state {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 18px 0;
+}
+
+.allocation-session-state--error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--danger);
+}
+
+.allocation-session-actions {
+  display: flex;
+  min-width: 150px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.allocation-session-actions > span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.allocation-cancel-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.6fr) minmax(260px, 1fr) auto;
+  align-items: end;
+  gap: 16px;
+  border-color: #fecaca;
+  background: var(--danger-soft);
+}
+
+.allocation-cancel-form h2 {
+  color: #991b1b;
+}
+
+.allocation-cancel-form p {
+  color: #b91c1c;
+  font-size: 10px;
+  line-height: 1.5;
+  margin-top: 5px;
+}
+
+.allocation-cancel-form textarea {
+  min-height: 64px;
+}
+
+.allocation-cancel-form .allocation-session-form__actions {
+  margin-top: 0;
+}
+
+.allocation-context-loading {
+  margin-bottom: 18px;
+}
+
 .inline-select {
   display: flex;
   align-items: center;
@@ -2289,6 +2417,15 @@ td small {
   .timeline-strip > svg {
     display: none;
   }
+  .allocation-session-form__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .allocation-cancel-form {
+    grid-template-columns: minmax(180px, 0.6fr) minmax(260px, 1fr);
+  }
+  .allocation-cancel-form .allocation-session-form__actions {
+    grid-column: 1 / -1;
+  }
   .login-page {
     grid-template-columns: 1fr 1fr;
   }
@@ -2391,6 +2528,14 @@ td small {
   .report-grid,
   .settings-grid {
     grid-template-columns: 1fr;
+  }
+
+  .allocation-cancel-form {
+    grid-template-columns: 1fr;
+  }
+
+  .allocation-cancel-form .allocation-session-form__actions {
+    grid-column: auto;
   }
 
   .receipt-list {
@@ -2558,6 +2703,19 @@ td small {
   .timeline-strip > div {
     min-width: 0;
   }
+  .allocation-session-form__grid {
+    grid-template-columns: 1fr;
+  }
+  .allocation-session-form__wide {
+    grid-column: auto;
+  }
+  .allocation-session-form__actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .allocation-session-form__actions .button {
+    width: 100%;
+  }
   .mini-kpis {
     grid-template-columns: 1fr;
   }
@@ -2672,6 +2830,10 @@ td small {
   }
   .table-actions {
     justify-content: flex-end;
+  }
+  .allocation-session-actions {
+    min-width: 0;
+    align-items: flex-end;
   }
   .login-visual {
     min-height: 300px;

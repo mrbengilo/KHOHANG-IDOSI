@@ -1,6 +1,28 @@
-import { ArrowRight, CheckCircle2, Clock3, Play, RotateCcw, ShieldCheck } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import {
+  CreateOrderSessionRequestSchema,
+  DEFAULT_ALLOCATION_POLICY_VERSION,
+  type CreateOrderSessionRequest,
+  type OperationalSettingsVersion,
+  type OrderSession,
+  type OrderSessionStatus,
+  type TransitionOrderSessionRequest,
+} from '@idosi/contracts';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  ArrowRight,
+  Ban,
+  CalendarClock,
+  CheckCircle2,
+  Clock3,
+  LockKeyhole,
+  Play,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  ShieldCheck,
+  X,
+} from 'lucide-react';
+import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import type { AppOutletContext } from '../components/AppShell';
 import { Badge } from '../components/Badge';
@@ -10,7 +32,17 @@ import { PageHeader } from '../components/PageHeader';
 import { PriorityOffer } from '../components/PriorityOffer';
 import { StatCard } from '../components/StatCard';
 import { WaitlistPanel } from '../components/WaitlistPanel';
-import { listAccessibleStores, listCatalog, mockModeEnabled } from '../lib/api';
+import { getAdminOperationalSettings } from '../features/admin/adminApi';
+import {
+  ApiClientError,
+  createOrderSession,
+  listAccessibleStores,
+  listCatalog,
+  listOrderSessions,
+  mockModeEnabled,
+  transitionOrderSession,
+} from '../lib/api';
+import { businessDate } from '../lib/business-time';
 import { allocationRequests as seed } from '../lib/data';
 import type { AllocationRequest } from '../lib/types';
 
@@ -232,13 +264,187 @@ export function AllocationPage() {
   );
 }
 
+const sessionStatusCopy: Record<OrderSessionStatus, string> = {
+  SCHEDULED: 'Đã lên lịch',
+  OPEN: 'Đang nhận đơn',
+  CLOSED: 'Đã đóng nhận đơn',
+  ALLOCATING: 'Đang phân bổ',
+  ALLOCATED: 'Đã phân bổ',
+  CANCELLED: 'Đã hủy',
+};
+
+const sessionStatusTone: Record<
+  OrderSessionStatus,
+  'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'priority'
+> = {
+  SCHEDULED: 'info',
+  OPEN: 'success',
+  CLOSED: 'warning',
+  ALLOCATING: 'priority',
+  ALLOCATED: 'success',
+  CANCELLED: 'neutral',
+};
+
+type AdminSessionTransition = TransitionOrderSessionRequest['status'];
+
+export interface OrderSessionDraft {
+  readonly businessDate: string;
+  readonly requestOpensTime: string;
+  readonly requestClosesTime: string;
+  readonly allocationStartsTime: string;
+  readonly policyVersion: string;
+}
+
+interface SessionNotice {
+  readonly kind: 'error' | 'success';
+  readonly message: string;
+}
+
+type SessionOperation =
+  | { readonly kind: 'CREATE'; readonly input: CreateOrderSessionRequest }
+  | {
+      readonly kind: 'TRANSITION';
+      readonly session: OrderSession;
+      readonly input: TransitionOrderSessionRequest;
+    };
+
+const BUSINESS_TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/u;
+const SESSION_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/u;
+const oneDayMilliseconds = 24 * 60 * 60 * 1_000;
+const sessionTimeFormatter = new Intl.DateTimeFormat('vi-VN', {
+  hour: '2-digit',
+  hourCycle: 'h23',
+  minute: '2-digit',
+  timeZone: 'Asia/Ho_Chi_Minh',
+});
+const businessClockFormatter = new Intl.DateTimeFormat('en-GB', {
+  hour: '2-digit',
+  hourCycle: 'h23',
+  minute: '2-digit',
+  timeZone: 'Asia/Ho_Chi_Minh',
+});
+
+function businessClock(date: Date): string {
+  return businessClockFormatter.format(date);
+}
+
+export function defaultOrderSessionDraft(
+  settings?: Pick<OperationalSettingsVersion, 'cutoffTime' | 'policyVersion' | 'snapshotTime'>,
+  now = new Date(),
+): OrderSessionDraft {
+  const requestClosesTime = settings?.snapshotTime ?? '08:00';
+  const useNextBusinessDate = businessClock(now) >= requestClosesTime;
+  const draftDate = useNextBusinessDate ? new Date(now.getTime() + oneDayMilliseconds) : now;
+  return {
+    allocationStartsTime: settings?.cutoffTime ?? '09:00',
+    businessDate: businessDate(draftDate),
+    policyVersion: settings?.policyVersion ?? DEFAULT_ALLOCATION_POLICY_VERSION,
+    requestClosesTime,
+    requestOpensTime: '00:00',
+  };
+}
+
+function isoAtBusinessTime(date: string, time: string): string {
+  return new Date(`${date}T${time}:00+07:00`).toISOString();
+}
+
+export function orderSessionInputFromDraft(draft: OrderSessionDraft): {
+  readonly error: string | null;
+  readonly input: CreateOrderSessionRequest | null;
+} {
+  if (
+    !SESSION_DATE_PATTERN.test(draft.businessDate) ||
+    !BUSINESS_TIME_PATTERN.test(draft.requestOpensTime) ||
+    !BUSINESS_TIME_PATTERN.test(draft.requestClosesTime) ||
+    !BUSINESS_TIME_PATTERN.test(draft.allocationStartsTime)
+  ) {
+    return { error: 'Ngày hoặc giờ vận hành chưa hợp lệ.', input: null };
+  }
+  if (draft.requestOpensTime >= draft.requestClosesTime) {
+    return { error: 'Giờ đóng nhận đơn phải sau giờ mở nhận đơn.', input: null };
+  }
+  if (draft.requestClosesTime > draft.allocationStartsTime) {
+    return { error: 'Giờ bắt đầu phân bổ không được trước giờ đóng nhận đơn.', input: null };
+  }
+
+  const parsed = CreateOrderSessionRequestSchema.safeParse({
+    allocationStartsAt: isoAtBusinessTime(draft.businessDate, draft.allocationStartsTime),
+    businessDate: draft.businessDate,
+    policyVersion: draft.policyVersion.trim(),
+    requestClosesAt: isoAtBusinessTime(draft.businessDate, draft.requestClosesTime),
+    requestOpensAt: isoAtBusinessTime(draft.businessDate, draft.requestOpensTime),
+  });
+  if (!parsed.success) {
+    return {
+      error: 'Lịch phiên chưa hợp lệ. Hãy kiểm tra ngày, giờ và phiên bản chính sách.',
+      input: null,
+    };
+  }
+  return { error: null, input: parsed.data };
+}
+
+export function availableSessionTransitions(status: OrderSessionStatus): AdminSessionTransition[] {
+  if (status === 'SCHEDULED') return ['OPEN', 'CANCELLED'];
+  if (status === 'OPEN') return ['CLOSED', 'CANCELLED'];
+  if (status === 'CLOSED') return ['CANCELLED'];
+  return [];
+}
+
+function sessionActionLabel(status: AdminSessionTransition): string {
+  if (status === 'OPEN') return 'Mở nhận đơn';
+  if (status === 'CLOSED') return 'Đóng nhận đơn';
+  return 'Hủy phiên';
+}
+
+function canOpenSessionNow(session: OrderSession, now = Date.now()): boolean {
+  return now >= Date.parse(session.requestOpensAt) && now < Date.parse(session.requestClosesAt);
+}
+
+function formatSessionTime(value: string): string {
+  return sessionTimeFormatter.format(new Date(value));
+}
+
+function sessionErrorMessage(error: unknown): string {
+  if (error instanceof ApiClientError) {
+    const reference = error.requestId ? ` Mã yêu cầu: ${error.requestId}.` : '';
+    if (error.code === 'VERSION_CONFLICT') {
+      return `Phiên đã thay đổi ở nơi khác. Dữ liệu đang được tải lại.${reference}`;
+    }
+    return `${error.message}${reference}`;
+  }
+  return 'Không thể hoàn tất thao tác vì phản hồi máy chủ không hợp lệ.';
+}
+
 function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>) {
+  const queryClient = useQueryClient();
   const catalogQuery = useQuery({ queryFn: listCatalog, queryKey: ['catalog'], retry: false });
   const storesQuery = useQuery({
     queryFn: listAccessibleStores,
     queryKey: ['stores', 'accessible'],
     retry: false,
   });
+  const sessionsQuery = useQuery({
+    queryFn: listOrderSessions,
+    queryKey: ['order-sessions', 'all'],
+    retry: false,
+  });
+  const settingsQuery = useQuery({
+    enabled: role === 'ADMIN',
+    queryFn: () => getAdminOperationalSettings(1),
+    queryKey: ['admin', 'operational-settings'],
+    retry: false,
+  });
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [draft, setDraft] = useState<OrderSessionDraft>(() => defaultOrderSessionDraft());
+  const [cancelTarget, setCancelTarget] = useState<OrderSession | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [notice, setNotice] = useState<SessionNotice | null>(null);
+  const [pendingAction, setPendingAction] = useState('');
+  const operationInFlight = useRef(false);
+  const operationKeys = useRef(new Map<string, string>());
+  const createDateRef = useRef<HTMLInputElement>(null);
+  const cancelReasonRef = useRef<HTMLTextAreaElement>(null);
+
   const productNameById = useMemo(
     () => new Map((catalogQuery.data ?? []).map((product) => [product.id, product.name])),
     [catalogQuery.data],
@@ -248,13 +454,437 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
     [storesQuery.data],
   );
   const contextError = catalogQuery.error ?? storesQuery.error;
+  const refreshing = catalogQuery.isFetching || storesQuery.isFetching || sessionsQuery.isFetching;
+
+  const refresh = async () => {
+    setNotice(null);
+    await Promise.all([
+      catalogQuery.refetch(),
+      storesQuery.refetch(),
+      sessionsQuery.refetch(),
+      ...(role === 'ADMIN' ? [settingsQuery.refetch()] : []),
+    ]);
+  };
+
+  const openCreateForm = () => {
+    setDraft(defaultOrderSessionDraft(settingsQuery.data?.current));
+    setShowCreateForm(true);
+    setCancelTarget(null);
+    setNotice(null);
+    window.requestAnimationFrame(() => createDateRef.current?.focus());
+  };
+
+  const updateDraft = <Key extends keyof OrderSessionDraft>(
+    key: Key,
+    value: OrderSessionDraft[Key],
+  ) => setDraft((current) => ({ ...current, [key]: value }));
+
+  const runSessionOperation = async (operation: SessionOperation): Promise<boolean> => {
+    if (operationInFlight.current) return false;
+    operationInFlight.current = true;
+    const fingerprint = JSON.stringify(operation);
+    const idempotencyKey = operationKeys.current.get(fingerprint) ?? crypto.randomUUID();
+    operationKeys.current.set(fingerprint, idempotencyKey);
+    const actionKey =
+      operation.kind === 'CREATE' ? 'CREATE' : `${operation.session.id}:${operation.input.status}`;
+    setPendingAction(actionKey);
+    setNotice(null);
+    try {
+      const updated =
+        operation.kind === 'CREATE'
+          ? await createOrderSession(operation.input, idempotencyKey)
+          : await transitionOrderSession(operation.session.id, operation.input, idempotencyKey);
+      operationKeys.current.delete(fingerprint);
+      queryClient.setQueryData<OrderSession[]>(['order-sessions', 'all'], (current = []) => {
+        const withoutUpdated = current.filter((session) => session.id !== updated.id);
+        return [updated, ...withoutUpdated].toSorted((left, right) =>
+          right.businessDate.localeCompare(left.businessDate),
+        );
+      });
+      await queryClient.invalidateQueries({ queryKey: ['order-sessions'] });
+      if (operation.kind === 'CREATE') {
+        setShowCreateForm(false);
+        setNotice({
+          kind: 'success',
+          message: `Đã tạo phiên ngày ${updated.businessDate}. Phiên đang chờ đến giờ mở nhận đơn.`,
+        });
+      } else {
+        setCancelTarget(null);
+        setCancelReason('');
+        setNotice({
+          kind: 'success',
+          message: `Đã chuyển phiên ngày ${updated.businessDate} sang “${sessionStatusCopy[updated.status]}”.`,
+        });
+      }
+      return true;
+    } catch (error) {
+      setNotice({ kind: 'error', message: sessionErrorMessage(error) });
+      if (error instanceof ApiClientError && error.code === 'VERSION_CONFLICT') {
+        await sessionsQuery.refetch();
+      }
+      return false;
+    } finally {
+      operationInFlight.current = false;
+      setPendingAction('');
+    }
+  };
+
+  const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const parsed = orderSessionInputFromDraft(draft);
+    if (!parsed.input) {
+      setNotice({ kind: 'error', message: parsed.error ?? 'Lịch phiên chưa hợp lệ.' });
+      return;
+    }
+    await runSessionOperation({ input: parsed.input, kind: 'CREATE' });
+  };
+
+  const transition = async (
+    session: OrderSession,
+    status: Exclude<AdminSessionTransition, 'CANCELLED'>,
+  ) => {
+    await runSessionOperation({
+      input: { expectedVersion: session.version, status },
+      kind: 'TRANSITION',
+      session,
+    });
+  };
+
+  const beginCancel = (session: OrderSession) => {
+    setCancelTarget(session);
+    setCancelReason('');
+    setShowCreateForm(false);
+    setNotice(null);
+    window.requestAnimationFrame(() => cancelReasonRef.current?.focus());
+  };
+
+  const submitCancellation = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!cancelTarget || cancelReason.trim().length < 3) {
+      setNotice({ kind: 'error', message: 'Lý do hủy phải có ít nhất 3 ký tự.' });
+      return;
+    }
+    await runSessionOperation({
+      input: {
+        expectedVersion: cancelTarget.version,
+        reason: cancelReason.trim(),
+        status: 'CANCELLED',
+      },
+      kind: 'TRANSITION',
+      session: cancelTarget,
+    });
+  };
 
   return (
     <>
       <PageHeader
-        description="Dữ liệu phiếu chờ và lượt ưu tiên trong phạm vi được phân quyền"
+        actions={
+          <>
+            <Button busy={refreshing} onClick={() => void refresh()} tone="secondary">
+              <RefreshCw aria-hidden="true" size={16} /> Tải lại
+            </Button>
+            {role === 'ADMIN' ? (
+              <Button
+                onClick={() => {
+                  if (showCreateForm) {
+                    setShowCreateForm(false);
+                  } else {
+                    openCreateForm();
+                  }
+                }}
+                tone={showCreateForm ? 'secondary' : 'primary'}
+              >
+                {showCreateForm ? (
+                  <X aria-hidden="true" size={16} />
+                ) : (
+                  <Plus aria-hidden="true" size={16} />
+                )}
+                {showCreateForm ? 'Đóng biểu mẫu' : 'Tạo phiên mới'}
+              </Button>
+            ) : null}
+          </>
+        }
+        description="Phiên nhận đơn, phân bổ và phiếu chờ lấy trực tiếp từ backend"
         title="Giám sát phân bổ hàng hóa"
       />
+
+      {notice ? (
+        <p
+          aria-live={notice.kind === 'error' ? 'assertive' : 'polite'}
+          className={`allocation-session-notice allocation-session-notice--${notice.kind}`}
+          role={notice.kind === 'error' ? 'alert' : 'status'}
+        >
+          {notice.message}
+        </p>
+      ) : null}
+
+      {showCreateForm && role === 'ADMIN' ? (
+        <form className="panel allocation-session-form" onSubmit={submitCreate}>
+          <div className="section-heading section-heading--compact">
+            <div>
+              <h2>Tạo phiên nhận đơn</h2>
+              <p>
+                Mốc đóng nhận đơn, bắt đầu phân bổ và chính sách được điền từ cấu hình vận hành.
+              </p>
+            </div>
+            <Badge tone="info">Asia/Ho_Chi_Minh</Badge>
+          </div>
+          {settingsQuery.isError ? (
+            <p className="allocation-session-form__warning">
+              Không tải được cấu hình hiện tại; đang dùng mốc mặc định 08:00–09:00. Hãy kiểm tra kỹ
+              trước khi tạo.
+            </p>
+          ) : null}
+          <div className="allocation-session-form__grid">
+            <label>
+              Ngày nghiệp vụ
+              <input
+                disabled={pendingAction === 'CREATE'}
+                onChange={(event) => updateDraft('businessDate', event.target.value)}
+                ref={createDateRef}
+                required
+                type="date"
+                value={draft.businessDate}
+              />
+            </label>
+            <label>
+              Mở nhận đơn
+              <input
+                disabled={pendingAction === 'CREATE'}
+                onChange={(event) => updateDraft('requestOpensTime', event.target.value)}
+                required
+                type="time"
+                value={draft.requestOpensTime}
+              />
+            </label>
+            <label>
+              Đóng nhận đơn / snapshot
+              <input
+                disabled={pendingAction === 'CREATE'}
+                onChange={(event) => updateDraft('requestClosesTime', event.target.value)}
+                required
+                type="time"
+                value={draft.requestClosesTime}
+              />
+            </label>
+            <label>
+              Bắt đầu phân bổ
+              <input
+                disabled={pendingAction === 'CREATE'}
+                onChange={(event) => updateDraft('allocationStartsTime', event.target.value)}
+                required
+                type="time"
+                value={draft.allocationStartsTime}
+              />
+            </label>
+            <label className="allocation-session-form__wide">
+              Phiên bản chính sách
+              <input
+                disabled={pendingAction === 'CREATE'}
+                maxLength={80}
+                minLength={1}
+                onChange={(event) => updateDraft('policyVersion', event.target.value)}
+                required
+                value={draft.policyVersion}
+              />
+            </label>
+          </div>
+          <div className="allocation-session-form__actions">
+            <Button
+              disabled={pendingAction === 'CREATE'}
+              onClick={() => setShowCreateForm(false)}
+              tone="secondary"
+            >
+              Hủy thao tác
+            </Button>
+            <Button busy={pendingAction === 'CREATE'} type="submit">
+              <CalendarClock aria-hidden="true" size={16} /> Tạo phiên đã lên lịch
+            </Button>
+          </div>
+        </form>
+      ) : null}
+
+      <section aria-labelledby="order-session-heading" className="panel allocation-session-console">
+        <div className="section-heading section-heading--compact">
+          <div>
+            <h2 id="order-session-heading">Phiên nhận đơn và phân bổ</h2>
+            <p>
+              Admin vận hành trạng thái có khóa phiên bản; HTKD theo dõi dữ liệu trong phạm vi được
+              cấp.
+            </p>
+          </div>
+          {role === 'ADMIN' ? (
+            <Badge tone="success">Có quyền vận hành</Badge>
+          ) : (
+            <Badge tone="neutral">Chỉ đọc</Badge>
+          )}
+        </div>
+
+        {sessionsQuery.isPending ? (
+          <p aria-live="polite" className="allocation-session-state">
+            Đang tải phiên từ backend…
+          </p>
+        ) : null}
+        {sessionsQuery.isError ? (
+          <div className="allocation-session-state allocation-session-state--error" role="alert">
+            <span>Không thể tải danh sách phiên.</span>
+            <Button onClick={() => void sessionsQuery.refetch()} tone="secondary">
+              <RotateCcw aria-hidden="true" size={16} /> Thử lại
+            </Button>
+          </div>
+        ) : null}
+        {sessionsQuery.data?.length === 0 ? (
+          <EmptyState
+            detail={
+              role === 'ADMIN'
+                ? 'Tạo phiên đầu tiên để cửa hàng có thể gửi yêu cầu đặt hàng.'
+                : 'Admin chưa tạo phiên nhận đơn.'
+            }
+            title="Chưa có phiên vận hành"
+          />
+        ) : null}
+        {sessionsQuery.data && sessionsQuery.data.length > 0 ? (
+          <div className="responsive-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Ngày nghiệp vụ</th>
+                  <th>Nhận đơn</th>
+                  <th>Phân bổ</th>
+                  <th>Chính sách</th>
+                  <th>Trạng thái</th>
+                  <th>Phiên bản</th>
+                  {role === 'ADMIN' ? <th>Thao tác</th> : null}
+                </tr>
+              </thead>
+              <tbody>
+                {sessionsQuery.data.map((session) => {
+                  const transitions = availableSessionTransitions(session.status);
+                  const openAllowedNow = canOpenSessionNow(session);
+                  return (
+                    <tr key={session.id}>
+                      <td data-label="Ngày nghiệp vụ">
+                        <strong>{session.businessDate}</strong>
+                        <small>{session.id.slice(0, 8)}</small>
+                      </td>
+                      <td data-label="Nhận đơn">
+                        <strong>{formatSessionTime(session.requestOpensAt)}</strong>
+                        <small>đến {formatSessionTime(session.requestClosesAt)}</small>
+                      </td>
+                      <td data-label="Phân bổ">
+                        <strong>{formatSessionTime(session.allocationStartsAt)}</strong>
+                        <small>giờ Việt Nam</small>
+                      </td>
+                      <td data-label="Chính sách">
+                        <strong>{session.policyVersion}</strong>
+                      </td>
+                      <td data-label="Trạng thái">
+                        <Badge tone={sessionStatusTone[session.status]}>
+                          {sessionStatusCopy[session.status]}
+                        </Badge>
+                      </td>
+                      <td data-label="Phiên bản">v{session.version}</td>
+                      {role === 'ADMIN' ? (
+                        <td data-label="Thao tác">
+                          <div className="allocation-session-actions">
+                            {transitions.includes('OPEN') ? (
+                              <button
+                                aria-busy={pendingAction === `${session.id}:OPEN`}
+                                className="link-button"
+                                disabled={!openAllowedNow || Boolean(pendingAction)}
+                                onClick={() => void transition(session, 'OPEN')}
+                                title={
+                                  openAllowedNow
+                                    ? undefined
+                                    : 'Chỉ mở được trong khung giờ nhận đơn đã cấu hình'
+                                }
+                                type="button"
+                              >
+                                <Play aria-hidden="true" size={15} />
+                                {pendingAction === `${session.id}:OPEN`
+                                  ? 'Đang mở…'
+                                  : sessionActionLabel('OPEN')}
+                              </button>
+                            ) : null}
+                            {transitions.includes('CLOSED') ? (
+                              <button
+                                aria-busy={pendingAction === `${session.id}:CLOSED`}
+                                className="link-button"
+                                disabled={Boolean(pendingAction)}
+                                onClick={() => void transition(session, 'CLOSED')}
+                                type="button"
+                              >
+                                <LockKeyhole aria-hidden="true" size={15} />
+                                {pendingAction === `${session.id}:CLOSED`
+                                  ? 'Đang đóng…'
+                                  : sessionActionLabel('CLOSED')}
+                              </button>
+                            ) : null}
+                            {transitions.includes('CANCELLED') ? (
+                              <button
+                                className="link-button link-button--danger"
+                                disabled={Boolean(pendingAction)}
+                                onClick={() => beginCancel(session)}
+                                type="button"
+                              >
+                                <Ban aria-hidden="true" size={15} />{' '}
+                                {sessionActionLabel('CANCELLED')}
+                              </button>
+                            ) : null}
+                            {transitions.length === 0 ? <span>Không còn thao tác</span> : null}
+                          </div>
+                        </td>
+                      ) : null}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </section>
+
+      {cancelTarget && role === 'ADMIN' ? (
+        <form className="panel allocation-cancel-form" onSubmit={submitCancellation}>
+          <div>
+            <h2>Hủy phiên ngày {cancelTarget.businessDate}</h2>
+            <p>Thao tác được audit và không thể mở lại phiên đã hủy.</p>
+          </div>
+          <label>
+            Lý do hủy
+            <textarea
+              disabled={pendingAction === `${cancelTarget.id}:CANCELLED`}
+              maxLength={500}
+              minLength={3}
+              onChange={(event) => setCancelReason(event.target.value)}
+              ref={cancelReasonRef}
+              required
+              value={cancelReason}
+            />
+          </label>
+          <div className="allocation-session-form__actions">
+            <Button
+              disabled={Boolean(pendingAction)}
+              onClick={() => {
+                setCancelTarget(null);
+                setCancelReason('');
+              }}
+              tone="secondary"
+            >
+              Giữ phiên
+            </Button>
+            <Button
+              busy={pendingAction === `${cancelTarget.id}:CANCELLED`}
+              disabled={cancelReason.trim().length < 3}
+              tone="danger"
+              type="submit"
+            >
+              <Ban aria-hidden="true" size={16} /> Xác nhận hủy phiên
+            </Button>
+          </div>
+        </form>
+      ) : null}
+
       {contextError ? (
         <section className="panel form-error" role="alert">
           <p>Không thể tải tên cửa hàng hoặc mặt hàng; mã định danh vẫn được giữ nguyên.</p>
@@ -270,7 +900,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
         </section>
       ) : null}
       {catalogQuery.isPending || storesQuery.isPending ? (
-        <section aria-live="polite" className="panel">
+        <section aria-live="polite" className="panel allocation-context-loading">
           Đang tải thông tin đối chiếu…
         </section>
       ) : null}

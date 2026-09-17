@@ -21,6 +21,7 @@ import {
   type UpdateAccountRequest,
   type UpdateOperationalSettingsRequest,
 } from '@idosi/contracts';
+import { reportUnauthorizedResponse } from '../../lib/session-expiry';
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
 const adminApiBaseUrl = (configuredBaseUrl || '/api/v1').replace(/\/$/u, '');
@@ -67,6 +68,7 @@ async function requestAdminApi(path: string, init?: RequestInit): Promise<unknow
     );
   }
 
+  reportUnauthorizedResponse(response.status, path);
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const parsed = ErrorEnvelopeSchema.safeParse(payload);
