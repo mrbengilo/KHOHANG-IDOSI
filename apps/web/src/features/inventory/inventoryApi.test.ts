@@ -13,6 +13,8 @@ const bag = {
   productId: '30000000-0000-4000-8000-000000000001',
   sourceReceiptBagId: '40000000-0000-4000-8000-000000000001',
   outboundOrderId: '50000000-0000-4000-8000-000000000001',
+  sourceTransferId: null,
+  sourceInventoryBagId: null,
   bagCode: 'GV-DAM-014',
   originalWeightKg: '100.000',
   receivedWeightKg: '99.500',
