@@ -38,8 +38,14 @@ export function useDialogAccessibility<T extends HTMLElement = HTMLElement>(
 
     const activeElement = document.activeElement;
     if (!(activeElement instanceof HTMLElement) || !panel.contains(activeElement)) {
-      const explicitInitialFocus = panel.querySelector<HTMLElement>('[autofocus]');
-      const initialFocus = explicitInitialFocus ?? focusableElements(panel)[0] ?? panel;
+      const explicitInitialFocus = panel.querySelector<HTMLElement>(
+        '[data-dialog-initial-focus], [autofocus]',
+      );
+      const editableInitialFocus = panel.querySelector<HTMLElement>(
+        'input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"]',
+      );
+      const initialFocus =
+        explicitInitialFocus ?? editableInitialFocus ?? focusableElements(panel)[0] ?? panel;
       initialFocus.focus();
     }
 
