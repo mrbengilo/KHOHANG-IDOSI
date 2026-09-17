@@ -19,12 +19,13 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { DashboardSkeleton } from './Skeleton';
 import { ApiClientError, getStoreKind, logout, mockModeEnabled } from '../lib/api';
 import { canAccessRoute } from '../lib/access';
 import { clearAuthenticatedSession, useSession } from '../lib/auth';
+import { onSessionExpired } from '../lib/session-expiry';
 import type { DemoMode, Role, StoreKind } from '../lib/types';
 
 interface NavEntry {
@@ -114,6 +115,16 @@ export function AppShell() {
   const queryClient = useQueryClient();
   const sessionQuery = useSession();
   const session = sessionQuery.data;
+
+  useEffect(() => {
+    if (mockModeEnabled) return undefined;
+    return onSessionExpired(() => {
+      const returnPath = `${location.pathname}${location.search}${location.hash}`;
+      clearAuthenticatedSession(queryClient);
+      navigate('/login', { replace: true, state: { from: returnPath, sessionExpired: true } });
+    });
+  }, [location.hash, location.pathname, location.search, navigate, queryClient]);
+
   const principalStoreId = session?.principal.storeId;
   const storeKindQuery = useQuery({
     enabled:
