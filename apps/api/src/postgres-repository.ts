@@ -18,6 +18,7 @@ import type {
   DispatchWarehouseOutboundRequest,
   ConfirmReceiptCostsRequest,
   FinalizeReceiptRequest,
+  HtkdAssignment,
   ListOrderSessionsQuery,
   ListAccountsQuery,
   ListAllocationsQuery,
@@ -50,6 +51,7 @@ import type {
   RespondPriorityOfferRequest,
   ReturnReceiptForCorrectionRequest,
   ResetPasswordRequest,
+  ReplaceHtkdAssignmentsRequest,
   ReviewStoreOutboundRequest,
   OrderSession,
   Session,
@@ -217,6 +219,7 @@ import { ApiError, conflict, forbidden, notFound, unauthenticated } from './erro
 import { monthlyOperationalReportDto } from './monthly-report.js';
 import type {
   AccountCredentials,
+  HtkdAssignmentsState,
   IdosiStatisticsTarget,
   IdempotentResource,
   OrderStatistics,
@@ -537,6 +540,172 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         metadata: { sessionsRevoked },
       });
       return { accountId, sessionsRevoked, sessionVersion: updated.tokenVersion };
+    });
+  }
+
+  public async listHtkdAssignments(
+    actor: AuthenticatedPrincipal,
+    htkdAccountId: string,
+  ): Promise<HtkdAssignmentsState> {
+    requirePostgresAdmin(actor);
+    return db.transaction(
+      async (tx) => {
+        const [account] = await tx
+          .select()
+          .from(users)
+          .where(and(eq(users.id, htkdAccountId), isNull(users.deletedAt)))
+          .limit(1);
+        if (!account) throw notFound('Không tìm thấy tài khoản HTKD');
+        requireActiveHtkdTarget(account);
+        const rows = await tx
+          .select()
+          .from(htkdAssignments)
+          .where(and(eq(htkdAssignments.userId, htkdAccountId), isNull(htkdAssignments.revokedAt)))
+          .orderBy(asc(htkdAssignments.storeId), asc(htkdAssignments.id));
+        return {
+          assignments: rows.map(htkdAssignmentDto),
+          htkdAccountId,
+          sessionVersion: account.tokenVersion,
+        };
+      },
+      { accessMode: 'read only', isolationLevel: 'repeatable read' },
+    );
+  }
+
+  public async replaceHtkdAssignments(
+    actor: AuthenticatedPrincipal,
+    htkdAccountId: string,
+    input: ReplaceHtkdAssignmentsRequest,
+    context: RequestContext,
+  ): Promise<HtkdAssignmentsState> {
+    requirePostgresAdmin(actor);
+    return db.transaction(async (tx) => {
+      const [account] = await tx
+        .select()
+        .from(users)
+        .where(and(eq(users.id, htkdAccountId), isNull(users.deletedAt)))
+        .for('update')
+        .limit(1);
+      if (!account) throw notFound('Không tìm thấy tài khoản HTKD');
+      requireActiveHtkdTarget(account);
+      assertPostgresAccountVersion(account.tokenVersion, input.expectedSessionVersion);
+
+      if (input.storeIds.length > 0) {
+        const validStores = await tx
+          .select({ id: stores.id })
+          .from(stores)
+          .where(
+            and(
+              inArray(stores.id, input.storeIds),
+              eq(stores.kind, 'retail'),
+              eq(stores.isActive, true),
+              isNull(stores.deletedAt),
+            ),
+          );
+        if (validStores.length !== input.storeIds.length) {
+          throw new ApiError(
+            'VALIDATION_ERROR',
+            'HTKD chỉ được phân công cửa hàng bán lẻ đang hoạt động',
+            400,
+          );
+        }
+      }
+
+      const currentRows = await tx
+        .select()
+        .from(htkdAssignments)
+        .where(and(eq(htkdAssignments.userId, htkdAccountId), isNull(htkdAssignments.revokedAt)))
+        .orderBy(asc(htkdAssignments.storeId), asc(htkdAssignments.id))
+        .for('update');
+      const before: HtkdAssignmentsState = {
+        assignments: currentRows.map(htkdAssignmentDto),
+        htkdAccountId,
+        sessionVersion: account.tokenVersion,
+      };
+      const currentStoreIds = before.assignments.map((assignment) => assignment.storeId).toSorted();
+      const nextStoreIds = [...input.storeIds].toSorted();
+      if (
+        currentStoreIds.length === nextStoreIds.length &&
+        currentStoreIds.every((storeId, index) => storeId === nextStoreIds[index])
+      ) {
+        return before;
+      }
+
+      const currentStoreIdSet = new Set(currentStoreIds);
+      const nextStoreIdSet = new Set(nextStoreIds);
+      const revokedRows = currentRows.filter((row) => !nextStoreIdSet.has(row.storeId));
+      const revokedStoreIds = revokedRows.map((row) => row.storeId);
+      const addedStoreIds = nextStoreIds.filter((storeId) => !currentStoreIdSet.has(storeId));
+      const now = new Date();
+
+      // Revoke first so the assignment trigger's token-version bump cannot claim these sessions
+      // with the generic user_security_changed reason before we can count and label them.
+      const sessionsRevoked = (
+        await tx
+          .update(sessions)
+          .set({ revokedAt: now, revokeReason: 'htkd_assignments_changed' })
+          .where(and(eq(sessions.userId, htkdAccountId), isNull(sessions.revokedAt)))
+          .returning({ id: sessions.id })
+      ).length;
+      if (revokedRows.length > 0) {
+        await tx
+          .update(htkdAssignments)
+          .set({ revokedAt: now, revokedByUserId: actor.accountId })
+          .where(
+            inArray(
+              htkdAssignments.id,
+              revokedRows.map((row) => row.id),
+            ),
+          );
+      }
+      if (addedStoreIds.length > 0) {
+        await tx.insert(htkdAssignments).values(
+          addedStoreIds.map((storeId) => ({
+            assignedAt: now,
+            assignedByUserId: actor.accountId,
+            storeId,
+            userId: htkdAccountId,
+          })),
+        );
+      }
+      if (revokedRows.length === 0) {
+        await tx
+          .update(users)
+          .set({ tokenVersion: account.tokenVersion + 1, updatedAt: now })
+          .where(and(eq(users.id, htkdAccountId), eq(users.tokenVersion, account.tokenVersion)));
+      } else {
+        await tx.update(users).set({ updatedAt: now }).where(eq(users.id, htkdAccountId));
+      }
+
+      const [updatedAccount] = await tx
+        .select({ tokenVersion: users.tokenVersion })
+        .from(users)
+        .where(eq(users.id, htkdAccountId))
+        .limit(1);
+      if (!updatedAccount) throw notFound('Không tìm thấy tài khoản HTKD');
+      const updatedRows = await tx
+        .select()
+        .from(htkdAssignments)
+        .where(and(eq(htkdAssignments.userId, htkdAccountId), isNull(htkdAssignments.revokedAt)))
+        .orderBy(asc(htkdAssignments.storeId), asc(htkdAssignments.id));
+      const after: HtkdAssignmentsState = {
+        assignments: updatedRows.map(htkdAssignmentDto),
+        htkdAccountId,
+        sessionVersion: updatedAccount.tokenVersion,
+      };
+      await tx.insert(auditLogs).values({
+        ...auditValue(
+          actor,
+          context,
+          'HTKD_ASSIGNMENTS_REPLACED',
+          'user',
+          htkdAccountId,
+          htkdAssignmentsJson(before),
+          htkdAssignmentsJson(after),
+        ),
+        metadata: { addedStoreIds, reason: input.reason, revokedStoreIds, sessionsRevoked },
+      });
+      return after;
     });
   }
 
@@ -3386,6 +3555,18 @@ function accountDto(row: typeof users.$inferSelect): Account {
   };
 }
 
+function htkdAssignmentDto(row: typeof htkdAssignments.$inferSelect): HtkdAssignment {
+  return {
+    id: row.id,
+    htkdAccountId: row.userId,
+    storeId: row.storeId,
+    assignedAt: row.assignedAt.toISOString(),
+    assignedByAccountId: row.assignedByUserId,
+    revokedAt: row.revokedAt?.toISOString() ?? null,
+    revokedByAccountId: row.revokedByUserId,
+  };
+}
+
 function adminAuditDto(row: typeof auditLogs.$inferSelect): AdminAuditLog {
   return {
     id: row.id,
@@ -4083,6 +4264,14 @@ function accountJson(account: Account): JsonObject {
   };
 }
 
+function htkdAssignmentsJson(state: HtkdAssignmentsState): JsonObject {
+  return {
+    htkdAccountId: state.htkdAccountId,
+    sessionVersion: state.sessionVersion,
+    assignments: state.assignments.map((assignment) => ({ ...assignment })),
+  };
+}
+
 function operationalSettingsJson(settings: OperationalSettingsVersion): JsonObject {
   return {
     id: settings.id,
@@ -4109,6 +4298,12 @@ function databaseAccountStatus(status: Account['status']): 'active' | 'locked' |
 
 function requirePostgresAdmin(actor: AuthenticatedPrincipal): void {
   if (actor.role !== 'ADMIN') throw forbidden();
+}
+
+function requireActiveHtkdTarget(account: typeof users.$inferSelect): void {
+  if (account.role !== 'htkd' || account.status !== 'active') {
+    throw conflict('Chỉ tài khoản HTKD đang hoạt động mới có thể được phân công cửa hàng');
+  }
 }
 
 function requireWarehouseActor(actor: AuthenticatedPrincipal): void {
