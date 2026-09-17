@@ -1,0 +1,211 @@
+.receipt-source-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.receipt-source-count {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.receipt-source-state {
+  display: grid;
+  min-height: 132px;
+  place-items: center;
+  border: 1px dashed var(--border-strong);
+  border-radius: 11px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  padding: 18px;
+  text-align: center;
+}
+
+.receipt-source-state > span {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  max-width: 420px;
+  line-height: 1.55;
+}
+
+.receipt-source-state .button__spinner {
+  position: static;
+  color: var(--brand);
+}
+
+.receipt-source-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.receipt-source-card {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: white;
+  color: var(--text);
+  padding: 13px;
+  text-align: left;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease,
+    transform 100ms ease;
+}
+
+.receipt-source-card:hover:not(:disabled) {
+  border-color: var(--brand);
+  box-shadow: 0 7px 18px rgba(15, 23, 42, 0.09);
+  transform: translateY(-1px);
+}
+
+.receipt-source-card:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
+}
+
+.receipt-source-card:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--brand) 24%, transparent);
+  outline-offset: 2px;
+}
+
+.receipt-source-card.selected {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  box-shadow: 0 0 0 1px var(--brand);
+}
+
+.receipt-source-card:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.receipt-source-card__heading,
+.receipt-source-card__meta,
+.receipt-source-card__line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.receipt-source-card__heading strong {
+  overflow: hidden;
+  color: var(--navy);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.receipt-source-card__heading span {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--info-soft);
+  color: var(--info);
+  font-size: 9px;
+  font-weight: 800;
+  padding: 4px 7px;
+}
+
+.receipt-source-card__meta {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.receipt-source-card__lines {
+  display: grid;
+  gap: 5px;
+  border-top: 1px solid var(--border);
+  padding-top: 9px;
+}
+
+.receipt-source-card__line {
+  align-items: flex-start;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.receipt-source-card__line span {
+  overflow-wrap: anywhere;
+}
+
+.receipt-source-card__line strong {
+  flex: 0 0 auto;
+  color: var(--text);
+  font-size: 10px;
+}
+
+.receipt-source-selection {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border-radius: 10px;
+  background: var(--success-soft);
+  color: var(--success);
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 11px 12px;
+}
+
+.receipt-source-selection span {
+  display: grid;
+  gap: 2px;
+}
+
+.receipt-source-selection small {
+  color: inherit;
+  opacity: 0.85;
+}
+
+.receipt-create .receipt-line-editor__row {
+  grid-template-columns: minmax(180px, 2fr) minmax(90px, 0.7fr) minmax(90px, 0.7fr);
+}
+
+.receipt-source-refreshing svg {
+  animation: receipt-source-spin 700ms linear infinite;
+}
+
+@keyframes receipt-source-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 700px) {
+  .receipt-source-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .receipt-source-actions {
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .receipt-source-actions .button {
+    flex: 1;
+  }
+
+  .receipt-create .receipt-line-editor__row {
+    grid-template-columns: minmax(0, 1fr) minmax(88px, 0.55fr);
+  }
+
+  .receipt-create .receipt-line-editor__row label:first-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .receipt-source-refreshing svg {
+    animation: none;
+  }
+}

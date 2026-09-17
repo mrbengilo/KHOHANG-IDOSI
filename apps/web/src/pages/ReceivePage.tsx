@@ -5,6 +5,7 @@ import type {
   Receipt,
   ReceiptStatus,
   ReturnReceiptForCorrectionRequest,
+  StoreReceiptSource,
   SubmitStoreReceiptRequest,
 } from '@idosi/contracts';
 import {
@@ -14,12 +15,11 @@ import {
   ClipboardCheck,
   FileCheck2,
   PackageCheck,
-  Plus,
+  RefreshCw,
   RotateCcw,
   Send,
-  Trash2,
 } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import type { AppOutletContext } from '../components/AppShell';
 import { Badge } from '../components/Badge';
@@ -28,6 +28,8 @@ import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
 import { DashboardSkeleton } from '../components/Skeleton';
 import { StatCard } from '../components/StatCard';
+import { listStoreReceiptSources } from '../features/receipts/receiptSourceApi';
+import '../features/receipts/receipt-source.css';
 import {
   ApiClientError,
   declareStoreReceipt,
@@ -42,7 +44,6 @@ import {
 } from '../lib/api';
 import { useSession } from '../lib/auth';
 import { formatVnd } from '../lib/format';
-import type { ProductConversion } from '../lib/types';
 
 const receiptStatusCopy: Record<
   ReceiptStatus,
@@ -114,6 +115,7 @@ function ProductionReceivePage({ role }: AppOutletContext) {
   const [selectedReceiptId, setSelectedReceiptId] = useState('');
   const [notice, setNotice] = useState('');
   const operationKeys = useRef(new Map<string, string>());
+  const operationInFlight = useRef(false);
   const principalStoreId = sessionQuery.data?.principal.storeId ?? '';
 
   const storesQuery = useQuery({
@@ -122,6 +124,12 @@ function ProductionReceivePage({ role }: AppOutletContext) {
     retry: false,
   });
   const catalogQuery = useQuery({ queryFn: listCatalog, queryKey: ['catalog'], retry: false });
+  const receiptSourcesQuery = useQuery({
+    enabled: role === 'STORE' && Boolean(principalStoreId),
+    queryFn: () => listStoreReceiptSources({ storeId: principalStoreId }),
+    queryKey: ['store-receipt-sources', principalStoreId],
+    retry: false,
+  });
   const receiptsQuery = useQuery({
     queryFn: () =>
       listStoreReceipts({
@@ -178,11 +186,24 @@ function ProductionReceivePage({ role }: AppOutletContext) {
       setNotice(operationNotice[operation.kind]);
       setSelectedReceiptId(receipt.id);
       queryClient.setQueryData(['store-receipt', receipt.id], receipt);
-      await queryClient.invalidateQueries({ queryKey: ['store-receipts'] });
+      if (operation.kind === 'DECLARE') {
+        queryClient.setQueryData<StoreReceiptSource[]>(
+          ['store-receipt-sources', principalStoreId],
+          (sources = []) => removeDeclaredReceiptSource(sources, operation.input.outboundRequestId),
+        );
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['store-receipts'] }),
+        ...(operation.kind === 'DECLARE'
+          ? [queryClient.invalidateQueries({ queryKey: ['store-receipt-sources'] })]
+          : []),
+      ]);
     },
   });
 
   const runOperation = async (operation: OperationWithoutKey): Promise<boolean> => {
+    if (operationInFlight.current) return false;
+    operationInFlight.current = true;
     setNotice('');
     mutation.reset();
     const fingerprint = JSON.stringify(operation);
@@ -195,6 +216,8 @@ function ProductionReceivePage({ role }: AppOutletContext) {
     } catch {
       // The mutation owns the visible error state; retain the key for an exact retry.
       return false;
+    } finally {
+      operationInFlight.current = false;
     }
   };
 
@@ -261,9 +284,14 @@ function ProductionReceivePage({ role }: AppOutletContext) {
       {role === 'STORE' && principalStoreId ? (
         <CreateReceiptForm
           busy={pendingOperation === 'DECLARE'}
-          catalog={catalogQuery.data ?? []}
-          disabled={mutation.isPending || catalogQuery.isPending}
+          disabled={mutation.isPending}
           onDeclare={(input) => runOperation({ kind: 'DECLARE', input })}
+          onRefresh={() => receiptSourcesQuery.refetch()}
+          productNameById={productNameById}
+          sources={receiptSourcesQuery.data ?? []}
+          sourcesError={receiptSourcesQuery.error}
+          sourcesFetching={receiptSourcesQuery.isFetching}
+          sourcesPending={receiptSourcesQuery.isPending}
           storeId={principalStoreId}
         />
       ) : null}
@@ -411,43 +439,74 @@ function ProductionReceivePage({ role }: AppOutletContext) {
 }
 
 interface DraftLine {
-  readonly key: string;
   readonly productId: string;
   readonly approvedUnits: number;
   readonly receivedUnits: number;
 }
 
-function emptyDraftLine(catalog: readonly ProductConversion[]): DraftLine {
-  return {
-    key: crypto.randomUUID(),
-    productId: catalog[0]?.id ?? '',
-    approvedUnits: 1,
-    receivedUnits: 1,
-  };
+export function receiptSourceDraftLines(source: StoreReceiptSource): DraftLine[] {
+  return source.lines.map((line) => ({
+    productId: line.productId,
+    approvedUnits: line.approvedUnits,
+    receivedUnits: line.dispatchedUnits,
+  }));
+}
+
+export function removeDeclaredReceiptSource(
+  sources: readonly StoreReceiptSource[],
+  outboundRequestId: string,
+): StoreReceiptSource[] {
+  return sources.filter((source) => source.id !== outboundRequestId);
 }
 
 function CreateReceiptForm({
   busy,
-  catalog,
   disabled,
   onDeclare,
+  onRefresh,
+  productNameById,
+  sources,
+  sourcesError,
+  sourcesFetching,
+  sourcesPending,
   storeId,
 }: {
   readonly busy: boolean;
-  readonly catalog: readonly ProductConversion[];
   readonly disabled: boolean;
   readonly onDeclare: (input: DeclareStoreReceiptRequest) => Promise<boolean>;
+  readonly onRefresh: () => Promise<unknown>;
+  readonly productNameById: ReadonlyMap<string, string>;
+  readonly sources: readonly StoreReceiptSource[];
+  readonly sourcesError: unknown;
+  readonly sourcesFetching: boolean;
+  readonly sourcesPending: boolean;
   readonly storeId: string;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [outboundRequestId, setOutboundRequestId] = useState('');
-  const [lines, setLines] = useState<DraftLine[]>(() => [emptyDraftLine(catalog)]);
+  const [selectedSourceId, setSelectedSourceId] = useState('');
+  const [lines, setLines] = useState<DraftLine[]>([]);
   const [discrepancyNote, setDiscrepancyNote] = useState('');
   const [formError, setFormError] = useState('');
-  const activeCatalog = catalog.filter((product) => product.status === 'ACTIVE');
+  const selectedSource = sources.find((source) => source.id === selectedSourceId) ?? null;
 
-  const updateLine = (key: string, patch: Partial<DraftLine>) => {
-    setLines((current) => current.map((line) => (line.key === key ? { ...line, ...patch } : line)));
+  useEffect(() => {
+    if (!selectedSourceId || selectedSource) return;
+    setSelectedSourceId('');
+    setLines([]);
+    setDiscrepancyNote('');
+  }, [selectedSource, selectedSourceId]);
+
+  const chooseSource = (source: StoreReceiptSource) => {
+    setSelectedSourceId(source.id);
+    setLines(receiptSourceDraftLines(source));
+    setDiscrepancyNote('');
+    setFormError('');
+  };
+
+  const updateReceivedUnits = (productId: string, receivedUnits: number) => {
+    setLines((current) =>
+      current.map((line) => (line.productId === productId ? { ...line, receivedUnits } : line)),
+    );
   };
 
   const submit = async () => {
@@ -456,14 +515,9 @@ function CreateReceiptForm({
       productId: line.productId,
       receivedUnits: line.receivedUnits,
     }));
-    const productIds = normalizedLines.map((line) => line.productId);
     const hasShortage = normalizedLines.some((line) => line.receivedUnits < line.approvedUnits);
-    if (!outboundRequestId.trim() || normalizedLines.some((line) => !line.productId)) {
-      setFormError('Chọn đủ lệnh xuất và mặt hàng trước khi tạo phiếu.');
-      return;
-    }
-    if (new Set(productIds).size !== productIds.length) {
-      setFormError('Mỗi mặt hàng chỉ được xuất hiện một lần trong phiếu.');
+    if (!selectedSource || normalizedLines.length === 0) {
+      setFormError('Chọn một lệnh xuất đang chờ nhận trước khi tạo phiếu.');
       return;
     }
     if (
@@ -487,12 +541,12 @@ function CreateReceiptForm({
     const input: DeclareStoreReceiptRequest = {
       discrepancyNote: discrepancyNote.trim() || null,
       lines: normalizedLines,
-      outboundRequestId: outboundRequestId.trim(),
+      outboundRequestId: selectedSource.id,
       storeId,
     };
     await confirmReceiptDeclaration(input, onDeclare, () => {
-      setOutboundRequestId('');
-      setLines([emptyDraftLine(activeCatalog)]);
+      setSelectedSourceId('');
+      setLines([]);
       setDiscrepancyNote('');
       setExpanded(false);
     });
@@ -503,114 +557,160 @@ function CreateReceiptForm({
       <div className="section-heading section-heading--compact">
         <div>
           <h2>Khai phiếu nhận từ lệnh xuất</h2>
-          <p>Số đã duyệt được máy chủ đối chiếu với lệnh xuất; cửa hàng chỉ khai đúng thực tế.</p>
+          <p>Chọn lệnh đã giao từ máy chủ; mặt hàng và số duyệt không thể tự nhập hoặc sửa.</p>
         </div>
-        <Button
-          disabled={disabled}
-          onClick={() => setExpanded((current) => !current)}
-          tone="secondary"
-        >
-          <Plus aria-hidden="true" size={16} /> {expanded ? 'Đóng' : 'Tạo phiếu'}
-        </Button>
+        <div className="receipt-source-actions">
+          <span className="receipt-source-count">{sources.length} lệnh chờ nhận</span>
+          <Button
+            aria-label="Làm mới lệnh xuất chờ nhận"
+            className={sourcesFetching ? 'receipt-source-refreshing' : undefined}
+            disabled={disabled || sourcesFetching}
+            onClick={() => void onRefresh()}
+            tone="secondary"
+          >
+            <RefreshCw aria-hidden="true" size={15} /> Làm mới
+          </Button>
+          <Button
+            disabled={disabled}
+            onClick={() => setExpanded((current) => !current)}
+            tone="secondary"
+          >
+            <ClipboardCheck aria-hidden="true" size={16} /> {expanded ? 'Đóng' : 'Tạo phiếu'}
+          </Button>
+        </div>
       </div>
       {expanded ? (
         <div className="receipt-create__body">
-          <label>
-            Mã lệnh xuất
-            <input
-              disabled={disabled}
-              onChange={(event) => setOutboundRequestId(event.target.value)}
-              placeholder="Dán ID lệnh xuất đã giao"
-              value={outboundRequestId}
-            />
-          </label>
-          <div className="receipt-line-editor">
-            {lines.map((line, index) => (
-              <div className="receipt-line-editor__row" key={line.key}>
-                <label>
-                  Mặt hàng {index + 1}
-                  <select
-                    disabled={disabled}
-                    onChange={(event) => updateLine(line.key, { productId: event.target.value })}
-                    value={line.productId}
-                  >
-                    <option value="">Chọn mặt hàng</option>
-                    {activeCatalog.map((product) => (
-                      <option key={product.id} value={product.id}>
-                        {product.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Đã duyệt
-                  <input
-                    disabled={disabled}
-                    min="1"
-                    onChange={(event) =>
-                      updateLine(line.key, { approvedUnits: event.target.valueAsNumber || 1 })
-                    }
-                    type="number"
-                    value={line.approvedUnits}
-                  />
-                </label>
-                <label>
-                  Thực nhận
-                  <input
-                    disabled={disabled}
-                    max={line.approvedUnits}
-                    min="0"
-                    onChange={(event) =>
-                      updateLine(line.key, {
-                        receivedUnits: Number.isNaN(event.target.valueAsNumber)
-                          ? 0
-                          : event.target.valueAsNumber,
-                      })
-                    }
-                    type="number"
-                    value={line.receivedUnits}
-                  />
-                </label>
-                <button
-                  aria-label={`Xóa mặt hàng ${index + 1}`}
-                  disabled={disabled || lines.length === 1}
-                  onClick={() =>
-                    setLines((current) => current.filter((candidate) => candidate.key !== line.key))
-                  }
-                  type="button"
-                >
-                  <Trash2 aria-hidden="true" size={17} />
-                </button>
-              </div>
-            ))}
-          </div>
-          <Button
-            disabled={disabled || activeCatalog.length === 0}
-            onClick={() => setLines((current) => [...current, emptyDraftLine(activeCatalog)])}
-            tone="secondary"
-          >
-            <Plus aria-hidden="true" size={15} /> Thêm mặt hàng
-          </Button>
-          <label>
-            Ghi chú / bằng chứng chênh lệch
-            <textarea
-              disabled={disabled}
-              onChange={(event) => setDiscrepancyNote(event.target.value)}
-              placeholder="Bắt buộc khi nhận thiếu; ghi rõ chênh lệch giao nhận"
-              rows={3}
-              value={discrepancyNote}
-            />
-          </label>
-          {formError ? (
-            <div className="form-error" role="alert">
-              {formError}
+          {sourcesPending ? (
+            <div className="receipt-source-state" role="status">
+              <span>
+                <span aria-hidden="true" className="button__spinner" />
+                Đang tải lệnh xuất đã giao từ máy chủ…
+              </span>
             </div>
+          ) : sourcesError && sources.length === 0 ? (
+            <ErrorNotice error={sourcesError} onRetry={() => void onRefresh()} />
+          ) : sources.length === 0 ? (
+            <div className="receipt-source-state">
+              <span>
+                <PackageCheck aria-hidden="true" size={22} />
+                <strong>Không có lệnh xuất nào đang chờ nhận</strong>
+                Khi kho đánh dấu đã giao, lệnh hợp lệ sẽ xuất hiện tại đây.
+              </span>
+            </div>
+          ) : (
+            <>
+              {sourcesError ? (
+                <ErrorNotice error={sourcesError} onRetry={() => void onRefresh()} />
+              ) : null}
+              <div className="receipt-source-grid" aria-label="Lệnh xuất đang chờ nhận">
+                {sources.map((source) => (
+                  <button
+                    aria-pressed={selectedSourceId === source.id}
+                    className={
+                      selectedSourceId === source.id
+                        ? 'receipt-source-card selected'
+                        : 'receipt-source-card'
+                    }
+                    disabled={disabled}
+                    key={source.id}
+                    onClick={() => chooseSource(source)}
+                    type="button"
+                  >
+                    <span className="receipt-source-card__heading">
+                      <strong>{source.requestNumber}</strong>
+                      <span>{source.lines.length} mặt hàng</span>
+                    </span>
+                    <span className="receipt-source-card__meta">
+                      <span>Đã giao {formatDateTime(source.dispatchedAt)}</span>
+                      <span>Mã: {source.id}</span>
+                    </span>
+                    <span className="receipt-source-card__lines">
+                      {source.lines.map((line) => (
+                        <span className="receipt-source-card__line" key={line.productId}>
+                          <span>{productNameById.get(line.productId) ?? line.productId}</span>
+                          <strong>
+                            Duyệt {line.approvedUnits} · giao {line.dispatchedUnits}
+                          </strong>
+                        </span>
+                      ))}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {selectedSource ? (
+            <>
+              <div className="receipt-source-selection" role="status">
+                <CircleCheck aria-hidden="true" size={18} />
+                <span>
+                  <strong>Đã chọn {selectedSource.requestNumber}</strong>
+                  <small>Chỉ chỉnh số thực nhận; số duyệt lấy trực tiếp từ lệnh xuất.</small>
+                </span>
+              </div>
+              <div className="receipt-line-editor">
+                {lines.map((line, index) => (
+                  <div className="receipt-line-editor__row" key={line.productId}>
+                    <label>
+                      Mặt hàng {index + 1}
+                      <input
+                        disabled
+                        value={productNameById.get(line.productId) ?? line.productId}
+                      />
+                    </label>
+                    <label>
+                      Đã duyệt
+                      <input disabled type="number" value={line.approvedUnits} />
+                    </label>
+                    <label>
+                      Thực nhận
+                      <input
+                        disabled={disabled}
+                        max={line.approvedUnits}
+                        min="0"
+                        onChange={(event) =>
+                          updateReceivedUnits(
+                            line.productId,
+                            Number.isNaN(event.target.valueAsNumber)
+                              ? 0
+                              : event.target.valueAsNumber,
+                          )
+                        }
+                        type="number"
+                        value={line.receivedUnits}
+                      />
+                    </label>
+                  </div>
+                ))}
+              </div>
+              <label>
+                Ghi chú / bằng chứng chênh lệch
+                <textarea
+                  disabled={disabled}
+                  onChange={(event) => setDiscrepancyNote(event.target.value)}
+                  placeholder="Bắt buộc khi nhận thiếu; ghi rõ chênh lệch giao nhận"
+                  rows={3}
+                  value={discrepancyNote}
+                />
+              </label>
+              {formError ? (
+                <div className="form-error" role="alert">
+                  {formError}
+                </div>
+              ) : null}
+              <div className="receipt-actions">
+                <Button
+                  busy={busy}
+                  disabled={disabled || !selectedSource}
+                  onClick={() => void submit()}
+                >
+                  <ClipboardCheck aria-hidden="true" size={16} /> Lưu phiếu nháp
+                </Button>
+              </div>
+            </>
           ) : null}
-          <div className="receipt-actions">
-            <Button busy={busy} disabled={disabled && !busy} onClick={() => void submit()}>
-              <ClipboardCheck aria-hidden="true" size={16} /> Lưu phiếu nháp
-            </Button>
-          </div>
         </div>
       ) : null}
     </section>
