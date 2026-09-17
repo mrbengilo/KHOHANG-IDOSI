@@ -46,6 +46,7 @@ describe('KHOHANG-IDOSI API', () => {
     assert.ok(specification.json().paths['/api/v1/inbound-receipts']);
     assert.ok(specification.json().paths['/api/v1/inbound-receipts/{receiptId}/confirm-costs']);
     assert.ok(specification.json().paths['/api/v1/admin/operational-settings']);
+    assert.ok(specification.json().paths['/api/v1/admin/accounts/{htkdAccountId}/assignments']);
     assert.ok(specification.json().paths['/api/v1/integrations/idosi/order-statistics']);
     assert.ok(specification.json().paths['/api/v1/integrations/idosi/order-statistics/sync']);
   });
@@ -2214,6 +2215,163 @@ describe('KHOHANG-IDOSI API', () => {
       filtered.json().data.map((account) => account.id),
       [accountId],
     );
+  });
+
+  test('lists and atomically replaces audited HTKD retail-store assignments for ADMIN', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const htkdCookie = cookieOf(await login('htkd'));
+    const path = `/api/v1/admin/accounts/${MEMORY_SEED_IDS.htkdAccount}/assignments`;
+
+    const denied = await app.inject({ method: 'GET', url: path, headers: { cookie: storeCookie } });
+    assert.equal(denied.statusCode, 403);
+
+    const initial = await app.inject({
+      method: 'GET',
+      url: path,
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(initial.statusCode, 200);
+    assert.equal(initial.headers['cache-control'], 'no-store');
+    assert.equal(initial.json().data.sessionVersion, 0);
+    assert.deepEqual(
+      initial
+        .json()
+        .data.assignments.map((assignment) => assignment.storeId)
+        .sort(),
+      [MEMORY_SEED_IDS.bdStore, MEMORY_SEED_IDS.nvtStore].sort(),
+    );
+
+    const replaced = await app.inject({
+      method: 'PUT',
+      url: path,
+      headers: { cookie: adminCookie, 'x-request-id': 'replace-htkd-scope' },
+      payload: {
+        expectedSessionVersion: 0,
+        reason: 'Điều chỉnh địa bàn phụ trách',
+        storeIds: [MEMORY_SEED_IDS.nvtStore],
+      },
+    });
+    assert.equal(replaced.statusCode, 200);
+    assert.equal(replaced.json().data.sessionVersion, 1);
+    assert.deepEqual(
+      replaced.json().data.assignments.map((assignment) => assignment.storeId),
+      [MEMORY_SEED_IDS.nvtStore],
+    );
+
+    const noOpReplay = await app.inject({
+      method: 'PUT',
+      url: path,
+      headers: { cookie: adminCookie },
+      payload: {
+        expectedSessionVersion: 1,
+        reason: 'Gửi lại cùng phạm vi không tạo thay đổi',
+        storeIds: [MEMORY_SEED_IDS.nvtStore],
+      },
+    });
+    assert.equal(noOpReplay.statusCode, 200);
+    assert.equal(noOpReplay.json().data.sessionVersion, 1);
+
+    const revokedSession = await app.inject({
+      method: 'GET',
+      url: '/api/v1/auth/session',
+      headers: { cookie: htkdCookie },
+    });
+    assert.equal(revokedSession.statusCode, 401);
+    assert.equal(revokedSession.json().error.code, 'UNAUTHENTICATED');
+
+    const stale = await app.inject({
+      method: 'PUT',
+      url: path,
+      headers: { cookie: adminCookie },
+      payload: {
+        expectedSessionVersion: 0,
+        reason: 'Thao tác trên dữ liệu cũ',
+        storeIds: [],
+      },
+    });
+    assert.equal(stale.statusCode, 409);
+    assert.equal(stale.json().error.code, 'VERSION_CONFLICT');
+
+    const cleared = await app.inject({
+      method: 'PUT',
+      url: path,
+      headers: { cookie: adminCookie, 'x-request-id': 'clear-htkd-scope' },
+      payload: {
+        expectedSessionVersion: 1,
+        reason: 'Thu hồi toàn bộ phạm vi phụ trách',
+        storeIds: [],
+      },
+    });
+    assert.equal(cleared.statusCode, 200);
+    assert.equal(cleared.json().data.sessionVersion, 2);
+    assert.deepEqual(cleared.json().data.assignments, []);
+
+    const audit = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/audit-logs?action=HTKD_ASSIGNMENTS_REPLACED&pageSize=10',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(audit.statusCode, 200);
+    assert.equal(audit.json().pagination.totalItems, 2);
+    assert.equal(audit.json().data[0].requestId, 'clear-htkd-scope');
+    assert.equal(audit.json().data[0].before.assignments.length, 1);
+    assert.equal(audit.json().data[0].after.assignments.length, 0);
+    assert.equal(audit.json().data[0].metadata.reason, 'Thu hồi toàn bộ phạm vi phụ trách');
+
+    const wholesaleStores = await app.inject({
+      method: 'GET',
+      url: '/api/v1/stores?kind=WHOLESALE&status=ACTIVE&pageSize=100',
+      headers: { cookie: adminCookie },
+    });
+    const wholesaleStoreId = wholesaleStores.json().data[0]?.id;
+    assert.ok(wholesaleStoreId);
+    const wholesaleRejected = await app.inject({
+      method: 'PUT',
+      url: path,
+      headers: { cookie: adminCookie },
+      payload: {
+        expectedSessionVersion: 2,
+        reason: 'Không được gán cửa hàng sỉ',
+        storeIds: [wholesaleStoreId],
+      },
+    });
+    assert.equal(wholesaleRejected.statusCode, 400);
+    assert.equal(wholesaleRejected.json().error.code, 'VALIDATION_ERROR');
+
+    repository.setStoreOperationEligibility(MEMORY_SEED_IDS.bdStore, { status: 'INACTIVE' });
+    const inactiveStoreRejected = await app.inject({
+      method: 'PUT',
+      url: path,
+      headers: { cookie: adminCookie },
+      payload: {
+        expectedSessionVersion: 2,
+        reason: 'Không được gán cửa hàng ngừng hoạt động',
+        storeIds: [MEMORY_SEED_IDS.bdStore],
+      },
+    });
+    assert.equal(inactiveStoreRejected.statusCode, 400);
+
+    const wrongTarget = await app.inject({
+      method: 'GET',
+      url: `/api/v1/admin/accounts/${MEMORY_SEED_IDS.storeAccount}/assignments`,
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(wrongTarget.statusCode, 409);
+    const missingTarget = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/accounts/99999999-9999-4999-8999-999999999999/assignments',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(missingTarget.statusCode, 404);
+
+    repository.setAccountStatus(MEMORY_SEED_IDS.htkdAccount, 'LOCKED');
+    const inactiveTarget = await app.inject({
+      method: 'GET',
+      url: path,
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(inactiveTarget.statusCode, 409);
   });
 
   test('resets passwords with optimistic locking, revokes sessions and exposes safe audit rows', async () => {

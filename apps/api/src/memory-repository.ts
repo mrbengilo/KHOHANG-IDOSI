@@ -20,6 +20,7 @@ import type {
   DeclareStoreReceiptRequest,
   DispatchWarehouseOutboundRequest,
   FinalizeReceiptRequest,
+  HtkdAssignment,
   InboundReceipt,
   ListOrderSessionsQuery,
   ListAccountsQuery,
@@ -54,6 +55,7 @@ import type {
   RespondPriorityOfferRequest,
   ReturnReceiptForCorrectionRequest,
   ResetPasswordRequest,
+  ReplaceHtkdAssignmentsRequest,
   ReviewStoreOutboundRequest,
   OrderSession,
   Session,
@@ -105,6 +107,7 @@ import { sanitizeAuditObject } from './audit-sanitization.js';
 import { monthlyOperationalReportDto } from './monthly-report.js';
 import type {
   AccountCredentials,
+  HtkdAssignmentsState,
   IdosiStatisticsTarget,
   OrderStatistics,
   IdempotentResource,
@@ -133,6 +136,8 @@ export const MEMORY_SEED_IDS = {
   allocationLine: '11000000-0000-4000-8000-300000000001',
   bdAllocationLine: '11000000-0000-4000-8000-300000000004',
   unassignedAllocationLine: '11000000-0000-4000-8000-300000000005',
+  htkdNvtAssignment: '14600000-0000-4000-8000-000000000001',
+  htkdBdAssignment: '14600000-0000-4000-8000-000000000002',
   inventoryBag: '15000000-0000-4000-8000-000000000001',
   inventoryLedger: '15100000-0000-4000-8000-000000000001',
   sourceReceiptBag: '15200000-0000-4000-8000-000000000001',
@@ -146,6 +151,7 @@ interface MutableAccount extends AccountCredentials {
   passwordHash: string;
   sessionVersion: number;
   status: 'ACTIVE' | 'LOCKED' | 'DISABLED';
+  assignedStoreIds: string[];
   readonly createdAt: string;
   updatedAt: string;
 }
@@ -239,6 +245,7 @@ export interface MemoryRepositoryOptions {
 export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly now: () => Date;
   private readonly accounts = new Map<string, MutableAccount>();
+  private readonly htkdAssignments = new Map<string, HtkdAssignment>();
   private readonly sessions = new Map<string, StoredSession>();
   private readonly stores = new Map<string, Store>();
   private readonly orderSessions = new Map<string, OrderSession>();
@@ -485,6 +492,91 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       sessionsRevoked,
     });
     return { accountId, sessionsRevoked, sessionVersion: account.sessionVersion };
+  }
+
+  public async listHtkdAssignments(
+    actor: AuthenticatedPrincipal,
+    htkdAccountId: string,
+  ): Promise<HtkdAssignmentsState> {
+    requireMemoryAdmin(actor);
+    return this.htkdAssignmentState(htkdAccountId);
+  }
+
+  public async replaceHtkdAssignments(
+    actor: AuthenticatedPrincipal,
+    htkdAccountId: string,
+    input: ReplaceHtkdAssignmentsRequest,
+    context: RequestContext,
+  ): Promise<HtkdAssignmentsState> {
+    requireMemoryAdmin(actor);
+    const account = this.requireActiveHtkdAccount(htkdAccountId);
+    assertMemoryAccountVersion(account, input.expectedSessionVersion);
+
+    for (const storeId of input.storeIds) {
+      const store = this.stores.get(storeId);
+      if (!store || store.status !== 'ACTIVE' || store.kind !== 'RETAIL') {
+        throw new ApiError(
+          'VALIDATION_ERROR',
+          'HTKD chỉ được phân công cửa hàng bán lẻ đang hoạt động',
+          400,
+        );
+      }
+    }
+
+    const before = this.htkdAssignmentState(htkdAccountId);
+    const currentStoreIds = before.assignments.map((assignment) => assignment.storeId).toSorted();
+    const nextStoreIds = [...input.storeIds].toSorted();
+    if (
+      currentStoreIds.length === nextStoreIds.length &&
+      currentStoreIds.every((storeId, index) => storeId === nextStoreIds[index])
+    ) {
+      return before;
+    }
+
+    const nextStoreIdSet = new Set(nextStoreIds);
+    const currentStoreIdSet = new Set(currentStoreIds);
+    const revokedStoreIds = currentStoreIds.filter((storeId) => !nextStoreIdSet.has(storeId));
+    const addedStoreIds = nextStoreIds.filter((storeId) => !currentStoreIdSet.has(storeId));
+    const now = this.now().toISOString();
+
+    for (const assignment of before.assignments) {
+      if (!nextStoreIdSet.has(assignment.storeId)) {
+        this.htkdAssignments.set(assignment.id, {
+          ...assignment,
+          revokedAt: now,
+          revokedByAccountId: actor.accountId,
+        });
+      }
+    }
+    for (const storeId of addedStoreIds) {
+      const assignment: HtkdAssignment = {
+        id: randomUUID(),
+        htkdAccountId,
+        storeId,
+        assignedAt: now,
+        assignedByAccountId: actor.accountId,
+        revokedAt: null,
+        revokedByAccountId: null,
+      };
+      this.htkdAssignments.set(assignment.id, assignment);
+    }
+
+    account.assignedStoreIds = nextStoreIds;
+    account.sessionVersion += 1;
+    account.updatedAt = now;
+    const sessionsRevoked = this.revokeAccountSessions(htkdAccountId);
+    const after = this.htkdAssignmentState(htkdAccountId);
+    this.appendAudit(
+      actor,
+      context,
+      'HTKD_ASSIGNMENTS_REPLACED',
+      'user',
+      htkdAccountId,
+      before,
+      after,
+      { addedStoreIds, reason: input.reason, revokedStoreIds, sessionsRevoked },
+    );
+    return after;
   }
 
   public async listAuditLogs(
@@ -3124,6 +3216,26 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     };
   }
 
+  private requireActiveHtkdAccount(htkdAccountId: string): MutableAccount {
+    const account = this.accounts.get(htkdAccountId);
+    if (!account) throw notFound('Không tìm thấy tài khoản HTKD');
+    if (account.role !== 'HTKD' || account.status !== 'ACTIVE') {
+      throw conflict('Chỉ tài khoản HTKD đang hoạt động mới có thể được phân công cửa hàng');
+    }
+    return account;
+  }
+
+  private htkdAssignmentState(htkdAccountId: string): HtkdAssignmentsState {
+    const account = this.requireActiveHtkdAccount(htkdAccountId);
+    const assignments = [...this.htkdAssignments.values()]
+      .filter(
+        (assignment) => assignment.htkdAccountId === htkdAccountId && assignment.revokedAt === null,
+      )
+      .toSorted((left, right) => left.storeId.localeCompare(right.storeId))
+      .map((assignment) => structuredClone(assignment));
+    return { assignments, htkdAccountId, sessionVersion: account.sessionVersion };
+  }
+
   private requireMutableReceipt(
     actor: AuthenticatedPrincipal,
     receiptId: string,
@@ -3505,6 +3617,28 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       },
     ];
     for (const account of seededAccounts) this.accounts.set(account.id, account);
+    for (const assignment of [
+      {
+        id: MEMORY_SEED_IDS.htkdNvtAssignment,
+        htkdAccountId: MEMORY_SEED_IDS.htkdAccount,
+        storeId: nvtId,
+        assignedAt: now,
+        assignedByAccountId: MEMORY_SEED_IDS.adminAccount,
+        revokedAt: null,
+        revokedByAccountId: null,
+      },
+      {
+        id: MEMORY_SEED_IDS.htkdBdAssignment,
+        htkdAccountId: MEMORY_SEED_IDS.htkdAccount,
+        storeId: bdId,
+        assignedAt: now,
+        assignedByAccountId: MEMORY_SEED_IDS.adminAccount,
+        revokedAt: null,
+        revokedByAccountId: null,
+      },
+    ] satisfies HtkdAssignment[]) {
+      this.htkdAssignments.set(assignment.id, assignment);
+    }
 
     this.operationalSettings.push(
       Object.freeze({

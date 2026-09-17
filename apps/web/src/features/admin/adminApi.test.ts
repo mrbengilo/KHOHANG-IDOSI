@@ -3,7 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AdminApiError } from './adminApi';
 import {
   getAdminOperationalSettings,
+  getAdminHtkdAssignments,
+  listActiveRetailStoresForAccounts,
   listAdminAccounts,
+  replaceAdminHtkdAssignments,
   resetAdminAccountPassword,
   updateAdminAccount,
   updateAdminOperationalSettings,
@@ -103,6 +106,90 @@ describe('admin API client', () => {
       requestId: 'request-version-1',
       status: 409,
     });
+  });
+
+  it('loads and replaces HTKD assignments with the optimistic account version', async () => {
+    const assignment = {
+      id: '22222222-2222-4222-8222-222222222222',
+      htkdAccountId: account.id,
+      storeId: '33333333-3333-4333-8333-333333333333',
+      assignedAt: '2026-09-17T01:00:00.000Z',
+      assignedByAccountId: '44444444-4444-4444-8444-444444444444',
+      revokedAt: null,
+      revokedByAccountId: null,
+    } as const;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: { assignments: [assignment], htkdAccountId: account.id, sessionVersion: 2 },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: { assignments: [], htkdAccountId: account.id, sessionVersion: 3 },
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getAdminHtkdAssignments(account.id)).resolves.toMatchObject({
+      assignments: [assignment],
+      sessionVersion: 2,
+    });
+    await expect(
+      replaceAdminHtkdAssignments(account.id, {
+        expectedSessionVersion: 2,
+        reason: 'Thu hồi toàn bộ phạm vi',
+        storeIds: [],
+      }),
+    ).resolves.toMatchObject({ assignments: [], sessionVersion: 3 });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      `/api/v1/admin/accounts/${account.id}/assignments`,
+    );
+    const replaceInit = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    expect(replaceInit.method).toBe('PUT');
+    expect(JSON.parse(String(replaceInit.body))).toEqual({
+      expectedSessionVersion: 2,
+      reason: 'Thu hồi toàn bộ phạm vi',
+      storeIds: [],
+    });
+  });
+
+  it('loads one filtered page of active retail store choices without page fan-out', async () => {
+    const store = (id: string, code: string) => ({
+      address: null,
+      code,
+      createdAt: '2026-09-17T00:00:00.000Z',
+      groupId: '55555555-5555-4555-8555-555555555555',
+      id,
+      kind: 'RETAIL',
+      name: code,
+      status: 'ACTIVE',
+      updatedAt: '2026-09-17T00:00:00.000Z',
+      version: 0,
+    });
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({
+        data: [store('66666666-6666-4666-8666-666666666666', 'DS_1')],
+        pagination: { page: 2, pageSize: 24, totalItems: 49, totalPages: 3 },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      listActiveRetailStoresForAccounts({ page: 2, pageSize: 24, search: 'BMT' }),
+    ).resolves.toMatchObject({
+      data: [expect.objectContaining({ code: 'DS_1' })],
+      pagination: { page: 2, totalPages: 3 },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const url = String(fetchMock.mock.calls[0]?.[0]);
+    expect(url).toContain('page=2');
+    expect(url).toContain('pageSize=24');
+    expect(url).toContain('kind=RETAIL');
+    expect(url).toContain('status=ACTIVE');
+    expect(url).toContain('search=BMT');
   });
 
   it('loads and versions operational settings without a secret field', async () => {

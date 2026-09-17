@@ -83,14 +83,30 @@ describe('identity and store-scope contracts', () => {
       ReplaceHtkdAssignmentsRequestSchema.safeParse({
         storeIds: [STORE_ID, OTHER_STORE_ID],
         reason: 'Territory rotation',
+        expectedSessionVersion: 0,
       }).success,
     ).toBe(true);
     expect(
       ReplaceHtkdAssignmentsRequestSchema.safeParse({
         storeIds: [STORE_ID, STORE_ID],
         reason: 'Territory rotation',
+        expectedSessionVersion: 0,
       }).success,
     ).toBe(false);
+  });
+
+  it('allows an explicit empty HTKD scope to revoke every store assignment', () => {
+    expect(
+      ReplaceHtkdAssignmentsRequestSchema.parse({
+        storeIds: [],
+        reason: 'Thu hồi toàn bộ phạm vi phụ trách',
+        expectedSessionVersion: 3,
+      }),
+    ).toEqual({
+      storeIds: [],
+      reason: 'Thu hồi toàn bộ phạm vi phụ trách',
+      expectedSessionVersion: 3,
+    });
   });
 
   it('requires an explicit store kind and supports wholesale filtering', () => {
