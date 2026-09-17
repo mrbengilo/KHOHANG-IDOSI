@@ -3,12 +3,24 @@ import type {
   AccountRole,
   AccountStatus,
   CreateAccountRequest,
+  HtkdAssignmentsResponse,
   ListAccountsQuery,
+  ReplaceHtkdAssignmentsRequest,
   Store,
   UpdateAccountRequest,
 } from '@idosi/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { KeyRound, LockKeyhole, Plus, RefreshCw, Search, ShieldCheck, X } from 'lucide-react';
+import {
+  CheckCircle2,
+  KeyRound,
+  LockKeyhole,
+  MapPin,
+  Plus,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  X,
+} from 'lucide-react';
 import { useMemo, useRef, useState, type FormEvent } from 'react';
 
 import { Badge } from '../../components/Badge';
@@ -19,15 +31,19 @@ import { AdminAccess } from './AdminAccess';
 import {
   adminErrorMessage,
   createAdminAccount,
+  getAdminHtkdAssignments,
+  listActiveRetailStoresForAccounts,
   listActiveStoresForAccounts,
   listAdminAccounts,
   resetAdminAccountPassword,
+  replaceAdminHtkdAssignments,
   updateAdminAccount,
 } from './adminApi';
 
 const accountQueryKey = ['admin', 'accounts'] as const;
 const auditQueryKey = ['admin', 'audit-logs'] as const;
 const pageSize = 20;
+const storeChoicePageSize = 24;
 
 const roleLabels: Record<AccountRole, string> = {
   ADMIN: 'Quản trị',
@@ -123,6 +139,36 @@ export function accountStatusRequest(
   return { expectedSessionVersion: account.sessionVersion, status };
 }
 
+type HtkdAssignmentsState = HtkdAssignmentsResponse['data'];
+
+export function htkdAssignmentRequestFromDraft(
+  storeIds: readonly string[],
+  reason: string,
+  expectedSessionVersion: number,
+): { readonly input: ReplaceHtkdAssignmentsRequest | null; readonly error: string | null } {
+  const normalizedReason = reason.trim();
+  if (normalizedReason.length < 3) {
+    return { error: 'Lý do thay đổi phải có ít nhất 3 ký tự.', input: null };
+  }
+  return {
+    error: null,
+    input: {
+      expectedSessionVersion,
+      reason: normalizedReason,
+      storeIds: [...new Set(storeIds)].toSorted(),
+    },
+  };
+}
+
+export function sameStoreSelection(left: readonly string[], right: readonly string[]): boolean {
+  const normalizedLeft = [...new Set(left)].toSorted();
+  const normalizedRight = [...new Set(right)].toSorted();
+  return (
+    normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((storeId, index) => storeId === normalizedRight[index])
+  );
+}
+
 export function AdminUsersPage() {
   return (
     <AdminAccess>
@@ -142,6 +188,8 @@ function AdminUsersContent() {
   const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
   const [resetTarget, setResetTarget] = useState<Account | null>(null);
   const [resetting, setResetting] = useState(false);
+  const [assignmentTarget, setAssignmentTarget] = useState<Account | null>(null);
+  const [assignmentBusy, setAssignmentBusy] = useState(false);
   const [actionError, setActionError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const createLock = useRef(false);
@@ -163,7 +211,6 @@ function AdminUsersContent() {
     () => new Map((storesQuery.data ?? []).map((store) => [store.id, store] as const)),
     [storesQuery.data],
   );
-
   const refreshData = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: accountQueryKey }),
@@ -212,6 +259,9 @@ function AdminUsersContent() {
     try {
       const updated = await updateAdminAccount(account.id, accountStatusRequest(account, status));
       setSuccessMessage(`Đã cập nhật ${updated.username}: ${statusLabels[updated.status]}.`);
+      if (assignmentTarget?.id === updated.id && updated.status !== 'ACTIVE') {
+        setAssignmentTarget(null);
+      }
       await refreshData();
     } catch (error) {
       setActionError(adminErrorMessage(error));
@@ -269,8 +319,11 @@ function AdminUsersContent() {
           <Button
             aria-expanded={showCreate}
             className="admin-clickable"
+            disabled={assignmentBusy || creating || resetting || statusBusyId !== null}
             onClick={() => {
               setActionError('');
+              setAssignmentTarget(null);
+              setResetTarget(null);
               setShowCreate((current) => !current);
             }}
           >
@@ -298,6 +351,30 @@ function AdminUsersContent() {
           onSubmit={submitCreate}
           stores={storesQuery.data ?? []}
           storesError={storesQuery.isError ? adminErrorMessage(storesQuery.error) : ''}
+        />
+      ) : null}
+
+      {assignmentTarget ? (
+        <HtkdAssignmentsEditor
+          key={assignmentTarget.id}
+          account={assignmentTarget}
+          onBusyChange={setAssignmentBusy}
+          onCancel={() => {
+            if (!assignmentBusy) setAssignmentTarget(null);
+          }}
+          onSaved={(result) => {
+            setAssignmentTarget((current) =>
+              current?.id === result.htkdAccountId
+                ? { ...current, sessionVersion: result.sessionVersion }
+                : current,
+            );
+            setSuccessMessage(
+              result.assignments.length === 0
+                ? `Đã thu hồi toàn bộ cửa hàng của ${assignmentTarget.username}.`
+                : `Đã phân công ${result.assignments.length} cửa hàng cho ${assignmentTarget.username}.`,
+            );
+            void refreshData();
+          }}
         />
       ) : null}
 
@@ -435,6 +512,9 @@ function AdminUsersContent() {
                         : account.role === 'ADMIN'
                           ? 'Toàn hệ thống'
                           : 'Theo phân công HTKD'}
+                      {account.role === 'HTKD' && account.status !== 'ACTIVE' ? (
+                        <small>Kích hoạt tài khoản để sửa phân công.</small>
+                      ) : null}
                     </td>
                     <td data-label="Trạng thái">
                       <Badge tone={statusTone[account.status]}>
@@ -448,14 +528,48 @@ function AdminUsersContent() {
                           key={`${account.id}:${account.sessionVersion}:${account.status}`}
                           account={account}
                           busy={statusBusyId === account.id}
-                          disabled={statusBusyId !== null || resetting || creating}
+                          disabled={
+                            statusBusyId !== null || resetting || creating || assignmentBusy
+                          }
                           onSave={saveStatus}
                         />
+                        {account.role === 'HTKD' ? (
+                          <button
+                            aria-expanded={assignmentTarget?.id === account.id}
+                            className="admin-action"
+                            disabled={
+                              account.status !== 'ACTIVE' ||
+                              statusBusyId !== null ||
+                              resetting ||
+                              creating ||
+                              assignmentBusy
+                            }
+                            onClick={() => {
+                              setActionError('');
+                              setSuccessMessage('');
+                              setShowCreate(false);
+                              setResetTarget(null);
+                              setAssignmentTarget(account);
+                            }}
+                            title={
+                              account.status === 'ACTIVE'
+                                ? 'Xem và thay đổi cửa hàng được phân công'
+                                : 'Kích hoạt tài khoản trước khi phân công cửa hàng'
+                            }
+                            type="button"
+                          >
+                            <MapPin aria-hidden="true" size={15} /> Phân công cửa hàng
+                          </button>
+                        ) : null}
                         <button
                           className="admin-action admin-action--secondary"
-                          disabled={statusBusyId !== null || resetting || creating}
+                          disabled={
+                            statusBusyId !== null || resetting || creating || assignmentBusy
+                          }
                           onClick={() => {
                             setActionError('');
+                            setAssignmentTarget(null);
+                            setShowCreate(false);
                             setResetTarget(account);
                           }}
                           type="button"
@@ -496,6 +610,401 @@ function AdminUsersContent() {
         ) : null}
       </section>
     </>
+  );
+}
+
+function HtkdAssignmentsEditor({
+  account,
+  onBusyChange,
+  onCancel,
+  onSaved,
+}: {
+  readonly account: Account;
+  readonly onBusyChange: (busy: boolean) => void;
+  readonly onCancel: () => void;
+  readonly onSaved: (result: HtkdAssignmentsState) => void;
+}) {
+  const queryClient = useQueryClient();
+  const queryKey = ['admin', 'htkd-assignments', account.id] as const;
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [notice, setNotice] = useState('');
+  const saveLock = useRef(false);
+  const assignmentsQuery = useQuery({
+    queryFn: () => getAdminHtkdAssignments(account.id),
+    queryKey,
+    retry: false,
+  });
+
+  const saveAssignments = async (input: ReplaceHtkdAssignmentsRequest) => {
+    if (saveLock.current) return;
+    saveLock.current = true;
+    setSaving(true);
+    onBusyChange(true);
+    setSaveError('');
+    setNotice('');
+    try {
+      const result = await replaceAdminHtkdAssignments(account.id, input);
+      queryClient.setQueryData(queryKey, result);
+      setNotice(
+        result.assignments.length === 0
+          ? 'Đã thu hồi toàn bộ quyền theo cửa hàng.'
+          : `Đã lưu ${result.assignments.length} cửa hàng đang phụ trách.`,
+      );
+      onSaved(result);
+    } catch (error) {
+      setSaveError(adminErrorMessage(error));
+      if (error instanceof Error && 'code' in error && error.code === 'VERSION_CONFLICT') {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: accountQueryKey }),
+          queryClient.invalidateQueries({ queryKey }),
+        ]);
+      }
+    } finally {
+      saveLock.current = false;
+      setSaving(false);
+      onBusyChange(false);
+    }
+  };
+
+  return (
+    <section aria-labelledby="htkd-assignments-title" className="admin-panel admin-editor">
+      <div className="admin-section-heading">
+        <div>
+          <h2 id="htkd-assignments-title">Phân công cửa hàng HTKD</h2>
+          <p>
+            {account.displayName} · {account.username}. Chỉ cửa hàng bán lẻ đang hoạt động được phép
+            chọn.
+          </p>
+        </div>
+        <button
+          aria-label="Đóng biểu mẫu phân công cửa hàng"
+          className="admin-icon-button"
+          disabled={saving}
+          onClick={onCancel}
+          type="button"
+        >
+          <X aria-hidden="true" size={18} />
+        </button>
+      </div>
+
+      {notice ? (
+        <p
+          className="admin-feedback admin-feedback--success admin-assignment-feedback"
+          role="status"
+        >
+          <CheckCircle2 aria-hidden="true" size={16} /> {notice}
+        </p>
+      ) : null}
+      {assignmentsQuery.isPending ? <AdminLoading label="Đang tải phạm vi HTKD…" /> : null}
+      {assignmentsQuery.isError ? (
+        <div className="admin-state admin-state--error" role="alert">
+          <strong>Không thể tải phân công cửa hàng</strong>
+          <p>{adminErrorMessage(assignmentsQuery.error)}</p>
+          <Button
+            className="admin-clickable"
+            onClick={() => void assignmentsQuery.refetch()}
+            tone="secondary"
+          >
+            <RefreshCw aria-hidden="true" size={15} /> Thử lại
+          </Button>
+        </div>
+      ) : null}
+      {assignmentsQuery.data ? (
+        <HtkdAssignmentsForm
+          key={`${account.id}:${assignmentsQuery.data.sessionVersion}`}
+          assignments={assignmentsQuery.data}
+          busy={saving}
+          error={saveError}
+          onSubmit={saveAssignments}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function HtkdAssignmentsForm({
+  assignments,
+  busy,
+  error,
+  onSubmit,
+}: {
+  readonly assignments: HtkdAssignmentsState;
+  readonly busy: boolean;
+  readonly error: string;
+  readonly onSubmit: (input: ReplaceHtkdAssignmentsRequest) => Promise<void>;
+}) {
+  const initialStoreIds = useMemo(
+    () => assignments.assignments.map((assignment) => assignment.storeId),
+    [assignments.assignments],
+  );
+  const [selectedStoreIds, setSelectedStoreIds] = useState(() => new Set(initialStoreIds));
+  const [reason, setReason] = useState('');
+  const [validationError, setValidationError] = useState('');
+  const [storePage, setStorePage] = useState(1);
+  const [storeSearchDraft, setStoreSearchDraft] = useState('');
+  const [storeSearch, setStoreSearch] = useState('');
+  const storesQuery = useQuery({
+    queryFn: () =>
+      listActiveRetailStoresForAccounts({
+        page: storePage,
+        pageSize: storeChoicePageSize,
+        ...(storeSearch ? { search: storeSearch } : {}),
+      }),
+    queryKey: ['admin', 'active-retail-store-choices', storeSearch, storePage],
+    retry: false,
+    staleTime: 60_000,
+  });
+  const stores = storesQuery.data?.data ?? [];
+  const pagination = storesQuery.data?.pagination;
+  const visibleSelectedCount = stores.filter((store) => selectedStoreIds.has(store.id)).length;
+  const hiddenSelectedCount = selectedStoreIds.size - visibleSelectedCount;
+  const changed = !sameStoreSelection(initialStoreIds, [...selectedStoreIds]);
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const parsed = htkdAssignmentRequestFromDraft(
+      [...selectedStoreIds],
+      reason,
+      assignments.sessionVersion,
+    );
+    setValidationError(parsed.error ?? '');
+    if (parsed.input && changed) void onSubmit(parsed.input);
+  };
+
+  const toggleStore = (storeId: string) => {
+    setSelectedStoreIds((current) => {
+      const next = new Set(current);
+      if (next.has(storeId)) next.delete(storeId);
+      else next.add(storeId);
+      return next;
+    });
+  };
+
+  const applyStoreSearch = () => {
+    setStorePage(1);
+    setStoreSearch(storeSearchDraft.trim());
+  };
+
+  return (
+    <form className="admin-assignment-form" onSubmit={submit}>
+      <div className="admin-assignment-toolbar">
+        <p aria-live="polite" className="admin-assignment-count">
+          <strong>{selectedStoreIds.size}</strong> cửa hàng được chọn
+          {pagination ? <small> · {pagination.totalItems} cửa hàng khả dụng</small> : null}
+        </p>
+        <div className="admin-row-actions">
+          <button
+            className="admin-action admin-action--secondary"
+            disabled={
+              busy ||
+              storesQuery.isFetching ||
+              stores.length === 0 ||
+              visibleSelectedCount === stores.length
+            }
+            onClick={() =>
+              setSelectedStoreIds((current) =>
+                updateStorePageSelection(
+                  current,
+                  stores.map((store) => store.id),
+                  true,
+                ),
+              )
+            }
+            type="button"
+          >
+            Chọn trang này
+          </button>
+          <button
+            className="admin-action admin-action--secondary"
+            disabled={busy || storesQuery.isFetching || visibleSelectedCount === 0}
+            onClick={() =>
+              setSelectedStoreIds((current) =>
+                updateStorePageSelection(
+                  current,
+                  stores.map((store) => store.id),
+                  false,
+                ),
+              )
+            }
+            type="button"
+          >
+            Bỏ chọn trang này
+          </button>
+          <button
+            className="admin-action admin-action--secondary"
+            disabled={busy || selectedStoreIds.size === 0}
+            onClick={() => setSelectedStoreIds(new Set())}
+            type="button"
+          >
+            Bỏ chọn tất cả
+          </button>
+        </div>
+      </div>
+
+      <div className="admin-store-choice-browser">
+        <label className="admin-field">
+          <span>Tìm cửa hàng bán lẻ</span>
+          <input
+            disabled={busy}
+            maxLength={160}
+            onChange={(event) => setStoreSearchDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                applyStoreSearch();
+              }
+            }}
+            placeholder="Mã hoặc tên cửa hàng"
+            value={storeSearchDraft}
+          />
+        </label>
+        <div className="admin-row-actions">
+          <button
+            className="admin-action"
+            disabled={busy || storesQuery.isFetching}
+            onClick={applyStoreSearch}
+            type="button"
+          >
+            <Search aria-hidden="true" size={15} /> Tìm
+          </button>
+          <button
+            className="admin-action admin-action--secondary"
+            disabled={busy || storesQuery.isFetching || (!storeSearch && !storeSearchDraft)}
+            onClick={() => {
+              setStoreSearchDraft('');
+              setStoreSearch('');
+              setStorePage(1);
+            }}
+            type="button"
+          >
+            Xóa tìm kiếm
+          </button>
+        </div>
+      </div>
+
+      {hiddenSelectedCount > 0 ? (
+        <p className="admin-assignment-warning" role="status">
+          {hiddenSelectedCount} cửa hàng đã chọn nằm ngoài trang hoặc bộ lọc hiện tại và vẫn được
+          giữ khi lưu.
+        </p>
+      ) : null}
+      {storesQuery.isPending ? <AdminLoading label="Đang tải cửa hàng bán lẻ…" /> : null}
+      {storesQuery.isError ? (
+        <div className="admin-state admin-state--error" role="alert">
+          <strong>Không thể tải danh sách cửa hàng</strong>
+          <p>{adminErrorMessage(storesQuery.error)}</p>
+          <Button
+            className="admin-clickable"
+            onClick={() => void storesQuery.refetch()}
+            tone="secondary"
+          >
+            <RefreshCw aria-hidden="true" size={15} /> Thử lại
+          </Button>
+        </div>
+      ) : null}
+      {storesQuery.isSuccess && stores.length === 0 ? (
+        <EmptyState
+          detail={
+            storeSearch
+              ? 'Thử mã hoặc tên khác. Các lựa chọn ngoài bộ lọc hiện tại vẫn được giữ.'
+              : 'Bạn vẫn có thể lưu danh sách rỗng để thu hồi toàn bộ quyền hiện tại.'
+          }
+          title={
+            storeSearch
+              ? 'Không có cửa hàng khớp tìm kiếm'
+              : 'Không có cửa hàng bán lẻ đang hoạt động'
+          }
+        />
+      ) : null}
+      {stores.length > 0 ? (
+        <fieldset className="admin-assignment-fieldset" disabled={busy}>
+          <legend>Chọn cửa hàng được phép quản lý</legend>
+          <div className="admin-assignment-grid">
+            {stores.map((store) => {
+              const selected = selectedStoreIds.has(store.id);
+              return (
+                <label
+                  className={`admin-assignment-option${selected ? ' admin-assignment-option--selected' : ''}`}
+                  key={store.id}
+                >
+                  <input
+                    checked={selected}
+                    onChange={() => toggleStore(store.id)}
+                    type="checkbox"
+                  />
+                  <span>
+                    <strong>{store.code}</strong>
+                    <small>{store.name}</small>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </fieldset>
+      ) : null}
+
+      {pagination && pagination.totalPages > 1 ? (
+        <div
+          aria-label="Phân trang cửa hàng"
+          className="admin-pagination admin-assignment-pagination"
+        >
+          <button
+            className="admin-action admin-action--secondary"
+            disabled={busy || storesQuery.isFetching || pagination.page <= 1}
+            onClick={() => setStorePage((current) => Math.max(1, current - 1))}
+            type="button"
+          >
+            Trang trước
+          </button>
+          <span>
+            Trang {pagination.page}/{pagination.totalPages}
+          </span>
+          <button
+            className="admin-action admin-action--secondary"
+            disabled={busy || storesQuery.isFetching || pagination.page >= pagination.totalPages}
+            onClick={() => setStorePage((current) => current + 1)}
+            type="button"
+          >
+            Trang sau
+          </button>
+        </div>
+      ) : null}
+
+      {selectedStoreIds.size === 0 ? (
+        <p className="admin-assignment-warning" role="status">
+          Lưu danh sách rỗng sẽ thu hồi toàn bộ quyền theo cửa hàng và các phiên HTKD hiện tại.
+        </p>
+      ) : null}
+      <label className="admin-field admin-assignment-reason">
+        <span>Lý do thay đổi</span>
+        <textarea
+          aria-describedby="htkd-assignment-reason-help"
+          disabled={busy}
+          maxLength={500}
+          minLength={3}
+          onChange={(event) => setReason(event.target.value)}
+          placeholder="Ví dụ: Điều chỉnh địa bàn phụ trách tháng 9"
+          required
+          rows={3}
+          value={reason}
+        />
+        <small id="htkd-assignment-reason-help">
+          Lý do được lưu cùng dữ liệu trước/sau trong nhật ký kiểm toán.
+        </small>
+      </label>
+      {validationError || error ? (
+        <p className="admin-feedback admin-feedback--error" role="alert">
+          {validationError || error}
+        </p>
+      ) : null}
+      <div className="admin-form-actions">
+        <Button busy={busy} className="admin-clickable" disabled={!changed} type="submit">
+          Lưu phân công
+        </Button>
+        {!changed ? <small>Chưa có thay đổi để lưu.</small> : null}
+      </div>
+    </form>
   );
 }
 
@@ -630,6 +1139,19 @@ function CreateAccountForm({
       </form>
     </section>
   );
+}
+
+export function updateStorePageSelection(
+  currentStoreIds: ReadonlySet<string>,
+  pageStoreIds: readonly string[],
+  selected: boolean,
+): Set<string> {
+  const next = new Set(currentStoreIds);
+  for (const storeId of pageStoreIds) {
+    if (selected) next.add(storeId);
+    else next.delete(storeId);
+  }
+  return next;
 }
 
 function AccountStatusControl({
