@@ -68,6 +68,38 @@ export type {
 } from './order-requests.js';
 
 export {
+  createOrderSession,
+  OrderSessionAuthorizationError,
+  OrderSessionConflictError,
+  OrderSessionNotFoundError,
+  OrderSessionValidationError,
+  transitionOrderSession,
+} from './order-sessions.js';
+export type {
+  CreateOrderSessionInput,
+  OrderSessionRecord,
+  TransitionOrderSessionInput,
+} from './order-sessions.js';
+
+export {
+  dispatchWarehouseOutboundRequest,
+  getWarehouseOutboundRequest,
+  listWarehouseOutboundRequests,
+  WarehouseOutboundAuthorizationError,
+  WarehouseOutboundConflictError,
+  WarehouseOutboundNotFoundError,
+  WarehouseOutboundValidationError,
+} from './outbound-requests.js';
+export type {
+  DispatchWarehouseOutboundRequestInput,
+  ListWarehouseOutboundRequestsInput,
+  WarehouseOutboundDatabaseStatus,
+  WarehouseOutboundRequestLineRecord,
+  WarehouseOutboundRequestPage,
+  WarehouseOutboundRequestRecord,
+} from './outbound-requests.js';
+
+export {
   cancelSupplierInbound,
   cancelSupplierInboundInTransaction,
   confirmSupplierInboundCosts,

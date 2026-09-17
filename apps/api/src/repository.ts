@@ -4,6 +4,7 @@ import type {
   AuthenticatedPrincipal,
   CancelInboundReceiptRequest,
   CancelWaitTicketRequest,
+  CreateOrderSessionRequest,
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
@@ -11,6 +12,7 @@ import type {
   CreateAccountRequest,
   CreateInboundReceiptRequest,
   DeclareStoreReceiptRequest,
+  DispatchWarehouseOutboundRequest,
   FinalizeReceiptRequest,
   ConfirmReceiptCostsRequest,
   ListOrderSessionsQuery,
@@ -44,11 +46,13 @@ import type {
   StoreOutbound,
   StoreReceiptSource,
   SubmitStoreReceiptRequest,
+  TransitionOrderSessionRequest,
   UpdateProductRequest,
   UpdateAccountRequest,
   UpdateProductConversionRequest,
   DeleteProductConversionRequest,
   ListWaitTicketsQuery,
+  ListWarehouseOutboundRequestsQuery,
   MonthlyOperationalReport,
   MonthlyOperationalReportQuery,
   IdosiOrderStatisticsPayload,
@@ -59,6 +63,7 @@ import type {
   OperationalSettingsVersion,
   WaitTicket,
   WaitTicketHistory,
+  WarehouseOutboundRequest,
   OpenStoreInventoryBagRequest,
   CreateStoreOutboundRequest,
   ReviewStoreOutboundRequest,
@@ -230,6 +235,21 @@ export interface WarehouseRepository {
   ): Promise<void>;
 
   listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>>;
+  createOrderSession(
+    actor: AuthenticatedPrincipal,
+    input: CreateOrderSessionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<OrderSession>>;
+  transitionOrderSession(
+    actor: AuthenticatedPrincipal,
+    sessionId: string,
+    input: TransitionOrderSessionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<OrderSession>>;
 
   listWarehouseBalances(actor: AuthenticatedPrincipal): Promise<WarehouseBalancesResponse>;
   listInboundReceipts(
@@ -318,6 +338,19 @@ export interface WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<SubmittedOrderRequest>;
+
+  listWarehouseOutboundRequests(
+    actor: AuthenticatedPrincipal,
+    query: ListWarehouseOutboundRequestsQuery,
+  ): Promise<Page<WarehouseOutboundRequest>>;
+  dispatchWarehouseOutboundRequest(
+    actor: AuthenticatedPrincipal,
+    outboundRequestId: string,
+    input: DispatchWarehouseOutboundRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<WarehouseOutboundRequest>>;
 
   listReceipts(actor: AuthenticatedPrincipal, query: ListReceiptsQuery): Promise<Page<Receipt>>;
   listStoreReceiptSources(

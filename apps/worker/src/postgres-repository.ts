@@ -15,6 +15,8 @@ import {
   orderRequestItems,
   orderRequests,
   orderSessions,
+  outboundRequestLines,
+  outboundRequests,
   reservations,
   stores,
   waitTickets,
@@ -64,6 +66,11 @@ interface PersistedMergedDemand {
   readonly demand: MergedDemand;
   readonly mergedOrderId: string;
   readonly mergedOrderItemId: string;
+}
+
+interface MergedDemandResolution {
+  readonly allocatedQuantity: number;
+  readonly waitlistedQuantity: number;
 }
 
 /** PostgreSQL adapter. Every scheduled job is one serializable, advisory-locked transaction. */
@@ -372,13 +379,6 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
     const persistedRunId = existingRun[0]?.id ?? runId;
     const persistedRunNumber = existingRun[0]?.runNumber ?? runNumber;
 
-    const persistedMerged = await persistMergedDemands(
-      tx,
-      session,
-      mergedDemands,
-      persistedRunNumber,
-      processedAt,
-    );
     if (existingRun.length === 0) {
       await tx.insert(allocationRuns).values({
         id: runId,
@@ -420,6 +420,41 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
     const storeOrder = await loadStoreOrder(tx, mergedDemands, domainTickets);
     const cursorByProduct = await loadPreviousCursors(tx);
 
+    const plannedAllocations = snapshotItems.map((item) => ({
+      item,
+      result: planProductAllocation({
+        allocationId: persistedRunId,
+        idempotencyKey: `${idempotencyKey}:${item.productId}`,
+        sessionId: session.id,
+        policyVersion: session.policyVersion,
+        allocatedAt: session.finalDueAt.toISOString(),
+        snapshot: snapshotItemPlan(snapshot, item),
+        mergedRequests: mergedDemands,
+        waitTickets: domainTickets,
+        priorityOffers: offers,
+        storeOrder,
+        startCursor: cursorByProduct[item.productId] ?? null,
+      }),
+    }));
+    const mergedResolutionByDemandId = new Map<string, MergedDemandResolution>();
+    for (const { result } of plannedAllocations) {
+      for (const remainder of result.remainders) {
+        if (remainder.source === 'CONFIRMED_WAIT') continue;
+        mergedResolutionByDemandId.set(remainder.demandId, {
+          allocatedQuantity: remainder.allocatedQuantity,
+          waitlistedQuantity: remainder.remainingQuantity,
+        });
+      }
+    }
+    const persistedMerged = await persistMergedDemands(
+      tx,
+      session,
+      mergedDemands,
+      mergedResolutionByDemandId,
+      persistedRunNumber,
+      processedAt,
+    );
+
     const demandById = new Map(mergedDemands.map((demand) => [demand.demandId, demand]));
     const offerByTicketId = new Map(acceptedRows.map((offer) => [offer.waitTicketId, offer]));
     const mergedByDemandId = new Map(persistedMerged.map((item) => [item.demand.demandId, item]));
@@ -434,20 +469,7 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
     const waitlistedByRequestItem = new Map<string, number>();
     const waitRemainders: AllocationRemainder[] = [];
 
-    for (const item of snapshotItems) {
-      const result = planProductAllocation({
-        allocationId: persistedRunId,
-        idempotencyKey: `${idempotencyKey}:${item.productId}`,
-        sessionId: session.id,
-        policyVersion: session.policyVersion,
-        allocatedAt: session.finalDueAt.toISOString(),
-        snapshot: snapshotItemPlan(snapshot, item),
-        mergedRequests: mergedDemands,
-        waitTickets: domainTickets,
-        priorityOffers: offers,
-        storeOrder,
-        startCursor: cursorByProduct[item.productId] ?? null,
-      });
+    for (const { item, result } of plannedAllocations) {
       nextCursorByProduct[item.productId] = result.nextCursor;
       requestedQuantity += result.remainders.reduce(
         (total, remainder) => total + remainder.requestedQuantity,
@@ -576,14 +598,6 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
           throw new Error(`Allocation ${remainder.demandId} did not reconcile to its sources.`);
         }
         if (remainder.remainingQuantity > 0) waitRemainders.push(remainder);
-        await tx
-          .update(mergedOrderItems)
-          .set({
-            allocatedQuantity: remainder.allocatedQuantity,
-            waitlistedQuantity: remainder.remainingQuantity,
-            updatedAt: processedAt,
-          })
-          .where(eq(mergedOrderItems.id, persisted.mergedOrderItemId));
       }
 
       if (result.allocatedQuantity > 0) {
@@ -610,6 +624,7 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
       processedAt,
     );
     await persistWaitRemainders(tx, waitRemainders, demandById, processedAt, persistedRunId);
+    affectedRows += await materializeOutboundRequests(tx, persistedRunId, session, processedAt);
     const mergedOrderIds = [...new Set(persistedMerged.map((item) => item.mergedOrderId))];
     if (mergedOrderIds.length > 0) {
       await tx
@@ -663,6 +678,165 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
 
     return { replayed: false, resourceId: persistedRunId, affectedRows: affectedRows + 1 };
   }
+}
+
+async function materializeOutboundRequests(
+  tx: Transaction,
+  allocationRunId: string,
+  session: ScheduledAllocationSession,
+  processedAt: Date,
+): Promise<number> {
+  const lines = await tx
+    .select({
+      id: allocationLines.id,
+      storeId: allocationLines.storeId,
+      productId: allocationLines.productId,
+      orderRequestItemId: allocationLines.orderRequestItemId,
+      waitTicketId: allocationLines.waitTicketId,
+      requestedQuantity: allocationLines.requestedQuantity,
+      allocatedQuantity: allocationLines.allocatedQuantity,
+      sequenceInRound: allocationLines.sequenceInRound,
+    })
+    .from(allocationLines)
+    .where(
+      and(
+        eq(allocationLines.allocationRunId, allocationRunId),
+        sql`${allocationLines.allocatedQuantity} > 0`,
+      ),
+    )
+    .orderBy(asc(allocationLines.sequenceInRound), asc(allocationLines.id));
+
+  let affectedRows = 0;
+  for (const line of lines) {
+    const [existing] = await tx
+      .select({ id: outboundRequestLines.id })
+      .from(outboundRequestLines)
+      .where(eq(outboundRequestLines.allocationLineId, line.id))
+      .limit(1);
+    if (existing) continue;
+
+    let sourceOrderRequestItemId = line.orderRequestItemId;
+    if (sourceOrderRequestItemId === null && line.waitTicketId !== null) {
+      const [ticket] = await tx
+        .select({ sourceOrderRequestItemId: waitTickets.sourceOrderRequestItemId })
+        .from(waitTickets)
+        .where(eq(waitTickets.id, line.waitTicketId))
+        .limit(1);
+      sourceOrderRequestItemId = ticket?.sourceOrderRequestItemId ?? null;
+    }
+    if (sourceOrderRequestItemId === null) {
+      throw new Error(`Allocation line ${line.id} has no request provenance for outbound.`);
+    }
+
+    const [requestSource] = await tx
+      .select({
+        requestedByUserId: orderRequests.requestedByUserId,
+        storeId: orderRequests.storeId,
+      })
+      .from(orderRequestItems)
+      .innerJoin(orderRequests, eq(orderRequests.id, orderRequestItems.orderRequestId))
+      .where(eq(orderRequestItems.id, sourceOrderRequestItemId))
+      .limit(1);
+    if (!requestSource || requestSource.storeId !== line.storeId) {
+      throw new Error(`Allocation line ${line.id} has invalid outbound requester provenance.`);
+    }
+
+    const [reservation] = await tx
+      .select({
+        id: reservations.id,
+        productId: reservations.productId,
+        storeId: reservations.storeId,
+        quantity: reservations.quantity,
+        outboundRequestLineId: reservations.outboundRequestLineId,
+      })
+      .from(reservations)
+      .where(
+        and(
+          eq(reservations.allocationLineId, line.id),
+          eq(reservations.status, 'active'),
+          isNull(reservations.deletedAt),
+        ),
+      )
+      .for('update')
+      .limit(1);
+    if (
+      !reservation ||
+      reservation.storeId !== line.storeId ||
+      reservation.productId !== line.productId ||
+      reservation.quantity !== line.allocatedQuantity ||
+      reservation.outboundRequestLineId !== null
+    ) {
+      throw new Error(`Allocation line ${line.id} has no matching active reservation.`);
+    }
+
+    const outboundRequestId = deterministicUuid(`outbound-request:${line.id}`);
+    const outboundLineId = deterministicUuid(`outbound-request-line:${line.id}`);
+    const requestNumber = [
+      'OUT',
+      session.businessDate.replaceAll('-', ''),
+      String(line.sequenceInRound).padStart(3, '0'),
+      line.id.replaceAll('-', '').toUpperCase(),
+    ].join('-');
+    await tx.insert(outboundRequests).values({
+      id: outboundRequestId,
+      requestNumber,
+      storeId: line.storeId,
+      orderSessionId: session.id,
+      allocationRunId,
+      status: 'reserved',
+      requestedByUserId: requestSource.requestedByUserId,
+      submittedAt: processedAt,
+      approvedAt: processedAt,
+      notes: `Automatically materialized from allocation line ${line.id}`,
+      createdAt: processedAt,
+      updatedAt: processedAt,
+    });
+    await tx.insert(outboundRequestLines).values({
+      id: outboundLineId,
+      outboundRequestId,
+      productId: line.productId,
+      allocationLineId: line.id,
+      requestedQuantity: line.requestedQuantity,
+      approvedQuantity: line.allocatedQuantity,
+      reservedQuantity: line.allocatedQuantity,
+      dispatchedQuantity: 0,
+      receivedQuantity: 0,
+      createdAt: processedAt,
+      updatedAt: processedAt,
+    });
+    const linkedReservations = await tx
+      .update(reservations)
+      .set({ outboundRequestLineId: outboundLineId, updatedAt: processedAt })
+      .where(
+        and(
+          eq(reservations.id, reservation.id),
+          eq(reservations.status, 'active'),
+          isNull(reservations.outboundRequestLineId),
+        ),
+      )
+      .returning({ id: reservations.id });
+    if (linkedReservations.length !== 1) {
+      throw new Error(`Reservation ${reservation.id} changed during outbound materialization.`);
+    }
+    await tx.insert(auditLogs).values({
+      id: deterministicUuid(`audit:outbound-materialized:${outboundRequestId}`),
+      action: 'OUTBOUND_REQUEST_MATERIALIZED',
+      entityType: 'outbound_request',
+      entityId: outboundRequestId,
+      after: {
+        allocationLineId: line.id,
+        allocationRunId,
+        approvedQuantity: line.allocatedQuantity,
+        productId: line.productId,
+        requestNumber,
+        status: 'reserved',
+        storeId: line.storeId,
+      },
+      createdAt: processedAt,
+    });
+    affectedRows += 3;
+  }
+  return affectedRows;
 }
 
 async function lockSession(tx: Transaction, sessionId: string) {
@@ -890,6 +1064,7 @@ async function persistMergedDemands(
   tx: Transaction,
   session: ScheduledAllocationSession,
   demands: readonly MergedDemand[],
+  resolutionByDemandId: ReadonlyMap<string, MergedDemandResolution>,
   version: number,
   now: Date,
 ): Promise<PersistedMergedDemand[]> {
@@ -916,6 +1091,10 @@ async function persistMergedDemands(
       updatedAt: now,
     });
     for (const demand of storeDemands) {
+      const resolution = resolutionByDemandId.get(demand.demandId);
+      if (!resolution) {
+        throw new Error(`Merged demand ${demand.demandId} has no allocation resolution.`);
+      }
       const mergedOrderItemId = deterministicUuid(
         `merged-order-item:${mergedOrderId}:${demand.productId}`,
       );
@@ -925,8 +1104,8 @@ async function persistMergedDemands(
         productId: demand.productId,
         requestedQuantity: demand.requestedQuantity,
         priorityLevel: demand.priority,
-        allocatedQuantity: 0,
-        waitlistedQuantity: 0,
+        allocatedQuantity: resolution.allocatedQuantity,
+        waitlistedQuantity: resolution.waitlistedQuantity,
         createdAt: now,
         updatedAt: now,
       });
