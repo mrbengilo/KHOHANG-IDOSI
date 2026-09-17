@@ -2,6 +2,7 @@ import {
   ErrorEnvelopeSchema,
   CancelWaitTicketRequestSchema,
   CreateOrderSessionRequestSchema,
+  ListAllocationsResponseSchema,
   ListReceiptsResponseSchema,
   ListPriorityOffersResponseSchema,
   GetSessionResponseSchema,
@@ -25,6 +26,7 @@ import {
   WaitTicketHistoryResponseSchema,
   WaitTicketResponseSchema,
   type CancelWaitTicketRequest,
+  type AllocationResultStatus,
   type CreateOrderSessionRequest,
   type DeclareStoreReceiptRequest,
   type FinalizeReceiptRequest,
@@ -33,6 +35,7 @@ import {
   type LoginRequest,
   type MonthlyOperationalReport,
   type MonthlyOperationalReportQuery,
+  type ListAllocationsResponse,
   type OrderSession,
   type PriorityOffer,
   type PriorityOfferStatus,
@@ -169,14 +172,16 @@ export async function logout(): Promise<void> {
 
 export async function listCatalog(): Promise<CatalogProduct[]> {
   const effectiveAt = businessDate();
-  const [productsPayload, conversionsPayload] = await Promise.all([
-    request('/products?page=1&pageSize=100'),
-    request(
-      `/product-conversions?page=1&pageSize=100&includeRetired=false&effectiveAt=${effectiveAt}`,
+  const [products, conversions] = await Promise.all([
+    listAllPages('/products', new URLSearchParams(), (payload) =>
+      ListProductsResponseSchema.parse(payload),
+    ),
+    listAllPages(
+      '/product-conversions',
+      new URLSearchParams({ effectiveAt, includeRetired: 'false' }),
+      (payload) => ListProductConversionsResponseSchema.parse(payload),
     ),
   ]);
-  const products = ListProductsResponseSchema.parse(productsPayload).data;
-  const conversions = ListProductConversionsResponseSchema.parse(conversionsPayload).data;
 
   return products.map((product) => {
     const conversion = conversions
@@ -315,6 +320,28 @@ export async function listOrderSessions(): Promise<OrderSession[]> {
   return listAllPages('/order-sessions', new URLSearchParams(), (payload) =>
     ListOrderSessionsResponseSchema.parse(payload),
   );
+}
+
+export interface AllocationResultFilters {
+  readonly page?: number;
+  readonly pageSize?: number;
+  readonly sessionId?: string;
+  readonly status?: AllocationResultStatus;
+  readonly storeId?: string;
+}
+
+export async function listAllocationResults(
+  filters: AllocationResultFilters = {},
+): Promise<ListAllocationsResponse> {
+  const query = new URLSearchParams({
+    page: String(filters.page ?? 1),
+    pageSize: String(filters.pageSize ?? 20),
+  });
+  if (filters.sessionId) query.set('sessionId', filters.sessionId);
+  if (filters.status) query.set('status', filters.status);
+  if (filters.storeId) query.set('storeId', filters.storeId);
+  const payload = await request(`/allocations?${query.toString()}`);
+  return ListAllocationsResponseSchema.parse(payload);
 }
 
 export async function createOrderSession(

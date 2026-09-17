@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  allocationResultsViewState,
   availableSessionTransitions,
   defaultOrderSessionDraft,
   orderSessionInputFromDraft,
@@ -68,5 +69,23 @@ describe('production allocation session helpers', () => {
     expect(availableSessionTransitions('ALLOCATING')).toEqual([]);
     expect(availableSessionTransitions('ALLOCATED')).toEqual([]);
     expect(availableSessionTransitions('CANCELLED')).toEqual([]);
+  });
+
+  it('keeps allocation result loading, error, empty and ready states explicit', () => {
+    expect(allocationResultsViewState({ hasError: false, isPending: true, resultCount: 0 })).toBe(
+      'LOADING',
+    );
+    expect(allocationResultsViewState({ hasError: true, isPending: false, resultCount: 0 })).toBe(
+      'ERROR',
+    );
+    expect(allocationResultsViewState({ hasError: false, isPending: false, resultCount: 0 })).toBe(
+      'EMPTY',
+    );
+    expect(allocationResultsViewState({ hasError: false, isPending: false, resultCount: 1 })).toBe(
+      'READY',
+    );
+    expect(allocationResultsViewState({ hasError: true, isPending: false, resultCount: 2 })).toBe(
+      'READY',
+    );
   });
 });
