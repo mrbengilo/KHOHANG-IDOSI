@@ -9,6 +9,7 @@ import {
   listStoreReceiptSources,
   listWarehouseOutboundRequests,
   mergedOrderItems,
+  orderSessions,
   products,
   reservations,
   stores,
@@ -32,6 +33,8 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
       max: 2,
       application_name: 'idosi-fresh-pipeline-integration-test',
     });
+    let cleanupSessionId: string | null = null;
+    let cleanupActorId: string | null = null;
 
     try {
       const [administrator] = await client.db
@@ -53,13 +56,13 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
         throw new Error('Reference seed and administrator bootstrap must run before this test.');
       }
 
-      // This PostgreSQL instance is shared by every workspace test in CI. Use
-      // a unique reserved date so another integration suite cannot leave a
-      // same-day session behind before the worker suite starts.
+      // Request acceptance is deliberately checked against the real clock, so
+      // this end-to-end database fixture must use today's Ho Chi Minh date.
+      // The session is soft-deleted in finally so the later live browser suite
+      // can create its own same-day session in this shared CI database.
       const runKey = randomUUID();
-      const dateOffset = Number.parseInt(runKey.replaceAll('-', '').slice(0, 8), 16) % 365;
-      const businessDate = new Date(Date.UTC(2040, 0, 1 + dateOffset)).toISOString().slice(0, 10);
-      const now = new Date(`${businessDate}T12:00:00+07:00`);
+      const now = new Date();
+      const businessDate = hoChiMinhDate(now);
       const requestOpensAt = new Date(`${businessDate}T00:00:00+07:00`);
       const requestClosesAt = new Date(`${businessDate}T23:59:58+07:00`);
       const allocationStartsAt = new Date(`${businessDate}T23:59:59+07:00`);
@@ -81,6 +84,8 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
       });
       if (sessionResult.replayed) throw new Error('Fresh session unexpectedly replayed.');
       const sessionId = sessionResult.value.id;
+      cleanupSessionId = sessionId;
+      cleanupActorId = administrator.id;
 
       const opened = await transitionOrderSession(client.db, {
         orderSessionId: sessionId,
@@ -229,7 +234,27 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
         lines: [{ productId: product.id, approvedUnits: 3, dispatchedUnits: 3 }],
       });
     } finally {
+      if (cleanupSessionId && cleanupActorId) {
+        await client.db
+          .update(orderSessions)
+          .set({ deletedAt: new Date(), deletedByUserId: cleanupActorId })
+          .where(eq(orderSessions.id, cleanupSessionId));
+      }
       await client.close();
     }
   }, 30_000);
 });
+
+function hoChiMinhDate(instant: Date): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    day: '2-digit',
+    month: '2-digit',
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+  }).formatToParts(instant);
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  if (!year || !month || !day) throw new Error('Unable to resolve the Ho Chi Minh business date.');
+  return `${year}-${month}-${day}`;
+}
