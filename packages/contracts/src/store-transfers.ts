@@ -9,6 +9,7 @@ import {
   PaginationQuerySchema,
   PositiveKilogramsDecimalSchema,
 } from './common.js';
+import { StoreSchema } from './stores.js';
 
 export const StoreTransferStatusSchema = z.enum(['DRAFT', 'IN_TRANSIT', 'RECEIVED', 'CANCELLED']);
 export type StoreTransferStatus = z.infer<typeof StoreTransferStatusSchema>;
@@ -146,3 +147,10 @@ export const ListStoreTransfersResponseSchema = z
   .object({ data: z.array(StoreTransferSchema), pagination: PaginationMetaSchema })
   .strict();
 export type ListStoreTransfersResponse = z.infer<typeof ListStoreTransfersResponseSchema>;
+
+export const ListStoreTransferDestinationsResponseSchema = z
+  .object({ data: z.array(StoreSchema) })
+  .strict();
+export type ListStoreTransferDestinationsResponse = z.infer<
+  typeof ListStoreTransferDestinationsResponseSchema
+>;

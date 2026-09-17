@@ -622,6 +622,12 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return repository.listStoreTransfers(session.principal, query);
   });
 
+  app.get('/api/v1/store-transfers/destinations', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    return { data: await repository.listStoreTransferDestinations(session.principal) };
+  });
+
   app.post('/api/v1/store-transfers', async (request, reply) => {
     const session = await authenticate(request, repository);
     requireRole(session.principal, ['STORE']);
@@ -1104,6 +1110,12 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: { '201': { description: 'Created or replayed draft store transfer' } },
+        },
+      },
+      '/api/v1/store-transfers/destinations': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Active retail transfer destinations' } },
         },
       },
       '/api/v1/store-transfers/{transferId}/dispatch': {

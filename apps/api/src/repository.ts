@@ -304,6 +304,7 @@ export interface WarehouseRepository {
     actor: AuthenticatedPrincipal,
     query: ListStoreTransfersQuery,
   ): Promise<Page<StoreTransfer>>;
+  listStoreTransferDestinations(actor: AuthenticatedPrincipal): Promise<readonly Store[]>;
   createStoreTransfer(
     actor: AuthenticatedPrincipal,
     input: CreateStoreTransferRequest,

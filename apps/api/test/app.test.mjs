@@ -31,6 +31,7 @@ describe('KHOHANG-IDOSI API', () => {
     assert.ok(specification.json().paths['/api/v1/store-receipt-sources']);
     assert.ok(specification.json().paths['/api/v1/store-inventory-bags']);
     assert.ok(specification.json().paths['/api/v1/store-outbounds/{outboundId}/review']);
+    assert.ok(specification.json().paths['/api/v1/store-transfers/destinations']);
     assert.ok(specification.json().paths['/api/v1/store-transfers/{transferId}/receive']);
   });
 
@@ -868,6 +869,25 @@ describe('KHOHANG-IDOSI API', () => {
 
     const sourceCookie = cookieOf(await login('ds_nvt'));
     const destinationCookie = cookieOf(await login('ds_bd'));
+    const destinationDirectory = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-transfers/destinations',
+      headers: { cookie: sourceCookie },
+    });
+    assert.equal(destinationDirectory.statusCode, 200);
+    assert.ok(
+      destinationDirectory.json().data.some((store) => store.id === MEMORY_SEED_IDS.bdStore),
+    );
+    assert.ok(
+      destinationDirectory
+        .json()
+        .data.every(
+          (store) =>
+            store.id !== MEMORY_SEED_IDS.nvtStore &&
+            store.kind === 'RETAIL' &&
+            store.status === 'ACTIVE',
+        ),
+    );
     const createPayload = {
       sourceStoreId: MEMORY_SEED_IDS.nvtStore,
       destinationStoreId: MEMORY_SEED_IDS.bdStore,
