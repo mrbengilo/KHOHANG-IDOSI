@@ -39,6 +39,8 @@ describe('KHOHANG-IDOSI API', () => {
     assert.ok(specification.json().paths['/api/v1/inbound-receipts']);
     assert.ok(specification.json().paths['/api/v1/inbound-receipts/{receiptId}/confirm-costs']);
     assert.ok(specification.json().paths['/api/v1/admin/operational-settings']);
+    assert.ok(specification.json().paths['/api/v1/integrations/idosi/order-statistics']);
+    assert.ok(specification.json().paths['/api/v1/integrations/idosi/order-statistics/sync']);
   });
 
   test('versions operational settings for ADMIN without accepting or returning secrets', async () => {
@@ -159,6 +161,137 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(audit.statusCode, 200);
     assert.equal(audit.json().pagination.totalItems, 1);
     assert.equal(audit.json().data[0].requestId, 'settings-update-request');
+  });
+
+  test('upserts scoped IDOSI aggregates without changing inventory and keeps stale data on failure', async () => {
+    await app.close();
+    let remoteRevenue = 300_000;
+    let shouldFail = false;
+    const remoteFetch = async (input, init) => {
+      const url = new URL(String(input));
+      assert.equal(url.searchParams.get('storeId'), 'DS_NVT');
+      assert.equal(url.searchParams.get('period'), '2026-09');
+      assert.equal(url.toString().includes('warehouse-server-secret'), false);
+      assert.equal(
+        new Headers(init?.headers).get('authorization'),
+        'Bearer warehouse-server-secret',
+      );
+      if (shouldFail) return new Response('{}', { status: 503 });
+      return new Response(JSON.stringify(idosiStatisticsPayload(remoteRevenue)));
+    };
+    app = await createApi({
+      repository,
+      corsOrigin: 'http://localhost:5173',
+      idosiIntegrationSecret: 'warehouse-server-secret',
+      idosiFetch: remoteFetch,
+    });
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const adminCookie = cookieOf(await login('admin'));
+    const query =
+      `/api/v1/integrations/idosi/order-statistics?storeId=${MEMORY_SEED_IDS.nvtStore}` +
+      '&period=2026-09';
+    const scope = {
+      storeId: MEMORY_SEED_IDS.nvtStore,
+      period: '2026-09',
+      date: null,
+      shiftId: null,
+      paymentMethod: null,
+    };
+
+    assert.equal((await app.inject({ method: 'GET', url: query })).statusCode, 401);
+    const initial = await app.inject({
+      method: 'GET',
+      url: query,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(initial.statusCode, 200);
+    assert.equal(initial.json().data.freshness, 'EMPTY');
+    assert.equal(initial.json().data.integrationStatus, 'CONFIGURED');
+
+    const inventoryBefore = await app.inject({
+      method: 'GET',
+      url: `/api/v1/store-inventory-bags?storeId=${MEMORY_SEED_IDS.nvtStore}`,
+      headers: { cookie: storeCookie },
+    });
+    const first = await app.inject({
+      method: 'POST',
+      url: '/api/v1/integrations/idosi/order-statistics/sync',
+      headers: { cookie: storeCookie, 'x-request-id': 'idosi-sync-first' },
+      payload: scope,
+    });
+    assert.equal(first.statusCode, 200);
+    assert.equal(first.headers['cache-control'], 'no-store');
+    assert.equal(first.json().data.freshness, 'CURRENT');
+    assert.equal(first.json().data.snapshot.payload.totals.revenue, 300_000);
+    const snapshotId = first.json().data.snapshot.id;
+
+    remoteRevenue = 450_000;
+    const replacement = await app.inject({
+      method: 'POST',
+      url: '/api/v1/integrations/idosi/order-statistics/sync',
+      headers: { cookie: storeCookie, 'x-request-id': 'idosi-sync-replacement' },
+      payload: scope,
+    });
+    assert.equal(replacement.statusCode, 200);
+    assert.equal(replacement.json().data.snapshot.id, snapshotId);
+    assert.equal(replacement.json().data.snapshot.payload.totals.revenue, 450_000);
+
+    const inventoryAfter = await app.inject({
+      method: 'GET',
+      url: `/api/v1/store-inventory-bags?storeId=${MEMORY_SEED_IDS.nvtStore}`,
+      headers: { cookie: storeCookie },
+    });
+    assert.deepEqual(inventoryAfter.json(), inventoryBefore.json());
+
+    shouldFail = true;
+    const failed = await app.inject({
+      method: 'POST',
+      url: '/api/v1/integrations/idosi/order-statistics/sync',
+      headers: { cookie: storeCookie, 'x-request-id': 'idosi-sync-failed' },
+      payload: scope,
+    });
+    assert.equal(failed.statusCode, 502);
+    assert.equal(failed.json().error.code, 'INTEGRATION_UNAVAILABLE');
+    const stale = await app.inject({ method: 'GET', url: query, headers: { cookie: storeCookie } });
+    assert.equal(stale.json().data.freshness, 'STALE');
+    assert.equal(stale.json().data.snapshot.payload.totals.revenue, 450_000);
+    assert.equal(stale.json().data.latestAttempt.status, 'FAILED');
+
+    const audit = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/audit-logs?entityType=idosi_statistics_snapshot&pageSize=100',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(audit.statusCode, 200);
+    assert.equal(audit.json().pagination.totalItems, 2);
+    assert.equal(JSON.stringify(audit.json()).includes('warehouse-server-secret'), false);
+
+    const deniedScope = await app.inject({
+      method: 'GET',
+      url:
+        `/api/v1/integrations/idosi/order-statistics?storeId=${MEMORY_SEED_IDS.bdStore}` +
+        '&period=2026-09',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(deniedScope.statusCode, 403);
+  });
+
+  test('fails closed before outbound sync when the server secret is absent', async () => {
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/integrations/idosi/order-statistics/sync',
+      headers: { cookie: storeCookie },
+      payload: {
+        storeId: MEMORY_SEED_IDS.nvtStore,
+        period: '2026-09',
+        date: null,
+        shiftId: null,
+        paymentMethod: null,
+      },
+    });
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.json().error.code, 'INTEGRATION_NOT_CONFIGURED');
   });
 
   test('uses scrypt and issues an opaque HttpOnly session without exposing secrets', async () => {
@@ -2184,5 +2317,83 @@ function orderPayload(productId, quantity) {
     businessSessionId: MEMORY_SEED_IDS.orderSession,
     storeId: MEMORY_SEED_IDS.nvtStore,
     items: [{ productId, quantity }],
+  };
+}
+
+function idosiStatisticsPayload(revenue) {
+  const bucket = {
+    actualKg: 0,
+    estimatedKg: 0,
+    knownKg: 0,
+    totalKg: 0,
+    isComplete: true,
+    missingFactorLines: 0,
+    invalidLines: 0,
+    unclassifiedOrders: 0,
+  };
+  const weight = {
+    ...bucket,
+    actualKg: 2.5,
+    estimatedKg: 5,
+    knownKg: 7.5,
+    totalKg: 7.5,
+    schemaVersion: 1,
+    unit: 'KG',
+    tableVersion: 'IDOSI-2026-09-15-v2',
+    byRevenueType: { NORMAL: bucket, SALE_KG: bucket, SALE_PIECE: bucket },
+  };
+  return {
+    ok: true,
+    apiVersion: 1,
+    storeId: 'DS_NVT',
+    currency: 'VND',
+    timezone: 'Asia/Ho_Chi_Minh',
+    revenueBasis: 'ACTIVE_ORDER_AMOUNT',
+    generatedAt: '2026-09-17T02:00:00.000Z',
+    store: { id: 'DS_NVT', name: 'DS NVT' },
+    filters: { period: '2026-09', date: null, shiftId: null, paymentMethod: null },
+    totals: {
+      orders: 2,
+      cash: revenue,
+      transfer: 0,
+      revenue,
+      cashOrders: 2,
+      transferOrders: 0,
+      revenueByType: { NORMAL: revenue, SALE_KG: 0, SALE_PIECE: 0 },
+      weight,
+    },
+    products: {
+      totalQuantity: 15,
+      totalWeightKg: 2.5,
+      productTypes: 1,
+      ordersWithItems: 2,
+      unclassifiedOrders: 0,
+      items: [
+        {
+          productId: 'P01',
+          productCode: 'DO-NAM',
+          productName: 'Đồ nam',
+          quantity: 15,
+          unit: 'PIECE',
+          revenueType: 'NORMAL',
+          orders: 2,
+          weight,
+        },
+      ],
+      weight,
+      weightByProduct: [
+        {
+          productId: 'P01',
+          productCode: 'DO-NAM',
+          productName: 'Đồ nam',
+          orders: 2,
+          totalQuantity: 15,
+          weight,
+        },
+      ],
+    },
+    groups: { shift: [], day: [], month: [] },
+    serverTime: '2026-09-17T02:00:00.000Z',
+    requestId: 'remote-idosi-request',
   };
 }

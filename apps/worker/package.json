@@ -14,6 +14,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@idosi/contracts": "0.1.0",
     "@idosi/database": "0.1.0",
     "@idosi/domain": "0.1.0",
     "drizzle-orm": "^0.44.5"
