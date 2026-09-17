@@ -5,6 +5,7 @@ import {
   CancelInboundReceiptRequestSchema,
   CancelWaitTicketRequestSchema,
   CreateAccountRequestSchema,
+  CreateOrderSessionRequestSchema,
   CreateInboundReceiptRequestSchema,
   CreateProductRequestSchema,
   CreateProductConversionRequestSchema,
@@ -12,6 +13,7 @@ import {
   CreateStoreOutboundRequestSchema,
   CreateStoreRequestSchema,
   DeclareStoreReceiptRequestSchema,
+  DispatchWarehouseOutboundRequestSchema,
   ConfirmReceiptCostsRequestSchema,
   FinalizeReceiptRequestSchema,
   GetOperationalSettingsQuerySchema,
@@ -33,9 +35,11 @@ import {
   ListStoreOrderRequestsQuerySchema,
   ListStoresQuerySchema,
   ListWaitTicketsQuerySchema,
+  ListWarehouseOutboundRequestsQuerySchema,
   LoginRequestSchema,
   MonthlyOperationalReportQuerySchema,
   OpenStoreInventoryBagRequestSchema,
+  OrderSessionParamsSchema,
   ProductParamsSchema,
   ProductConversionParamsSchema,
   PriorityOfferParamsSchema,
@@ -49,10 +53,12 @@ import {
   StoreOutboundParamsSchema,
   WaitTicketHistoryQuerySchema,
   WaitTicketParamsSchema,
+  WarehouseOutboundRequestParamsSchema,
   DeleteProductConversionRequestSchema,
   UpdateProductConversionRequestSchema,
   UpdateProductRequestSchema,
   UpdateAccountRequestSchema,
+  TransitionOrderSessionRequestSchema,
   ListStoreTransfersQuerySchema,
   CreateStoreTransferRequestSchema,
   DispatchStoreTransferRequestSchema,
@@ -339,6 +345,40 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return repository.listOrderSessions(query);
   });
 
+  app.post('/api/v1/order-sessions', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = CreateOrderSessionRequestSchema.parse(request.body);
+    const result = await repository.createOrderSession(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CREATE_ORDER_SESSION', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
+  });
+
+  app.post('/api/v1/order-sessions/:sessionId/transition', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { sessionId } = OrderSessionParamsSchema.parse(request.params);
+    const input = TransitionOrderSessionRequestSchema.parse(request.body);
+    const result = await repository.transitionOrderSession(
+      session.principal,
+      sessionId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'TRANSITION_ORDER_SESSION', sessionId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
   app.post('/api/v1/products', async (request, reply) => {
     const session = await authenticate(request, repository);
     requireRole(session.principal, ['ADMIN', 'HTKD']);
@@ -550,6 +590,30 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     );
     reply.header('idempotency-replayed', String(submitted.replayed));
     return reply.status(201).send({ data: submitted.data });
+  });
+
+  app.get('/api/v1/outbound-requests', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = ListWarehouseOutboundRequestsQuerySchema.parse(request.query);
+    return repository.listWarehouseOutboundRequests(session.principal, query);
+  });
+
+  app.post('/api/v1/outbound-requests/:outboundRequestId/dispatch', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { outboundRequestId } = WarehouseOutboundRequestParamsSchema.parse(request.params);
+    const input = DispatchWarehouseOutboundRequestSchema.parse(request.body);
+    const result = await repository.dispatchWarehouseOutboundRequest(
+      session.principal,
+      outboundRequestId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'DISPATCH_WAREHOUSE_OUTBOUND', outboundRequestId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
   });
 
   app.get('/api/v1/store-receipts', async (request) => {
@@ -1161,10 +1225,41 @@ function openApiDocument(): Record<string, unknown> {
           responses: { '201': { description: 'Submitted or replayed request' } },
         },
       },
+      '/api/v1/outbound-requests': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Scoped allocation-backed warehouse outbounds' } },
+        },
+      },
+      '/api/v1/outbound-requests/{outboundRequestId}/dispatch': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Dispatched or replayed warehouse outbound' } },
+        },
+      },
       '/api/v1/order-sessions': {
         get: {
           security: cookieSecurity,
           responses: { '200': { description: 'Paginated order sessions' } },
+        },
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '201': { description: 'Created or replayed order session (ADMIN only)' } },
+        },
+      },
+      '/api/v1/order-sessions/{sessionId}/transition': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Versioned order session transition' } },
         },
       },
       '/api/v1/warehouse-balances': {
