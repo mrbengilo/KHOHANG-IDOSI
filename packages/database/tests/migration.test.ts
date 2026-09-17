@@ -7,6 +7,10 @@ const forwardMigration = readFileSync(
   new URL('../migrations/0001_store_kind_product_conversions.sql', import.meta.url),
   'utf8',
 );
+const waitOfferMigration = readFileSync(
+  new URL('../migrations/0002_wait_offer_history_index.sql', import.meta.url),
+  'utf8',
+);
 const schemaSource = readFileSync(new URL('../src/schema.ts', import.meta.url), 'utf8');
 const seedDataSource = readFileSync(new URL('../src/seed-data.ts', import.meta.url), 'utf8');
 const storeOperationsSource = readFileSync(
@@ -25,6 +29,12 @@ const forwardSnapshot = JSON.parse(
   prevId: string;
   tables: Record<string, { name: string; columns: Record<string, unknown> }>;
   enums: Record<string, { values: string[] }>;
+};
+const waitOfferSnapshot = JSON.parse(
+  readFileSync(new URL('../migrations/meta/0002_snapshot.json', import.meta.url), 'utf8'),
+) as {
+  prevId: string;
+  tables: Record<string, { indexes: Record<string, unknown> }>;
 };
 
 const requiredTables = [
@@ -81,7 +91,7 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(2);
+    expect(journal.entries).toHaveLength(3);
     expect(journal.entries[0]).toMatchObject({
       tag: '0000_initial',
       breakpoints: true,
@@ -90,6 +100,22 @@ describe('initial migration invariants', () => {
       tag: '0001_store_kind_product_conversions',
       breakpoints: true,
     });
+    expect(journal.entries[2]).toMatchObject({
+      tag: '0002_wait_offer_history_index',
+      breakpoints: true,
+    });
+  });
+
+  it('indexes priority-offer history without losing the migration snapshot chain', () => {
+    expect(waitOfferMigration).toContain('"daily_priority_offers_wait_history_idx"');
+    expect(waitOfferMigration).toContain('("wait_ticket_id", "created_at")');
+    expect(schemaSource).toContain("index('daily_priority_offers_wait_history_idx')");
+    expect(waitOfferSnapshot.prevId).toBe('37fb48c4-d8ab-48e1-aaa8-0059998d5aac');
+    expect(
+      waitOfferSnapshot.tables['public.daily_priority_offers']?.indexes[
+        'daily_priority_offers_wait_history_idx'
+      ],
+    ).toBeDefined();
   });
 
   it('enforces at most two request slots for each store and session', () => {

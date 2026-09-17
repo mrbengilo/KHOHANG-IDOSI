@@ -769,6 +769,7 @@ export const dailyPriorityOffers = pgTable(
     index('daily_priority_offers_deadline_idx')
       .on(table.responseDeadlineAt)
       .where(sql`${table.status} = 'offered' AND ${table.deletedAt} IS NULL`),
+    index('daily_priority_offers_wait_history_idx').on(table.waitTicketId, table.createdAt),
     check('daily_priority_offers_round_positive', sql`${table.roundNumber} > 0`),
     check('daily_priority_offers_quantity_positive', sql`${table.offeredQuantity} > 0`),
     check('daily_priority_offers_accepted_nonnegative', sql`${table.acceptedQuantity} >= 0`),
