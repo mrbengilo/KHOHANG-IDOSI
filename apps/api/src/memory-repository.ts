@@ -110,6 +110,22 @@ import type {
 import { assertActiveRetailStore, canAccessStore, pagination, slicePage } from './repository.js';
 import { hashPassword, hashSessionToken } from './security.js';
 
+const HO_CHI_MINH_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  day: '2-digit',
+  month: '2-digit',
+  timeZone: 'Asia/Ho_Chi_Minh',
+  year: 'numeric',
+});
+
+function hoChiMinhBusinessDate(instant: Date): string {
+  const parts = HO_CHI_MINH_DATE_FORMATTER.formatToParts(instant);
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  if (!year || !month || !day) throw new Error('Unable to resolve Asia/Ho_Chi_Minh date');
+  return `${year}-${month}-${day}`;
+}
+
 export const MEMORY_SEED_IDS = {
   adminAccount: '00000000-0000-4000-8000-000000000001',
   htkdAccount: '00000000-0000-4000-8000-000000000002',
@@ -2986,13 +3002,15 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
 
   private async seed(password: string): Promise<void> {
     const passwordHash = await hashPassword(password);
-    const now = this.now().toISOString();
-    const sessionOpen = new Date(this.now().getTime() - 60 * 60 * 1_000);
-    const sessionClose = new Date(this.now().getTime() + 60 * 60 * 1_000);
-    const allocationStart = new Date(this.now().getTime() + 2 * 60 * 60 * 1_000);
+    const currentTime = this.now();
+    const now = currentTime.toISOString();
+    const sessionBusinessDate = hoChiMinhBusinessDate(currentTime);
+    const sessionOpen = new Date(`${sessionBusinessDate}T00:00:00+07:00`);
+    const sessionClose = new Date(`${sessionBusinessDate}T23:59:59.998+07:00`);
+    const allocationStart = new Date(`${sessionBusinessDate}T23:59:59.999+07:00`);
     this.orderSessions.set(MEMORY_SEED_IDS.orderSession, {
       id: MEMORY_SEED_IDS.orderSession,
-      businessDate: now.slice(0, 10),
+      businessDate: sessionBusinessDate,
       status: 'OPEN',
       requestOpensAt: sessionOpen.toISOString(),
       requestClosesAt: sessionClose.toISOString(),

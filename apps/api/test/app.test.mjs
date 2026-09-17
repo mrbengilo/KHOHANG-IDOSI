@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
+import { OrderSessionSchema } from '@idosi/contracts';
 
 import { createApi } from '../dist/app.js';
 import { sanitizeAuditObject } from '../dist/audit-sanitization.js';
@@ -604,6 +605,7 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(sessions.statusCode, 200);
     assert.equal(sessions.json().data.length, 1);
     assert.equal(sessions.json().data[0].id, MEMORY_SEED_IDS.orderSession);
+    assert.doesNotThrow(() => OrderSessionSchema.parse(sessions.json().data[0]));
 
     const productId = await firstProductId(cookie);
     const rejected = await submitOrder(cookie, 'unknown-session-key', {
