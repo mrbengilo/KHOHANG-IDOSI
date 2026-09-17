@@ -22,6 +22,13 @@
       "when": 1789629200000,
       "tag": "0002_wait_offer_history_index",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789630000000,
+      "tag": "0003_operational_settings_versions",
+      "breakpoints": true
     }
   ]
 }

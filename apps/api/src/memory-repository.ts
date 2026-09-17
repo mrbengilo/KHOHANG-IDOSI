@@ -29,6 +29,7 @@ import type {
   ListWaitTicketsQuery,
   MonthlyOperationalReport,
   MonthlyOperationalReportQuery,
+  OperationalSettingsVersion,
   OpenStoreInventoryBagRequest,
   Product,
   ProductConversion,
@@ -50,6 +51,7 @@ import type {
   UpdateProductRequest,
   UpdateAccountRequest,
   UpdateProductConversionRequest,
+  UpdateOperationalSettingsRequest,
   DeleteProductConversionRequest,
   WaitTicket,
   WaitTicketHistory,
@@ -94,6 +96,7 @@ export const MEMORY_SEED_IDS = {
   waitTicket: '13000000-0000-4000-8000-000000000001',
   cancellableWaitTicket: '13000000-0000-4000-8000-000000000002',
   priorityOffer: '14000000-0000-4000-8000-000000000001',
+  operationalSettings: '14500000-0000-4000-8000-000000000001',
   inventoryBag: '15000000-0000-4000-8000-000000000001',
   inventoryLedger: '15100000-0000-4000-8000-000000000001',
   sourceReceiptBag: '15200000-0000-4000-8000-000000000001',
@@ -200,6 +203,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly storeOutbounds = new Map<string, StoreOutbound>();
   private readonly storeGroupIds = new Set<string>();
   private readonly audit: AuditRecord[] = [];
+  private readonly operationalSettings: OperationalSettingsVersion[] = [];
 
   private constructor(now: () => Date) {
     this.now = now;
@@ -426,6 +430,63 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       data: slicePage(values, query.page, query.pageSize),
       pagination: pagination(query.page, query.pageSize, values.length),
     };
+  }
+
+  public async getOperationalSettings(
+    actor: AuthenticatedPrincipal,
+    historyLimit: number,
+  ): Promise<{
+    readonly current: OperationalSettingsVersion;
+    readonly history: readonly OperationalSettingsVersion[];
+  }> {
+    requireMemoryAdmin(actor);
+    const history = this.operationalSettings
+      .toSorted((left, right) => right.version - left.version)
+      .slice(0, historyLimit)
+      .map((settings) => structuredClone(settings));
+    const current = history[0];
+    if (!current) throw new Error('Operational settings have not been initialized');
+    return { current, history };
+  }
+
+  public async updateOperationalSettings(
+    actor: AuthenticatedPrincipal,
+    input: UpdateOperationalSettingsRequest,
+    context: RequestContext,
+  ): Promise<OperationalSettingsVersion> {
+    requireMemoryAdmin(actor);
+    const current = this.operationalSettings.toSorted(
+      (left, right) => right.version - left.version,
+    )[0];
+    if (!current) throw new Error('Operational settings have not been initialized');
+    if (current.version !== input.expectedVersion) {
+      throw operationalSettingsVersionConflict();
+    }
+    const created: OperationalSettingsVersion = Object.freeze({
+      id: randomUUID(),
+      version: current.version + 1,
+      timezone: input.timezone,
+      snapshotTime: input.snapshotTime,
+      cutoffTime: input.cutoffTime,
+      maxRequestsPerStore: input.maxRequestsPerStore,
+      policyVersion: input.policyVersion,
+      idosiSyncIntervalMinutes: input.idosiSyncIntervalMinutes,
+      createdByAccountId: actor.accountId,
+      requestId: context.requestId,
+      createdAt: this.now().toISOString(),
+    });
+    this.operationalSettings.push(created);
+    this.appendAudit(
+      actor,
+      context,
+      'OPERATIONAL_SETTINGS_VERSION_CREATED',
+      'operational_settings_version',
+      created.id,
+      current,
+      created,
+      { previousVersion: current.version, version: created.version },
+    );
+    return structuredClone(created);
   }
 
   public async listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>> {
@@ -1950,6 +2011,22 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     ];
     for (const account of seededAccounts) this.accounts.set(account.id, account);
 
+    this.operationalSettings.push(
+      Object.freeze({
+        id: MEMORY_SEED_IDS.operationalSettings,
+        version: 1,
+        timezone: 'Asia/Ho_Chi_Minh',
+        snapshotTime: '08:00',
+        cutoffTime: '09:00',
+        maxRequestsPerStore: 2,
+        policyVersion: 'ALLOC-v1.2',
+        idosiSyncIntervalMinutes: 15,
+        createdByAccountId: null,
+        requestId: 'memory-seed',
+        createdAt: now,
+      }),
+    );
+
     this.inventoryBags.set(MEMORY_SEED_IDS.inventoryBag, {
       id: MEMORY_SEED_IDS.inventoryBag,
       storeId: nvtId,
@@ -2074,6 +2151,10 @@ function memoryAuditDto(event: AuditRecord): AdminAuditLog {
 
 function requireMemoryAdmin(actor: AuthenticatedPrincipal): void {
   if (actor.role !== 'ADMIN') throw forbidden();
+}
+
+function operationalSettingsVersionConflict(): ApiError {
+  return new ApiError('VERSION_CONFLICT', 'Cấu hình vận hành đã thay đổi, vui lòng tải lại', 409);
 }
 
 function assertMemoryAccountVersion(
