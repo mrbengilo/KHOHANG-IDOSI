@@ -24,6 +24,30 @@ describe('product conversion contracts', () => {
     expect(result).toMatchObject({ itemQuantity: 1, weightKilograms: '3.000' });
   });
 
+  it('supports compare-and-append expectations for initial and resumed histories', () => {
+    const request = {
+      itemQuantity: 1,
+      weightKilograms: '3.000',
+      effectiveFrom: '2026-09-12',
+      effectiveTo: null,
+      reason: 'Approved catalog baseline',
+    };
+
+    expect(CreateProductConversionRequestSchema.safeParse(request).success).toBe(true);
+    expect(
+      CreateProductConversionRequestSchema.safeParse({ ...request, expectedVersion: 0 }).success,
+    ).toBe(true);
+    expect(
+      CreateProductConversionRequestSchema.safeParse({ ...request, expectedVersion: 2 }).success,
+    ).toBe(true);
+    expect(
+      CreateProductConversionRequestSchema.safeParse({ ...request, expectedVersion: -1 }).success,
+    ).toBe(false);
+    expect(
+      CreateProductConversionRequestSchema.safeParse({ ...request, expectedVersion: 1.5 }).success,
+    ).toBe(false);
+  });
+
   it('rejects floating-point and over-precision ratio sources', () => {
     const base = {
       itemQuantity: 3,

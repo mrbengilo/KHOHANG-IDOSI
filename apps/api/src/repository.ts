@@ -179,6 +179,7 @@ export interface WarehouseRepository {
     query: ListProductConversionsQuery,
   ): Promise<Page<ProductConversion>>;
   listAllProductConversions(query: ListProductConversionsQuery): Promise<Page<ProductConversion>>;
+  /** Creates v1, or atomically appends after the latest version has been explicitly retired. */
   createProductConversion(
     actor: AuthenticatedPrincipal,
     productId: string,

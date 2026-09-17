@@ -689,19 +689,40 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
           .where(and(eq(products.id, productId), isNull(products.deletedAt)))
           .limit(1);
         if (!product) throw notFound('Không tìm thấy mặt hàng');
-        const [existing] = await tx
-          .select({ id: productConversions.id })
+        const [latest] = await tx
+          .select()
           .from(productConversions)
           .where(eq(productConversions.productId, productId))
+          .orderBy(desc(productConversions.version))
           .limit(1);
-        if (existing) {
-          throw conflict('Mặt hàng đã có lịch sử quy đổi; hãy tạo phiên bản kế tiếp bằng PATCH');
+        if (!latest && input.expectedVersion !== undefined && input.expectedVersion !== 0) {
+          throw new ApiError('VERSION_CONFLICT', 'Phiên bản tỷ lệ quy đổi đã thay đổi', 409);
+        }
+        if (latest) {
+          if (input.expectedVersion !== latest.version) {
+            throw new ApiError('VERSION_CONFLICT', 'Phiên bản tỷ lệ quy đổi đã thay đổi', 409);
+          }
+          if (latest.retiredAt === null) {
+            throw conflict(
+              'Tỷ lệ quy đổi hiện tại vẫn hoạt động; hãy tạo phiên bản kế tiếp bằng PATCH',
+            );
+          }
+          if (
+            input.effectiveFrom <= latest.effectiveFrom ||
+            (latest.effectiveTo !== null && input.effectiveFrom < latest.effectiveTo)
+          ) {
+            throw new ApiError(
+              'VALIDATION_ERROR',
+              'Ngày hiệu lực phải sau phiên bản gần nhất và không trước ngày phiên bản đó kết thúc',
+              400,
+            );
+          }
         }
         const [created] = await tx
           .insert(productConversions)
           .values({
             productId,
-            version: 1,
+            version: (latest?.version ?? 0) + 1,
             itemQuantity: input.itemQuantity,
             weightKilograms: input.weightKilograms,
             effectiveFrom: input.effectiveFrom,
@@ -718,10 +739,10 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
             auditValue(
               actor,
               context,
-              'PRODUCT_CONVERSION_CREATED',
+              latest ? 'PRODUCT_CONVERSION_APPENDED' : 'PRODUCT_CONVERSION_CREATED',
               'product_conversion',
               result.id,
-              null,
+              latest ? conversionJson(conversionDto(latest)) : null,
               conversionJson(result),
             ),
           );
