@@ -16,6 +16,41 @@ function focusableElements(panel: HTMLElement): HTMLElement[] {
   );
 }
 
+function focusElement(element: HTMLElement | null): boolean {
+  if (!element?.isConnected || element.hidden || element.getAttribute('aria-hidden') === 'true') {
+    return false;
+  }
+
+  element.focus({ preventScroll: true });
+  return document.activeElement === element;
+}
+
+function restoreDialogFocus(previousFocus: HTMLElement | null): void {
+  if (focusElement(previousFocus)) return;
+
+  const fallback = [
+    '[data-dialog-focus-fallback]',
+    'main h1',
+    '[role="main"] h1',
+    'main',
+    '[role="main"]',
+  ]
+    .map((selector) => document.querySelector<HTMLElement>(selector))
+    .find((element): element is HTMLElement => element !== null);
+  if (!fallback) return;
+
+  const previousTabIndex = fallback.getAttribute('tabindex');
+  if (previousTabIndex === null) fallback.tabIndex = -1;
+  const focused = focusElement(fallback);
+  if (previousTabIndex === null) {
+    if (focused) {
+      fallback.addEventListener('blur', () => fallback.removeAttribute('tabindex'), { once: true });
+    } else {
+      fallback.removeAttribute('tabindex');
+    }
+  }
+}
+
 /** Keeps keyboard focus inside an open modal and restores it to its trigger on close. */
 export function useDialogAccessibility<T extends HTMLElement = HTMLElement>(
   onClose: (() => void) | undefined,
@@ -67,10 +102,11 @@ export function useDialogAccessibility<T extends HTMLElement = HTMLElement>(
       }
 
       const focused = document.activeElement;
-      if (event.shiftKey && (focused === first || !panel.contains(focused))) {
+      const focusedIndex = focused instanceof HTMLElement ? focusable.indexOf(focused) : -1;
+      if (event.shiftKey && (focused === first || focusedIndex === -1)) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && (focused === last || !panel.contains(focused))) {
+      } else if (!event.shiftKey && (focused === last || focusedIndex === -1)) {
         event.preventDefault();
         first.focus();
       }
@@ -82,7 +118,7 @@ export function useDialogAccessibility<T extends HTMLElement = HTMLElement>(
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
       document.body.classList.remove('dialog-open');
-      previousFocusRef.current?.focus();
+      restoreDialogFocus(previousFocusRef.current);
     };
   }, []);
 

@@ -89,6 +89,26 @@ test('catalog dialog traps focus, closes with Escape, and restores its trigger',
   await expect(dialog).toBeVisible();
   await expect(dialog.getByLabel('Mã SKU')).toBeFocused();
 
+  const controls = dialog.locator('button, input, select, textarea');
+  await controls.evaluateAll((elements) => {
+    elements.forEach((element) => {
+      (
+        element as HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+      ).disabled = true;
+    });
+  });
+  await page.keyboard.press('Tab');
+  await expect(dialog).toBeFocused();
+  await controls.evaluateAll((elements) => {
+    elements.forEach((element) => {
+      (
+        element as HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+      ).disabled = false;
+    });
+  });
+  await page.keyboard.press('Shift+Tab');
+  await expect(dialog.getByRole('button', { name: /Lưu phiên bản/ })).toBeFocused();
+
   const closeButton = dialog.getByRole('button', { name: 'Đóng' });
   await closeButton.focus();
   await page.keyboard.press('Shift+Tab');
@@ -97,6 +117,23 @@ test('catalog dialog traps focus, closes with Escape, and restores its trigger',
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   await expect(trigger).toBeFocused();
+});
+
+test('catalog dialog restores focus to the page heading after its trigger is removed', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-1440', 'desktop-only assertion');
+  await page.goto('/catalog');
+  await page.getByRole('button', { exact: true, name: 'Ngừng hệ số' }).first().click();
+
+  const dialog = page.getByRole('dialog', { name: /Ngừng hệ số của/ });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Xác nhận ngừng' }).click();
+
+  await expect(dialog).toBeHidden();
+  await expect(
+    page.getByRole('heading', { level: 1, name: 'Danh mục & quy đổi bán hàng' }),
+  ).toBeFocused();
 });
 
 test('mobile navigation remains usable at 390px', async ({ page }, testInfo) => {
