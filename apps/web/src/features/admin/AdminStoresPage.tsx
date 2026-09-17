@@ -29,6 +29,7 @@ import {
   adminErrorMessage,
   createAdminStore,
   createAdminStoreGroup,
+  listAdminStoreGroupDirectory,
   listAdminStoreGroups,
   listAdminStores,
   updateAdminStore,
@@ -229,18 +230,18 @@ function AdminStoresContent() {
     retry: false,
   });
   const allGroupsQuery = useQuery({
-    queryFn: () => listAdminStoreGroups({ page: 1, pageSize: 100 }),
+    queryFn: listAdminStoreGroupDirectory,
     queryKey: [...groupQueryKey, 'directory'],
     retry: false,
     staleTime: 30_000,
   });
 
   const groupsById = useMemo(
-    () => new Map((allGroupsQuery.data?.data ?? []).map((group) => [group.id, group] as const)),
+    () => new Map((allGroupsQuery.data ?? []).map((group) => [group.id, group] as const)),
     [allGroupsQuery.data],
   );
   const activeGroups = useMemo(
-    () => (allGroupsQuery.data?.data ?? []).filter((group) => group.status === 'ACTIVE'),
+    () => (allGroupsQuery.data ?? []).filter((group) => group.status === 'ACTIVE'),
     [allGroupsQuery.data],
   );
 
@@ -260,18 +261,18 @@ function AdminStoresContent() {
     return created;
   };
 
-  const finishMutation = async (fingerprint: string, message: string) => {
+  const finishMutation = async (fingerprint: string, message: string, closeEditor: boolean) => {
     idempotencyKeys.current.delete(fingerprint);
-    setEditor(null);
+    if (closeEditor) setEditor(null);
     setNotice({ message, tone: 'success' });
     await refreshLifecycle();
   };
 
-  const failMutation = async (fingerprint: string, error: unknown) => {
+  const failMutation = async (fingerprint: string, error: unknown, closeEditor: boolean) => {
     setNotice({ message: adminErrorMessage(error), tone: 'error' });
     if (error instanceof AdminApiError && error.code === 'VERSION_CONFLICT') {
       idempotencyKeys.current.delete(fingerprint);
-      setEditor(null);
+      if (closeEditor) setEditor(null);
       await refreshLifecycle();
     }
   };
@@ -280,15 +281,16 @@ function AdminStoresContent() {
     action: string,
     fingerprint: string,
     operation: (key: string) => Promise<string>,
+    closeEditor = false,
   ) => {
     if (mutationLock.current) return;
     mutationLock.current = true;
     setBusyAction(action);
     setNotice(null);
     try {
-      await finishMutation(fingerprint, await operation(mutationKey(fingerprint)));
+      await finishMutation(fingerprint, await operation(mutationKey(fingerprint)), closeEditor);
     } catch (error) {
-      await failMutation(fingerprint, error);
+      await failMutation(fingerprint, error, closeEditor);
     } finally {
       mutationLock.current = false;
       setBusyAction(null);
@@ -304,14 +306,19 @@ function AdminStoresContent() {
       return;
     }
     const fingerprint = JSON.stringify({ groupId: group?.id ?? null, input: parsed.input });
-    await runMutation(group ? `group:${group.id}` : 'group:create', fingerprint, async (key) => {
-      const saved = group
-        ? await updateAdminStoreGroup(group.id, parsed.input as UpdateStoreGroupRequest, key)
-        : await createAdminStoreGroup(parsed.input as CreateStoreGroupRequest, key);
-      return group
-        ? `Đã cập nhật nhóm ${saved.code} lên phiên bản ${saved.version}.`
-        : `Đã tạo nhóm ${saved.code}.`;
-    });
+    await runMutation(
+      group ? `group:${group.id}` : 'group:create',
+      fingerprint,
+      async (key) => {
+        const saved = group
+          ? await updateAdminStoreGroup(group.id, parsed.input as UpdateStoreGroupRequest, key)
+          : await createAdminStoreGroup(parsed.input as CreateStoreGroupRequest, key);
+        return group
+          ? `Đã cập nhật nhóm ${saved.code} lên phiên bản ${saved.version}.`
+          : `Đã tạo nhóm ${saved.code}.`;
+      },
+      true,
+    );
   };
 
   const saveStore = async (draft: StoreDraft, store?: Store) => {
@@ -323,18 +330,31 @@ function AdminStoresContent() {
       return;
     }
     const fingerprint = JSON.stringify({ input: parsed.input, storeId: store?.id ?? null });
-    await runMutation(store ? `store:${store.id}` : 'store:create', fingerprint, async (key) => {
-      const saved = store
-        ? await updateAdminStore(store.id, parsed.input as UpdateStoreRequest, key)
-        : await createAdminStore(parsed.input as CreateStoreRequest, key);
-      return store
-        ? `Đã cập nhật cửa hàng ${saved.code} lên phiên bản ${saved.version}.`
-        : `Đã tạo cửa hàng ${saved.code}.`;
-    });
+    await runMutation(
+      store ? `store:${store.id}` : 'store:create',
+      fingerprint,
+      async (key) => {
+        const saved = store
+          ? await updateAdminStore(store.id, parsed.input as UpdateStoreRequest, key)
+          : await createAdminStore(parsed.input as CreateStoreRequest, key);
+        return store
+          ? `Đã cập nhật cửa hàng ${saved.code} lên phiên bản ${saved.version}.`
+          : `Đã tạo cửa hàng ${saved.code}.`;
+      },
+      true,
+    );
   };
 
   const changeGroupStatus = async (group: StoreGroup) => {
     const status: StoreGroupStatus = group.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+    if (
+      status === 'INACTIVE' &&
+      !window.confirm(
+        `Ngừng nhóm ${group.code}? Các cửa hàng đang hoạt động phải được chuyển hoặc ngừng trước.`,
+      )
+    ) {
+      return;
+    }
     const input: UpdateStoreGroupRequest = { expectedVersion: group.version, status };
     const fingerprint = JSON.stringify({ groupId: group.id, input });
     await runMutation(`group:${group.id}`, fingerprint, async (key) => {
@@ -345,6 +365,12 @@ function AdminStoresContent() {
 
   const changeStoreStatus = async (store: Store) => {
     const status: StoreStatus = store.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+    if (
+      status === 'INACTIVE' &&
+      !window.confirm(`Ngừng cửa hàng ${store.code}? Các thao tác bán lẻ sẽ bị chặn ngay lập tức.`)
+    ) {
+      return;
+    }
     const input: UpdateStoreRequest = { expectedVersion: store.version, status };
     const fingerprint = JSON.stringify({ input, storeId: store.id });
     await runMutation(`store:${store.id}`, fingerprint, async (key) => {
@@ -415,6 +441,7 @@ function AdminStoresContent() {
       {editor?.kind === 'CREATE_GROUP' || editor?.kind === 'EDIT_GROUP' ? (
         <StoreGroupEditor
           busy={busy}
+          key={editor.kind === 'EDIT_GROUP' ? editor.group.id : 'create-group'}
           onCancel={() => {
             if (!busy) setEditor(null);
           }}
@@ -424,8 +451,9 @@ function AdminStoresContent() {
       ) : null}
       {editor?.kind === 'CREATE_STORE' || editor?.kind === 'EDIT_STORE' ? (
         <StoreEditor
-          allGroups={allGroupsQuery.data?.data ?? []}
+          allGroups={allGroupsQuery.data ?? []}
           busy={busy}
+          key={editor.kind === 'EDIT_STORE' ? editor.store.id : 'create-store'}
           onCancel={() => {
             if (!busy) setEditor(null);
           }}
@@ -445,10 +473,17 @@ function AdminStoresContent() {
         ) : null}
       </div>
 
+      {allGroupsQuery.isError ? (
+        <LifecycleLoadError
+          error={allGroupsQuery.error}
+          onRetry={() => void allGroupsQuery.refetch()}
+        />
+      ) : null}
+
       <div className="store-lifecycle-summary" aria-label="Tóm tắt danh mục cửa hàng">
         <span>
           <Layers3 aria-hidden="true" size={18} />
-          <strong>{allGroupsQuery.data?.pagination.totalItems ?? '—'}</strong> nhóm
+          <strong>{allGroupsQuery.data?.length ?? '—'}</strong> nhóm
         </span>
         <span>
           <Building2 aria-hidden="true" size={18} />
@@ -459,8 +494,10 @@ function AdminStoresContent() {
       <section className="admin-panel" aria-labelledby="store-groups-heading">
         <LifecycleHeading
           description="Vô hiệu hóa nhóm chỉ khi không còn cửa hàng đang hoạt động."
-          onRefresh={() => void groupsQuery.refetch()}
-          refreshing={groupsQuery.isFetching}
+          onRefresh={() => {
+            void Promise.all([groupsQuery.refetch(), allGroupsQuery.refetch()]);
+          }}
+          refreshing={groupsQuery.isFetching || allGroupsQuery.isFetching}
           title="Nhóm cửa hàng"
         />
         <form className="store-lifecycle-filters" onSubmit={submitGroupFilters}>
@@ -551,7 +588,7 @@ function AdminStoresContent() {
               value={storeFilterDraft.groupId}
             >
               <option value="">Tất cả</option>
-              {(allGroupsQuery.data?.data ?? []).map((group) => (
+              {(allGroupsQuery.data ?? []).map((group) => (
                 <option key={group.id} value={group.id}>
                   {group.code} · {group.name}
                 </option>
@@ -909,8 +946,13 @@ function StoreGroupTable({
                       <Pencil aria-hidden="true" size={15} /> Sửa
                     </button>
                     <button
+                      aria-label={`${group.status === 'ACTIVE' ? 'Ngừng' : 'Kích hoạt'} nhóm ${group.code}`}
                       aria-busy={rowBusy}
-                      className="admin-action"
+                      className={
+                        group.status === 'ACTIVE'
+                          ? 'admin-action admin-action--danger'
+                          : 'admin-action'
+                      }
                       disabled={busyAction !== null}
                       onClick={() => void onStatus(group)}
                       type="button"
@@ -990,8 +1032,13 @@ function StoreTable({
                       <Pencil aria-hidden="true" size={15} /> Sửa
                     </button>
                     <button
+                      aria-label={`${store.status === 'ACTIVE' ? 'Ngừng' : 'Kích hoạt'} cửa hàng ${store.code}`}
                       aria-busy={rowBusy}
-                      className="admin-action"
+                      className={
+                        store.status === 'ACTIVE'
+                          ? 'admin-action admin-action--danger'
+                          : 'admin-action'
+                      }
                       disabled={busyAction !== null}
                       onClick={() => void onStatus(store)}
                       type="button"
@@ -1125,7 +1172,8 @@ function Pagination({
     { readonly page: number; readonly totalItems: number; readonly totalPages: number } | undefined;
   readonly refreshing: boolean;
 }) {
-  if (!pagination || pagination.totalPages <= 1) return null;
+  if (!pagination || (pagination.totalPages <= 1 && currentPage <= 1)) return null;
+  const lastPage = Math.max(1, pagination.totalPages);
   return (
     <nav aria-label={`Phân trang ${label}`} className="admin-pagination">
       <button
@@ -1137,11 +1185,11 @@ function Pagination({
         Trang trước
       </button>
       <span>
-        Trang {pagination.page}/{pagination.totalPages} · {pagination.totalItems} {label}
+        Trang {currentPage}/{lastPage} · {pagination.totalItems} {label}
       </span>
       <button
         className="admin-action"
-        disabled={currentPage >= pagination.totalPages || refreshing}
+        disabled={currentPage >= lastPage || refreshing}
         onClick={() => onPage(currentPage + 1)}
         type="button"
       >

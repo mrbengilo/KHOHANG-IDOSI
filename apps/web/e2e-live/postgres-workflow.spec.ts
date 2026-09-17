@@ -103,7 +103,13 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
       new URL(response.url()).pathname.startsWith('/api/v1/stores/') &&
       response.request().method() === 'PATCH',
   );
-  await storeRow.getByRole('button', { name: 'Ngừng cửa hàng' }).click();
+  const confirmStoreDeactivation = page.waitForEvent('dialog').then(async (dialog) => {
+    expect(dialog.type()).toBe('confirm');
+    expect(dialog.message()).toContain(storeCode);
+    await dialog.accept();
+  });
+  await storeRow.getByRole('button', { name: `Ngừng cửa hàng ${storeCode}` }).click();
+  await confirmStoreDeactivation;
   expect((await disableStoreResponse).status()).toBe(200);
   await expect(page.getByText(`Cửa hàng ${storeCode}: ngừng hoạt động.`)).toBeVisible();
 
@@ -113,7 +119,13 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
       new URL(response.url()).pathname.startsWith('/api/v1/store-groups/') &&
       response.request().method() === 'PATCH',
   );
-  await groupRow.getByRole('button', { name: 'Ngừng nhóm' }).click();
+  const confirmGroupDeactivation = page.waitForEvent('dialog').then(async (dialog) => {
+    expect(dialog.type()).toBe('confirm');
+    expect(dialog.message()).toContain(groupCode);
+    await dialog.accept();
+  });
+  await groupRow.getByRole('button', { name: `Ngừng nhóm ${groupCode}` }).click();
+  await confirmGroupDeactivation;
   expect((await disableGroupResponse).status()).toBe(200);
   await expect(page.getByText(`Nhóm ${groupCode}: ngừng hoạt động.`)).toBeVisible();
 

@@ -213,6 +213,18 @@ export async function listAdminStoreGroups(
   return ListStoreGroupsResponseSchema.parse(payload);
 }
 
+export async function listAdminStoreGroupDirectory(): Promise<readonly StoreGroup[]> {
+  const firstPage = await listAdminStoreGroups({ page: 1, pageSize: 100 });
+  if (firstPage.pagination.totalPages <= 1) return firstPage.data;
+
+  const remainingPages = await Promise.all(
+    Array.from({ length: firstPage.pagination.totalPages - 1 }, (_, index) =>
+      listAdminStoreGroups({ page: index + 2, pageSize: 100 }),
+    ),
+  );
+  return [firstPage, ...remainingPages].flatMap((page) => page.data);
+}
+
 export async function createAdminStoreGroup(
   input: CreateStoreGroupRequest,
   idempotencyKey: string,

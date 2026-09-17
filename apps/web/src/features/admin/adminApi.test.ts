@@ -8,6 +8,7 @@ import {
   getAdminHtkdAssignments,
   listActiveRetailStoresForAccounts,
   listAdminAccounts,
+  listAdminStoreGroupDirectory,
   listAdminStoreGroups,
   listAdminStores,
   replaceAdminHtkdAssignments,
@@ -330,6 +331,35 @@ describe('admin API client', () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('status=ACTIVE');
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain(`groupId=${group.id}`);
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain('kind=RETAIL');
+  });
+
+  it('loads every store-group page for filters and editors', async () => {
+    const northernGroup = {
+      ...group,
+      code: 'MIEN_BAC',
+      id: '44444444-4444-4444-8444-444444444444',
+      name: 'Miền Bắc',
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: [group],
+          pagination: { page: 1, pageSize: 100, totalItems: 101, totalPages: 2 },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: [northernGroup],
+          pagination: { page: 2, pageSize: 100, totalItems: 101, totalPages: 2 },
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(listAdminStoreGroupDirectory()).resolves.toEqual([group, northernGroup]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('page=1&pageSize=100');
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('page=2&pageSize=100');
   });
 
   it('sends idempotency keys and optimistic versions for store lifecycle mutations', async () => {
