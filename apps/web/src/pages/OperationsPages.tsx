@@ -28,6 +28,7 @@ import {
   ProductionOpenBagPage,
   ProductionOutboundPage,
 } from '../features/inventory/InventoryOperations';
+import { ProductionTransfersPage } from '../features/transfers/TransferOperations';
 
 export function InventoryPage() {
   const context = useOutletContext<AppOutletContext>();
@@ -389,8 +390,9 @@ export function SortingPage() {
 }
 
 export function TransfersPage() {
+  const context = useOutletContext<AppOutletContext>();
   const [status, setStatus] = useState<'DRAFT' | 'TRANSIT' | 'RECEIVED'>('DRAFT');
-  if (!mockModeEnabled) return <UnavailableFeature title="Điều chuyển cửa hàng" />;
+  if (!mockModeEnabled) return <ProductionTransfersPage {...context} />;
   return (
     <>
       <PageHeader
