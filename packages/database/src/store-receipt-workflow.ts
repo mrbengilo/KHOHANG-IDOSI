@@ -28,6 +28,7 @@ export interface DeclareStoreReceiptInput {
   readonly declaredByUserId: string;
   readonly lines: readonly DeclareStoreReceiptLineInput[];
   readonly discrepancyNote?: string | null;
+  readonly requestId?: string;
   readonly idempotencyKey: string;
   readonly requestHash: string;
 }
@@ -38,6 +39,7 @@ export interface SubmitStoreReceiptInput {
   readonly submittedByUserId: string;
   readonly lines: readonly DeclareStoreReceiptLineInput[];
   readonly discrepancyNote?: string | null;
+  readonly requestId?: string;
   readonly idempotencyKey: string;
   readonly requestHash: string;
 }
@@ -47,6 +49,7 @@ export interface ReturnStoreReceiptForCorrectionInput {
   readonly expectedVersion: number;
   readonly reviewedByUserId: string;
   readonly reason: string;
+  readonly requestId?: string;
   readonly idempotencyKey: string;
   readonly requestHash: string;
 }
@@ -276,6 +279,7 @@ export async function declareStoreReceiptInTransaction(
       version: created.version,
     };
     await tx.insert(auditLogs).values({
+      requestId: input.requestId ?? null,
       actorUserId: input.declaredByUserId,
       actorRole: 'store',
       actorStoreId: outbound.storeId,
@@ -416,6 +420,7 @@ export async function submitStoreReceiptInTransaction(
       version: submitted.version,
     };
     await tx.insert(auditLogs).values({
+      requestId: input.requestId ?? null,
       actorUserId: input.submittedByUserId,
       actorRole: 'store',
       actorStoreId: receipt.storeId,
@@ -521,6 +526,7 @@ export async function returnStoreReceiptForCorrectionInTransaction(
       version: returned.version,
     };
     await tx.insert(auditLogs).values({
+      requestId: input.requestId ?? null,
       actorUserId: input.reviewedByUserId,
       actorRole: reviewerRole,
       actorStoreId: receipt.storeId,

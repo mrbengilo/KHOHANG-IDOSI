@@ -335,6 +335,163 @@ describe('KHOHANG-IDOSI API', () => {
     );
   });
 
+  test('runs the auditable store receipt lifecycle with scopes, versions and idempotency', async () => {
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const htkdCookie = cookieOf(await login('htkd'));
+    const products = await app.inject({
+      method: 'GET',
+      url: '/api/v1/products?pageSize=100',
+      headers: { cookie: storeCookie },
+    });
+    const product = products.json().data[1];
+    assert.ok(product);
+
+    const declaration = {
+      storeId: MEMORY_SEED_IDS.nvtStore,
+      outboundRequestId: MEMORY_SEED_IDS.secondOutboundRequest,
+      lines: [{ productId: product.id, approvedUnits: 2, receivedUnits: 1 }],
+      discrepancyNote: 'Thiếu một bao khi giao nhận',
+    };
+    const declared = await mutateReceipt(
+      storeCookie,
+      'POST',
+      '/api/v1/store-receipts',
+      'receipt-declare-0001',
+      declaration,
+    );
+    assert.equal(declared.statusCode, 201);
+    assert.equal(declared.json().data.status, 'DRAFT');
+    assert.equal(declared.json().data.version, 0);
+    assert.equal(declared.json().data.outboundRequestId, MEMORY_SEED_IDS.secondOutboundRequest);
+    const receiptId = declared.json().data.id;
+
+    const declarationReplay = await mutateReceipt(
+      storeCookie,
+      'POST',
+      '/api/v1/store-receipts',
+      'receipt-declare-0001',
+      declaration,
+    );
+    assert.equal(declarationReplay.statusCode, 201);
+    assert.equal(declarationReplay.headers['idempotency-replayed'], 'true');
+    assert.equal(declarationReplay.json().data.id, receiptId);
+
+    const declarationConflict = await mutateReceipt(
+      storeCookie,
+      'POST',
+      '/api/v1/store-receipts',
+      'receipt-declare-0001',
+      {
+        ...declaration,
+        lines: [{ productId: product.id, approvedUnits: 2, receivedUnits: 2 }],
+        discrepancyNote: null,
+      },
+    );
+    assert.equal(declarationConflict.statusCode, 409);
+    assert.equal(declarationConflict.json().error.code, 'IDEMPOTENCY_CONFLICT');
+
+    const submitPayload = {
+      lines: declaration.lines,
+      discrepancyNote: declaration.discrepancyNote,
+      expectedVersion: 0,
+    };
+    const submitted = await mutateReceipt(
+      storeCookie,
+      'POST',
+      `/api/v1/store-receipts/${receiptId}/submit`,
+      'receipt-submit-0001',
+      submitPayload,
+    );
+    assert.equal(submitted.statusCode, 200);
+    assert.equal(submitted.json().data.status, 'PENDING_HTKD');
+    assert.equal(submitted.json().data.version, 1);
+
+    const finalization = {
+      lines: [
+        {
+          ...declaration.lines[0],
+          bagWeightsKg: ['1.255'],
+          pricePerKgVnd: 20_001,
+        },
+      ],
+      freightVnd: 10_000,
+      handlingVnd: 5_000,
+      expectedVersion: 1,
+    };
+    const storeDenied = await mutateReceipt(
+      storeCookie,
+      'POST',
+      `/api/v1/store-receipts/${receiptId}/finalize`,
+      'receipt-finalize-denied',
+      finalization,
+    );
+    assert.equal(storeDenied.statusCode, 403);
+
+    const returned = await mutateReceipt(
+      htkdCookie,
+      'POST',
+      `/api/v1/store-receipts/${receiptId}/return`,
+      'receipt-return-0001',
+      { reason: 'Vui lòng kiểm tra lại số lượng thực nhận', expectedVersion: 1 },
+    );
+    assert.equal(returned.statusCode, 200);
+    assert.equal(returned.json().data.status, 'RETURNED');
+    assert.equal(returned.json().data.version, 2);
+
+    const staleSubmit = await mutateReceipt(
+      storeCookie,
+      'POST',
+      `/api/v1/store-receipts/${receiptId}/submit`,
+      'receipt-submit-stale',
+      submitPayload,
+    );
+    assert.equal(staleSubmit.statusCode, 409);
+    assert.equal(staleSubmit.json().error.code, 'VERSION_CONFLICT');
+
+    const resubmitted = await mutateReceipt(
+      storeCookie,
+      'POST',
+      `/api/v1/store-receipts/${receiptId}/submit`,
+      'receipt-submit-0002',
+      { ...submitPayload, expectedVersion: 2 },
+    );
+    assert.equal(resubmitted.statusCode, 200);
+    assert.equal(resubmitted.json().data.status, 'PENDING_HTKD');
+    assert.equal(resubmitted.json().data.version, 3);
+
+    const finalized = await mutateReceipt(
+      htkdCookie,
+      'POST',
+      `/api/v1/store-receipts/${receiptId}/finalize`,
+      'receipt-finalize-0001',
+      { ...finalization, expectedVersion: 3 },
+    );
+    assert.equal(finalized.statusCode, 200);
+    assert.equal(finalized.json().data.status, 'FINALIZED');
+    assert.equal(finalized.json().data.version, 4);
+    assert.equal(finalized.json().data.totalCostVnd, 40_101);
+
+    const finalizeReplay = await mutateReceipt(
+      htkdCookie,
+      'POST',
+      `/api/v1/store-receipts/${receiptId}/finalize`,
+      'receipt-finalize-0001',
+      { ...finalization, expectedVersion: 3 },
+    );
+    assert.equal(finalizeReplay.statusCode, 200);
+    assert.equal(finalizeReplay.headers['idempotency-replayed'], 'true');
+    assert.deepEqual(finalizeReplay.json().data, finalized.json().data);
+
+    const filtered = await app.inject({
+      method: 'GET',
+      url: `/api/v1/store-receipts?outboundRequestId=${MEMORY_SEED_IDS.secondOutboundRequest}`,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(filtered.statusCode, 200);
+    assert.equal(filtered.json().data.length, 1);
+    assert.equal(filtered.json().data[0].status, 'FINALIZED');
+  });
+
   test('returns structured validation errors with the propagated request id', async () => {
     const response = await app.inject({
       method: 'POST',
@@ -369,6 +526,15 @@ describe('KHOHANG-IDOSI API', () => {
     return app.inject({
       method: 'POST',
       url: '/api/v1/order-requests',
+      headers: { cookie, 'idempotency-key': idempotencyKey },
+      payload,
+    });
+  }
+
+  async function mutateReceipt(cookie, method, url, idempotencyKey, payload) {
+    return app.inject({
+      method,
+      url,
       headers: { cookie, 'idempotency-key': idempotencyKey },
       payload,
     });

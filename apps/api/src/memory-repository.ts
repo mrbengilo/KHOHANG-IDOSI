@@ -6,17 +6,23 @@ import type {
   CreateProductRequest,
   CreateStoreOrderRequest,
   CreateStoreRequest,
+  DeclareStoreReceiptRequest,
+  FinalizeReceiptRequest,
   ListOrderSessionsQuery,
   ListProductsQuery,
+  ListReceiptsQuery,
   ListProductConversionsQuery,
   ListStoreOrderRequestsQuery,
   ListStoresQuery,
   Product,
   ProductConversion,
+  Receipt,
+  ReturnReceiptForCorrectionRequest,
   OrderSession,
   Session,
   Store,
   StoreOrderRequest,
+  SubmitStoreReceiptRequest,
   UpdateProductRequest,
   UpdateProductConversionRequest,
   DeleteProductConversionRequest,
@@ -27,11 +33,13 @@ import {
   STORE_GROUP_SEEDS,
   STORE_SEEDS,
 } from '@idosi/database/seed-data';
+import { calculateWeightedCostVnd } from '@idosi/database';
 
 import { ApiError, conflict, forbidden, notFound, unauthenticated } from './errors.js';
 import type {
   AccountCredentials,
   OrderStatistics,
+  IdempotentResource,
   Page,
   RequestContext,
   SubmittedOrderRequest,
@@ -45,6 +53,9 @@ export const MEMORY_SEED_IDS = {
   htkdAccount: '00000000-0000-4000-8000-000000000002',
   storeAccount: '00000000-0000-4000-8000-000000000003',
   orderSession: '10000000-0000-4000-8000-000000000001',
+  outboundRequest: '11000000-0000-4000-8000-000000000001',
+  secondOutboundRequest: '11000000-0000-4000-8000-000000000002',
+  storeReceipt: '12000000-0000-4000-8000-000000000001',
   nvtStore: '20000000-0000-4000-8000-000000000007',
   bdStore: '20000000-0000-4000-8000-000000000008',
 } as const;
@@ -69,6 +80,16 @@ interface StoredSession {
 interface IdempotencyRecord {
   readonly requestHash: string;
   readonly response: StoreOrderRequest;
+}
+
+interface ReceiptIdempotencyRecord {
+  readonly requestHash: string;
+  readonly response: Receipt;
+}
+
+interface MemoryDispatchedOutbound {
+  readonly storeId: string;
+  readonly lines: readonly { readonly productId: string; readonly approvedUnits: number }[];
 }
 
 interface AuditRecord {
@@ -98,7 +119,10 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly products = new Map<string, Product>();
   private readonly productConversions = new Map<string, ProductConversion>();
   private readonly orderRequests = new Map<string, StoreOrderRequest>();
+  private readonly receipts = new Map<string, Receipt>();
+  private readonly dispatchedOutbounds = new Map<string, MemoryDispatchedOutbound>();
   private readonly idempotency = new Map<string, IdempotencyRecord>();
+  private readonly receiptIdempotency = new Map<string, ReceiptIdempotencyRecord>();
   private readonly storeGroupIds = new Set<string>();
   private readonly audit: AuditRecord[] = [];
 
@@ -569,6 +593,229 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     return { data: request, replayed: false };
   }
 
+  public async listReceipts(
+    actor: AuthenticatedPrincipal,
+    query: ListReceiptsQuery,
+  ): Promise<Page<Receipt>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const values = [...this.receipts.values()]
+      .filter((receipt) => canAccessStore(actor, receipt.storeId))
+      .filter((receipt) => query.storeId === undefined || receipt.storeId === query.storeId)
+      .filter(
+        (receipt) =>
+          query.outboundRequestId === undefined ||
+          receipt.outboundRequestId === query.outboundRequestId,
+      )
+      .filter((receipt) => query.status === undefined || receipt.status === query.status)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return {
+      data: slicePage(values, query.page, query.pageSize),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
+  }
+
+  public async getReceipt(actor: AuthenticatedPrincipal, receiptId: string): Promise<Receipt> {
+    const receipt = this.receipts.get(receiptId);
+    if (!receipt) throw notFound('Không tìm thấy phiếu nhận hàng');
+    if (!canAccessStore(actor, receipt.storeId)) throw forbidden();
+    return structuredClone(receipt);
+  }
+
+  public async declareStoreReceipt(
+    actor: AuthenticatedPrincipal,
+    input: DeclareStoreReceiptRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<Receipt>> {
+    if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
+    const scopedKey = `${actor.accountId}:receipt:declare:${input.outboundRequestId}:${idempotencyKey}`;
+    const replay = this.replayReceipt(scopedKey, requestHash);
+    if (replay) return { data: replay, replayed: true };
+    const outbound = this.dispatchedOutbounds.get(input.outboundRequestId);
+    if (!outbound || outbound.storeId !== input.storeId) {
+      throw new ApiError('INVALID_STATE_TRANSITION', 'Phiếu xuất chưa sẵn sàng để nhận', 409);
+    }
+    if (
+      [...this.receipts.values()].some(
+        (receipt) => receipt.outboundRequestId === input.outboundRequestId,
+      )
+    ) {
+      throw conflict('Phiếu xuất đã có phiếu nhận hàng');
+    }
+    validateMemoryDeclaration(input.lines, outbound.lines, input.discrepancyNote);
+    const now = this.now().toISOString();
+    const receipt: Receipt = {
+      id: randomUUID(),
+      receiptNumber: `SR-${input.outboundRequestId.slice(0, 8)}`,
+      storeId: input.storeId,
+      outboundRequestId: input.outboundRequestId,
+      declaredByAccountId: actor.accountId,
+      lines: input.lines.map((line) => ({
+        approvedUnits: line.approvedUnits,
+        bagWeightsKg: [],
+        pricePerKgVnd: null,
+        productId: line.productId,
+        receivedUnits: line.receivedUnits,
+      })),
+      discrepancyNote: input.discrepancyNote,
+      status: 'DRAFT',
+      freightVnd: 0,
+      handlingVnd: 0,
+      totalCostVnd: null,
+      reviewedByAccountId: null,
+      reviewNote: null,
+      version: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.receipts.set(receipt.id, receipt);
+    this.rememberReceipt(scopedKey, requestHash, receipt);
+    this.appendAudit(
+      actor,
+      context,
+      'STORE_RECEIPT_DECLARED',
+      'store_receipt',
+      receipt.id,
+      null,
+      receipt,
+    );
+    return { data: structuredClone(receipt), replayed: false };
+  }
+
+  public async submitStoreReceipt(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: SubmitStoreReceiptRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<Receipt>> {
+    const scopedKey = `${actor.accountId}:receipt:submit:${receiptId}:${idempotencyKey}`;
+    const replay = this.replayReceipt(scopedKey, requestHash);
+    if (replay) return { data: replay, replayed: true };
+    const current = this.requireMutableReceipt(actor, receiptId, ['DRAFT', 'RETURNED'], true);
+    if (current.version !== input.expectedVersion) throw versionConflict();
+    validateMemoryDeclaration(input.lines, current.lines, input.discrepancyNote);
+    const updated: Receipt = {
+      ...current,
+      declaredByAccountId: actor.accountId,
+      discrepancyNote: input.discrepancyNote,
+      lines: input.lines.map((line) => ({
+        approvedUnits: line.approvedUnits,
+        bagWeightsKg: [],
+        pricePerKgVnd: null,
+        productId: line.productId,
+        receivedUnits: line.receivedUnits,
+      })),
+      reviewNote: null,
+      reviewedByAccountId: null,
+      status: 'PENDING_HTKD',
+      updatedAt: this.now().toISOString(),
+      version: current.version + 1,
+    };
+    this.receipts.set(receiptId, updated);
+    this.rememberReceipt(scopedKey, requestHash, updated);
+    this.appendAudit(
+      actor,
+      context,
+      'STORE_RECEIPT_SUBMITTED',
+      'store_receipt',
+      receiptId,
+      current,
+      updated,
+    );
+    return { data: structuredClone(updated), replayed: false };
+  }
+
+  public async returnStoreReceiptForCorrection(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: ReturnReceiptForCorrectionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<Receipt>> {
+    const scopedKey = `${actor.accountId}:receipt:return:${receiptId}:${idempotencyKey}`;
+    const replay = this.replayReceipt(scopedKey, requestHash);
+    if (replay) return { data: replay, replayed: true };
+    const current = this.requireMutableReceipt(actor, receiptId, ['PENDING_HTKD'], false);
+    if (current.version !== input.expectedVersion) throw versionConflict();
+    const updated: Receipt = {
+      ...current,
+      reviewNote: input.reason,
+      reviewedByAccountId: actor.accountId,
+      status: 'RETURNED',
+      updatedAt: this.now().toISOString(),
+      version: current.version + 1,
+    };
+    this.receipts.set(receiptId, updated);
+    this.rememberReceipt(scopedKey, requestHash, updated);
+    this.appendAudit(
+      actor,
+      context,
+      'STORE_RECEIPT_RETURNED',
+      'store_receipt',
+      receiptId,
+      current,
+      updated,
+    );
+    return { data: structuredClone(updated), replayed: false };
+  }
+
+  public async finalizeStoreReceipt(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: FinalizeReceiptRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<Receipt>> {
+    const scopedKey = `${actor.accountId}:receipt:finalize:${receiptId}:${idempotencyKey}`;
+    const replay = this.replayReceipt(scopedKey, requestHash);
+    if (replay) return { data: replay, replayed: true };
+    const current = this.requireMutableReceipt(actor, receiptId, ['PENDING_HTKD'], false);
+    if (current.version !== input.expectedVersion) throw versionConflict();
+    validateMemoryFinalization(input, current);
+    const goodsCostVnd = input.lines.reduce(
+      (total, line) =>
+        total +
+        line.bagWeightsKg.reduce(
+          (lineTotal, weight) =>
+            lineTotal + calculateWeightedCostVnd(weight, BigInt(line.pricePerKgVnd ?? 0)),
+          0n,
+        ),
+      0n,
+    );
+    const totalCostVnd = goodsCostVnd + BigInt(input.freightVnd) + BigInt(input.handlingVnd);
+    if (totalCostVnd > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new ApiError('VALIDATION_ERROR', 'Tổng giá vốn vượt giới hạn an toàn', 400);
+    }
+    const updated: Receipt = {
+      ...current,
+      freightVnd: input.freightVnd,
+      handlingVnd: input.handlingVnd,
+      lines: input.lines,
+      reviewedByAccountId: actor.accountId,
+      status: 'FINALIZED',
+      totalCostVnd: Number(totalCostVnd),
+      updatedAt: this.now().toISOString(),
+      version: current.version + 1,
+    };
+    this.receipts.set(receiptId, updated);
+    this.rememberReceipt(scopedKey, requestHash, updated);
+    this.appendAudit(
+      actor,
+      context,
+      'STORE_RECEIPT_FINALIZED',
+      'store_receipt',
+      receiptId,
+      current,
+      updated,
+    );
+    return { data: structuredClone(updated), replayed: false };
+  }
+
   public async getOrderStatistics(
     actor: AuthenticatedPrincipal,
     storeCode: string,
@@ -587,6 +834,45 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (!account) throw notFound('Không tìm thấy tài khoản');
     account.status = status;
     account.sessionVersion += 1;
+  }
+
+  private replayReceipt(scopedKey: string, requestHash: string): Receipt | null {
+    const previous = this.receiptIdempotency.get(scopedKey);
+    if (!previous) return null;
+    if (previous.requestHash !== requestHash) {
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    }
+    return structuredClone(previous.response);
+  }
+
+  private rememberReceipt(scopedKey: string, requestHash: string, receipt: Receipt): void {
+    this.receiptIdempotency.set(scopedKey, {
+      requestHash,
+      response: structuredClone(receipt),
+    });
+  }
+
+  private requireMutableReceipt(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    statuses: readonly Receipt['status'][],
+    storeOnly: boolean,
+  ): Receipt {
+    const receipt = this.receipts.get(receiptId);
+    if (!receipt) throw notFound('Không tìm thấy phiếu nhận hàng');
+    if (!canAccessStore(actor, receipt.storeId)) throw forbidden();
+    if (storeOnly && (actor.role !== 'STORE' || actor.storeId !== receipt.storeId)) {
+      throw forbidden();
+    }
+    if (!storeOnly && actor.role === 'STORE') throw forbidden();
+    if (!statuses.includes(receipt.status)) {
+      throw new ApiError('INVALID_STATE_TRANSITION', 'Trạng thái phiếu không hợp lệ', 409);
+    }
+    return receipt;
   }
 
   private async seed(password: string): Promise<void> {
@@ -672,6 +958,46 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
 
     const nvtId = this.storeIdByCode('DS_NVT');
     const bdId = this.storeIdByCode('DS_BD');
+    const seededProducts = [...this.products.values()].sort((left, right) =>
+      left.sku.localeCompare(right.sku),
+    );
+    const firstProduct = seededProducts[0];
+    const secondProduct = seededProducts[1];
+    if (!firstProduct || !secondProduct) throw new Error('Memory catalog requires two products');
+    this.dispatchedOutbounds.set(MEMORY_SEED_IDS.outboundRequest, {
+      storeId: nvtId,
+      lines: [{ productId: firstProduct.id, approvedUnits: 5 }],
+    });
+    this.dispatchedOutbounds.set(MEMORY_SEED_IDS.secondOutboundRequest, {
+      storeId: nvtId,
+      lines: [{ productId: secondProduct.id, approvedUnits: 2 }],
+    });
+    this.receipts.set(MEMORY_SEED_IDS.storeReceipt, {
+      id: MEMORY_SEED_IDS.storeReceipt,
+      receiptNumber: 'SR-MEMORY-001',
+      storeId: nvtId,
+      outboundRequestId: MEMORY_SEED_IDS.outboundRequest,
+      declaredByAccountId: MEMORY_SEED_IDS.storeAccount,
+      lines: [
+        {
+          productId: firstProduct.id,
+          approvedUnits: 5,
+          receivedUnits: 4,
+          bagWeightsKg: [],
+          pricePerKgVnd: null,
+        },
+      ],
+      discrepancyNote: 'Thiếu một bao khi giao nhận',
+      status: 'DRAFT',
+      freightVnd: 0,
+      handlingVnd: 0,
+      totalCostVnd: null,
+      reviewedByAccountId: null,
+      reviewNote: null,
+      version: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
     const seededAccounts: MutableAccount[] = [
       {
         id: MEMORY_SEED_IDS.adminAccount,
@@ -776,4 +1102,49 @@ function emptyStatistics(storeCode: string, from: string, to: string, now: Date)
 function retirementDate(effectiveFrom: string, now: Date): string {
   const today = now.toISOString().slice(0, 10);
   return today > effectiveFrom ? today : effectiveFrom;
+}
+
+function validateMemoryDeclaration(
+  lines: DeclareStoreReceiptRequest['lines'],
+  dispatchedLines: readonly { readonly productId: string; readonly approvedUnits: number }[],
+  discrepancyNote: string | null,
+): void {
+  const dispatched = new Map(
+    dispatchedLines.map((line) => [line.productId, line.approvedUnits] as const),
+  );
+  if (lines.length !== dispatched.size) {
+    throw new ApiError('VALIDATION_ERROR', 'Phiếu nhận phải có đủ mặt hàng đã xuất', 400);
+  }
+  let hasShortage = false;
+  for (const line of lines) {
+    const approvedUnits = dispatched.get(line.productId);
+    if (approvedUnits === undefined || approvedUnits !== line.approvedUnits) {
+      throw new ApiError('VALIDATION_ERROR', 'Số lượng duyệt không khớp phiếu xuất', 400);
+    }
+    hasShortage ||= line.receivedUnits < approvedUnits;
+  }
+  if (hasShortage && discrepancyNote === null) {
+    throw new ApiError('VALIDATION_ERROR', 'Nhận thiếu phải có ghi chú chênh lệch', 400);
+  }
+}
+
+function validateMemoryFinalization(input: FinalizeReceiptRequest, current: Receipt): void {
+  const currentLines = new Map(current.lines.map((line) => [line.productId, line] as const));
+  if (input.lines.length !== currentLines.size) {
+    throw new ApiError('VALIDATION_ERROR', 'Chi tiết giá vốn không khớp phiếu nhận', 400);
+  }
+  for (const line of input.lines) {
+    const persisted = currentLines.get(line.productId);
+    if (
+      !persisted ||
+      persisted.approvedUnits !== line.approvedUnits ||
+      persisted.receivedUnits !== line.receivedUnits
+    ) {
+      throw new ApiError('VALIDATION_ERROR', 'Số lượng thực nhận đã thay đổi', 400);
+    }
+  }
+}
+
+function versionConflict(): ApiError {
+  return new ApiError('VERSION_CONFLICT', 'Phiếu nhận đã thay đổi, vui lòng tải lại', 409);
 }

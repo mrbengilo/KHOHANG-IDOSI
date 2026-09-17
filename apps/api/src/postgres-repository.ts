@@ -4,17 +4,23 @@ import type {
   CreateProductRequest,
   CreateStoreOrderRequest,
   CreateStoreRequest,
+  DeclareStoreReceiptRequest,
+  FinalizeReceiptRequest,
   ListOrderSessionsQuery,
   ListProductsQuery,
+  ListReceiptsQuery,
   ListProductConversionsQuery,
   ListStoreOrderRequestsQuery,
   ListStoresQuery,
   Product,
   ProductConversion,
+  Receipt,
+  ReturnReceiptForCorrectionRequest,
   OrderSession,
   Session,
   Store,
   StoreOrderRequest,
+  SubmitStoreReceiptRequest,
   UpdateProductRequest,
   UpdateProductConversionRequest,
   DeleteProductConversionRequest,
@@ -23,10 +29,12 @@ import {
   ActiveWaitTicketExistsError,
   auditLogs,
   closeDatabase,
+  declareStoreReceipt as declareDatabaseStoreReceipt,
   db,
   htkdAssignments,
   IdempotencyConflictError,
   IdempotencyInProgressError,
+  finalizeStoreReceipt as finalizeDatabaseStoreReceipt,
   orderRequestItems,
   orderRequests,
   orderSessions,
@@ -37,21 +45,30 @@ import {
   products,
   RequestLimitExceededError,
   sessions,
+  StoreOperationConflictError,
+  StoreOperationValidationError,
+  StoreReceiptAuthorizationError,
+  storeReceiptBags,
+  storeReceiptLines,
+  storeReceipts,
   storeGroups,
   storeInventoryBags,
   storeOutbounds,
   stores,
   submitOrderRequest as submitDatabaseOrderRequest,
+  submitStoreReceipt as submitDatabaseStoreReceipt,
   users,
+  returnStoreReceiptForCorrection as returnDatabaseStoreReceiptForCorrection,
   withAdvisoryLock,
   withSerializableTransaction,
   type JsonObject,
 } from '@idosi/database';
-import { and, asc, count, desc, eq, gte, isNull, lt, lte } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNull, lt, lte, type SQL } from 'drizzle-orm';
 
 import { ApiError, conflict, forbidden, notFound, unauthenticated } from './errors.js';
 import type {
   AccountCredentials,
+  IdempotentResource,
   OrderStatistics,
   Page,
   RequestContext,
@@ -713,6 +730,181 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     }
   }
 
+  public async listReceipts(
+    actor: AuthenticatedPrincipal,
+    query: ListReceiptsQuery,
+  ): Promise<Page<Receipt>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    if (actor.role === 'STORE' && actor.storeId === null) {
+      return { data: [], pagination: pagination(query.page, query.pageSize, 0) };
+    }
+    if (actor.role === 'HTKD' && actor.assignedStoreIds.length === 0) {
+      return { data: [], pagination: pagination(query.page, query.pageSize, 0) };
+    }
+
+    const conditions: SQL[] = [isNull(storeReceipts.deletedAt)];
+    if (query.storeId !== undefined) {
+      conditions.push(eq(storeReceipts.storeId, query.storeId));
+    } else if (actor.role === 'STORE' && actor.storeId !== null) {
+      conditions.push(eq(storeReceipts.storeId, actor.storeId));
+    } else if (actor.role === 'HTKD') {
+      conditions.push(inArray(storeReceipts.storeId, [...actor.assignedStoreIds]));
+    }
+    if (query.outboundRequestId !== undefined) {
+      conditions.push(eq(storeReceipts.outboundRequestId, query.outboundRequestId));
+    }
+    if (query.status !== undefined) {
+      conditions.push(eq(storeReceipts.status, databaseReceiptStatus(query.status)));
+    }
+
+    const where = and(...conditions);
+    const [totalRow] = await db.select({ value: count() }).from(storeReceipts).where(where);
+    const rows = await db
+      .select({ id: storeReceipts.id })
+      .from(storeReceipts)
+      .where(where)
+      .orderBy(desc(storeReceipts.createdAt), desc(storeReceipts.id))
+      .limit(query.pageSize)
+      .offset((query.page - 1) * query.pageSize);
+    return {
+      data: await Promise.all(rows.map((row) => this.receiptDto(row.id))),
+      pagination: pagination(query.page, query.pageSize, totalRow?.value ?? 0),
+    };
+  }
+
+  public async getReceipt(actor: AuthenticatedPrincipal, receiptId: string): Promise<Receipt> {
+    const receipt = await this.receiptDto(receiptId);
+    if (!canAccessStore(actor, receipt.storeId)) throw forbidden();
+    return receipt;
+  }
+
+  public async declareStoreReceipt(
+    actor: AuthenticatedPrincipal,
+    input: DeclareStoreReceiptRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<Receipt>> {
+    if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
+    try {
+      const result = await declareDatabaseStoreReceipt(db, {
+        outboundRequestId: input.outboundRequestId,
+        storeId: input.storeId,
+        declaredByUserId: actor.accountId,
+        lines: input.lines.map((line) => ({
+          productId: line.productId,
+          approvedQuantity: line.approvedUnits,
+          receivedQuantity: line.receivedUnits,
+        })),
+        discrepancyNote: input.discrepancyNote,
+        requestId: context.requestId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.receiptId;
+      if (!resourceId) throw new Error('Idempotent receipt declaration has no resource id');
+      return { data: await this.receiptDto(resourceId), replayed: result.replayed };
+    } catch (error: unknown) {
+      throwReceiptError(error);
+    }
+  }
+
+  public async submitStoreReceipt(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: SubmitStoreReceiptRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<Receipt>> {
+    const current = await this.getReceipt(actor, receiptId);
+    if (actor.role !== 'STORE' || actor.storeId !== current.storeId) throw forbidden();
+    try {
+      const result = await submitDatabaseStoreReceipt(db, {
+        receiptId,
+        expectedVersion: input.expectedVersion,
+        submittedByUserId: actor.accountId,
+        lines: input.lines.map((line) => ({
+          productId: line.productId,
+          approvedQuantity: line.approvedUnits,
+          receivedQuantity: line.receivedUnits,
+        })),
+        discrepancyNote: input.discrepancyNote,
+        requestId: context.requestId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.receiptId;
+      if (!resourceId) throw new Error('Idempotent receipt submission has no resource id');
+      return { data: await this.receiptDto(resourceId), replayed: result.replayed };
+    } catch (error: unknown) {
+      throwReceiptError(error);
+    }
+  }
+
+  public async returnStoreReceiptForCorrection(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: ReturnReceiptForCorrectionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<Receipt>> {
+    const current = await this.getReceipt(actor, receiptId);
+    if (actor.role === 'STORE' || !canAccessStore(actor, current.storeId)) throw forbidden();
+    try {
+      const result = await returnDatabaseStoreReceiptForCorrection(db, {
+        receiptId,
+        expectedVersion: input.expectedVersion,
+        reviewedByUserId: actor.accountId,
+        reason: input.reason,
+        requestId: context.requestId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.receiptId;
+      if (!resourceId) throw new Error('Idempotent receipt return has no resource id');
+      return { data: await this.receiptDto(resourceId), replayed: result.replayed };
+    } catch (error: unknown) {
+      throwReceiptError(error);
+    }
+  }
+
+  public async finalizeStoreReceipt(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: FinalizeReceiptRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<Receipt>> {
+    const current = await this.getReceipt(actor, receiptId);
+    if (actor.role === 'STORE' || !canAccessStore(actor, current.storeId)) throw forbidden();
+    assertFinalizationMatchesDeclaration(current, input);
+    try {
+      const result = await finalizeDatabaseStoreReceipt(db, {
+        receiptId,
+        expectedVersion: input.expectedVersion,
+        reviewedByUserId: actor.accountId,
+        freightVnd: BigInt(input.freightVnd),
+        handlingVnd: BigInt(input.handlingVnd),
+        lines: input.lines.map((line) => ({
+          productId: line.productId,
+          pricePerKgVnd: line.pricePerKgVnd === null ? null : BigInt(line.pricePerKgVnd),
+          bagWeightsKg: line.bagWeightsKg,
+        })),
+        requestId: context.requestId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.receiptId;
+      if (!resourceId) throw new Error('Idempotent receipt finalization has no resource id');
+      return { data: await this.receiptDto(resourceId), replayed: result.replayed };
+    } catch (error: unknown) {
+      throwReceiptError(error);
+    }
+  }
+
   public async getOrderStatistics(
     actor: AuthenticatedPrincipal,
     storeCode: string,
@@ -855,6 +1047,63 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       cancelledAt: request.cancelledAt?.toISOString() ?? null,
     };
   }
+
+  private async receiptDto(receiptId: string): Promise<Receipt> {
+    const [receipt] = await db
+      .select()
+      .from(storeReceipts)
+      .where(and(eq(storeReceipts.id, receiptId), isNull(storeReceipts.deletedAt)))
+      .limit(1);
+    if (!receipt) throw notFound('Không tìm thấy phiếu nhận hàng');
+
+    const lines = await db
+      .select()
+      .from(storeReceiptLines)
+      .where(eq(storeReceiptLines.storeReceiptId, receipt.id))
+      .orderBy(asc(storeReceiptLines.productId));
+    if (lines.length === 0) throw new Error('Store receipt has no product lines');
+    const bags = await db
+      .select()
+      .from(storeReceiptBags)
+      .where(
+        inArray(
+          storeReceiptBags.storeReceiptLineId,
+          lines.map((line) => line.id),
+        ),
+      )
+      .orderBy(asc(storeReceiptBags.storeReceiptLineId), asc(storeReceiptBags.bagNumber));
+    const weightsByLine = new Map<string, string[]>();
+    for (const bag of bags) {
+      const weights = weightsByLine.get(bag.storeReceiptLineId) ?? [];
+      weights.push(bag.weightKg);
+      weightsByLine.set(bag.storeReceiptLineId, weights);
+    }
+
+    return {
+      id: receipt.id,
+      receiptNumber: receipt.receiptNumber,
+      storeId: receipt.storeId,
+      outboundRequestId: receipt.outboundRequestId,
+      declaredByAccountId: receipt.declaredByUserId,
+      lines: lines.map((line) => ({
+        productId: line.productId,
+        approvedUnits: line.approvedQuantity,
+        receivedUnits: line.receivedQuantity,
+        bagWeightsKg: weightsByLine.get(line.id) ?? [],
+        pricePerKgVnd: line.pricePerKgVnd === null ? null : safeVnd(line.pricePerKgVnd),
+      })),
+      discrepancyNote: receipt.discrepancyNote,
+      status: receiptStatus(receipt.status),
+      freightVnd: safeVnd(receipt.freightVnd),
+      handlingVnd: safeVnd(receipt.handlingVnd),
+      totalCostVnd: receipt.status === 'finalized' ? safeVnd(receipt.totalCostVnd) : null,
+      reviewedByAccountId: receipt.reviewedByUserId,
+      reviewNote: receipt.reviewNote,
+      version: receipt.version,
+      createdAt: receipt.createdAt.toISOString(),
+      updatedAt: receipt.updatedAt.toISOString(),
+    };
+  }
 }
 
 function sessionDto(stored: typeof sessions.$inferSelect, account: AccountCredentials): Session {
@@ -985,6 +1234,83 @@ function orderSessionDto(row: typeof orderSessions.$inferSelect): OrderSession {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+function databaseReceiptStatus(
+  status: Receipt['status'],
+): typeof storeReceipts.$inferSelect.status {
+  switch (status) {
+    case 'DRAFT':
+      return 'draft';
+    case 'PENDING_HTKD':
+      return 'pending_htkd';
+    case 'RETURNED':
+      return 'returned';
+    case 'FINALIZED':
+      return 'finalized';
+  }
+}
+
+function receiptStatus(status: typeof storeReceipts.$inferSelect.status): Receipt['status'] {
+  switch (status) {
+    case 'draft':
+      return 'DRAFT';
+    case 'pending_htkd':
+      return 'PENDING_HTKD';
+    case 'returned':
+      return 'RETURNED';
+    case 'finalized':
+      return 'FINALIZED';
+  }
+}
+
+function assertFinalizationMatchesDeclaration(
+  current: Receipt,
+  input: FinalizeReceiptRequest,
+): void {
+  const declaredByProduct = new Map(current.lines.map((line) => [line.productId, line]));
+  if (declaredByProduct.size !== input.lines.length) {
+    throw new ApiError(
+      'VALIDATION_ERROR',
+      'Các dòng xác nhận phải khớp chính xác với khai báo đã gửi',
+      400,
+    );
+  }
+  for (const line of input.lines) {
+    const declared = declaredByProduct.get(line.productId);
+    if (
+      !declared ||
+      line.approvedUnits !== declared.approvedUnits ||
+      line.receivedUnits !== declared.receivedUnits
+    ) {
+      throw new ApiError(
+        'VALIDATION_ERROR',
+        'Số lượng xác nhận không được thay đổi khai báo đã gửi',
+        400,
+      );
+    }
+  }
+}
+
+function throwReceiptError(error: unknown): never {
+  if (error instanceof StoreReceiptAuthorizationError) throw forbidden();
+  if (error instanceof StoreOperationValidationError) {
+    throw new ApiError('VALIDATION_ERROR', error.message, 400);
+  }
+  if (error instanceof StoreOperationConflictError) {
+    throw new ApiError('VERSION_CONFLICT', 'Phiếu nhận hàng đã thay đổi hoặc sai trạng thái', 409);
+  }
+  if (error instanceof IdempotencyConflictError) {
+    throw new ApiError(
+      'IDEMPOTENCY_CONFLICT',
+      'Khóa idempotency đã được dùng cho nội dung khác',
+      409,
+    );
+  }
+  if (error instanceof IdempotencyInProgressError) {
+    throw conflict('Yêu cầu cùng khóa idempotency đang được xử lý');
+  }
+  throw error;
 }
 
 function slugify(value: string): string {

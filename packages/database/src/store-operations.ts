@@ -42,6 +42,7 @@ export interface FinalizeStoreReceiptInput {
   readonly reviewNote?: string | null;
   readonly idempotencyKey: string;
   readonly requestHash: string;
+  readonly requestId?: string;
 }
 
 export interface FinalizedStoreReceipt {
@@ -512,6 +513,7 @@ export async function finalizeStoreReceiptInTransaction(
         );
 
       await tx.insert(auditLogs).values({
+        requestId: input.requestId ?? null,
         actorUserId: input.reviewedByUserId,
         actorStoreId: receipt.storeId,
         action: 'STORE_RECEIPT_FINALIZED',

@@ -4,8 +4,11 @@ import type {
   CreateProductRequest,
   CreateStoreOrderRequest,
   CreateStoreRequest,
+  DeclareStoreReceiptRequest,
+  FinalizeReceiptRequest,
   ListOrderSessionsQuery,
   ListProductsQuery,
+  ListReceiptsQuery,
   ListProductConversionsQuery,
   ListStoreOrderRequestsQuery,
   ListStoresQuery,
@@ -13,9 +16,12 @@ import type {
   OrderSession,
   Product,
   ProductConversion,
+  Receipt,
+  ReturnReceiptForCorrectionRequest,
   Session,
   Store,
   StoreOrderRequest,
+  SubmitStoreReceiptRequest,
   UpdateProductRequest,
   UpdateProductConversionRequest,
   DeleteProductConversionRequest,
@@ -51,6 +57,11 @@ export interface CreatedSession {
 
 export interface SubmittedOrderRequest {
   readonly data: StoreOrderRequest;
+  readonly replayed: boolean;
+}
+
+export interface IdempotentResource<T> {
+  readonly data: T;
   readonly replayed: boolean;
 }
 
@@ -153,6 +164,40 @@ export interface WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<SubmittedOrderRequest>;
+
+  listReceipts(actor: AuthenticatedPrincipal, query: ListReceiptsQuery): Promise<Page<Receipt>>;
+  getReceipt(actor: AuthenticatedPrincipal, receiptId: string): Promise<Receipt>;
+  declareStoreReceipt(
+    actor: AuthenticatedPrincipal,
+    input: DeclareStoreReceiptRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<Receipt>>;
+  submitStoreReceipt(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: SubmitStoreReceiptRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<Receipt>>;
+  returnStoreReceiptForCorrection(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: ReturnReceiptForCorrectionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<Receipt>>;
+  finalizeStoreReceipt(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: FinalizeReceiptRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<Receipt>>;
 
   getOrderStatistics(
     actor: AuthenticatedPrincipal,

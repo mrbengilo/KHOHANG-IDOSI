@@ -237,9 +237,10 @@ export type ReceiptLine = z.infer<typeof ReceiptLineSchema>;
 export const ReceiptSchema = z
   .object({
     id: EntityIdSchema,
+    receiptNumber: z.string().trim().min(1).max(100),
     storeId: EntityIdSchema,
-    allocationId: EntityIdSchema,
-    declaredByAccountId: EntityIdSchema,
+    outboundRequestId: EntityIdSchema,
+    declaredByAccountId: EntityIdSchema.nullable(),
     lines: z.array(ReceiptLineSchema).min(1).max(500),
     discrepancyNote: z.string().trim().min(3).max(1_000).nullable(),
     status: ReceiptStatusSchema,
@@ -302,7 +303,7 @@ const DeclaredReceiptLinesSchema = z
 export const DeclareStoreReceiptRequestSchema = z
   .object({
     storeId: EntityIdSchema,
-    allocationId: EntityIdSchema,
+    outboundRequestId: EntityIdSchema,
     lines: DeclaredReceiptLinesSchema,
     discrepancyNote: z.string().trim().min(3).max(1_000).nullable().default(null),
   })
@@ -390,7 +391,7 @@ export type ReceiptResponse = z.infer<typeof ReceiptResponseSchema>;
 
 export const ListReceiptsQuerySchema = PaginationQuerySchema.extend({
   storeId: EntityIdSchema.optional(),
-  allocationId: EntityIdSchema.optional(),
+  outboundRequestId: EntityIdSchema.optional(),
   status: ReceiptStatusSchema.optional(),
 }).strict();
 export type ListReceiptsQuery = z.infer<typeof ListReceiptsQuerySchema>;

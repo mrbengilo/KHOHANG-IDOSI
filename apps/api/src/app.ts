@@ -5,16 +5,22 @@ import {
   CreateProductConversionRequestSchema,
   CreateStoreOrderRequestSchema,
   CreateStoreRequestSchema,
+  DeclareStoreReceiptRequestSchema,
+  FinalizeReceiptRequestSchema,
   IdempotencyHeadersSchema,
   IsoDateSchema,
   ListOrderSessionsQuerySchema,
   ListProductsQuerySchema,
   ListProductConversionsQuerySchema,
+  ListReceiptsQuerySchema,
   ListStoreOrderRequestsQuerySchema,
   ListStoresQuerySchema,
   LoginRequestSchema,
   ProductParamsSchema,
   ProductConversionParamsSchema,
+  ReceiptParamsSchema,
+  ReturnReceiptForCorrectionRequestSchema,
+  SubmitStoreReceiptRequestSchema,
   DeleteProductConversionRequestSchema,
   UpdateProductConversionRequestSchema,
   UpdateProductRequestSchema,
@@ -340,6 +346,111 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return reply.status(201).send({ data: submitted.data });
   });
 
+  app.get('/api/v1/store-receipts', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = ListReceiptsQuerySchema.parse(request.query);
+    return repository.listReceipts(session.principal, query);
+  });
+
+  app.get('/api/v1/store-receipts/:receiptId', async (request) => {
+    const session = await authenticate(request, repository);
+    const { receiptId } = ReceiptParamsSchema.parse(request.params);
+    return { data: await repository.getReceipt(session.principal, receiptId) };
+  });
+
+  app.post('/api/v1/store-receipts', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = DeclareStoreReceiptRequestSchema.parse(request.body);
+    const result = await repository.declareStoreReceipt(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({
+        action: 'DECLARE_STORE_RECEIPT',
+        storeId: input.storeId,
+        outboundRequestId: input.outboundRequestId,
+        lines: [...input.lines].sort((left, right) =>
+          left.productId.localeCompare(right.productId),
+        ),
+        discrepancyNote: input.discrepancyNote,
+      }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
+  });
+
+  app.post('/api/v1/store-receipts/:receiptId/submit', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { receiptId } = ReceiptParamsSchema.parse(request.params);
+    const input = SubmitStoreReceiptRequestSchema.parse(request.body);
+    const result = await repository.submitStoreReceipt(
+      session.principal,
+      receiptId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({
+        action: 'SUBMIT_STORE_RECEIPT',
+        receiptId,
+        lines: [...input.lines].sort((left, right) =>
+          left.productId.localeCompare(right.productId),
+        ),
+        discrepancyNote: input.discrepancyNote,
+        expectedVersion: input.expectedVersion,
+      }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.post('/api/v1/store-receipts/:receiptId/return', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { receiptId } = ReceiptParamsSchema.parse(request.params);
+    const input = ReturnReceiptForCorrectionRequestSchema.parse(request.body);
+    const result = await repository.returnStoreReceiptForCorrection(
+      session.principal,
+      receiptId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'RETURN_STORE_RECEIPT', receiptId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.post('/api/v1/store-receipts/:receiptId/finalize', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { receiptId } = ReceiptParamsSchema.parse(request.params);
+    const input = FinalizeReceiptRequestSchema.parse(request.body);
+    const result = await repository.finalizeStoreReceipt(
+      session.principal,
+      receiptId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({
+        action: 'FINALIZE_STORE_RECEIPT',
+        receiptId,
+        ...input,
+        lines: [...input.lines].sort((left, right) =>
+          left.productId.localeCompare(right.productId),
+        ),
+      }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
   app.get('/api/v1/integrations/warehouse/v1/order-statistics', async (request) => {
     const session = await authenticate(request, repository);
     const query = StatisticsQuerySchema.parse(request.query);
@@ -558,6 +669,43 @@ function openApiDocument(): Record<string, unknown> {
         get: {
           security: cookieSecurity,
           responses: { '200': { description: 'Paginated order sessions' } },
+        },
+      },
+      '/api/v1/store-receipts': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Scoped store receipts' } },
+        },
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '201': { description: 'Declared store receipt' } },
+        },
+      },
+      '/api/v1/store-receipts/{receiptId}': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Store receipt detail' } },
+        },
+      },
+      '/api/v1/store-receipts/{receiptId}/submit': {
+        post: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Submitted for HTKD review' } },
+        },
+      },
+      '/api/v1/store-receipts/{receiptId}/return': {
+        post: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Returned for store correction' } },
+        },
+      },
+      '/api/v1/store-receipts/{receiptId}/finalize': {
+        post: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Finalized receipt and inventory' } },
         },
       },
       '/api/v1/integrations/warehouse/v1/order-statistics': {

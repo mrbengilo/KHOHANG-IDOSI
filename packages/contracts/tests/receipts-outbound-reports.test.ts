@@ -3,10 +3,13 @@ import { describe, expect, it } from 'vitest';
 import {
   CreateInboundReceiptRequestSchema,
   CreateOutboundLineSchema,
+  DeclareStoreReceiptRequestSchema,
   ExportMonthlyReportQuerySchema,
+  FinalizeReceiptRequestSchema,
   MonthlyReportQuerySchema,
   OutboundReceiptDeclarationLineSchema,
   ReceiptCostConfirmationSchema,
+  ReceiptSchema,
   StoreInventoryBagSchema,
 } from '../src/index.js';
 
@@ -107,6 +110,93 @@ describe('receipt, outbound and report contracts', () => {
       OutboundReceiptDeclarationLineSchema.safeParse({
         ...declaration,
         actual: { kind: 'UNIT', quantity: 4 },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('binds store receipt declarations to an outbound and requires shortage evidence', () => {
+    const full = {
+      storeId: IDS.store,
+      outboundRequestId: IDS.outbound,
+      lines: [{ productId: IDS.product, approvedUnits: 5, receivedUnits: 5 }],
+    };
+    expect(DeclareStoreReceiptRequestSchema.parse(full)).toEqual({
+      ...full,
+      discrepancyNote: null,
+    });
+    expect(
+      DeclareStoreReceiptRequestSchema.safeParse({
+        ...full,
+        lines: [{ productId: IDS.product, approvedUnits: 5, receivedUnits: 4 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      DeclareStoreReceiptRequestSchema.safeParse({
+        ...full,
+        lines: [{ productId: IDS.product, approvedUnits: 5, receivedUnits: 4 }],
+        discrepancyNote: 'Thiếu một bao khi giao nhận',
+      }).success,
+    ).toBe(true);
+    expect(
+      DeclareStoreReceiptRequestSchema.safeParse({
+        ...full,
+        outboundRequestId: undefined,
+        allocationId: IDS.allocationLine,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('requires exact bag evidence and reviewer data before a receipt is finalized', () => {
+    const line = {
+      productId: IDS.product,
+      approvedUnits: 2,
+      receivedUnits: 2,
+      bagWeightsKg: ['1.250', '1.500'],
+      pricePerKgVnd: 20_000,
+    };
+    expect(
+      FinalizeReceiptRequestSchema.safeParse({
+        lines: [line],
+        freightVnd: 10_000,
+        handlingVnd: 5_000,
+        expectedVersion: 3,
+      }).success,
+    ).toBe(true);
+    expect(
+      FinalizeReceiptRequestSchema.safeParse({
+        lines: [{ ...line, bagWeightsKg: ['2.750'] }],
+        freightVnd: 10_000,
+        handlingVnd: 5_000,
+        expectedVersion: 3,
+      }).success,
+    ).toBe(false);
+
+    const finalizedReceipt = {
+      id: IDS.receipt,
+      receiptNumber: 'SR-2026-0001',
+      storeId: IDS.store,
+      outboundRequestId: IDS.outbound,
+      declaredByAccountId: null,
+      lines: [line],
+      discrepancyNote: null,
+      status: 'FINALIZED',
+      freightVnd: 10_000,
+      handlingVnd: 5_000,
+      totalCostVnd: 70_000,
+      reviewedByAccountId: IDS.account,
+      reviewNote: null,
+      version: 4,
+      createdAt: '2026-09-10T08:00:00Z',
+      updatedAt: '2026-09-10T10:00:00Z',
+    };
+    expect(ReceiptSchema.safeParse(finalizedReceipt).success).toBe(true);
+    expect(
+      ReceiptSchema.safeParse({ ...finalizedReceipt, reviewedByAccountId: null }).success,
+    ).toBe(false);
+    expect(
+      ReceiptSchema.safeParse({
+        ...finalizedReceipt,
+        lines: [{ ...line, bagWeightsKg: ['2.750'] }],
       }).success,
     ).toBe(false);
   });
