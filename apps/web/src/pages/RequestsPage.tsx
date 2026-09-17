@@ -1,4 +1,4 @@
-import { Clock3, Plus, Send, Trash2 } from 'lucide-react';
+import { Clock3, Plus, RotateCcw, Send, Trash2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
@@ -202,6 +202,11 @@ interface ProductionDraftLine {
   readonly quantity: number;
 }
 
+interface RequestNotice {
+  readonly kind: 'error' | 'success';
+  readonly message: string;
+}
+
 function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
   const sessionQuery = useSession();
   const storesQuery = useQuery({
@@ -216,16 +221,18 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
     retry: false,
   });
   const [selectedStoreId, setSelectedStoreId] = useState('');
+  const [selectedSessionId, setSelectedSessionId] = useState('');
   const [selectedProductId, setSelectedProductId] = useState('');
   const [quantity, setQuantity] = useState(1);
   const [draftLines, setDraftLines] = useState<ProductionDraftLine[]>([]);
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState<RequestNotice | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const idempotencyKey = useRef<string | null>(null);
 
   const stores = storesQuery.data ?? [];
   const activeProducts = (catalogQuery.data ?? []).filter((product) => product.status === 'ACTIVE');
-  const activeSession = sessionsQuery.data?.[0];
+  const sessions = sessionsQuery.data ?? [];
+  const activeSession = sessions.find((session) => session.id === selectedSessionId) ?? sessions[0];
   const principalStoreId = sessionQuery.data?.principal.storeId ?? '';
   const effectiveStoreId =
     role === 'STORE' ? principalStoreId : selectedStoreId || stores[0]?.id || '';
@@ -250,7 +257,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
 
   const resetMutationKey = () => {
     idempotencyKey.current = null;
-    setNotice('');
+    setNotice(null);
   };
 
   const addLine = () => {
@@ -274,7 +281,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
       return;
     }
     setSubmitting(true);
-    setNotice('');
+    setNotice(null);
     idempotencyKey.current ??= crypto.randomUUID();
     try {
       await submitStoreOrderRequest(
@@ -290,26 +297,46 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
       );
       setDraftLines([]);
       idempotencyKey.current = null;
-      setNotice('Đã gửi yêu cầu. Kho chỉ giữ hàng sau khi chạy phân bổ.');
+      setNotice({
+        kind: 'success',
+        message: 'Đã gửi yêu cầu. Kho chỉ giữ hàng sau khi chạy phân bổ.',
+      });
       await requestsQuery.refetch();
     } catch (cause) {
-      setNotice(
-        cause instanceof ApiClientError
-          ? cause.message
-          : 'Không thể gửi yêu cầu vì phản hồi máy chủ không hợp lệ.',
-      );
+      setNotice({
+        kind: 'error',
+        message:
+          cause instanceof ApiClientError
+            ? cause.message
+            : 'Không thể gửi yêu cầu vì phản hồi máy chủ không hợp lệ.',
+      });
     } finally {
       setSubmitting(false);
     }
   };
 
-  const loading =
+  const initialLoading =
     sessionQuery.isPending ||
     storesQuery.isPending ||
     catalogQuery.isPending ||
     sessionsQuery.isPending;
+  const loading =
+    initialLoading || (Boolean(effectiveStoreId && activeSession) && requestsQuery.isPending);
   const loadError =
-    sessionQuery.error ?? storesQuery.error ?? catalogQuery.error ?? sessionsQuery.error;
+    sessionQuery.error ??
+    storesQuery.error ??
+    catalogQuery.error ??
+    sessionsQuery.error ??
+    requestsQuery.error;
+  const formDisabled = loading || Boolean(loadError) || submitting;
+
+  const retryLoading = () => {
+    void sessionQuery.refetch();
+    void storesQuery.refetch();
+    void catalogQuery.refetch();
+    void sessionsQuery.refetch();
+    if (effectiveStoreId && activeSession) void requestsQuery.refetch();
+  };
 
   return (
     <>
@@ -324,16 +351,20 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
 
       {loadError ? (
         <section className="panel form-error" role="alert">
-          Không thể tải phiên đặt hàng. Vui lòng thử lại.
+          <p>Không thể tải đầy đủ dữ liệu đặt hàng. Biểu mẫu đã được khóa để tránh gửi sai.</p>
+          <Button onClick={retryLoading} tone="secondary">
+            <RotateCcw aria-hidden="true" size={16} /> Thử tải lại
+          </Button>
         </section>
       ) : null}
       {loading ? <section className="panel">Đang tải dữ liệu đặt hàng…</section> : null}
 
-      {!loading && role !== 'STORE' ? (
-        <section className="panel">
+      {!initialLoading && role !== 'STORE' ? (
+        <section className="panel form-grid">
           <label>
             Cửa hàng
             <select
+              disabled={formDisabled}
               onChange={(event) => {
                 setSelectedStoreId(event.target.value);
                 setDraftLines([]);
@@ -344,6 +375,51 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
               {stores.map((store) => (
                 <option key={store.id} value={store.id}>
                   {store.code} • {store.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {sessions.length > 1 ? (
+            <label>
+              Phiên đặt hàng
+              <select
+                disabled={formDisabled}
+                onChange={(event) => {
+                  setSelectedSessionId(event.target.value);
+                  setDraftLines([]);
+                  resetMutationKey();
+                }}
+                value={activeSession?.id ?? ''}
+              >
+                {sessions.map((session) => (
+                  <option key={session.id} value={session.id}>
+                    {session.businessDate} · đóng{' '}
+                    {new Date(session.requestClosesAt).toLocaleString('vi-VN')}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+        </section>
+      ) : null}
+
+      {!initialLoading && role === 'STORE' && sessions.length > 1 ? (
+        <section className="panel">
+          <label>
+            Phiên đặt hàng
+            <select
+              disabled={formDisabled}
+              onChange={(event) => {
+                setSelectedSessionId(event.target.value);
+                setDraftLines([]);
+                resetMutationKey();
+              }}
+              value={activeSession?.id ?? ''}
+            >
+              {sessions.map((session) => (
+                <option key={session.id} value={session.id}>
+                  {session.businessDate} · đóng{' '}
+                  {new Date(session.requestClosesAt).toLocaleString('vi-VN')}
                 </option>
               ))}
             </select>
@@ -382,7 +458,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
             <label>
               Mặt hàng
               <select
-                disabled={!activeSession || remainingSlots === 0}
+                disabled={formDisabled || !activeSession || remainingSlots === 0}
                 onChange={(event) => {
                   setSelectedProductId(event.target.value);
                   resetMutationKey();
@@ -399,7 +475,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
             <label>
               Số bao
               <input
-                disabled={!activeSession || remainingSlots === 0}
+                disabled={formDisabled || !activeSession || remainingSlots === 0}
                 max="100000"
                 min="1"
                 onChange={(event) => {
@@ -412,7 +488,9 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
             </label>
           </div>
           <Button
-            disabled={!activeSession || remainingSlots === 0 || activeProducts.length === 0}
+            disabled={
+              formDisabled || !activeSession || remainingSlots === 0 || activeProducts.length === 0
+            }
             onClick={addLine}
           >
             <Plus aria-hidden="true" size={16} /> Thêm mặt hàng
@@ -448,14 +526,21 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
             </article>
           ))}
           {notice ? (
-            <div className="form-error" role="status">
-              {notice}
+            <div
+              className={notice.kind === 'error' ? 'form-error' : 'inline-notice'}
+              role={notice.kind === 'error' ? 'alert' : 'status'}
+            >
+              {notice.message}
             </div>
           ) : null}
           <Button
             busy={submitting}
             disabled={
-              !activeSession || !effectiveStoreId || draftLines.length === 0 || remainingSlots === 0
+              formDisabled ||
+              !activeSession ||
+              !effectiveStoreId ||
+              draftLines.length === 0 ||
+              remainingSlots === 0
             }
             onClick={() => void submit()}
           >
