@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  cancelStoreOrderRequest,
   cancelWaitTicket,
   createOrderSession,
   declareStoreReceipt,
@@ -107,6 +108,7 @@ describe('API projections', () => {
                   priority: 'P1',
                   productId,
                   requested: { kind: 'UNIT', quantity: 2 },
+                  note: 'Ưu tiên kiện loại A',
                 },
               ],
               requestSequence: 1,
@@ -128,10 +130,82 @@ describe('API projections', () => {
     ]);
     await expect(
       submitStoreOrderRequest(
-        { businessSessionId: sessionId, items: [{ productId, quantity: 2 }], storeId },
+        {
+          businessSessionId: sessionId,
+          items: [{ productId, quantity: 2, note: 'Ưu tiên kiện loại A' }],
+          storeId,
+        },
         'request-key-2026',
       ),
-    ).resolves.toEqual(expect.objectContaining({ requestSequence: 1, status: 'SUBMITTED' }));
+    ).resolves.toEqual(
+      expect.objectContaining({
+        lines: [expect.objectContaining({ note: 'Ưu tiên kiện loại A' })],
+        requestSequence: 1,
+        status: 'SUBMITTED',
+      }),
+    );
+  });
+
+  it('cancels an order request with a validated reason and idempotency key', async () => {
+    const requestId = '60000000-0000-4000-8000-000000000001';
+    const calls: Array<{ body: unknown; key: string | null; method: string; url: string }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string | URL | Request, init?: RequestInit) => {
+        calls.push({
+          body: init?.body ? JSON.parse(String(init.body)) : null,
+          key: new Headers(init?.headers).get('idempotency-key'),
+          method: init?.method ?? 'GET',
+          url: String(input),
+        });
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: {
+                cancellationReason: 'Cửa hàng nhập nhầm nhu cầu',
+                cancelledAt: '2026-09-17T01:00:00.000Z',
+                id: requestId,
+                lines: [
+                  {
+                    priority: 'P1',
+                    productId: '40000000-0000-4000-8000-000000000001',
+                    requested: { kind: 'UNIT', quantity: 2 },
+                  },
+                ],
+                requestSequence: 1,
+                sessionId: '10000000-0000-4000-8000-000000000001',
+                status: 'CANCELLED',
+                storeId: '20000000-0000-4000-8000-000000000001',
+                submittedAt: '2026-09-17T00:10:00.000Z',
+                submittedByAccountId: '00000000-0000-4000-8000-000000000001',
+              },
+            }),
+            { status: 200 },
+          ),
+        );
+      }),
+    );
+
+    await expect(
+      cancelStoreOrderRequest(
+        requestId,
+        { reason: 'Cửa hàng nhập nhầm nhu cầu' },
+        'cancel-request-key',
+      ),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        cancellationReason: 'Cửa hàng nhập nhầm nhu cầu',
+        status: 'CANCELLED',
+      }),
+    );
+    expect(calls).toEqual([
+      {
+        body: { reason: 'Cửa hàng nhập nhầm nhu cầu' },
+        key: 'cancel-request-key',
+        method: 'POST',
+        url: expect.stringContaining(`/order-requests/${requestId}/cancel`),
+      },
+    ]);
   });
 
   it('lists and operates order sessions with validated versioned idempotent requests', async () => {
