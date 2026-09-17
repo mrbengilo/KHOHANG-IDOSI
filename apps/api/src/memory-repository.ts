@@ -108,7 +108,7 @@ import type {
   SubmittedOrderRequest,
   WarehouseRepository,
 } from './repository.js';
-import { canAccessStore, pagination, slicePage } from './repository.js';
+import { assertActiveRetailStore, canAccessStore, pagination, slicePage } from './repository.js';
 import { hashPassword, hashSessionToken } from './security.js';
 
 export const MEMORY_SEED_IDS = {
@@ -338,6 +338,12 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (!stored || stored.revokedAt !== null) return false;
     stored.revokedAt = this.now();
     return true;
+  }
+
+  public async authorizeRetailStoreOperation(actor: AuthenticatedPrincipal): Promise<void> {
+    const store =
+      actor.role === 'STORE' && actor.storeId !== null ? this.stores.get(actor.storeId) : undefined;
+    assertActiveRetailStore(store ?? null);
   }
 
   public async listAccounts(
@@ -1450,6 +1456,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<SubmittedOrderRequest> {
+    if (actor.role === 'STORE') await this.authorizeRetailStoreOperation(actor);
     if (!canAccessStore(actor, input.storeId))
       throw forbidden('Không có quyền gửi cho cửa hàng này');
     if (!this.stores.has(input.storeId)) throw notFound('Không tìm thấy cửa hàng');
@@ -1680,6 +1687,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<Receipt>> {
+    await this.authorizeRetailStoreOperation(actor);
     if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
     const scopedKey = `${actor.accountId}:receipt:declare:${input.outboundRequestId}:${idempotencyKey}`;
     const replay = this.replayReceipt(scopedKey, requestHash);
@@ -1743,6 +1751,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<Receipt>> {
+    await this.authorizeRetailStoreOperation(actor);
     const scopedKey = `${actor.accountId}:receipt:submit:${receiptId}:${idempotencyKey}`;
     const replay = this.replayReceipt(scopedKey, requestHash);
     if (replay) return { data: replay, replayed: true };
@@ -1928,7 +1937,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<StoreInventoryBag>> {
-    this.assertStoreMutationActor(actor);
+    await this.authorizeRetailStoreOperation(actor);
     const scopedKey = `${actor.accountId}:inventory:open:${bagId}:${idempotencyKey}`;
     const replay = this.replayInventoryMutation(scopedKey, requestHash, 'STORE_INVENTORY_BAG');
     if (replay) return { data: replay as StoreInventoryBag, replayed: true };
@@ -1988,7 +1997,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<StoreOutbound>> {
-    this.assertStoreMutationActor(actor);
+    await this.authorizeRetailStoreOperation(actor);
     if (actor.storeId !== input.storeId) throw forbidden();
     const scopedKey = `${actor.accountId}:outbound:create:${input.storeId}:${idempotencyKey}`;
     const replay = this.replayInventoryMutation(scopedKey, requestHash, 'STORE_OUTBOUND');
@@ -2156,7 +2165,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   public async listStoreTransferDestinations(
     actor: AuthenticatedPrincipal,
   ): Promise<readonly Store[]> {
-    this.assertStoreMutationActor(actor);
+    await this.authorizeRetailStoreOperation(actor);
     return structuredClone(
       [...this.stores.values()]
         .filter(
@@ -2174,7 +2183,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<StoreTransfer>> {
-    this.assertStoreMutationActor(actor);
+    await this.authorizeRetailStoreOperation(actor);
     if (actor.storeId !== input.sourceStoreId) throw forbidden();
     const scopedKey = `${actor.accountId}:transfer:create:${input.sourceStoreId}:${idempotencyKey}`;
     const replay = this.replayTransferMutation(scopedKey, requestHash);
@@ -2247,7 +2256,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<StoreTransfer>> {
-    this.assertStoreMutationActor(actor);
+    await this.authorizeRetailStoreOperation(actor);
     const scopedKey = `${actor.accountId}:transfer:dispatch:${transferId}:${idempotencyKey}`;
     const replay = this.replayTransferMutation(scopedKey, requestHash);
     if (replay) return { data: replay, replayed: true };
@@ -2333,7 +2342,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<StoreTransfer>> {
-    this.assertStoreMutationActor(actor);
+    await this.authorizeRetailStoreOperation(actor);
     const scopedKey = `${actor.accountId}:transfer:receive:${transferId}:${idempotencyKey}`;
     const replay = this.replayTransferMutation(scopedKey, requestHash);
     if (replay) return { data: replay, replayed: true };
@@ -2409,7 +2418,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<StoreTransfer>> {
-    this.assertStoreMutationActor(actor);
+    await this.authorizeRetailStoreOperation(actor);
     const scopedKey = `${actor.accountId}:transfer:cancel:${transferId}:${idempotencyKey}`;
     const replay = this.replayTransferMutation(scopedKey, requestHash);
     if (replay) return { data: replay, replayed: true };
@@ -2516,6 +2525,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<WaitTicket>> {
+    await this.authorizeRetailStoreOperation(actor);
     const current = this.waitTickets.get(waitTicketId);
     if (!current) throw notFound('Không tìm thấy phiếu chờ');
     if (!canAccessStore(actor, current.storeId)) throw forbidden();
@@ -2594,6 +2604,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<PriorityOffer>> {
+    await this.authorizeRetailStoreOperation(actor);
     const current = this.priorityOffers.get(offerId);
     if (!current) throw notFound('Không tìm thấy đề nghị ưu tiên');
     if (actor.role !== 'STORE' || actor.storeId !== current.storeId) throw forbidden();
@@ -2704,6 +2715,20 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     account.sessionVersion += 1;
   }
 
+  /** Test/admin helper for exercising current store metadata authorization. */
+  public setStoreOperationEligibility(
+    storeId: string,
+    eligibility: Partial<Pick<Store, 'kind' | 'status'>>,
+  ): void {
+    const store = this.stores.get(storeId);
+    if (!store) throw notFound('Không tìm thấy cửa hàng');
+    this.stores.set(storeId, {
+      ...store,
+      ...eligibility,
+      updatedAt: this.now().toISOString(),
+    });
+  }
+
   private assertRequestedStoreScope(
     actor: AuthenticatedPrincipal,
     requestedStoreId: string | undefined,
@@ -2739,10 +2764,6 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       requestHash,
       response: structuredClone(receipt),
     });
-  }
-
-  private assertStoreMutationActor(actor: AuthenticatedPrincipal): void {
-    if (actor.role !== 'STORE' || actor.storeId === null) throw forbidden();
   }
 
   private requireInventoryBag(bagId: string): StoreInventoryBag {
