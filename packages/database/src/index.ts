@@ -99,6 +99,27 @@ export type {
   StoreReceiptSourceRecord,
 } from './receipt-sources.js';
 
+export {
+  createStoreOutbound,
+  listStoreInventoryBags,
+  listStoreInventoryLedger,
+  listStoreOutbounds,
+  openStoreInventoryBag,
+  StoreInventoryAuthorizationError,
+} from './store-inventory-operations.js';
+export type {
+  CreatedStoreOutbound,
+  CreateStoreOutboundInput,
+  OpenedStoreInventoryBag,
+  OpenStoreInventoryBagInput,
+  PageResult as StoreInventoryPageResult,
+  StoreInventoryBagRecord,
+  StoreInventoryLedgerPageInput,
+  StoreInventoryLedgerRecord,
+  StoreInventoryPageInput,
+  StoreOutboundPageInput,
+} from './store-inventory-operations.js';
+
 export * from './schema.js';
 export {
   PRODUCT_CONVERSION_SEEDS,

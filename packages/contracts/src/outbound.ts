@@ -323,6 +323,7 @@ export const CreateStoreOutboundRequestSchema = z
   .object({
     storeId: EntityIdSchema,
     inventoryLotId: EntityIdSchema,
+    expectedInventoryVersion: z.number().int().nonnegative(),
     weightKg: PositiveKilogramsDecimalSchema,
     reason: OutboundReasonSchema,
     revenueVnd: MoneyVndSchema.nullable().default(null),

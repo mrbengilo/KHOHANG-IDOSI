@@ -18,6 +18,8 @@ export const StoreInventoryBagStatusSchema = z.enum([
   'OPEN',
   'EMPTY',
   'QUARANTINED',
+  'RETURNED',
+  'LOST',
 ]);
 export type StoreInventoryBagStatus = z.infer<typeof StoreInventoryBagStatusSchema>;
 
@@ -80,6 +82,12 @@ export type StoreInventoryBag = z.infer<typeof StoreInventoryBagSchema>;
 export const StoreInventoryBagParamsSchema = z.object({ bagId: EntityIdSchema }).strict();
 export type StoreInventoryBagParams = z.infer<typeof StoreInventoryBagParamsSchema>;
 
+/** Opens one physical bag for retail use without changing its recorded weight. */
+export const OpenStoreInventoryBagRequestSchema = z
+  .object({ expectedVersion: z.number().int().nonnegative() })
+  .strict();
+export type OpenStoreInventoryBagRequest = z.infer<typeof OpenStoreInventoryBagRequestSchema>;
+
 export const AdjustStoreInventoryBagRequestSchema = z
   .object({
     actualRemainingWeightKg: KilogramsDecimalSchema,
@@ -133,6 +141,14 @@ export const ListStoreInventoryBagLedgerResponseSchema = z
   .strict();
 export type ListStoreInventoryBagLedgerResponse = z.infer<
   typeof ListStoreInventoryBagLedgerResponseSchema
+>;
+
+export const ListStoreInventoryBagLedgerQuerySchema = PaginationQuerySchema.extend({
+  storeId: EntityIdSchema.optional(),
+  productId: EntityIdSchema.optional(),
+}).strict();
+export type ListStoreInventoryBagLedgerQuery = z.infer<
+  typeof ListStoreInventoryBagLedgerQuerySchema
 >;
 
 export const InventoryLotStatusSchema = z.enum(['AVAILABLE', 'QUARANTINED', 'DEPLETED']);
