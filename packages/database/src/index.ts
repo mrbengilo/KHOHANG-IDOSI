@@ -13,6 +13,29 @@ export type {
 } from './idempotency.js';
 
 export {
+  kilogramsToGramsForReport,
+  loadMonthlyOperationalReport,
+  mergeScopedInboundRows,
+  monthWindowInHoChiMinh,
+  summarizeMonthlyReport,
+  vndPerKilogram,
+} from './monthly-report.js';
+export type {
+  MonthWindow,
+  MonthlyInboundHeaderRow,
+  MonthlyInboundProductRow,
+  MonthlyOperationalReport,
+  MonthlyProductOperationalReport,
+  MonthlyReportInput,
+  MonthlyReportRows,
+  MonthlyReportScope,
+  MonthlySaleRow,
+  ReportMetric,
+  ReportMetricSource,
+  ReportUnavailableReason,
+} from './monthly-report.js';
+
+export {
   ActiveWaitTicketExistsError,
   createOrderRequest,
   OrderRequestAuthorizationError,
