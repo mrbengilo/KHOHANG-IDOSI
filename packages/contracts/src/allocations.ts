@@ -114,16 +114,55 @@ export type CancelAllocationRequest = z.infer<typeof CancelAllocationRequestSche
 export const AllocationBatchResponseSchema = z.object({ data: AllocationBatchSchema }).strict();
 export type AllocationBatchResponse = z.infer<typeof AllocationBatchResponseSchema>;
 
+/** Persisted result state from `allocation_lines`, exposed as a read-only projection. */
+export const AllocationResultStatusSchema = z.enum([
+  'ALLOCATED',
+  'PARTIAL',
+  'WAITLISTED',
+  'SKIPPED',
+]);
+export type AllocationResultStatus = z.infer<typeof AllocationResultStatusSchema>;
+
+export const AllocationResultSchema = z
+  .object({
+    id: EntityIdSchema,
+    allocationRunId: EntityIdSchema,
+    sessionId: EntityIdSchema,
+    mergedOrderId: EntityIdSchema.nullable(),
+    storeId: EntityIdSchema,
+    productId: EntityIdSchema,
+    priority: AllocationPrioritySchema,
+    roundNumber: z.number().int().positive().safe(),
+    sequenceInRound: z.number().int().positive().safe(),
+    requestedQuantity: z.number().int().positive().safe(),
+    allocatedQuantity: z.number().int().nonnegative().safe(),
+    waitlistedQuantity: z.number().int().nonnegative().safe(),
+    status: AllocationResultStatusSchema,
+    reasonCode: z.string().trim().min(1),
+    createdAt: IsoDateTimeSchema,
+  })
+  .strict()
+  .superRefine((result, context) => {
+    if (result.allocatedQuantity + result.waitlistedQuantity > result.requestedQuantity) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['allocatedQuantity'],
+        message: 'Allocated and waitlisted quantities cannot exceed the requested quantity',
+      });
+    }
+  });
+export type AllocationResult = z.infer<typeof AllocationResultSchema>;
+
 export const ListAllocationsQuerySchema = PaginationQuerySchema.extend({
   sessionId: EntityIdSchema.optional(),
   storeId: EntityIdSchema.optional(),
   productId: EntityIdSchema.optional(),
-  status: AllocationLineStatusSchema.optional(),
+  status: AllocationResultStatusSchema.optional(),
   priority: AllocationPrioritySchema.optional(),
 }).strict();
 export type ListAllocationsQuery = z.infer<typeof ListAllocationsQuerySchema>;
 
 export const ListAllocationsResponseSchema = z
-  .object({ data: z.array(AllocationLineSchema), pagination: PaginationMetaSchema })
+  .object({ data: z.array(AllocationResultSchema), pagination: PaginationMetaSchema })
   .strict();
 export type ListAllocationsResponse = z.infer<typeof ListAllocationsResponseSchema>;

@@ -25,6 +25,7 @@ import {
   InboundReceiptParamsSchema,
   ListOrderSessionsQuerySchema,
   ListAccountsQuerySchema,
+  ListAllocationsQuerySchema,
   ListAuditLogsQuerySchema,
   ListInboundReceiptsQuerySchema,
   ListPriorityOffersQuerySchema,
@@ -422,6 +423,13 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     await authenticate(request, repository);
     const query = ListOrderSessionsQuerySchema.parse(request.query);
     return repository.listOrderSessions(query);
+  });
+
+  app.get('/api/v1/allocations', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    const query = ListAllocationsQuerySchema.parse(request.query);
+    reply.header('cache-control', 'no-store');
+    return repository.listAllocations(session.principal, query);
   });
 
   app.post('/api/v1/order-sessions', async (request, reply) => {
@@ -1466,6 +1474,40 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: { '201': { description: 'Created or replayed order session (ADMIN only)' } },
+        },
+      },
+      '/api/v1/allocations': {
+        get: {
+          summary: 'List persisted allocation results visible to the current store scope',
+          security: cookieSecurity,
+          parameters: [
+            { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+            {
+              name: 'pageSize',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+            },
+            { name: 'sessionId', in: 'query', schema: { type: 'string', format: 'uuid' } },
+            { name: 'storeId', in: 'query', schema: { type: 'string', format: 'uuid' } },
+            { name: 'productId', in: 'query', schema: { type: 'string', format: 'uuid' } },
+            {
+              name: 'status',
+              in: 'query',
+              schema: {
+                type: 'string',
+                enum: ['ALLOCATED', 'PARTIAL', 'WAITLISTED', 'SKIPPED'],
+              },
+            },
+            {
+              name: 'priority',
+              in: 'query',
+              schema: { type: 'string', enum: ['P0A', 'P0B', 'P1', 'P2', 'P3'] },
+            },
+          ],
+          responses: {
+            '200': { description: 'Paginated scoped allocation result projection' },
+            '403': { description: 'Requested store is outside the current account scope' },
+          },
         },
       },
       '/api/v1/order-sessions/{sessionId}/transition': {
