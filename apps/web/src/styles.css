@@ -1276,6 +1276,10 @@ td small {
   padding: 18px;
 }
 
+body.dialog-open {
+  overflow: hidden;
+}
+
 .dialog {
   display: flex;
   width: min(100%, 520px);
