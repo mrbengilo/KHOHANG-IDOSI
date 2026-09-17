@@ -91,6 +91,14 @@ export type {
   SubmitStoreReceiptInput,
 } from './store-receipt-workflow.js';
 
+export { assembleStoreReceiptSources, listStoreReceiptSources } from './receipt-sources.js';
+export type {
+  StoreReceiptSourceLineRecord,
+  StoreReceiptSourceListInput,
+  StoreReceiptSourcePage,
+  StoreReceiptSourceRecord,
+} from './receipt-sources.js';
+
 export * from './schema.js';
 export {
   PRODUCT_CONVERSION_SEEDS,

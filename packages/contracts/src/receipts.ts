@@ -400,3 +400,45 @@ export const ListReceiptsResponseSchema = z
   .object({ data: z.array(ReceiptSchema), pagination: PaginationMetaSchema })
   .strict();
 export type ListReceiptsResponse = z.infer<typeof ListReceiptsResponseSchema>;
+
+/**
+ * A dispatched outbound request that can still be declared as received by its store.
+ * This deliberately carries only the immutable dispatch facts needed to start the workflow.
+ */
+export const StoreReceiptSourceLineSchema = z
+  .object({
+    productId: EntityIdSchema,
+    approvedUnits: z.number().int().nonnegative().safe(),
+    dispatchedUnits: z.number().int().positive().safe(),
+  })
+  .strict()
+  .refine((line) => line.dispatchedUnits <= line.approvedUnits, {
+    path: ['dispatchedUnits'],
+    message: 'Dispatched units cannot exceed approved units',
+  });
+export type StoreReceiptSourceLine = z.infer<typeof StoreReceiptSourceLineSchema>;
+
+export const StoreReceiptSourceSchema = z
+  .object({
+    id: EntityIdSchema,
+    requestNumber: z.string().trim().min(1).max(100),
+    storeId: EntityIdSchema,
+    dispatchedAt: IsoDateTimeSchema,
+    lines: z.array(StoreReceiptSourceLineSchema).min(1).max(500),
+  })
+  .strict()
+  .refine(
+    (source) => new Set(source.lines.map((line) => line.productId)).size === source.lines.length,
+    { path: ['lines'], message: 'A product may appear only once in a receipt source' },
+  );
+export type StoreReceiptSource = z.infer<typeof StoreReceiptSourceSchema>;
+
+export const ListStoreReceiptSourcesQuerySchema = PaginationQuerySchema.extend({
+  storeId: EntityIdSchema.optional(),
+}).strict();
+export type ListStoreReceiptSourcesQuery = z.infer<typeof ListStoreReceiptSourcesQuerySchema>;
+
+export const ListStoreReceiptSourcesResponseSchema = z
+  .object({ data: z.array(StoreReceiptSourceSchema), pagination: PaginationMetaSchema })
+  .strict();
+export type ListStoreReceiptSourcesResponse = z.infer<typeof ListStoreReceiptSourcesResponseSchema>;
