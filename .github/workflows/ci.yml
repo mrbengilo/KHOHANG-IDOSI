@@ -138,12 +138,14 @@ jobs:
             assert.ok(Object.keys(config.services.db.networks).every(name => config.networks[name].internal), "database must remain internal");
             assert.ok(!config.services.db.ports?.length, "database must not publish ports");
             assert.equal(config.services.api.environment.IDOSI_STORE_ID_MAP, config.services.worker.environment.IDOSI_STORE_ID_MAP);
+            assert.equal(config.services.caddy.user, "65532:65532");
+            assert.deepEqual(config.services.caddy.cap_drop, ["ALL"]);
+            assert.deepEqual(config.services.caddy.cap_add, ["NET_BIND_SERVICE"]);
+            assert.ok(config.services.caddy.security_opt.includes("no-new-privileges:true"));
           '
-          docker run --rm \
-            --env APP_DOMAIN=localhost \
-            --volume "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
-            caddy:2.10.2-alpine \
-            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          docker compose --file docker-compose.yml run --rm --no-deps caddy-storage-init
+          docker compose --file docker-compose.yml run --rm --no-deps caddy caddy version
+          docker compose --file docker-compose.yml run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
       - name: Build production container targets
         env:
@@ -153,7 +155,7 @@ jobs:
           POSTGRES_PASSWORD: idosi_ci_password
         run: docker compose --file docker-compose.yml build api migrate worker web
 
-      - name: Verify production migration, seed, and bootstrap containers
+      - name: Verify production migration, bootstrap, and healthy full stack
         env:
           APP_DOMAIN: localhost
           BOOTSTRAP_ADMIN_DISPLAY_NAME: CI Container Administrator
@@ -174,3 +176,8 @@ jobs:
           docker compose --file docker-compose.yml run --rm --no-deps --pull never migrate
           docker compose --file docker-compose.yml run --rm --no-deps --pull never migrate
           docker compose --file docker-compose.yml --profile bootstrap run --rm --no-deps --pull never bootstrap-admin
+          docker compose --file docker-compose.yml up --detach --pull never --wait --wait-timeout 120 api worker web caddy
+          # localhost uses Caddy's internal CA in this isolated CI stack only.
+          curl --fail --silent --show-error --insecure https://localhost/health
+          curl --fail --silent --show-error --insecure https://localhost/ready
+          curl --fail --silent --show-error --insecure https://localhost/ >/dev/null
