@@ -1,4 +1,4 @@
-import { Clock3, Plus, RotateCcw, Send, Trash2 } from 'lucide-react';
+import { Clock3, RotateCcw, Send, Trash2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
@@ -19,6 +19,7 @@ import {
 } from '../lib/api';
 import { useSession } from '../lib/auth';
 import { productConversions } from '../lib/data';
+import { ProductBagPicker } from '../components/ProductBagPicker';
 
 interface RequestDraft {
   product: string;
@@ -26,18 +27,13 @@ interface RequestDraft {
   note: string;
 }
 
-const initialRequests: RequestDraft[] = [
-  { product: 'Đồ nam', bags: 3, note: 'Ưu tiên kiện loại A' },
-];
+const initialRequests: RequestDraft[] = [];
 
 export function RequestsPage() {
   const { role, storeKind } = useOutletContext<AppOutletContext>();
   const [requests, setRequests] = useState(initialRequests);
-  const [product, setProduct] = useState('Đồ nam');
-  const [bags, setBags] = useState(1);
-  const [note, setNote] = useState('');
   const [submitted, setSubmitted] = useState(false);
-  const remaining = Math.max(0, 2 - requests.length);
+  const remaining = submitted ? 1 : 2;
   const isWholesale = role === 'STORE' && storeKind === 'WHOLESALE';
 
   const grouped = useMemo(
@@ -53,12 +49,6 @@ export function RequestsPage() {
     return <ProductionRequestsPage role={role} storeKind={storeKind} />;
   }
 
-  const add = () => {
-    if (remaining === 0) return;
-    setRequests((current) => [...current, { product, bags: Math.max(1, bags), note }]);
-    setNote('');
-  };
-
   return (
     <>
       <PageHeader
@@ -68,10 +58,10 @@ export function RequestsPage() {
 
       <section className="quota-card">
         <div>
-          <strong>{requests.length} / 2 phiếu</strong>
+          <strong>{submitted ? 1 : 0} / 2 phiếu</strong>
           <span>Còn {remaining} yêu cầu mới trong phiên tuần 37</span>
         </div>
-        <progress max="2" value={requests.length} />
+        <progress max="2" value={submitted ? 1 : 0} />
         <Badge tone={remaining > 0 ? 'info' : 'warning'}>
           {remaining > 0 ? 'Còn lượt' : 'Đã đủ giới hạn'}
         </Badge>
@@ -93,40 +83,46 @@ export function RequestsPage() {
               <p>Mỗi yêu cầu có nhiều mặt hàng; tổng tối đa 2 phiếu hoạt động.</p>
             </div>
           </div>
-          <div className="form-grid">
-            <label>
-              Mặt hàng
-              <select onChange={(event) => setProduct(event.target.value)} value={product}>
-                {productConversions.map((item) => (
-                  <option key={item.id} value={item.name}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Số bao
-              <input
-                max="999"
-                min="1"
-                onChange={(event) => setBags(event.target.valueAsNumber || 1)}
-                type="number"
-                value={bags}
-              />
-            </label>
-            <label className="form-grid__wide">
-              Ghi chú
-              <textarea
-                onChange={(event) => setNote(event.target.value)}
-                placeholder="Nhu cầu hoặc ưu tiên vận hành"
-                rows={3}
-                value={note}
-              />
-            </label>
-          </div>
-          <Button disabled={remaining === 0} onClick={add}>
-            <Plus aria-hidden="true" size={16} /> Thêm yêu cầu
-          </Button>
+          <ProductBagPicker
+            products={productConversions.map((product) => ({
+              id: product.name,
+              name: product.name,
+            }))}
+            quantities={Object.fromEntries(
+              requests.map((request) => [request.product, request.bags]),
+            )}
+            max={100000}
+            disabled={submitted}
+            onSelect={(product, selected) =>
+              setRequests((current) =>
+                selected
+                  ? [...current, { product, bags: 1, note: '' }]
+                  : current.filter((item) => item.product !== product),
+              )
+            }
+            onQuantityChange={(product, bags) =>
+              setRequests((current) =>
+                current.map((item) => (item.product === product ? { ...item, bags } : item)),
+              )
+            }
+            renderDetails={(product) => (
+              <label>
+                Ghi chú mặt hàng — {product}
+                <textarea
+                  rows={2}
+                  maxLength={500}
+                  value={requests.find((item) => item.product === product)?.note ?? ''}
+                  onChange={(event) =>
+                    setRequests((current) =>
+                      current.map((item) =>
+                        item.product === product ? { ...item, note: event.target.value } : item,
+                      ),
+                    )
+                  }
+                />
+              </label>
+            )}
+          />
         </section>
 
         <section className="panel request-summary">
@@ -225,9 +221,6 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
   });
   const [selectedStoreId, setSelectedStoreId] = useState('');
   const [selectedSessionId, setSelectedSessionId] = useState('');
-  const [selectedProductId, setSelectedProductId] = useState('');
-  const [quantity, setQuantity] = useState(1);
-  const [lineNote, setLineNote] = useState('');
   const [draftLines, setDraftLines] = useState<ProductionDraftLine[]>([]);
   const [notice, setNotice] = useState<RequestNotice | null>(null);
   const [historyNotice, setHistoryNotice] = useState<RequestNotice | null>(null);
@@ -270,31 +263,23 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
     setNotice(null);
   };
 
-  const addLine = () => {
-    const productId = selectedProductId || activeProducts[0]?.id;
-    if (!productId || !Number.isSafeInteger(quantity) || quantity <= 0) return;
-    setDraftLines((current) => {
-      const existing = current.find((line) => line.productId === productId);
-      if (existing) {
-        return current.map((line) =>
-          line.productId === productId
-            ? {
-                ...line,
-                quantity: line.quantity + quantity,
-                note: lineNote.trim() || line.note,
-              }
-            : line,
-        );
-      }
-      return [...current, { productId, quantity, note: lineNote.trim() }];
-    });
-    setQuantity(1);
-    setLineNote('');
-    resetMutationKey();
-  };
-
   const submit = async () => {
     if (!activeSession || !effectiveStoreId || draftLines.length === 0 || remainingSlots === 0) {
+      return;
+    }
+    if (
+      draftLines.some(
+        (line) =>
+          !Number.isSafeInteger(line.quantity) ||
+          line.quantity < 1 ||
+          line.quantity > 100000 ||
+          !activeProducts.some((product) => product.id === line.productId),
+      )
+    ) {
+      setNotice({
+        kind: 'error',
+        message: 'Chọn mặt hàng đang hoạt động và nhập số bao nguyên từ 1 đến 100000.',
+      });
       return;
     }
     setSubmitting(true);
@@ -505,61 +490,48 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
               <p>Một phiếu có thể gồm nhiều mặt hàng; tối đa hai phiếu trong mỗi phiên.</p>
             </div>
           </div>
-          <div className="form-grid">
-            <label>
-              Mặt hàng
-              <select
-                disabled={formDisabled || !activeSession || remainingSlots === 0}
-                onChange={(event) => {
-                  setSelectedProductId(event.target.value);
-                  resetMutationKey();
-                }}
-                value={selectedProductId || activeProducts[0]?.id || ''}
-              >
-                {activeProducts.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Số bao
-              <input
-                disabled={formDisabled || !activeSession || remainingSlots === 0}
-                max="100000"
-                min="1"
-                onChange={(event) => {
-                  setQuantity(event.target.valueAsNumber || 1);
-                  resetMutationKey();
-                }}
-                type="number"
-                value={quantity}
-              />
-            </label>
-            <label className="form-grid__wide">
-              Ghi chú mặt hàng
-              <textarea
-                disabled={formDisabled || !activeSession || remainingSlots === 0}
-                maxLength={500}
-                onChange={(event) => {
-                  setLineNote(event.target.value);
-                  resetMutationKey();
-                }}
-                placeholder="Nhu cầu hoặc ưu tiên vận hành (không bắt buộc)"
-                rows={3}
-                value={lineNote}
-              />
-            </label>
-          </div>
-          <Button
-            disabled={
-              formDisabled || !activeSession || remainingSlots === 0 || activeProducts.length === 0
-            }
-            onClick={addLine}
-          >
-            <Plus aria-hidden="true" size={16} /> Thêm mặt hàng
-          </Button>
+          <ProductBagPicker
+            products={activeProducts}
+            quantities={Object.fromEntries(
+              draftLines.map((line) => [line.productId, line.quantity]),
+            )}
+            max={100000}
+            disabled={formDisabled || !activeSession || remainingSlots === 0}
+            onSelect={(productId, selected) => {
+              setDraftLines((current) =>
+                selected
+                  ? [...current, { productId, quantity: 1, note: '' }]
+                  : current.filter((line) => line.productId !== productId),
+              );
+              resetMutationKey();
+            }}
+            onQuantityChange={(productId, quantity) => {
+              setDraftLines((current) =>
+                current.map((line) =>
+                  line.productId === productId ? { ...line, quantity } : line,
+                ),
+              );
+              resetMutationKey();
+            }}
+            renderDetails={(productId) => (
+              <label>
+                Ghi chú mặt hàng — {productNameById.get(productId)}
+                <textarea
+                  maxLength={500}
+                  rows={2}
+                  value={draftLines.find((line) => line.productId === productId)?.note ?? ''}
+                  onChange={(event) => {
+                    setDraftLines((current) =>
+                      current.map((line) =>
+                        line.productId === productId ? { ...line, note: event.target.value } : line,
+                      ),
+                    );
+                    resetMutationKey();
+                  }}
+                />
+              </label>
+            )}
+          />
         </section>
 
         <section className="panel request-summary">
@@ -580,6 +552,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
               </div>
               <button
                 aria-label={`Xóa ${productNameById.get(line.productId) ?? 'mặt hàng'}`}
+                disabled={submitting}
                 onClick={() => {
                   setDraftLines((current) =>
                     current.filter((candidate) => candidate.productId !== line.productId),

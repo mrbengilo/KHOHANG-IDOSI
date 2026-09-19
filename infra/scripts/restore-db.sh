@@ -5,6 +5,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 repository_dir="$(cd -- "${script_dir}/../.." && pwd -P)"
 compose_file="${repository_dir}/docker-compose.yml"
 project_name="khohang-idosi"
+env_file=""
 backup_file=""
 target_database=""
 confirmed_database=""
@@ -21,6 +22,7 @@ usage() {
     '  --target-db NAME      New database to create' \
     '  --confirm-db NAME     Must exactly match --target-db' \
     '  --compose-file PATH   Compose file (default: repository docker-compose.yml)' \
+    '  --env-file PATH       Production Compose environment file' \
     '  --project-name NAME   Compose project (default: khohang-idosi)' \
     '  --help                Show this help'
 }
@@ -52,6 +54,11 @@ while (($# > 0)); do
       compose_file="$2"
       shift 2
       ;;
+    --env-file)
+      (($# >= 2)) || fail '--env-file requires a value'
+      env_file="$2"
+      shift 2
+      ;;
     --project-name)
       (($# >= 2)) || fail '--project-name requires a value'
       project_name="$2"
@@ -66,6 +73,8 @@ while (($# > 0)); do
 done
 
 [[ -f "$compose_file" ]] || fail "compose file not found: $compose_file"
+[[ -z "$env_file" || (-f "$env_file" && -r "$env_file") ]] || \
+  fail "environment file is not readable: $env_file"
 [[ -f "$backup_file" && -r "$backup_file" ]] || fail "backup is not readable: $backup_file"
 [[ "$target_database" == "$confirmed_database" ]] || fail '--confirm-db must exactly match --target-db'
 [[ "$target_database" =~ ^[a-zA-Z_][a-zA-Z0-9_]{0,62}$ ]] || fail 'invalid PostgreSQL database name'
@@ -73,7 +82,11 @@ done
   fail 'refusing to restore into a PostgreSQL maintenance database'
 [[ "$project_name" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || fail 'invalid project name'
 
-compose=(docker compose --file "$compose_file" --project-name "$project_name")
+compose=(docker compose)
+if [[ -n "$env_file" ]]; then
+  compose+=(--env-file "$env_file")
+fi
+compose+=(--file "$compose_file" --project-name "$project_name")
 "${compose[@]}" version >/dev/null
 
 live_database="$("${compose[@]}" exec -T db sh -ceu 'printf "%s" "$POSTGRES_DB"')"

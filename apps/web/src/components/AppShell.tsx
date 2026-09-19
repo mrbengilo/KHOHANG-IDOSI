@@ -37,6 +37,7 @@ interface NavEntry {
 
 const navEntries: NavEntry[] = [
   { to: '/', label: 'Tổng quan', icon: LayoutDashboard },
+  { to: '/warehouse-inbound', label: 'Nhập kho tổng', icon: PackageCheck },
   {
     to: '/allocations',
     label: 'Phân bổ hàng hóa',
