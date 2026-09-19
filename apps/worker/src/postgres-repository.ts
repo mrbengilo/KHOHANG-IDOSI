@@ -519,7 +519,7 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
             waitlistedQuantity: remainder.remainingQuantity,
             status: allocationStatus(remainder),
             reasonCode: allocationReason(remainder),
-            decisionMetadata: allocationMetadata(result, remainderSteps),
+            decisionMetadata: allocationMetadata(result, remainderSteps, remainder.priority),
           });
           if (remainder.allocatedQuantity > 0) {
             await tx.insert(reservations).values({
@@ -591,7 +591,7 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
             waitlistedQuantity: sourceWaitlisted,
             status: allocationStatusFromQuantities(sourceAllocated, sourceWaitlisted),
             reasonCode: allocationReasonFromQuantities(sourceAllocated, sourceWaitlisted),
-            decisionMetadata: allocationMetadata(result, sourceSteps),
+            decisionMetadata: allocationMetadata(result, sourceSteps, remainder.priority),
           });
           if (sourceAllocated > 0) {
             await tx.insert(reservations).values({
@@ -1207,15 +1207,16 @@ function allocationReasonFromQuantities(allocated: number, waitlisted: number): 
   return 'ALLOCATED_BY_PRIORITY_ROUND_ROBIN';
 }
 
-function allocationMetadata(
-  result: AllocationPlan,
+export function allocationMetadata(
+  result: Pick<AllocationPlan, 'cursorBefore' | 'nextCursor' | 'availableBefore' | 'snapshotId'>,
   steps: readonly AllocationPolicyStep[],
+  appliedPriority: AllocationRemainder['priority'],
 ): JsonObject {
   return {
     cursorBefore: result.cursorBefore,
     nextCursor: result.nextCursor,
     policyRounds: steps.map((step) => step.round),
-    appliedPriority: steps[0]?.priority ?? null,
+    appliedPriority,
     snapshotAvailable: result.availableBefore,
     snapshotId: result.snapshotId,
   };

@@ -458,7 +458,18 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     const query = ListAllocationsQuerySchema.parse(request.query);
     reply.header('cache-control', 'no-store');
     const result = await repository.listAllocations(session.principal, query);
-    if (request.headers.accept === 'application/vnd.idosi.allocations.v2+json') return result;
+    const acceptsV2 = request.headers.accept?.split(',').some((range) => {
+      const [mediaType, ...parameters] = range.trim().toLowerCase().split(';');
+      if (mediaType?.trim() !== 'application/vnd.idosi.allocations.v2+json') return false;
+      const qualities = parameters
+        .map((parameter) => parameter.trim())
+        .filter((parameter) => /^q\s*=/u.test(parameter));
+      if (qualities.length === 0) return true;
+      if (qualities.length !== 1) return false;
+      const quality = qualities[0]!.split('=')[1]?.trim() ?? '';
+      return /^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/u.test(quality) && Number(quality) > 0;
+    });
+    if (acceptsV2) return result;
     // Existing browser bundles validate the v1 shape strictly. Opt in to the
     // expanded projection without changing responses for those clients.
     return {

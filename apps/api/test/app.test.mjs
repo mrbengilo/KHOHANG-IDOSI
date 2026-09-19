@@ -520,6 +520,20 @@ describe('KHOHANG-IDOSI API', () => {
       ...legacyResult
     } = ownResults.json().data[0];
     assert.deepEqual(legacyResults.json().data[0], legacyResult);
+    for (const [accept, hasRounds] of [
+      ['application/vnd.idosi.allocations.v2+json, application/json;q=0.9', true],
+      ['application/vnd.idosi.allocations.v2+json; q=0.5', true],
+      ['application/vnd.idosi.allocations.v2+json;q=0, application/json', false],
+      ['application/vnd.idosi.allocations.v2+json;q=invalid', false],
+    ]) {
+      const negotiated = await app.inject({
+        method: 'GET',
+        url: '/api/v1/allocations?page=1&pageSize=100',
+        headers: { cookie: storeCookie, accept },
+      });
+      assert.equal(negotiated.statusCode, 200);
+      assert.equal(Object.hasOwn(negotiated.json().data[0], 'rounds'), hasRounds);
+    }
 
     const denied = await app.inject({
       method: 'GET',
