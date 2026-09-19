@@ -32,6 +32,7 @@ import {
 } from '../features/dashboard/dashboardApi';
 import '../features/dashboard/dashboard.css';
 import { businessDate } from '../lib/business-time';
+import { formatKg } from '../lib/format';
 import type { Role, StatusTone, StoreKind } from '../lib/types';
 
 const sourceLabels: Record<ReportMetricSource, string> = {
@@ -136,7 +137,7 @@ export function formatExactGrams(value: string): string {
 function formatAmount(amount: InventoryAmount): string {
   if (amount.kind === 'UNIT')
     return `${new Intl.NumberFormat('vi-VN').format(amount.quantity)} bao`;
-  return `${amount.value.replace('.', ',')} kg`;
+  return formatKg(amount.value);
 }
 
 function currentBusinessMonth(): string {

@@ -22,6 +22,7 @@ import {
 } from '../features/catalog/catalogApi';
 import '../features/catalog/catalog.css';
 import { businessDate } from '../lib/business-time';
+import { formatKg } from '../lib/format';
 import { kilogramsToGrams, normalizeKilograms } from '../lib/conversions';
 import { productConversions as seed } from '../lib/data';
 import { shouldEnableMockMode } from '../lib/runtime-mode';
@@ -82,7 +83,9 @@ export function formatConversionRatios(conversion: ProductConversion | null): {
   const kilogramsPerItem = roundDivide(gramQuantity, itemQuantity);
   return {
     itemsPerKilogram: `${formatThousandths(itemsPerKilogram)} cái`,
-    kilogramsPerItem: `${formatThousandths(kilogramsPerItem)} kg`,
+    kilogramsPerItem: formatKg(
+      `${kilogramsPerItem / 1000n}.${String(kilogramsPerItem % 1000n).padStart(3, '0')}`,
+    ),
   };
 }
 
@@ -1140,7 +1143,7 @@ function HistoryDialog({
                     <div>
                       <dt>Tỷ lệ nguồn</dt>
                       <dd>
-                        {conversion.itemQuantity} cái = {conversion.weightKilograms} kg
+                        {conversion.itemQuantity} cái = {formatKg(conversion.weightKilograms)}
                       </dd>
                     </div>
                     <div>

@@ -17,6 +17,7 @@ import {
   respondPriorityOffer,
 } from '../lib/api';
 import { useSession } from '../lib/auth';
+import { formatKg } from '../lib/format';
 import { useDialogAccessibility } from '../lib/use-dialog-accessibility';
 import { retainIdempotencyForExactRetry, type RetryAttempt } from '../lib/idempotency-retry';
 import type { Role } from '../lib/types';
@@ -71,7 +72,7 @@ const auditActionLabel: Readonly<Record<string, string>> = {
 };
 
 function amountLabel(amount: InventoryAmount): string {
-  return amount.kind === 'UNIT' ? `${amount.quantity} bao` : `${amount.value} kg`;
+  return amount.kind === 'UNIT' ? `${amount.quantity} bao` : formatKg(amount.value);
 }
 
 function messageOf(cause: unknown, fallback: string): string {
