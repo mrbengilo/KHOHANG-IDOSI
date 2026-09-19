@@ -94,6 +94,13 @@ docker compose --env-file "$env_file" ps
 Migration dùng advisory lock và phải hoàn tất trước khi API/worker khởi động. Seed chỉ thêm reference
 row còn thiếu; deploy không được đổi tên, kích hoạt lại hoặc phục hồi catalog/store đã được quản trị.
 
+Caddy chạy bằng UID/GID `65532:65532`, filesystem chỉ đọc và `no-new-privileges`.
+Chỉ giữ capability `NET_BIND_SERVICE` trong bounding set vì binary chính thức có file
+capability này; nếu chỉ đặt `cap_drop: ALL`, Linux có thể từ chối khởi chạy với
+`exec /usr/bin/caddy: operation not permitted` ngay cả khi dùng cổng nội bộ 8080/8443.
+CI phải chạy và kiểm tra health của toàn bộ stack bằng đúng cấu hình Compose, không
+chỉ validate Caddyfile trong container root mặc định.
+
 ## Tạo Admin lần đầu
 
 Chỉ chạy một lần qua terminal riêng tư. Không đưa mật khẩu vào lịch sử shell hoặc chat. Nạp ba biến
