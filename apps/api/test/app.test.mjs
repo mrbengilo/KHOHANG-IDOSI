@@ -53,6 +53,32 @@ describe('KHOHANG-IDOSI API', () => {
     assert.ok(specification.json().paths['/api/v1/integrations/idosi/order-statistics/sync']);
   });
 
+  test('prepares the next date instead of recreating an explicitly cancelled cycle', async () => {
+    await app.close();
+    repository = await MemoryWarehouseRepository.create({
+      bootstrapPassword: PASSWORD,
+      now: () => new Date('2020-04-05T07:00:00+07:00'),
+    });
+    app = await createApi({ repository, corsOrigin: 'http://localhost:5173' });
+    const adminCookie = cookieOf(await login('admin'));
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const cancelled = await mutateSession(
+      adminCookie,
+      `/api/v1/order-sessions/${MEMORY_SEED_IDS.orderSession}/transition`,
+      'cancel-before-snapshot',
+      { status: 'CANCELLED', expectedVersion: 0, reason: 'Admin hủy phiên trong ngày' },
+    );
+    assert.equal(cancelled.statusCode, 200, cancelled.body);
+    const prepared = await app.inject({
+      method: 'POST',
+      url: '/api/v1/ordering-context',
+      headers: { cookie: storeCookie },
+      payload: { storeId: MEMORY_SEED_IDS.nvtStore },
+    });
+    assert.equal(prepared.statusCode, 200, prepared.body);
+    assert.equal(prepared.json().data.session.businessDate, '2020-04-06');
+  });
+
   test('prepares continuous ordering with scoped stores, two slots and cutoff-safe replay', async () => {
     const storeCookie = cookieOf(await login('ds_nvt'));
     const headers = { cookie: storeCookie };

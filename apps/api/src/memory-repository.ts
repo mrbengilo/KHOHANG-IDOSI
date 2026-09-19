@@ -833,9 +833,9 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const settings = this.operationalSettings.at(-1)!;
     let window = nextOrderingWindow(now, settings.snapshotTime, settings.cutoffTime);
     for (let attempt = 0; attempt < 31; attempt += 1) {
-      const existing = [...this.orderSessions.values()].find(
-        (session) => session.businessDate === window.businessDate && session.status !== 'CANCELLED',
-      );
+      const existing = [...this.orderSessions.values()]
+        .filter((session) => session.businessDate === window.businessDate)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
       if (
         !existing ||
         (['SCHEDULED', 'OPEN'].includes(existing.status) &&

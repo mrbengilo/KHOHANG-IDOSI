@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import {
   closeDatabase,
   db,
@@ -12,6 +12,7 @@ import {
   users,
   submitOrderRequest,
   prepareOrderingContext,
+  ensureDailyOrderingSession,
 } from '../src/index.js';
 import {
   countOrderingQuota,
@@ -23,12 +24,38 @@ const describePostgres = process.env.RUN_POSTGRES_TESTS === '1' ? describe : des
 describePostgres('24/7 ordering and allocation-completion quota', () => {
   const sessionIds = new Set<string>();
   afterEach(async () => {
+    vi.useRealTimers();
     for (const id of sessionIds) {
       await db.update(orderSessions).set({ deletedAt: new Date() }).where(eq(orderSessions.id, id));
     }
     sessionIds.clear();
   });
   afterAll(() => closeDatabase());
+
+  it('keeps an explicitly cancelled date frozen across API and worker preparation', async () => {
+    const { admin, store } = await createFixture();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2032-04-05T07:00:00+07:00'));
+    const today = await ensureDailyOrderingSession(db, new Date());
+    sessionIds.add(today.id);
+    await db
+      .update(orderSessions)
+      .set({ status: 'cancelled' })
+      .where(eq(orderSessions.id, today.id));
+    const contexts = await Promise.all([
+      prepareOrderingContext(db, admin.id, store.id, randomUUID()),
+      prepareOrderingContext(db, admin.id, store.id, randomUUID()),
+    ]);
+    contexts.forEach(({ session }) => sessionIds.add(session.id));
+    expect(contexts[0]!.session.businessDate).toBe('2032-04-06');
+    expect(contexts[1]!.session.id).toBe(contexts[0]!.session.id);
+    expect((await ensureDailyOrderingSession(db, new Date())).status).toBe('cancelled');
+    const rows = await db
+      .select()
+      .from(orderSessions)
+      .where(eq(orderSessions.businessDate, '2032-04-05'));
+    expect(rows.filter((row) => row.deletedAt === null)).toHaveLength(1);
+  });
 
   it('prepares one open cycle concurrently and refuses an unassigned HTKD', async () => {
     const fixture = await createFixture();

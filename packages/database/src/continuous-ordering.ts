@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { nextOrderingWindow } from '@idosi/contracts';
-import { and, asc, desc, eq, gt, isNull, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNull } from 'drizzle-orm';
 import type { Database } from './client.js';
 import { assertUserMayAccessStore, countOrderingQuota } from './order-requests.js';
 import { auditLogs, operationalSettingsVersions, orderSessions, users } from './schema.js';
@@ -115,10 +115,10 @@ export async function prepareOrderingContext(
             .where(
               and(
                 eq(orderSessions.businessDate, window.businessDate),
-                ne(orderSessions.status, 'cancelled'),
                 isNull(orderSessions.deletedAt),
               ),
             )
+            .orderBy(desc(orderSessions.createdAt))
             .for('update')
             .limit(1);
           if (
