@@ -105,6 +105,7 @@ export const receiptCostTypeEnum = pgEnum('receipt_cost_type', [
   'shipping',
   'handling',
   'other',
+  'vat',
 ]);
 export const storeReceiptStatusEnum = pgEnum('store_receipt_status', [
   'draft',
@@ -1193,6 +1194,8 @@ export const receipts = pgTable(
     totalOtherCostVnd: bigint('total_other_cost_vnd', { mode: 'bigint' })
       .notNull()
       .default(sql`0`),
+    vatAmountVnd: bigint('vat_amount_vnd', { mode: 'bigint' }),
+    vatRatePercent: integer('vat_rate_percent'),
     version: integer('version').notNull().default(0),
     notes: text('notes'),
     createdByUserId: uuid('created_by_user_id')
@@ -1212,6 +1215,10 @@ export const receipts = pgTable(
     check('receipts_shipping_cost_nonnegative', sql`${table.totalShippingCostVnd} >= 0`),
     check('receipts_handling_cost_nonnegative', sql`${table.totalHandlingCostVnd} >= 0`),
     check('receipts_other_cost_nonnegative', sql`${table.totalOtherCostVnd} >= 0`),
+    check(
+      'receipts_vat_valid',
+      sql`(${table.vatAmountVnd} IS NULL AND ${table.vatRatePercent} IS NULL) OR (${table.vatAmountVnd} IS NOT NULL AND ${table.vatRatePercent} IS NOT NULL AND ${table.vatAmountVnd} BETWEEN 0 AND 9007199254740991 AND ${table.vatRatePercent} = 8)`,
+    ),
     check('receipts_version_nonnegative', sql`${table.version} >= 0`),
     check(
       'receipts_confirmation_timestamp',

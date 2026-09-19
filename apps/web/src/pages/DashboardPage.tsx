@@ -48,7 +48,7 @@ const unavailableLabels: Record<ReportUnavailableReason, string> = {
   COGS_NOT_RECORDED_PER_SALE: 'Chưa ghi nhận giá vốn theo từng giao dịch bán',
   MISSING_INBOUND_WEIGHT: 'Phiếu nhập chưa có khối lượng xác nhận',
   MISSING_SALE_REVENUE: 'Nguồn bán hàng chưa có doanh thu',
-  VAT_NOT_CAPTURED: 'Hệ thống chưa thu thập VAT đầu vào',
+  VAT_NOT_CAPTURED: 'Chưa ghi nhận đầy đủ VAT trong phạm vi báo cáo',
   ZERO_INBOUND_WEIGHT: 'Kỳ này không có khối lượng nhập để tính tỷ lệ',
 };
 

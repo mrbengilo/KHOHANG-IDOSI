@@ -25,6 +25,10 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   await expect(page.getByRole('spinbutton')).toHaveCount(1);
   await page.getByLabel(/^Khối lượng bao 1/).fill('80.500');
   await page.getByLabel(/^Khối lượng bao 2/).fill('79.250');
+  await page.getByRole('button', { name: 'Nhập VAT · 8%' }).click();
+  await page.getByLabel('Số tiền VAT (VND)').fill('1000000');
+  await expect(page.getByLabel('Thuế suất mặc định')).toHaveValue('8%');
+  await page.getByRole('button', { name: 'Mặt hàng', exact: true }).click();
   for (const width of [360, 390, 768, 1366, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await expect
@@ -77,12 +81,15 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   const receipt = (await response.json()).data;
   expect(receipt.bags).toHaveLength(2);
   expect(receipt.totalWeightKg).toBe('159.750');
+  expect(receipt.vat).toEqual({ amountVnd: 1000000, ratePercent: 8 });
   await expect(page.getByRole('status')).toContainText(`Đã nhập phiếu ${reference}`);
   await expect(page.getByRole('checkbox').first()).not.toBeChecked();
   const api = new URL(response.url()).origin;
   const stored = await page.request.get(`${api}/api/v1/inbound-receipts/${receipt.id}`);
   expect(stored.status()).toBe(200);
-  expect((await stored.json()).data.bags).toEqual(receipt.bags);
+  const storedReceipt = (await stored.json()).data;
+  expect(storedReceipt.bags).toEqual(receipt.bags);
+  expect(storedReceipt.vat).toEqual(receipt.vat);
   const replay = await page.request.post(response.url(), {
     data: response.request().postDataJSON(),
     headers: { 'idempotency-key': response.request().headers()['idempotency-key']! },

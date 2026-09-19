@@ -28,6 +28,28 @@ const IDS = {
 };
 
 describe('receipt, outbound and report contracts', () => {
+  it('accepts directly entered whole VND VAT at 8% without recalculating the amount', () => {
+    const input = {
+      referenceCode: 'VAT-1',
+      supplierName: 'Supplier',
+      receivedAt: '2026-09-10T08:00:00+07:00',
+      bags: [{ productId: IDS.product, bagCode: 'VAT-BAG', weightKg: '2.000' }],
+      vat: { amountVnd: 1000000, ratePercent: 8 },
+    };
+    expect(CreateInboundReceiptRequestSchema.parse(input).vat).toEqual(input.vat);
+    for (const amountVnd of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(
+        CreateInboundReceiptRequestSchema.safeParse({ ...input, vat: { ...input.vat, amountVnd } })
+          .success,
+      ).toBe(false);
+    }
+    expect(
+      CreateInboundReceiptRequestSchema.safeParse({
+        ...input,
+        vat: { amountVnd: 1, ratePercent: 10 },
+      }).success,
+    ).toBe(false);
+  });
   it('rejects duplicate inbound bag codes', () => {
     const bag = { productId: IDS.product, bagCode: 'BAG-001', weightKg: '25.125' };
     expect(
@@ -59,6 +81,16 @@ describe('receipt, outbound and report contracts', () => {
       confirmedAt: '2026-09-10T10:00:00Z',
     };
     expect(ReceiptCostConfirmationSchema.safeParse(confirmation).success).toBe(true);
+    expect(
+      ReceiptCostConfirmationSchema.safeParse({
+        ...confirmation,
+        vatAmountVnd: 1000000,
+        totalCostVnd: 2120000,
+      }).success,
+    ).toBe(true);
+    expect(
+      ReceiptCostConfirmationSchema.safeParse({ ...confirmation, vatAmountVnd: 1000000 }).success,
+    ).toBe(false);
     expect(
       ReceiptCostConfirmationSchema.safeParse({ ...confirmation, totalCostVnd: 1_119_999 }).success,
     ).toBe(false);

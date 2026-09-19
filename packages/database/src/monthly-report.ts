@@ -60,6 +60,7 @@ export interface ReportMetric<T> {
 }
 
 export interface MonthlyInboundHeaderRow {
+  readonly vatAmountVnd?: bigint | null;
   readonly receiptId: string;
   readonly goodsCostVnd: bigint;
   readonly transportationFeeVnd: bigint;
@@ -266,8 +267,13 @@ export function summarizeMonthlyReport(
   const transportationFeeVnd = sum(rows.inboundHeaders, (row) => row.transportationFeeVnd);
   const handlingFeeVnd = sum(rows.inboundHeaders, (row) => row.handlingFeeVnd);
   const otherInboundCostVnd = sum(rows.inboundHeaders, (row) => row.otherCostVnd);
+  const vatCostVnd = sum(rows.inboundHeaders, (row) => row.vatAmountVnd ?? 0n);
+  const vatComplete =
+    rows.inboundSource === 'WAREHOUSE_RECEIPTS' &&
+    rows.inboundHeaders.length > 0 &&
+    rows.inboundHeaders.every((row) => row.vatAmountVnd != null);
   const landedInboundCostVnd =
-    inboundGoodsCostVnd + transportationFeeVnd + handlingFeeVnd + otherInboundCostVnd;
+    inboundGoodsCostVnd + transportationFeeVnd + handlingFeeVnd + otherInboundCostVnd + vatCostVnd;
 
   const inboundWeightMetric =
     inboundWeightGrams === null
@@ -327,7 +333,9 @@ export function summarizeMonthlyReport(
       handlingFeeVnd: available(handlingFeeVnd, rows.inboundSource),
       otherInboundCostVnd: available(otherInboundCostVnd, rows.inboundSource),
       landedInboundCostVnd: available(landedInboundCostVnd, rows.inboundSource),
-      vatCostVnd: unavailable('VAT_NOT_CAPTURED', 'NOT_AVAILABLE'),
+      vatCostVnd: vatComplete
+        ? available(vatCostVnd, rows.inboundSource)
+        : unavailable('VAT_NOT_CAPTURED', 'NOT_AVAILABLE'),
     },
     ratios: {
       averageInboundCostPerKgVnd: costPerInboundKilogram(
@@ -487,6 +495,7 @@ async function loadWarehouseInbound(database: Database, period: MonthWindow) {
         transportationFeeVnd: receipts.totalShippingCostVnd,
         handlingFeeVnd: receipts.totalHandlingCostVnd,
         otherCostVnd: receipts.totalOtherCostVnd,
+        vatAmountVnd: receipts.vatAmountVnd,
       })
       .from(receipts)
       .where(

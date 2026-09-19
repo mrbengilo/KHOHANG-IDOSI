@@ -1107,6 +1107,9 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     return withSupplierInboundErrors(async () => {
       const result = await receiveDatabaseSupplierInbound(db, {
         referenceCode: input.referenceCode,
+        ...(input.vat
+          ? { vat: { amountVnd: BigInt(input.vat.amountVnd), ratePercent: input.vat.ratePercent } }
+          : {}),
         supplierName: input.supplierName,
         receivedAt: new Date(input.receivedAt),
         bags: input.bags,
@@ -3113,7 +3116,8 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       receipt.totalGoodsCostVnd +
       receipt.totalShippingCostVnd +
       receipt.totalHandlingCostVnd +
-      receipt.totalOtherCostVnd;
+      receipt.totalOtherCostVnd +
+      (receipt.vatAmountVnd ?? 0n);
     if (isConfirmed && receipt.totalOtherCostVnd !== 0n) {
       throw new Error('Inbound receipt contract cannot represent legacy other costs.');
     }
@@ -3133,6 +3137,10 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       id: receipt.id,
       referenceCode: receipt.receiptNumber,
       supplierName: receipt.supplierName,
+      vat:
+        receipt.vatAmountVnd === null
+          ? null
+          : { amountVnd: safeVnd(receipt.vatAmountVnd), ratePercent: 8 },
       status: inboundReceiptStatus(receipt.status),
       bags,
       totalWeightKg: gramsToKilogramsExact(totalWeightGrams),
@@ -3141,6 +3149,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
             productCosts,
             transportationFeeVnd: safeVnd(receipt.totalShippingCostVnd),
             handlingFeeVnd: safeVnd(receipt.totalHandlingCostVnd),
+            vatAmountVnd: safeVnd(receipt.vatAmountVnd ?? 0n),
             goodsCostVnd: safeVnd(receipt.totalGoodsCostVnd),
             totalCostVnd: safeVnd(totalCostVnd),
             confirmedByAccountId: receipt.confirmedByUserId as string,

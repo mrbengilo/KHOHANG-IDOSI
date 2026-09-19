@@ -39,6 +39,7 @@ export interface SupplierInboundBagInput {
 }
 
 export interface ReceiveSupplierInboundInput extends SupplierInboundRequestContext {
+  readonly vat?: { readonly amountVnd: bigint; readonly ratePercent: 8 };
   readonly referenceCode: string;
   readonly supplierName: string;
   readonly receivedAt: Date;
@@ -246,6 +247,8 @@ export async function receiveSupplierInboundInTransaction(
       .values({
         receiptNumber: normalized.referenceCode,
         supplierName: normalized.supplierName,
+        vatAmountVnd: input.vat?.amountVnd ?? null,
+        vatRatePercent: input.vat?.ratePercent ?? null,
         status: 'submitted',
         receivedAt: input.receivedAt,
         submittedAt: now,
@@ -327,6 +330,9 @@ export async function receiveSupplierInboundInTransaction(
         version: created.version,
         receivedAt: input.receivedAt.toISOString(),
         totalWeightKg,
+        vat: input.vat
+          ? { amountVnd: input.vat.amountVnd.toString(), ratePercent: input.vat.ratePercent }
+          : null,
         products: productBalances.map((balance) => ({
           productId: balance.productId,
           receivedQuantity: balance.receivedQuantity,
@@ -461,7 +467,11 @@ export async function confirmSupplierInboundCostsInTransaction(
       });
     }
 
-    const totalCostVnd = goodsCostVnd + input.transportationFeeVnd + input.handlingFeeVnd;
+    const totalCostVnd =
+      goodsCostVnd +
+      input.transportationFeeVnd +
+      input.handlingFeeVnd +
+      (receipt.vatAmountVnd ?? 0n);
     assertVnd(totalCostVnd, 'receipt total cost');
     await tx.insert(receiptCosts).values([
       ...goodsCosts.map((cost) => ({
@@ -483,6 +493,16 @@ export async function confirmSupplierInboundCostsInTransaction(
         amountVnd: input.handlingFeeVnd,
         description: 'Supplier receipt handling fee',
       },
+      ...(receipt.vatAmountVnd === null
+        ? []
+        : [
+            {
+              receiptId: receipt.id,
+              costType: 'vat' as const,
+              amountVnd: receipt.vatAmountVnd,
+              description: `Supplier receipt VAT ${receipt.vatRatePercent}% (entered amount)`,
+            },
+          ]),
     ]);
 
     const [confirmed] = await tx
@@ -525,6 +545,7 @@ export async function confirmSupplierInboundCostsInTransaction(
         goodsCostVnd: goodsCostVnd.toString(),
         transportationFeeVnd: input.transportationFeeVnd.toString(),
         handlingFeeVnd: input.handlingFeeVnd.toString(),
+        vatAmountVnd: receipt.vatAmountVnd?.toString() ?? null,
         totalCostVnd: totalCostVnd.toString(),
       },
       ipAddress: input.ipAddress ?? null,
@@ -695,6 +716,7 @@ export async function cancelSupplierInboundInTransaction(
 }
 
 function normalizeReceiveInput(input: {
+  readonly vat?: { readonly amountVnd: bigint; readonly ratePercent: 8 };
   readonly referenceCode: string;
   readonly supplierName: string;
   readonly receivedAt: Date;
@@ -705,6 +727,11 @@ function normalizeReceiveInput(input: {
   readonly bags: readonly SupplierInboundBagInput[];
 } {
   const referenceCode = input.referenceCode.trim();
+  if (input.vat) {
+    assertVnd(input.vat.amountVnd, 'vatAmountVnd');
+    if (input.vat.ratePercent !== 8)
+      throw new SupplierInboundValidationError('VAT rate must be 8%.');
+  }
   const supplierName = input.supplierName.trim();
   if (referenceCode.length === 0 || referenceCode.length > 100) {
     throw new SupplierInboundValidationError(

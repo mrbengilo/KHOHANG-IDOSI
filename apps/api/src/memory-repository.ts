@@ -1049,6 +1049,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       id,
       referenceCode: input.referenceCode,
       supplierName: input.supplierName,
+      vat: input.vat ?? null,
       status: 'COST_PENDING',
       bags: input.bags.map((bag) => ({
         id: randomUUID(),
@@ -1139,7 +1140,10 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       return total + calculateWeightedCostVnd(bag.weightKg, price);
     }, 0n);
     const totalCostVnd =
-      goodsCostVnd + BigInt(input.transportationFeeVnd) + BigInt(input.handlingFeeVnd);
+      goodsCostVnd +
+      BigInt(input.transportationFeeVnd) +
+      BigInt(input.handlingFeeVnd) +
+      BigInt(current.vat?.amountVnd ?? 0);
     if (
       goodsCostVnd > BigInt(Number.MAX_SAFE_INTEGER) ||
       totalCostVnd > BigInt(Number.MAX_SAFE_INTEGER)
@@ -1154,6 +1158,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         productCosts: input.productCosts,
         transportationFeeVnd: input.transportationFeeVnd,
         handlingFeeVnd: input.handlingFeeVnd,
+        vatAmountVnd: current.vat?.amountVnd ?? 0,
         goodsCostVnd: Number(goodsCostVnd),
         totalCostVnd: Number(totalCostVnd),
         confirmedByAccountId: actor.accountId,

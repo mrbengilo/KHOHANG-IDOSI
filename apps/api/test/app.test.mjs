@@ -2639,6 +2639,7 @@ describe('KHOHANG-IDOSI API', () => {
     const beforeBalance = before.json().data.find((balance) => balance.productId === productId);
     const payload = {
       referenceCode: 'SUPPLIER-TEST-001',
+      vat: { amountVnd: 1000000, ratePercent: 8 },
       supplierName: 'Nhà cung cấp test',
       receivedAt: '2026-09-17T08:00:00+07:00',
       bags: [
@@ -2657,6 +2658,7 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(received.headers['idempotency-replayed'], 'false');
     assert.equal(received.json().data.status, 'COST_PENDING');
     assert.equal(received.json().data.totalWeightKg, '3.235');
+    assert.deepEqual(received.json().data.vat, payload.vat);
     const receiptId = received.json().data.id;
 
     const replay = await mutateReceipt(
@@ -2716,7 +2718,8 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(confirmed.statusCode, 200);
     assert.equal(confirmed.json().data.status, 'COST_CONFIRMED');
     assert.equal(confirmed.json().data.cost.goodsCostVnd, 32_353);
-    assert.equal(confirmed.json().data.cost.totalCostVnd, 152_353);
+    assert.equal(confirmed.json().data.cost.totalCostVnd, 1_152_353);
+    assert.equal(confirmed.json().data.cost.vatAmountVnd, 1_000_000);
     assert.equal(confirmed.json().data.version, 1);
 
     const cannotCancelConfirmed = await mutateReceipt(

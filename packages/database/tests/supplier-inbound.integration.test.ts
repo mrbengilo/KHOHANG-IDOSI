@@ -121,6 +121,7 @@ describePostgres('supplier inbound PostgreSQL lifecycle', () => {
     const received = await receiveSupplierInbound(db, {
       referenceCode: `COST-${suffix}`,
       supplierName: 'Nhà cung cấp cost',
+      vat: { amountVnd: 1_000_000n, ratePercent: 8 },
       receivedAt: new Date(),
       bags: [
         {
@@ -154,7 +155,7 @@ describePostgres('supplier inbound PostgreSQL lifecycle', () => {
     if (confirmed.replayed) throw new Error('Expected cost confirmation to execute.');
     expect(confirmed.value).toMatchObject({
       goodsCostVnd,
-      totalCostVnd: goodsCostVnd + 120_000n,
+      totalCostVnd: goodsCostVnd + 1_120_000n,
       version: received.value.version + 1,
     });
 
@@ -165,6 +166,8 @@ describePostgres('supplier inbound PostgreSQL lifecycle', () => {
         goodsCostVnd: receipts.totalGoodsCostVnd,
         shippingCostVnd: receipts.totalShippingCostVnd,
         handlingCostVnd: receipts.totalHandlingCostVnd,
+        vatAmountVnd: receipts.vatAmountVnd,
+        vatRatePercent: receipts.vatRatePercent,
         bagCostVnd: receiptBagWeights.goodsCostVnd,
       })
       .from(receipts)
@@ -177,6 +180,8 @@ describePostgres('supplier inbound PostgreSQL lifecycle', () => {
       goodsCostVnd,
       shippingCostVnd: 100_000n,
       handlingCostVnd: 20_000n,
+      vatAmountVnd: 1_000_000n,
+      vatRatePercent: 8,
       bagCostVnd: goodsCostVnd,
     });
     const [audit] = await db

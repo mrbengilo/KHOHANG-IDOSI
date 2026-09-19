@@ -81,6 +81,34 @@ describe('exact report arithmetic', () => {
 });
 
 describe('monthly operational summary', () => {
+  it('reports captured VAT exactly and distinguishes legacy unknown VAT', () => {
+    const rows = {
+      inboundSource: 'WAREHOUSE_RECEIPTS' as const,
+      inboundHeaders: [
+        {
+          receiptId: 'vat-1',
+          goodsCostVnd: 5000000n,
+          transportationFeeVnd: 0n,
+          handlingFeeVnd: 0n,
+          otherCostVnd: 0n,
+          vatAmountVnd: 1000000n as bigint | null,
+        },
+      ],
+      inboundProducts: [],
+      sales: [],
+      outboundOrderIds: [],
+      allocationRunIds: [],
+      waitTicketIds: [],
+    };
+    const input = { year: 2026, month: 9, scope: { kind: 'ALL' as const } };
+    const result = summarizeMonthlyReport(input, rows);
+    expect(result.totals.vatCostVnd.value).toBe(1000000n);
+    expect(result.totals.landedInboundCostVnd.value).toBe(6000000n);
+    rows.inboundHeaders[0]!.vatAmountVnd = null;
+    expect(summarizeMonthlyReport(input, rows).totals.vatCostVnd.unavailableReason).toBe(
+      'VAT_NOT_CAPTURED',
+    );
+  });
   it('reports trustworthy totals and refuses revenue or margin when source data is incomplete', () => {
     const generatedAt = new Date('2026-10-01T00:00:00.000Z');
     const report = summarizeMonthlyReport(
