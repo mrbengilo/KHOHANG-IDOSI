@@ -43,24 +43,42 @@ export const ReceiptProductCostSchema = z
   .strict();
 export type ReceiptProductCost = z.infer<typeof ReceiptProductCostSchema>;
 
+export const InboundVatSchema = z
+  .object({
+    amountVnd: MoneyVndSchema,
+    ratePercent: z.literal(8),
+  })
+  .strict();
+
 export const ReceiptCostConfirmationSchema = z
   .object({
     productCosts: z.array(ReceiptProductCostSchema).min(1),
     transportationFeeVnd: MoneyVndSchema,
     handlingFeeVnd: MoneyVndSchema,
+    vatAmountVnd: MoneyVndSchema.nullish(),
     goodsCostVnd: MoneyVndSchema,
-    totalCostVnd: MoneyVndSchema,
+    totalCostVnd: MoneyVndSchema.nullable(),
     confirmedByAccountId: EntityIdSchema,
     confirmedAt: IsoDateTimeSchema,
   })
   .strict()
   .superRefine((cost, context) => {
+    // Omitted VAT is accepted for pre-VAT clients; explicit null means unknown.
+    if ((cost.vatAmountVnd === null) !== (cost.totalCostVnd === null)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['totalCostVnd'],
+        message: 'Total cost must remain unknown until VAT is captured',
+      });
+    }
     const expectedTotal = sumRefinementValues([
       safeIntegerToBigIntForRefinement(cost.goodsCostVnd),
       safeIntegerToBigIntForRefinement(cost.transportationFeeVnd),
       safeIntegerToBigIntForRefinement(cost.handlingFeeVnd),
+      safeIntegerToBigIntForRefinement(cost.vatAmountVnd ?? 0),
     ]);
-    const declaredTotal = safeIntegerToBigIntForRefinement(cost.totalCostVnd);
+    const declaredTotal =
+      cost.totalCostVnd === null ? null : safeIntegerToBigIntForRefinement(cost.totalCostVnd);
     if (expectedTotal !== null && declaredTotal !== null && declaredTotal !== expectedTotal) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -85,6 +103,7 @@ export const InboundReceiptSchema = z
     id: EntityIdSchema,
     referenceCode: z.string().trim().min(1).max(100),
     supplierName: z.string().trim().min(1).max(200),
+    vat: InboundVatSchema.nullish(),
     status: InboundReceiptStatusSchema,
     bags: z.array(InboundReceiptBagSchema).min(1),
     totalWeightKg: PositiveKilogramsDecimalSchema,
@@ -138,6 +157,7 @@ export const CreateInboundReceiptRequestSchema = z
   .object({
     referenceCode: z.string().trim().min(1).max(100),
     supplierName: z.string().trim().min(1).max(200),
+    vat: InboundVatSchema.optional(),
     receivedAt: IsoDateTimeSchema,
     bags: z
       .array(CreateInboundReceiptBagSchema)
@@ -175,6 +195,15 @@ export const CancelInboundReceiptRequestSchema = z
   })
   .strict();
 export type CancelInboundReceiptRequest = z.infer<typeof CancelInboundReceiptRequestSchema>;
+
+export const UpdateInboundVatRequestSchema = z
+  .object({
+    vat: InboundVatSchema,
+    expectedVersion: z.number().int().nonnegative(),
+    reason: AuditReasonSchema,
+  })
+  .strict();
+export type UpdateInboundVatRequest = z.infer<typeof UpdateInboundVatRequestSchema>;
 
 export const InboundReceiptParamsSchema = z.object({ receiptId: EntityIdSchema }).strict();
 export type InboundReceiptParams = z.infer<typeof InboundReceiptParamsSchema>;

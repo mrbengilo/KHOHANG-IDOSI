@@ -59,7 +59,7 @@ describe('catalog exact ratio and export helpers', () => {
   it('preserves the special 1 item = 3.000 kg ratio without binary-float drift', () => {
     expect(formatConversionRatios(conversion)).toEqual({
       itemsPerKilogram: '0,333 cái',
-      kilogramsPerItem: '3,000 kg',
+      kilogramsPerItem: '3 kg',
     });
   });
 

@@ -43,7 +43,7 @@ import {
   submitStoreReceipt,
 } from '../lib/api';
 import { useSession } from '../lib/auth';
-import { formatVnd } from '../lib/format';
+import { formatKg, formatVnd } from '../lib/format';
 
 const receiptStatusCopy: Record<
   ReceiptStatus,
@@ -1170,7 +1170,9 @@ function ReadonlyReceiptLines({
                 {line.approvedUnits} / {line.receivedUnits} bao
               </td>
               <td data-label="Mã bao">
-                {line.bagWeightsKg.length > 0 ? line.bagWeightsKg.join(' · ') + ' kg' : 'Chưa cân'}
+                {line.bagWeightsKg.length > 0
+                  ? line.bagWeightsKg.map(formatKg).join(' · ')
+                  : 'Chưa cân'}
               </td>
               <td data-label="Giá / kg">
                 {line.pricePerKgVnd === null ? 'Chưa chốt' : formatVnd(line.pricePerKgVnd)}

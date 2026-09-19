@@ -18,6 +18,7 @@ import {
   submitStoreOrderRequest,
 } from '../lib/api';
 import { useSession } from '../lib/auth';
+import { formatKg } from '../lib/format';
 import { productConversions } from '../lib/data';
 import { ProductBagPicker } from '../components/ProductBagPicker';
 
@@ -617,7 +618,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
                       const quantity =
                         line.requested.kind === 'UNIT'
                           ? `${line.requested.quantity} bao`
-                          : `${line.requested.value} kg`;
+                          : formatKg(line.requested.value);
                       return `${productNameById.get(line.productId) ?? line.productId}: ${quantity}`;
                     })
                     .join(' • ')}

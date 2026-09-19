@@ -5,6 +5,7 @@ import type {
 import { AlarmClock, ArrowRight, Check, X } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button } from './Button';
+import { formatKg } from '../lib/format';
 
 interface MockPriorityOfferProps {
   readonly bags?: number;
@@ -38,7 +39,7 @@ const formatCountdown = (seconds: number): string => {
 function formatAmount(offer: PriorityOfferRecord): string {
   return offer.offered.kind === 'UNIT'
     ? `${offer.offered.quantity} bao`
-    : `${offer.offered.value} kg`;
+    : formatKg(offer.offered.value);
 }
 
 function ControlledPriorityOffer({

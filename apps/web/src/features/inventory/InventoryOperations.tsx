@@ -26,7 +26,7 @@ import { DashboardSkeleton } from '../../components/Skeleton';
 import { StatCard } from '../../components/StatCard';
 import { ApiClientError, listAccessibleStores, listCatalog } from '../../lib/api';
 import { useSession } from '../../lib/auth';
-import { formatVnd } from '../../lib/format';
+import { formatKg, formatVnd } from '../../lib/format';
 import { IdosiStatisticsPanel } from '../idosi/IdosiStatisticsPanel';
 import {
   createStoreOutbound,
@@ -97,10 +97,7 @@ export function gramsToKilograms(grams: bigint): string {
   return `${sign}${absolute / 1000n}.${String(absolute % 1000n).padStart(3, '0')}`;
 }
 
-export function formatKg(value: string): string {
-  const [whole = '0', fraction = ''] = value.split('.');
-  return `${new Intl.NumberFormat('vi-VN').format(BigInt(whole))},${fraction.padEnd(3, '0').slice(0, 3)} kg`;
-}
+export { formatKg } from '../../lib/format';
 
 export function isOutboundWeightAllowed(value: string, remainingWeightKg: string): boolean {
   if (!kilogramsPattern.test(value)) return false;
@@ -780,7 +777,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                     {eligibleBags.map((bag) => (
                       <option key={bag.id} value={bag.id}>
                         {bag.bagCode} · {productNames.get(bag.productId) ?? bag.productId} · còn{' '}
-                        {bag.remainingWeightKg} kg
+                        {formatKg(bag.remainingWeightKg)}
                       </option>
                     ))}
                   </select>
@@ -798,7 +795,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                   />
                   <small>
                     {selectedBag
-                      ? `Tối đa ${selectedBag.remainingWeightKg} kg · v${selectedBag.version}`
+                      ? `Tối đa ${formatKg(selectedBag.remainingWeightKg)} · v${selectedBag.version}`
                       : 'Chưa có Mã bao khả dụng'}
                   </small>
                 </label>

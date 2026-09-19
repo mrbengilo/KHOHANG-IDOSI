@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { formatKg } from '../../lib/format';
 import type { Store, StoreTransfer, StoreTransferStatus } from '@idosi/contracts';
 import {
   ArrowRight,
@@ -80,11 +81,6 @@ export function transferActionsForStore(
     return ['RECEIVE'];
   }
   return [];
-}
-
-function formatKg(value: string): string {
-  const [whole = '0', fraction = ''] = value.split('.');
-  return `${new Intl.NumberFormat('vi-VN').format(BigInt(whole))},${fraction.padEnd(3, '0').slice(0, 3)} kg`;
 }
 
 function formatDateTime(value: string): string {

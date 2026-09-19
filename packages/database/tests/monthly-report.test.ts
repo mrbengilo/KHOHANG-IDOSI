@@ -81,6 +81,53 @@ describe('exact report arithmetic', () => {
 });
 
 describe('monthly operational summary', () => {
+  it('reports captured VAT exactly and distinguishes legacy unknown VAT', () => {
+    const rows = {
+      inboundSource: 'WAREHOUSE_RECEIPTS' as const,
+      inboundHeaders: [
+        {
+          receiptId: 'vat-1',
+          goodsCostVnd: 5000000n,
+          transportationFeeVnd: 0n,
+          handlingFeeVnd: 0n,
+          otherCostVnd: 0n,
+          vatAmountVnd: 1000000n as bigint | null,
+        },
+      ],
+      inboundProducts: [
+        {
+          productId: 'vat-product',
+          sku: 'VAT',
+          productName: 'VAT product',
+          weightKg: '2.000',
+          goodsCostVnd: 5000000n,
+        },
+      ],
+      sales: [],
+      outboundOrderIds: [],
+      allocationRunIds: [],
+      waitTicketIds: [],
+    };
+    const input = { year: 2026, month: 9, scope: { kind: 'ALL' as const } };
+    const result = summarizeMonthlyReport(input, rows);
+    expect(result.totals.vatCostVnd.value).toBe(1000000n);
+    expect(result.totals.landedInboundCostVnd.value).toBe(6000000n);
+    rows.inboundHeaders[0]!.vatAmountVnd = null;
+    expect(summarizeMonthlyReport(input, rows).totals.landedInboundCostVnd.value).toBeNull();
+    expect(
+      summarizeMonthlyReport(input, rows).ratios.averageInboundCostPerKgVnd.unavailableReason,
+    ).toBe('VAT_NOT_CAPTURED');
+    expect(summarizeMonthlyReport(input, rows).totals.vatCostVnd.unavailableReason).toBe(
+      'VAT_NOT_CAPTURED',
+    );
+    const scoped = summarizeMonthlyReport(
+      { ...input, scope: { kind: 'STORE', id: 'store-1' } },
+      { ...rows, inboundSource: 'STORE_RECEIPTS' },
+    );
+    expect(scoped.totals.vatCostVnd.unavailableReason).toBe('VAT_NOT_CAPTURED');
+    expect(scoped.totals.landedInboundCostVnd.value).toBe(5000000n);
+    expect(scoped.ratios.averageInboundCostPerKgVnd.value).toBe(2500000n);
+  });
   it('reports trustworthy totals and refuses revenue or margin when source data is incomplete', () => {
     const generatedAt = new Date('2026-10-01T00:00:00.000Z');
     const report = summarizeMonthlyReport(
@@ -94,6 +141,7 @@ describe('monthly operational summary', () => {
             transportationFeeVnd: 50_000n,
             handlingFeeVnd: 25_000n,
             otherCostVnd: 5_000n,
+            vatAmountVnd: 0n,
           },
         ],
         inboundProducts: [

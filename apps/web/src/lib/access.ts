@@ -48,6 +48,16 @@ function normalizePath(pathname: string): string {
   return pathname.replace(/\/+$/, '');
 }
 
+export function canShowNavigation(
+  pathname: string,
+  role: Role,
+  storeKind: StoreKind | null,
+): boolean {
+  if (role === 'ADMIN' && ['/requests', '/receive', '/open-bag'].includes(normalizePath(pathname)))
+    return false;
+  return canAccessRoute(pathname, role, storeKind);
+}
+
 export function canAccessRoute(pathname: string, role: Role, storeKind: StoreKind | null): boolean {
   const policy: RouteAccessPolicy | undefined =
     routeAccessPolicies[normalizePath(pathname) as keyof typeof routeAccessPolicies];

@@ -138,6 +138,7 @@ test('catalog dialog restores focus to the page heading after its trigger is rem
 
 test('mobile navigation remains usable at 390px', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile-390', 'mobile-only assertion');
+  await page.addInitScript(() => localStorage.setItem('idosi-demo-role:v2', 'HTKD'));
   await page.goto('/');
   await page.getByRole('button', { name: 'Mở menu' }).click();
   const primaryNavigation = page.getByRole('navigation', { name: 'Điều hướng chính' });

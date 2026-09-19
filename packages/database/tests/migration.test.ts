@@ -125,6 +125,19 @@ const requiredTables = [
 ] as const;
 
 describe('initial migration invariants', () => {
+  it('adds nullable exact VAT without inventing historical amounts', () => {
+    const vatMigration = readFileSync(
+      new URL('../migrations/0007_receipt_vat.sql', import.meta.url),
+      'utf8',
+    );
+    expect(vatMigration).toContain('ADD COLUMN "vat_amount_vnd" bigint');
+    expect(vatMigration).toContain('ADD CONSTRAINT "receipts_vat_valid"');
+    expect(vatMigration).not.toMatch(/UPDATE\s+"?receipts/i);
+    const vatSnapshot = JSON.parse(
+      readFileSync(new URL('../migrations/meta/0007_snapshot.json', import.meta.url), 'utf8'),
+    ) as { prevId: string };
+    expect(vatSnapshot.prevId).toBe(storeGroupVersionSnapshot.id);
+  });
   it.each(requiredTables)('creates %s', (tableName) => {
     expect(migration).toMatch(new RegExp(`CREATE TABLE "?${tableName}"?\\s*\\(`));
   });
@@ -139,7 +152,8 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(7);
+    expect(journal.entries).toHaveLength(8);
+    expect(journal.entries[7]).toMatchObject({ tag: '0007_receipt_vat', breakpoints: true });
     expect(journal.entries[0]).toMatchObject({
       tag: '0000_initial',
       breakpoints: true,

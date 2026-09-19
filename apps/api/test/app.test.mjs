@@ -2200,8 +2200,8 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(allStores.json().data.dataOrigin, 'LOCAL_TRANSACTIONAL_DATA');
     assert.equal(allStores.json().data.period.timeZone, 'Asia/Ho_Chi_Minh');
     assert.equal(typeof allStores.json().data.totals.inboundWeightGrams.value, 'string');
-    assert.equal(allStores.json().data.totals.vatCostVnd.value, null);
-    assert.equal(allStores.json().data.totals.vatCostVnd.unavailableReason, 'VAT_NOT_CAPTURED');
+    assert.equal(allStores.json().data.totals.vatCostVnd.value, '0');
+    assert.equal(allStores.json().data.totals.vatCostVnd.unavailableReason, null);
     assert.equal(allStores.json().data.ratios.effectiveCostPerSoldKgVnd.value, null);
     assert.equal(
       allStores.json().data.ratios.effectiveCostPerSoldKgVnd.unavailableReason,
@@ -2619,6 +2619,127 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(nonAdminAudit.statusCode, 403);
   });
 
+  test('keeps confirmed totals unknown until deferred VAT is recorded', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const productId = await firstProductId(adminCookie);
+    const created = await mutateReceipt(
+      adminCookie,
+      'POST',
+      '/api/v1/inbound-receipts',
+      'unknown-vat-create',
+      {
+        referenceCode: 'UNKNOWN-VAT',
+        supplierName: 'VAT test',
+        receivedAt: new Date().toISOString(),
+        bags: [{ productId, bagCode: 'UNKNOWN-VAT-BAG', weightKg: '2.000' }],
+      },
+    );
+    assert.equal(created.statusCode, 201, created.body);
+    const id = created.json().data.id;
+    const confirmation = {
+      expectedVersion: 0,
+      productCosts: [{ productId, priceVndPerKg: 1000 }],
+      transportationFeeVnd: 100,
+      handlingFeeVnd: 50,
+    };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await mutateReceipt(
+        adminCookie,
+        'POST',
+        `/api/v1/inbound-receipts/${id}/confirm-costs`,
+        'unknown-vat-confirm',
+        confirmation,
+      );
+      assert.equal(result.statusCode, 200, result.body);
+      assert.equal(result.json().data.vat, null);
+      assert.equal(result.json().data.cost.vatAmountVnd, null);
+      assert.equal(result.json().data.cost.totalCostVnd, null);
+      assert.equal(result.json().data.cost.goodsCostVnd, 2000);
+    }
+    const updated = await mutateReceipt(
+      adminCookie,
+      'PATCH',
+      `/api/v1/inbound-receipts/${id}/vat`,
+      'unknown-vat-update',
+      { expectedVersion: 1, vat: { amountVnd: 80, ratePercent: 8 }, reason: 'Bổ sung số tiền VAT' },
+    );
+    assert.equal(updated.statusCode, 200, updated.body);
+    assert.equal(updated.json().data.cost.totalCostVnd, 2230);
+  });
+
+  test('allows only ADMIN to fill deferred VAT and correct a confirmed receipt with audit and replay', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const productId = await firstProductId(adminCookie);
+    const created = await mutateReceipt(
+      adminCookie,
+      'POST',
+      '/api/v1/inbound-receipts',
+      'vat-deferred-create',
+      {
+        referenceCode: 'VAT-LATER',
+        supplierName: 'VAT test',
+        receivedAt: new Date().toISOString(),
+        bags: [{ productId, bagCode: 'VAT-LATER-BAG', weightKg: '2.000' }],
+      },
+    );
+    assert.equal(created.statusCode, 201);
+    const id = created.json().data.id;
+    const url = `/api/v1/inbound-receipts/${id}/vat`;
+    const input = {
+      expectedVersion: 0,
+      vat: { amountVnd: 1000000, ratePercent: 8 },
+      reason: 'Bổ sung số tiền VAT',
+    };
+    const denied = await mutateReceipt(
+      cookieOf(await login('htkd')),
+      'PATCH',
+      url,
+      'vat-forbidden',
+      input,
+    );
+    assert.equal(denied.statusCode, 403);
+    const updated = await mutateReceipt(adminCookie, 'PATCH', url, 'vat-update', input);
+    assert.equal(updated.statusCode, 200, updated.body);
+    assert.deepEqual(updated.json().data.vat, input.vat);
+    assert.equal(
+      (await mutateReceipt(adminCookie, 'PATCH', url, 'vat-update', input)).headers[
+        'idempotency-replayed'
+      ],
+      'true',
+    );
+    assert.equal(
+      (await mutateReceipt(adminCookie, 'PATCH', url, 'vat-stale', input)).statusCode,
+      409,
+    );
+    const confirmed = await mutateReceipt(
+      adminCookie,
+      'POST',
+      `/api/v1/inbound-receipts/${id}/confirm-costs`,
+      'vat-confirm',
+      {
+        expectedVersion: 1,
+        productCosts: [{ productId, priceVndPerKg: 1000 }],
+        transportationFeeVnd: 0,
+        handlingFeeVnd: 0,
+      },
+    );
+    assert.equal(confirmed.json().data.cost.totalCostVnd, 1002000);
+    const correction = await mutateReceipt(adminCookie, 'PATCH', url, 'vat-correct', {
+      ...input,
+      expectedVersion: 2,
+      vat: { amountVnd: 0, ratePercent: 8 },
+    });
+    assert.equal(correction.statusCode, 200, correction.body);
+    assert.equal(correction.json().data.cost.totalCostVnd, 2000);
+    assert.equal(correction.json().data.cost.vatAmountVnd, 0);
+    const audit = await app.inject({
+      method: 'GET',
+      url: `/api/v1/admin/audit-logs?action=SUPPLIER_INBOUND_VAT_UPDATED&entityId=${id}`,
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(audit.json().pagination.totalItems, 2);
+  });
+
   test('receives supplier bags into warehouse stock and confirms exact costs idempotently', async () => {
     const adminCookie = cookieOf(await login('admin'));
     const storeCookie = cookieOf(await login('ds_nvt'));
@@ -2639,6 +2760,7 @@ describe('KHOHANG-IDOSI API', () => {
     const beforeBalance = before.json().data.find((balance) => balance.productId === productId);
     const payload = {
       referenceCode: 'SUPPLIER-TEST-001',
+      vat: { amountVnd: 1000000, ratePercent: 8 },
       supplierName: 'Nhà cung cấp test',
       receivedAt: '2026-09-17T08:00:00+07:00',
       bags: [
@@ -2657,6 +2779,7 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(received.headers['idempotency-replayed'], 'false');
     assert.equal(received.json().data.status, 'COST_PENDING');
     assert.equal(received.json().data.totalWeightKg, '3.235');
+    assert.deepEqual(received.json().data.vat, payload.vat);
     const receiptId = received.json().data.id;
 
     const replay = await mutateReceipt(
@@ -2716,7 +2839,8 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(confirmed.statusCode, 200);
     assert.equal(confirmed.json().data.status, 'COST_CONFIRMED');
     assert.equal(confirmed.json().data.cost.goodsCostVnd, 32_353);
-    assert.equal(confirmed.json().data.cost.totalCostVnd, 152_353);
+    assert.equal(confirmed.json().data.cost.totalCostVnd, 1_152_353);
+    assert.equal(confirmed.json().data.cost.vatAmountVnd, 1_000_000);
     assert.equal(confirmed.json().data.version, 1);
 
     const cannotCancelConfirmed = await mutateReceipt(

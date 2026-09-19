@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type {
+  UpdateInboundVatRequest,
   Account,
   AdminAuditLog,
   AllocationResult,
@@ -1049,6 +1050,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       id,
       referenceCode: input.referenceCode,
       supplierName: input.supplierName,
+      vat: input.vat ?? null,
       status: 'COST_PENDING',
       bags: input.bags.map((bag) => ({
         id: randomUUID(),
@@ -1139,7 +1141,10 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       return total + calculateWeightedCostVnd(bag.weightKg, price);
     }, 0n);
     const totalCostVnd =
-      goodsCostVnd + BigInt(input.transportationFeeVnd) + BigInt(input.handlingFeeVnd);
+      goodsCostVnd +
+      BigInt(input.transportationFeeVnd) +
+      BigInt(input.handlingFeeVnd) +
+      BigInt(current.vat?.amountVnd ?? 0);
     if (
       goodsCostVnd > BigInt(Number.MAX_SAFE_INTEGER) ||
       totalCostVnd > BigInt(Number.MAX_SAFE_INTEGER)
@@ -1154,8 +1159,9 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         productCosts: input.productCosts,
         transportationFeeVnd: input.transportationFeeVnd,
         handlingFeeVnd: input.handlingFeeVnd,
+        vatAmountVnd: current.vat?.amountVnd ?? null,
         goodsCostVnd: Number(goodsCostVnd),
-        totalCostVnd: Number(totalCostVnd),
+        totalCostVnd: current.vat == null ? null : Number(totalCostVnd),
         confirmedByAccountId: actor.accountId,
         confirmedAt: now,
       },
@@ -1172,6 +1178,56 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       receiptId,
       current,
       updated,
+    );
+    return { data: structuredClone(updated), replayed: false };
+  }
+
+  public async updateSupplierInboundVat(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: UpdateInboundVatRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<InboundReceipt>> {
+    requireMemoryAdmin(actor);
+    const key = `${actor.accountId}:supplier-inbound:vat:${receiptId}:${idempotencyKey}`;
+    const replay = this.replayInboundReceipt(key, requestHash);
+    if (replay) return { data: replay, replayed: true };
+    const current = this.inboundReceipts.get(receiptId);
+    if (!current) throw notFound('Không tìm thấy phiếu nhập');
+    if (current.version !== input.expectedVersion) throw versionConflict();
+    if (current.status === 'CANCELLED') throw conflict('Phiếu đã hủy không thể cập nhật VAT');
+    const cost = current.cost;
+    const total = cost
+      ? BigInt(cost.goodsCostVnd) +
+        BigInt(cost.transportationFeeVnd) +
+        BigInt(cost.handlingFeeVnd) +
+        BigInt(input.vat.amountVnd)
+      : null;
+    if (total !== null && total > BigInt(Number.MAX_SAFE_INTEGER))
+      throw new ApiError('VALIDATION_ERROR', 'Tổng chi phí vượt giới hạn VND an toàn', 400);
+    const updated: InboundReceipt = {
+      ...current,
+      vat: input.vat,
+      cost:
+        cost && total !== null
+          ? { ...cost, vatAmountVnd: input.vat.amountVnd, totalCostVnd: Number(total) }
+          : cost,
+      version: current.version + 1,
+      updatedAt: this.now().toISOString(),
+    };
+    this.inboundReceipts.set(receiptId, updated);
+    this.rememberInboundReceipt(key, requestHash, updated);
+    this.appendAudit(
+      actor,
+      context,
+      'SUPPLIER_INBOUND_VAT_UPDATED',
+      'supplier_inbound_receipt',
+      receiptId,
+      current,
+      updated,
+      { reason: input.reason },
     );
     return { data: structuredClone(updated), replayed: false };
   }
