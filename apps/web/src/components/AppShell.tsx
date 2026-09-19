@@ -243,7 +243,13 @@ export function AppShell() {
       <aside className={clsx('sidebar', open && 'sidebar--open')}>
         <div className="sidebar__brand">
           <div>
-            <strong>IDOSI</strong>
+            <img
+              className="app-logo"
+              src="/idosi-kho-app-1024.png"
+              alt="IDOSI Kho hàng"
+              width="112"
+              height="84"
+            />
             <span>QUẢN TRỊ HỆ THỐNG</span>
           </div>
           <button aria-label="Đóng menu" onClick={() => setOpen(false)} type="button">

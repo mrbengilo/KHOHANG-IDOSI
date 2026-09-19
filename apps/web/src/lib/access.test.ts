@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { canAccessRoute } from './access';
 
 describe('route access policy', () => {
+  it('keeps store ordering, receiving and opening out of the admin workspace', () => {
+    for (const route of ['/requests', '/receive', '/open-bag']) {
+      expect(canAccessRoute(route, 'ADMIN', null)).toBe(false);
+      expect(canAccessRoute(route, 'HTKD', null)).toBe(true);
+      expect(canAccessRoute(route, 'STORE', 'RETAIL')).toBe(true);
+    }
+    expect(canAccessRoute('/costs', 'ADMIN', null)).toBe(true);
+  });
   it('keeps admin-only screens unavailable to stores', () => {
     expect(canAccessRoute('/users', 'STORE', 'RETAIL')).toBe(false);
     expect(canAccessRoute('/stores', 'HTKD', null)).toBe(false);

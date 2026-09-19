@@ -54,7 +54,13 @@ export function LoginPage() {
     <main className="login-page">
       <section className="login-visual">
         <div className="login-brand">
-          <strong>IDOSI</strong>
+          <img
+            className="app-logo"
+            src="/idosi-kho-app-1024.png"
+            alt="IDOSI Kho hàng"
+            width="112"
+            height="84"
+          />
           <span>QUẢN TRỊ HỆ THỐNG</span>
         </div>
         <div>
@@ -77,6 +83,13 @@ export function LoginPage() {
       </section>
       <section className="login-panel">
         <form onSubmit={submit}>
+          <img
+            className="app-logo"
+            src="/idosi-kho-app-1024.png"
+            alt="IDOSI Kho hàng"
+            width="112"
+            height="84"
+          />
           <div>
             <span>Chào mừng trở lại</span>
             <h2>Đăng nhập Kho hàng IDOSI</h2>
