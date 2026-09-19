@@ -90,6 +90,9 @@ describe('IDOSI statistics contracts and gateway', () => {
     expect(parseIdosiStoreIdMap(undefined)).toEqual({});
     expect(parseIdosiStoreIdMap('{}')).toEqual({});
     expect(parseIdosiStoreIdMap('{"LOCAL":"S01"}')).toEqual({ LOCAL: 'S01' });
+    expect(parseIdosiStoreIdMap('{"LOCAL":"value with \\"quote\\" and : comma,"}')).toEqual({
+      LOCAL: 'value with "quote" and : comma,',
+    });
     for (const value of [
       'null',
       '[]',
@@ -99,6 +102,9 @@ describe('IDOSI statistics contracts and gateway', () => {
       '{"__proto__":"S01"}',
       '{"constructor":"S01"}',
       '{" A":"S01"}',
+      '{"LOCAL":"S01","LOCAL":"S02"}',
+      '{"LOCAL":"S01","\\u004cOCAL":"S02"}',
+      '{"LOCAL":{"nested":"S01"},"LOCAL":"S02"}',
     ]) {
       expect(() => parseIdosiStoreIdMap(value)).toThrow('IDOSI_STORE_ID_MAP');
     }

@@ -294,6 +294,16 @@ export interface FetchIdosiStatisticsOptions {
 export function parseIdosiStoreIdMap(raw: string | undefined): Readonly<Record<string, string>> {
   if (!raw?.trim()) return {};
   try {
+    // This configuration is a flat string-to-string object. Validate that grammar
+    // and inspect decoded key tokens before JSON.parse can discard duplicates.
+    const stringToken = '"(?:[^"\\\\]|\\\\.)*"';
+    const pair = `(${stringToken})\\s*:\\s*${stringToken}`;
+    const flatObject = new RegExp(`^\\s*\\{\\s*(?:${pair}(?:\\s*,\\s*${pair})*)?\\s*\\}\\s*$`, 'u');
+    if (raw.length > 500_000 || !flatObject.test(raw)) throw new Error();
+    const localKeys = [...raw.matchAll(new RegExp(pair, 'gu'))].map(
+      (match) => JSON.parse(match[1]!) as string,
+    );
+    if (new Set(localKeys).size !== localKeys.length) throw new Error();
     const input: unknown = JSON.parse(raw);
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error();
     const keys = Object.keys(input);
