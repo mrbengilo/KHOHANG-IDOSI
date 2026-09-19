@@ -61,6 +61,8 @@ type SnapshotRow = typeof inventorySnapshots.$inferSelect;
 type SnapshotItemRow = typeof inventorySnapshotItems.$inferSelect;
 type WaitTicketRow = typeof waitTickets.$inferSelect;
 type OfferRow = typeof dailyPriorityOffers.$inferSelect;
+type AllocationPlan = ReturnType<typeof planProductAllocation>;
+type AllocationPolicyStep = AllocationPlan['steps'][number];
 
 interface PersistedMergedDemand {
   readonly demand: MergedDemand;
@@ -482,6 +484,7 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
       );
 
       for (const remainder of result.remainders) {
+        const remainderSteps = allocationStepsForRemainder(result, remainder);
         if (remainder.source === 'CONFIRMED_WAIT') {
           const ticketId = remainder.sourceWaitTicketId;
           if (!ticketId) throw new Error('Confirmed wait allocation lost its ticket id.');
@@ -491,6 +494,11 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
             throw new Error(`Confirmed wait allocation ${ticketId} has no persisted source.`);
           }
           lineSequence += 1;
+          const coordinates = allocationPersistenceCoordinates(
+            result,
+            remainderSteps,
+            lineSequence,
+          );
           const lineId = deterministicUuid(
             `allocation-line:${persistedRunId}:wait:${ticketId}:${offer.id}`,
           );
@@ -504,14 +512,14 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
             waitTicketId: ticketId,
             priorityOfferId: offer.id,
             priorityLevel: 'P0A',
-            roundNumber: 1,
-            sequenceInRound: lineSequence,
+            roundNumber: coordinates.roundNumber,
+            sequenceInRound: coordinates.sequenceInRound,
             requestedQuantity: remainder.requestedQuantity,
             allocatedQuantity: remainder.allocatedQuantity,
             waitlistedQuantity: remainder.remainingQuantity,
             status: allocationStatus(remainder),
             reasonCode: allocationReason(remainder),
-            decisionMetadata: allocationMetadata(result, remainder),
+            decisionMetadata: allocationMetadata(result, remainderSteps, remainder.priority),
           });
           if (remainder.allocatedQuantity > 0) {
             await tx.insert(reservations).values({
@@ -551,11 +559,18 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
           throw new Error(`Order allocation ${remainder.demandId} has no merged provenance.`);
         }
         let allocationLeft = remainder.allocatedQuantity;
+        let allocatedStepOffset = 0;
         for (const source of demand.sourceLines) {
           const sourceAllocated = Math.min(source.quantity, allocationLeft);
           const sourceWaitlisted = source.quantity - sourceAllocated;
           allocationLeft -= sourceAllocated;
+          const sourceSteps = remainderSteps.slice(
+            allocatedStepOffset,
+            allocatedStepOffset + sourceAllocated,
+          );
+          allocatedStepOffset += sourceAllocated;
           lineSequence += 1;
+          const coordinates = allocationPersistenceCoordinates(result, sourceSteps, lineSequence);
           const lineId = deterministicUuid(
             `allocation-line:${persistedRunId}:request:${source.lineId}`,
           );
@@ -569,14 +584,14 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
             waitTicketId: null,
             priorityOfferId: null,
             priorityLevel: source.priority,
-            roundNumber: 1,
-            sequenceInRound: lineSequence,
+            roundNumber: coordinates.roundNumber,
+            sequenceInRound: coordinates.sequenceInRound,
             requestedQuantity: source.quantity,
             allocatedQuantity: sourceAllocated,
             waitlistedQuantity: sourceWaitlisted,
             status: allocationStatusFromQuantities(sourceAllocated, sourceWaitlisted),
             reasonCode: allocationReasonFromQuantities(sourceAllocated, sourceWaitlisted),
-            decisionMetadata: allocationMetadata(result, remainder),
+            decisionMetadata: allocationMetadata(result, sourceSteps, remainder.priority),
           });
           if (sourceAllocated > 0) {
             await tx.insert(reservations).values({
@@ -594,7 +609,7 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
           waitlistedByRequestItem.set(source.lineId, sourceWaitlisted);
           affectedRows += 1;
         }
-        if (allocationLeft !== 0) {
+        if (allocationLeft !== 0 || allocatedStepOffset !== remainderSteps.length) {
           throw new Error(`Allocation ${remainder.demandId} did not reconcile to its sources.`);
         }
         if (remainder.remainingQuantity > 0) waitRemainders.push(remainder);
@@ -1192,20 +1207,55 @@ function allocationReasonFromQuantities(allocated: number, waitlisted: number): 
   return 'ALLOCATED_BY_PRIORITY_ROUND_ROBIN';
 }
 
-function allocationMetadata(
-  result: ReturnType<typeof planProductAllocation>,
-  remainder: AllocationRemainder,
+export function allocationMetadata(
+  result: Pick<AllocationPlan, 'cursorBefore' | 'nextCursor' | 'availableBefore' | 'snapshotId'>,
+  steps: readonly AllocationPolicyStep[],
+  appliedPriority: AllocationRemainder['priority'],
 ): JsonObject {
-  const rounds = result.steps
-    .filter((step) => step.demandId === remainder.demandId)
-    .map((step) => step.round);
+  if (steps.some((step) => !Number.isSafeInteger(step.round) || step.round < 1)) {
+    throw new Error('Allocation audit rounds must be positive safe integers.');
+  }
+  if (new Set(steps.map((step) => step.round)).size !== steps.length) {
+    throw new Error('Allocation audit rounds must be unique within a source line.');
+  }
   return {
     cursorBefore: result.cursorBefore,
     nextCursor: result.nextCursor,
-    policyRounds: rounds,
+    policyRounds: steps.map((step) => step.round),
+    policyRoundsVersion: 1,
+    appliedPriority,
     snapshotAvailable: result.availableBefore,
     snapshotId: result.snapshotId,
   };
+}
+
+function allocationStepsForRemainder(
+  result: AllocationPlan,
+  remainder: AllocationRemainder,
+): readonly AllocationPolicyStep[] {
+  const steps = result.steps.filter((step) => step.demandId === remainder.demandId);
+  if (steps.length !== remainder.allocatedQuantity) {
+    throw new Error(`Allocation ${remainder.demandId} has inconsistent planner step metadata.`);
+  }
+  return steps;
+}
+
+function allocationPersistenceCoordinates(
+  result: AllocationPlan,
+  steps: readonly AllocationPolicyStep[],
+  fallbackSequence: number,
+): { readonly roundNumber: number; readonly sequenceInRound: number } {
+  const firstStep = steps[0];
+  if (firstStep === undefined) {
+    return { roundNumber: 1, sequenceInRound: fallbackSequence };
+  }
+  const sequenceInRound = result.steps.filter(
+    (step) =>
+      step.priority === firstStep.priority &&
+      step.round === firstStep.round &&
+      step.sequence <= firstStep.sequence,
+  ).length;
+  return { roundNumber: firstStep.round, sequenceInRound };
 }
 
 async function persistRequestResolution(

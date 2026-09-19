@@ -53,6 +53,27 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
         totalPages: 2,
       });
       assert.equal(adminPage.json().data.length, 2);
+      assert.deepEqual(
+        adminPage.json().data.map((line) => line.storeId),
+        [fixture.storeIds.assignedA, fixture.storeIds.assignedB],
+      );
+      const secondPage = await app.inject({
+        method: 'GET',
+        url: `${baseUrl}&page=2&pageSize=2`,
+        headers: { cookie: sessionCookie(fixture.tokens.admin) },
+      });
+      assert.deepEqual(
+        secondPage.json().data.map((line) => line.storeId),
+        [fixture.storeIds.unassigned],
+      );
+
+      const unsafePage = await app.inject({
+        method: 'GET',
+        url: `${baseUrl}&page=9007199254740992&pageSize=1`,
+        headers: { cookie: sessionCookie(fixture.tokens.admin) },
+      });
+      assert.equal(unsafePage.statusCode, 400);
+      assert.equal(unsafePage.json().error.code, 'VALIDATION_ERROR');
 
       const htkdPage = await app.inject({
         method: 'GET',
@@ -69,7 +90,10 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
       const storePage = await app.inject({
         method: 'GET',
         url: `${baseUrl}&pageSize=100`,
-        headers: { cookie: sessionCookie(fixture.tokens.store) },
+        headers: {
+          cookie: sessionCookie(fixture.tokens.store),
+          accept: 'application/vnd.idosi.allocations.v2+json',
+        },
       });
       assert.equal(storePage.statusCode, 200);
       assert.equal(storePage.json().pagination.totalItems, 1);
@@ -81,6 +105,7 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
           waitlistedQuantity: storePage.json().data[0].waitlistedQuantity,
           reasonCode: storePage.json().data[0].reasonCode,
           roundNumber: storePage.json().data[0].roundNumber,
+          rounds: storePage.json().data[0].rounds,
           status: storePage.json().data[0].status,
         },
         {
@@ -89,6 +114,13 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
           waitlistedQuantity: 0,
           reasonCode: 'ALLOCATED_BY_PRIORITY_ROUND_ROBIN',
           roundNumber: 1,
+          rounds: [
+            { roundNumber: 1, allocatedQuantity: 1 },
+            { roundNumber: 2, allocatedQuantity: 1 },
+            { roundNumber: 3, allocatedQuantity: 1 },
+            { roundNumber: 4, allocatedQuantity: 1 },
+            { roundNumber: 5, allocatedQuantity: 1 },
+          ],
           status: 'ALLOCATED',
         },
       );
@@ -116,6 +148,64 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
         headers: { cookie: sessionCookie(fixture.tokens.store) },
       });
       assert.equal(storeDenied.statusCode, 403);
+      const largeRounds = Array.from({ length: 100000 }, (_, index) => index + 1);
+      const largeFixture = await createFixture({
+        quantity: 100000,
+        policyRounds: largeRounds,
+        policyRoundsVersion: 1,
+      });
+      const bounded = await app.inject({
+        method: 'GET',
+        url: `/api/v1/allocations?sessionId=${largeFixture.sessionId}`,
+        headers: {
+          cookie: sessionCookie(largeFixture.tokens.store),
+          accept: 'application/vnd.idosi.allocations.v2+json',
+        },
+      });
+      assert.equal(bounded.statusCode, 200);
+      assert.equal(bounded.json().data[0].allocatedQuantity, 100000);
+      assert.equal(bounded.json().data[0].appliedPriority, 'P1');
+      assert.equal(bounded.json().data[0].roundsOmitted, true);
+      assert.deepEqual(bounded.json().data[0].rounds, []);
+      assert.ok(Buffer.byteLength(bounded.body) < 2000);
+      const [stored] = await db
+        .select({ metadata: allocationLines.decisionMetadata })
+        .from(allocationLines)
+        .where(eq(allocationLines.id, bounded.json().data[0].id));
+      assert.equal(stored.metadata.policyRounds.length, 100000);
+      for (const audit of [
+        { quantity: 2, policyRounds: [1, 1], label: 'duplicate legacy rounds' },
+        { quantity: 100000, policyRounds: largeRounds, label: 'unversioned large legacy audit' },
+        { quantity: 5, policyRounds: largeRounds, label: 'legacy merged source mismatch' },
+        {
+          quantity: 5,
+          policyRounds: largeRounds,
+          policyRoundsVersion: 1,
+          label: 'versioned count mismatch',
+        },
+        { quantity: 101, policyRounds: [...Array(100).fill(1), '1'], label: 'string round' },
+        { quantity: 101, policyRounds: [...Array(100).fill(1), 1.5], label: 'fractional round' },
+        { quantity: 101, policyRounds: [...Array(100).fill(1), 0], label: 'zero round' },
+        {
+          quantity: 101,
+          policyRounds: [...Array(100).fill(1), 9007199254740992],
+          label: 'unsafe round',
+        },
+      ]) {
+        const invalidFixture = await createFixture(audit);
+        const invalid = await app.inject({
+          method: 'GET',
+          url: `/api/v1/allocations?sessionId=${invalidFixture.sessionId}`,
+          headers: {
+            cookie: sessionCookie(invalidFixture.tokens.store),
+            accept: 'application/vnd.idosi.allocations.v2+json',
+          },
+        });
+        assert.equal(invalid.statusCode, 200, audit.label);
+        assert.equal(invalid.json().data[0].roundsOmitted, false, audit.label);
+        assert.deepEqual(invalid.json().data[0].rounds, [], audit.label);
+        assert.ok(Buffer.byteLength(invalid.body) < 2000, audit.label);
+      }
     } finally {
       if (app) await app.close();
       else await repository.close();
@@ -123,7 +213,11 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
   });
 });
 
-async function createFixture() {
+async function createFixture({
+  quantity = 5,
+  policyRounds = [1, 2, 3, 4, 5],
+  policyRoundsVersion,
+} = {}) {
   const suffix = randomUUID();
   const [administrator] = await db
     .select({ id: users.id, tokenVersion: users.tokenVersion })
@@ -232,8 +326,8 @@ async function createFixture() {
         status: 'completed',
         policyVersion: 'idosi-round-robin-p0a-p3-v1',
         idempotencyKey: `allocation-result-test-${suffix}`,
-        requestedQuantity: 15,
-        allocatedQuantity: 8,
+        requestedQuantity: quantity + 10,
+        allocatedQuantity: quantity + 3,
         waitlistedQuantity: 7,
         startedAt: snapshotAt,
         finishedAt: allocationAt,
@@ -246,12 +340,13 @@ async function createFixture() {
     const lineInputs = [
       {
         storeId: storeA.id,
-        requested: 5,
-        allocated: 5,
+        requested: quantity,
+        allocated: quantity,
         waitlisted: 0,
         status: 'allocated',
         requestStatus: 'allocated',
         reasonCode: 'ALLOCATED_BY_PRIORITY_ROUND_ROBIN',
+        policyRounds,
       },
       {
         storeId: storeB.id,
@@ -261,6 +356,7 @@ async function createFixture() {
         status: 'partial',
         requestStatus: 'partially_allocated',
         reasonCode: 'PARTIAL_SNAPSHOT_STOCK',
+        policyRounds: [1, 2, 3],
       },
       {
         storeId: storeC.id,
@@ -270,6 +366,7 @@ async function createFixture() {
         status: 'waitlisted',
         requestStatus: 'waitlisted',
         reasonCode: 'INSUFFICIENT_SNAPSHOT_STOCK',
+        policyRounds: [],
       },
     ];
     for (const [index, input] of lineInputs.entries()) {
@@ -325,6 +422,8 @@ async function createFixture() {
         requestedQuantity: input.requested,
       });
       await tx.insert(allocationLines).values({
+        // Reverse ID order deliberately: pagination must follow planner coordinates.
+        id: `${3 - index}0000000-${randomUUID().slice(9)}`,
         allocationRunId: run.id,
         mergedOrderId: mergedOrder.id,
         storeId: input.storeId,
@@ -332,12 +431,18 @@ async function createFixture() {
         orderRequestItemId: requestItem.id,
         priorityLevel: 'P1',
         roundNumber: 1,
-        sequenceInRound: index + 1,
+        // Tier P1 precedes P3; zero grants sort last despite earlier fallback coordinates.
+        sequenceInRound: index === 0 ? 5 : index === 1 ? 3 : 1,
         requestedQuantity: input.requested,
         allocatedQuantity: input.allocated,
         waitlistedQuantity: input.waitlisted,
         status: input.status,
         reasonCode: input.reasonCode,
+        decisionMetadata: {
+          policyRounds: input.policyRounds,
+          appliedPriority: index === 0 ? 'P1' : 'P3',
+          ...(policyRoundsVersion === undefined ? {} : { policyRoundsVersion }),
+        },
         createdAt: allocationAt,
       });
     }

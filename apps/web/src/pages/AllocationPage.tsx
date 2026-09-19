@@ -328,8 +328,17 @@ export function allocationResultsViewState(input: {
   return 'EMPTY';
 }
 
-function allocationRoundText(result: AllocationResult): string {
-  return `Vòng ${result.roundNumber} · lượt ${result.sequenceInRound}`;
+export function allocationRoundText(
+  result: Pick<AllocationResult, 'allocatedQuantity' | 'rounds' | 'roundsOmitted'>,
+): string {
+  if (result.roundsOmitted)
+    return `Chi tiết vòng vượt giới hạn danh sách; tổng đã cấp: ${result.allocatedQuantity}`;
+  if (result.rounds.length === 0) {
+    return result.allocatedQuantity === 0 ? 'Không có lượt cấp' : 'Chưa có dữ liệu vòng';
+  }
+  return result.rounds
+    .map((round) => `Vòng ${round.roundNumber}: ${round.allocatedQuantity}`)
+    .join(' · ');
 }
 
 type AdminSessionTransition = TransitionOrderSessionRequest['status'];
@@ -1121,8 +1130,13 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                       </td>
                       <td data-label="Ưu tiên / vòng">
                         <Badge tone={result.priority.startsWith('P0') ? 'priority' : 'info'}>
-                          {result.priority}
+                          Nguồn: {result.priority}
                         </Badge>
+                        <small>
+                          {result.appliedPriority
+                            ? `Áp dụng: ${result.appliedPriority}`
+                            : 'Chưa có dữ liệu ưu tiên áp dụng'}
+                        </small>
                         <small>{allocationRoundText(result)}</small>
                       </td>
                       <td className="allocation-result-decision" data-label="Kết quả / lý do">

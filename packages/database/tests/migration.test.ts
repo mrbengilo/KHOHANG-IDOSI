@@ -77,6 +77,7 @@ const idosiStatisticsSnapshot = JSON.parse(
 const storeGroupVersionSnapshot = JSON.parse(
   readFileSync(new URL('../migrations/meta/0006_snapshot.json', import.meta.url), 'utf8'),
 ) as {
+  id: string;
   prevId: string;
   tables: Record<
     string,

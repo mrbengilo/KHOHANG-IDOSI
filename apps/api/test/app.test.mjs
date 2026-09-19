@@ -35,7 +35,12 @@ describe('KHOHANG-IDOSI API', () => {
     assert.ok(specification.json().paths['/api/v1/store-outbounds/{outboundId}/review']);
     assert.ok(specification.json().paths['/api/v1/order-sessions/{sessionId}/transition']);
     assert.ok(specification.json().paths['/api/v1/order-requests/{requestId}/cancel']);
-    assert.ok(specification.json().paths['/api/v1/allocations']);
+    const allocationList = specification.json().paths['/api/v1/allocations'];
+    assert.ok(allocationList);
+    assert.equal(
+      allocationList.get.parameters.find((parameter) => parameter.name === 'page').schema.maximum,
+      Number.MAX_SAFE_INTEGER,
+    );
     assert.ok(specification.json().paths['/api/v1/outbound-requests/{outboundRequestId}/dispatch']);
     assert.ok(specification.json().paths['/api/v1/store-transfers/destinations']);
     assert.ok(specification.json().paths['/api/v1/store-transfers/{transferId}/receive']);
@@ -476,7 +481,7 @@ describe('KHOHANG-IDOSI API', () => {
     const ownResults = await app.inject({
       method: 'GET',
       url: '/api/v1/allocations?page=1&pageSize=100',
-      headers: { cookie: storeCookie },
+      headers: { cookie: storeCookie, accept: 'application/vnd.idosi.allocations.v2+json' },
     });
     assert.equal(ownResults.statusCode, 200);
     assert.equal(ownResults.headers['cache-control'], 'no-store');
@@ -495,6 +500,13 @@ describe('KHOHANG-IDOSI API', () => {
       priority: 'P1',
       roundNumber: 1,
       sequenceInRound: 1,
+      rounds: [
+        { roundNumber: 1, allocatedQuantity: 1 },
+        { roundNumber: 2, allocatedQuantity: 1 },
+        { roundNumber: 3, allocatedQuantity: 1 },
+        { roundNumber: 4, allocatedQuantity: 1 },
+        { roundNumber: 5, allocatedQuantity: 1 },
+      ],
       requestedQuantity: 5,
       allocatedQuantity: 5,
       waitlistedQuantity: 0,
@@ -502,6 +514,36 @@ describe('KHOHANG-IDOSI API', () => {
       reasonCode: 'ALLOCATED_BY_PRIORITY_ROUND_ROBIN',
       createdAt: ownResults.json().data[0].createdAt,
     });
+
+    const legacyResults = await app.inject({
+      method: 'GET',
+      url: '/api/v1/allocations?page=1&pageSize=100',
+      headers: { cookie: storeCookie },
+    });
+    const {
+      rounds: _rounds,
+      appliedPriority: _appliedPriority,
+      ...legacyResult
+    } = ownResults.json().data[0];
+    assert.deepEqual(legacyResults.json().data[0], legacyResult);
+    for (const [accept, hasRounds] of [
+      ['application/vnd.idosi.allocations.v2+json, application/json;q=0.9', true],
+      ['application/vnd.idosi.allocations.v2+json; q=0.5', true],
+      ['application/vnd.idosi.allocations.v2+json;q=0, application/json', false],
+      ['application/vnd.idosi.allocations.v2+json;q=invalid', false],
+    ]) {
+      const negotiated = await app.inject({
+        method: 'GET',
+        url: '/api/v1/allocations?page=1&pageSize=100',
+        headers: { cookie: storeCookie, accept },
+      });
+      assert.equal(negotiated.statusCode, 200);
+      assert.equal(Object.hasOwn(negotiated.json().data[0], 'rounds'), hasRounds);
+      assert.equal(
+        negotiated.headers['content-type'].split(';')[0],
+        hasRounds ? 'application/vnd.idosi.allocations.v2+json' : 'application/json',
+      );
+    }
 
     const denied = await app.inject({
       method: 'GET',
@@ -556,6 +598,14 @@ describe('KHOHANG-IDOSI API', () => {
       headers: { cookie: adminCookie },
     });
     assert.equal(invalidStatus.statusCode, 400);
+
+    const unsafePage = await app.inject({
+      method: 'GET',
+      url: '/api/v1/allocations?page=9007199254740992&pageSize=1',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(unsafePage.statusCode, 400);
+    assert.equal(unsafePage.json().error.code, 'VALIDATION_ERROR');
   });
 
   test('blocks wholesale STORE actors and inactive stores from protected retail actions', async () => {

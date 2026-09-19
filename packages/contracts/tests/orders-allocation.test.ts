@@ -230,6 +230,10 @@ describe('order, allocation and wait-list contracts', () => {
       priority: 'P1',
       roundNumber: 2,
       sequenceInRound: 3,
+      rounds: [
+        { roundNumber: 1, allocatedQuantity: 1 },
+        { roundNumber: 2, allocatedQuantity: 2 },
+      ],
       requestedQuantity: 5,
       allocatedQuantity: 3,
       waitlistedQuantity: 2,
@@ -238,11 +242,45 @@ describe('order, allocation and wait-list contracts', () => {
       createdAt: '2026-09-10T09:00:00Z',
     };
     expect(AllocationResultSchema.safeParse(result).success).toBe(true);
+    const { rounds: _rounds, ...legacy } = result;
+    expect(AllocationResultSchema.parse(legacy).rounds).toEqual([]);
+    expect(
+      AllocationResultSchema.parse({ ...result, priority: 'P3', appliedPriority: 'P1' }),
+    ).toMatchObject({
+      priority: 'P3',
+      appliedPriority: 'P1',
+    });
     expect(AllocationResultSchema.safeParse({ ...result, allocatedQuantity: 4 }).success).toBe(
       false,
     );
+    expect(
+      AllocationResultSchema.safeParse({
+        ...result,
+        rounds: [
+          { roundNumber: 2, allocatedQuantity: 2 },
+          { roundNumber: 1, allocatedQuantity: 1 },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(AllocationResultSchema.safeParse({ ...result, rounds: [] }).success).toBe(true);
+    expect(
+      AllocationResultSchema.safeParse({
+        ...result,
+        allocatedQuantity: 0,
+        waitlistedQuantity: 5,
+        status: 'WAITLISTED',
+        rounds: [],
+      }).success,
+    ).toBe(true);
     expect(ListAllocationsQuerySchema.parse({ status: 'WAITLISTED' }).status).toBe('WAITLISTED');
     expect(ListAllocationsQuerySchema.safeParse({ status: 'RESERVED' }).success).toBe(false);
+    expect(
+      ListAllocationsQuerySchema.safeParse({ page: '9007199254740992', pageSize: '1' }).success,
+    ).toBe(false);
+    expect(
+      ListAllocationsQuerySchema.safeParse({ page: String(Number.MAX_SAFE_INTEGER), pageSize: '2' })
+        .success,
+    ).toBe(false);
   });
 
   it('requires offer expiry after creation and accepted amount for accepted offers', () => {

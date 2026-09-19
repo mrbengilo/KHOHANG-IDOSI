@@ -459,7 +459,32 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     const session = await authenticate(request, repository);
     const query = ListAllocationsQuerySchema.parse(request.query);
     reply.header('cache-control', 'no-store');
-    return repository.listAllocations(session.principal, query);
+    const result = await repository.listAllocations(session.principal, query);
+    const acceptsV2 = request.headers.accept?.split(',').some((range) => {
+      const [mediaType, ...parameters] = range.trim().toLowerCase().split(';');
+      if (mediaType?.trim() !== 'application/vnd.idosi.allocations.v2+json') return false;
+      const qualities = parameters
+        .map((parameter) => parameter.trim())
+        .filter((parameter) => /^q\s*=/u.test(parameter));
+      if (qualities.length === 0) return true;
+      if (qualities.length !== 1) return false;
+      const quality = qualities[0]!.split('=')[1]?.trim() ?? '';
+      return /^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/u.test(quality) && Number(quality) > 0;
+    });
+    if (acceptsV2) return reply.type('application/vnd.idosi.allocations.v2+json').send(result);
+    // Existing browser bundles validate the v1 shape strictly. Opt in to the
+    // expanded projection without changing responses for those clients.
+    return {
+      ...result,
+      data: result.data.map(
+        ({
+          rounds: _rounds,
+          appliedPriority: _appliedPriority,
+          roundsOmitted: _roundsOmitted,
+          ...legacy
+        }) => legacy,
+      ),
+    };
   });
 
   app.post('/api/v1/order-sessions', async (request, reply) => {
@@ -1553,7 +1578,23 @@ function openApiDocument(): Record<string, unknown> {
           summary: 'List persisted allocation results visible to the current store scope',
           security: cookieSecurity,
           parameters: [
-            { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+            {
+              name: 'Accept',
+              in: 'header',
+              description:
+                'Use application/vnd.idosi.allocations.v2+json to include rounds and appliedPriority. Omit for the legacy response shape.',
+              schema: { type: 'string', enum: ['application/vnd.idosi.allocations.v2+json'] },
+            },
+            {
+              name: 'page',
+              in: 'query',
+              schema: {
+                type: 'integer',
+                minimum: 1,
+                maximum: Number.MAX_SAFE_INTEGER,
+                default: 1,
+              },
+            },
             {
               name: 'pageSize',
               in: 'query',

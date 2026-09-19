@@ -123,6 +123,14 @@ export const AllocationResultStatusSchema = z.enum([
 ]);
 export type AllocationResultStatus = z.infer<typeof AllocationResultStatusSchema>;
 
+export const AllocationResultRoundSchema = z
+  .object({
+    roundNumber: z.number().int().positive().safe(),
+    allocatedQuantity: z.number().int().positive().safe(),
+  })
+  .strict();
+export type AllocationResultRound = z.infer<typeof AllocationResultRoundSchema>;
+
 export const AllocationResultSchema = z
   .object({
     id: EntityIdSchema,
@@ -132,8 +140,36 @@ export const AllocationResultSchema = z
     storeId: EntityIdSchema,
     productId: EntityIdSchema,
     priority: AllocationPrioritySchema,
-    roundNumber: z.number().int().positive().safe(),
-    sequenceInRound: z.number().int().positive().safe(),
+    appliedPriority: AllocationPrioritySchema.nullable()
+      .optional()
+      .describe(
+        'Planner priority for the merged demand; priority retains the original source priority. Unknown for legacy rows.',
+      ),
+    roundNumber: z
+      .number()
+      .int()
+      .positive()
+      .safe()
+      .describe('Deprecated persistence coordinate; use rounds for policy-round audit data.'),
+    sequenceInRound: z
+      .number()
+      .int()
+      .positive()
+      .safe()
+      .describe('Deprecated persistence coordinate; use rounds for policy-round audit data.'),
+    rounds: z
+      .array(AllocationResultRoundSchema)
+      .max(100)
+      .default([])
+      .describe(
+        'Complete allocated quantity grouped by planner round when within the 100-grant list budget; empty for zero-grant, omitted, or legacy metadata.',
+      ),
+    roundsOmitted: z
+      .boolean()
+      .optional()
+      .describe(
+        'True when complete round audit exceeds the list detail budget; stored audit is unchanged.',
+      ),
     requestedQuantity: z.number().int().positive().safe(),
     allocatedQuantity: z.number().int().nonnegative().safe(),
     waitlistedQuantity: z.number().int().nonnegative().safe(),
@@ -150,6 +186,32 @@ export const AllocationResultSchema = z
         message: 'Allocated and waitlisted quantities cannot exceed the requested quantity',
       });
     }
+    const roundNumbers = result.rounds.map((round) => round.roundNumber);
+    if (roundNumbers.some((round, index) => index > 0 && round <= roundNumbers[index - 1]!)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['rounds'],
+        message: 'Allocation rounds must be unique and ordered by round number',
+      });
+    }
+    const roundAllocatedQuantity = result.rounds.reduce(
+      (total, round) => total + round.allocatedQuantity,
+      0,
+    );
+    if (result.rounds.length > 0 && roundAllocatedQuantity !== result.allocatedQuantity) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['rounds'],
+        message: 'Allocation round quantities must equal the allocated quantity',
+      });
+    }
+    if (result.allocatedQuantity === 0 && result.rounds.length > 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['rounds'],
+        message: 'Zero-grant allocation results cannot contain planner rounds',
+      });
+    }
   });
 export type AllocationResult = z.infer<typeof AllocationResultSchema>;
 
@@ -159,7 +221,17 @@ export const ListAllocationsQuerySchema = PaginationQuerySchema.extend({
   productId: EntityIdSchema.optional(),
   status: AllocationResultStatusSchema.optional(),
   priority: AllocationPrioritySchema.optional(),
-}).strict();
+})
+  .strict()
+  .superRefine((query, context) => {
+    if (!Number.isSafeInteger((query.page - 1) * query.pageSize)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['page'],
+        message: 'Pagination offset exceeds the safe integer range',
+      });
+    }
+  });
 export type ListAllocationsQuery = z.infer<typeof ListAllocationsQuerySchema>;
 
 export const ListAllocationsResponseSchema = z

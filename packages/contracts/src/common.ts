@@ -59,8 +59,8 @@ export const AuditReasonSchema = z.string().trim().min(3).max(500);
 
 export const PaginationQuerySchema = z
   .object({
-    page: z.coerce.number().int().min(1).default(1),
-    pageSize: z.coerce.number().int().min(1).max(100).default(20),
+    page: z.coerce.number().int().min(1).safe().default(1),
+    pageSize: z.coerce.number().int().min(1).max(100).safe().default(20),
   })
   .strict();
 export type PaginationQuery = z.infer<typeof PaginationQuerySchema>;

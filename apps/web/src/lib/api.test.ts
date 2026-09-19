@@ -345,6 +345,10 @@ describe('API projections', () => {
       requestedQuantity: 5,
       roundNumber: 2,
       sequenceInRound: 4,
+      rounds: [
+        { roundNumber: 1, allocatedQuantity: 1 },
+        { roundNumber: 2, allocatedQuantity: 2 },
+      ],
       sessionId,
       status: 'PARTIAL',
       storeId,
@@ -373,6 +377,22 @@ describe('API projections', () => {
       `/allocations?page=2&pageSize=20&sessionId=${sessionId}&status=PARTIAL&storeId=${storeId}`,
     );
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ credentials: 'include' });
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('Accept')).toBe(
+      'application/vnd.idosi.allocations.v2+json',
+    );
+    const { rounds: _rounds, ...legacyAllocation } = allocation;
+    fetchMock.mockImplementationOnce(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            data: [legacyAllocation],
+            pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 },
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    expect((await listAllocationResults()).data[0]?.rounds).toEqual([]);
   });
 
   it('loads receipt detail and sends every receipt transition with idempotency', async () => {
