@@ -51,7 +51,7 @@ const ticketStatusLabel: Record<WaitTicket['status'], string> = {
 };
 
 const offerStatusLabel: Record<PriorityOfferRecord['status'], string> = {
-  ACCEPTED: 'Đã nhận đủ',
+  ACCEPTED: 'Đã xác nhận ưu tiên',
   CANCELLED: 'Đã hủy',
   DECLINED: 'Đã từ chối',
   EXPIRED: 'Hết hạn',
@@ -177,7 +177,7 @@ export function WaitlistPanel({
       offerAttempt.current = null;
       setNotice(
         input.action === 'ACCEPT'
-          ? 'Máy chủ đã ghi nhận nhận đủ lượt ưu tiên.'
+          ? 'Đã xác nhận ưu tiên. Hàng được cấp sẽ giữ lại và giao chung với đơn thường kế tiếp, không tính vào 2 lượt đặt hàng.'
           : 'Máy chủ đã ghi nhận từ chối lượt ưu tiên.',
       );
       await refetchWaitState();
@@ -275,7 +275,7 @@ export function WaitlistPanel({
             <h2>{title}</h2>
             <p>
               {canRespond
-                ? 'Dữ liệu trực tiếp từ máy chủ; nhận ưu tiên phải nhận đủ số lượng được đề nghị.'
+                ? 'Xác nhận toàn bộ số lượng ưu tiên được đề nghị. Hàng được cấp sẽ giữ lại để giao chung với đơn thường kế tiếp, không chiếm lượt đặt thường.'
                 : 'Chế độ giám sát chỉ đọc; phản hồi ưu tiên chỉ xuất hiện cho đúng cửa hàng.'}
             </p>
           </div>
