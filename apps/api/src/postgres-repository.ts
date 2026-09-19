@@ -1,4 +1,6 @@
+import { prepareOrderingContext as prepareDatabaseOrdering } from '@idosi/database';
 import type {
+  OrderingContext,
   Account,
   AdminAuditLog,
   AllocationResult,
@@ -1562,6 +1564,23 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         return result;
       }),
     );
+  }
+
+  public async prepareOrderingContext(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+    context: RequestContext,
+  ): Promise<OrderingContext> {
+    if (!canAccessStore(actor, storeId))
+      throw forbidden('Không có quyền đặt hàng cho cửa hàng này');
+    try {
+      const result = await prepareDatabaseOrdering(db, actor.accountId, storeId, context.requestId);
+      return { session: orderSessionDto(result.session), usedSlots: result.usedSlots, maxSlots: 2 };
+    } catch (error) {
+      if (error instanceof OrderRequestAuthorizationError)
+        throw forbidden('Không có quyền đặt hàng cho cửa hàng này');
+      throw error;
+    }
   }
 
   public async listStores(

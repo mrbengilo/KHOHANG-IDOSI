@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, count, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
@@ -83,112 +83,133 @@ export function isRequestDeadlineClosed(requestDeadlineAt: Date, instant: Date):
   return requestDeadlineAt.getTime() <= instant.getTime();
 }
 
+/** Closing a window is not a quota reset. Only a completed allocation starts a new cycle.
+ * Orders already queued for the next session still consume that session's two slots. */
+export async function countOrderingQuota(
+  tx: Transaction,
+  storeId: string,
+  sessionId: string,
+): Promise<number> {
+  const [row] = await tx
+    .select({ value: count() })
+    .from(orderRequests)
+    .where(
+      and(
+        eq(orderRequests.storeId, storeId),
+        or(
+          eq(orderRequests.orderSessionId, sessionId),
+          sql`${orderRequests.submittedAt} > coalesce((select max(s.completed_at) from order_sessions s where s.status = 'completed' and s.deleted_at is null and exists (select 1 from order_requests r where r.order_session_id = s.id and r.store_id = ${storeId})), '-infinity'::timestamptz)`,
+        ),
+      ),
+    );
+  return row?.value ?? 0;
+}
+
 export async function createOrderRequest(
   tx: Transaction,
   input: CreateOrderRequestInput,
 ): Promise<CreatedOrderRequest> {
   validateItems(input.items);
 
-  return withAdvisoryLock(
-    tx,
-    'order-request-slot',
-    `${input.orderSessionId}:${input.storeId}`,
-    async () => {
-      const [session] = await tx
-        .select({
-          id: orderSessions.id,
-          status: orderSessions.status,
-          openedAt: orderSessions.openedAt,
-          requestClosesAt: orderSessions.inventorySnapshotDueAt,
-          deletedAt: orderSessions.deletedAt,
-        })
-        .from(orderSessions)
-        .where(eq(orderSessions.id, input.orderSessionId))
-        .limit(1);
+  return withAdvisoryLock(tx, 'order-request-slot', input.storeId, async () => {
+    const [session] = await tx
+      .select({
+        id: orderSessions.id,
+        status: orderSessions.status,
+        openedAt: orderSessions.openedAt,
+        requestClosesAt: orderSessions.inventorySnapshotDueAt,
+        deletedAt: orderSessions.deletedAt,
+      })
+      .from(orderSessions)
+      .where(eq(orderSessions.id, input.orderSessionId))
+      .for('share')
+      .limit(1);
 
-      const now = new Date();
-      if (
-        !session ||
-        session.status !== 'open' ||
-        session.deletedAt !== null ||
-        (session.openedAt !== null && session.openedAt.getTime() > now.getTime()) ||
-        isRequestDeadlineClosed(session.requestClosesAt, now)
-      ) {
-        throw new OrderSessionUnavailableError();
-      }
+    const now = new Date();
+    if (
+      !session ||
+      session.status !== 'open' ||
+      session.deletedAt !== null ||
+      (session.openedAt !== null && session.openedAt.getTime() > now.getTime()) ||
+      isRequestDeadlineClosed(session.requestClosesAt, now)
+    ) {
+      throw new OrderSessionUnavailableError();
+    }
 
-      await assertUserMayAccessStore(tx, input.requestedByUserId, input.storeId);
-      await assertProductsAreActive(
-        tx,
-        input.items.map((item) => item.productId),
-      );
+    await assertUserMayAccessStore(tx, input.requestedByUserId, input.storeId);
+    if ((await countOrderingQuota(tx, input.storeId, input.orderSessionId)) >= 2) {
+      throw new RequestLimitExceededError(input.orderSessionId, input.storeId);
+    }
+    await assertProductsAreActive(
+      tx,
+      input.items.map((item) => item.productId),
+    );
 
-      return withStoreProductWaitLocks(
-        tx,
-        input.storeId,
-        input.items.map((item) => item.productId),
-        async () => {
-          await assertNoActiveWaitTickets(
-            tx,
-            input.storeId,
-            input.items.map((item) => item.productId),
+    return withStoreProductWaitLocks(
+      tx,
+      input.storeId,
+      input.items.map((item) => item.productId),
+      async () => {
+        await assertNoActiveWaitTickets(
+          tx,
+          input.storeId,
+          input.items.map((item) => item.productId),
+        );
+
+        // The advisory lock makes slot selection atomic. The CHECK + UNIQUE constraints remain
+        // the final guard against bypasses and guarantee that a third request cannot be stored.
+        const existingRequests = await tx
+          .select({ requestNumber: orderRequests.requestNumber })
+          .from(orderRequests)
+          .where(
+            and(
+              eq(orderRequests.orderSessionId, input.orderSessionId),
+              eq(orderRequests.storeId, input.storeId),
+            ),
           );
 
-          // The advisory lock makes slot selection atomic. The CHECK + UNIQUE constraints remain
-          // the final guard against bypasses and guarantee that a third request cannot be stored.
-          const existingRequests = await tx
-            .select({ requestNumber: orderRequests.requestNumber })
-            .from(orderRequests)
-            .where(
-              and(
-                eq(orderRequests.orderSessionId, input.orderSessionId),
-                eq(orderRequests.storeId, input.storeId),
-              ),
-            );
+        const usedSlots = new Set(existingRequests.map((request) => request.requestNumber));
+        const requestNumber = usedSlots.has(1) ? (usedSlots.has(2) ? null : 2) : 1;
 
-          const usedSlots = new Set(existingRequests.map((request) => request.requestNumber));
-          const requestNumber = usedSlots.has(1) ? (usedSlots.has(2) ? null : 2) : 1;
+        if (requestNumber === null) {
+          throw new RequestLimitExceededError(input.orderSessionId, input.storeId);
+        }
 
-          if (requestNumber === null) {
-            throw new RequestLimitExceededError(input.orderSessionId, input.storeId);
-          }
+        const [createdRequest] = await tx
+          .insert(orderRequests)
+          .values({
+            orderSessionId: input.orderSessionId,
+            storeId: input.storeId,
+            requestNumber,
+            status: 'submitted',
+            requestedByUserId: input.requestedByUserId,
+            submittedAt: now,
+            notes: input.notes ?? null,
+          })
+          .returning({
+            id: orderRequests.id,
+            requestNumber: orderRequests.requestNumber,
+            submittedAt: orderRequests.submittedAt,
+          });
 
-          const [createdRequest] = await tx
-            .insert(orderRequests)
-            .values({
-              orderSessionId: input.orderSessionId,
-              storeId: input.storeId,
-              requestNumber,
-              status: 'submitted',
-              requestedByUserId: input.requestedByUserId,
-              submittedAt: now,
-              notes: input.notes ?? null,
-            })
-            .returning({
-              id: orderRequests.id,
-              requestNumber: orderRequests.requestNumber,
-              submittedAt: orderRequests.submittedAt,
-            });
+        if (!createdRequest) {
+          throw new Error('Order request insert returned no row.');
+        }
 
-          if (!createdRequest) {
-            throw new Error('Order request insert returned no row.');
-          }
+        await tx.insert(orderRequestItems).values(
+          input.items.map((item) => ({
+            orderRequestId: createdRequest.id,
+            productId: item.productId,
+            requestedQuantity: item.quantity,
+            priorityLevel: 'P1' as const,
+            notes: item.notes ?? null,
+          })),
+        );
 
-          await tx.insert(orderRequestItems).values(
-            input.items.map((item) => ({
-              orderRequestId: createdRequest.id,
-              productId: item.productId,
-              requestedQuantity: item.quantity,
-              priorityLevel: 'P1' as const,
-              notes: item.notes ?? null,
-            })),
-          );
-
-          return { ...createdRequest, submittedAt: createdRequest.submittedAt ?? now };
-        },
-      );
-    },
-  );
+        return { ...createdRequest, submittedAt: createdRequest.submittedAt ?? now };
+      },
+    );
+  });
 }
 
 export async function submitOrderRequest(
@@ -239,7 +260,7 @@ function validateItems(items: readonly CreateOrderRequestItemInput[]): void {
   }
 }
 
-async function assertUserMayAccessStore(
+export async function assertUserMayAccessStore(
   tx: Transaction,
   userId: string,
   storeId: string,

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { nextOrderingWindow, type OrderingContext } from '@idosi/contracts';
 
 import type {
   Account,
@@ -794,6 +795,93 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         errorCode: attempt.errorCode,
       },
     );
+  }
+
+  private orderingQuota(storeId: string, sessionId: string): number {
+    const lastCompletedAt = Math.max(
+      0,
+      ...[...this.orderSessions.values()]
+        .filter(
+          (session) =>
+            session.status === 'ALLOCATED' &&
+            [...this.orderRequests.values()].some(
+              (request) => request.storeId === storeId && request.sessionId === session.id,
+            ),
+        )
+        .map((session) => Date.parse(session.updatedAt)),
+    );
+    return [...this.orderRequests.values()].filter(
+      (request) =>
+        request.storeId === storeId &&
+        (request.sessionId === sessionId || Date.parse(request.submittedAt) > lastCompletedAt),
+    ).length;
+  }
+
+  public async prepareOrderingContext(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+    context: RequestContext,
+  ): Promise<OrderingContext> {
+    if (!canAccessStore(actor, storeId) || this.stores.get(storeId)?.status !== 'ACTIVE')
+      throw forbidden();
+    const now = this.now();
+    const open = [...this.orderSessions.values()]
+      .filter(
+        (session) =>
+          session.status === 'OPEN' &&
+          Date.parse(session.requestOpensAt) <= now.getTime() &&
+          Date.parse(session.requestClosesAt) > now.getTime(),
+      )
+      .sort((a, b) => a.requestClosesAt.localeCompare(b.requestClosesAt))[0];
+    if (open)
+      return { session: open, usedSlots: this.orderingQuota(storeId, open.id), maxSlots: 2 };
+    const settings = this.operationalSettings.at(-1)!;
+    let window = nextOrderingWindow(now, settings.snapshotTime, settings.cutoffTime);
+    for (let attempt = 0; attempt < 31; attempt += 1) {
+      const existing = [...this.orderSessions.values()].find(
+        (session) => session.businessDate === window.businessDate && session.status !== 'CANCELLED',
+      );
+      if (
+        !existing ||
+        (['SCHEDULED', 'OPEN'].includes(existing.status) &&
+          Date.parse(existing.requestClosesAt) > now.getTime())
+      ) {
+        const session: OrderSession = existing
+          ? {
+              ...existing,
+              status: 'OPEN',
+              requestOpensAt: now.toISOString(),
+              updatedAt: now.toISOString(),
+              version: existing.version + 1,
+            }
+          : {
+              ...window,
+              id: randomUUID(),
+              status: 'OPEN',
+              policyVersion: settings.policyVersion,
+              version: 0,
+              createdAt: now.toISOString(),
+              updatedAt: now.toISOString(),
+            };
+        this.orderSessions.set(session.id, session);
+        this.appendAudit(
+          actor,
+          context,
+          'ORDER_SESSION_AUTO_OPENED',
+          'order_session',
+          session.id,
+          existing ?? null,
+          session,
+        );
+        return { session, usedSlots: this.orderingQuota(storeId, session.id), maxSlots: 2 };
+      }
+      window = nextOrderingWindow(
+        new Date(window.allocationStartsAt),
+        settings.snapshotTime,
+        settings.cutoffTime,
+      );
+    }
+    throw conflict('Không tìm được đợt phân bổ kế tiếp.');
   }
 
   public async listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>> {
@@ -1754,6 +1842,18 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const targetStore = this.stores.get(input.storeId);
     if (!targetStore) throw notFound('Không tìm thấy cửa hàng');
     if (targetStore.status !== 'ACTIVE') throw forbidden();
+    const scopedKey = `${actor.accountId}:${idempotencyKey}`;
+    const previous = this.idempotency.get(scopedKey);
+    if (previous) {
+      if (previous.requestHash !== requestHash) {
+        throw new ApiError(
+          'IDEMPOTENCY_CONFLICT',
+          'Khóa idempotency đã được dùng cho nội dung khác',
+          409,
+        );
+      }
+      return { data: previous.response, replayed: true };
+    }
     const session = this.orderSessions.get(input.businessSessionId);
     if (
       !session ||
@@ -1768,25 +1868,12 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         throw notFound('Có mặt hàng không tồn tại hoặc đã ngừng dùng');
     }
 
-    const scopedKey = `${actor.accountId}:${idempotencyKey}`;
-    const previous = this.idempotency.get(scopedKey);
-    if (previous) {
-      if (previous.requestHash !== requestHash) {
-        throw new ApiError(
-          'IDEMPOTENCY_CONFLICT',
-          'Khóa idempotency đã được dùng cho nội dung khác',
-          409,
-        );
-      }
-      return { data: previous.response, replayed: true };
-    }
-
     // No await occurs between counting and insertion: this is one atomic event-loop turn.
     const existing = [...this.orderRequests.values()].filter(
       (request) =>
         request.sessionId === input.businessSessionId && request.storeId === input.storeId,
     );
-    if (existing.length >= 2) {
+    if (existing.length >= 2 || this.orderingQuota(input.storeId, input.businessSessionId) >= 2) {
       throw new ApiError(
         'REQUEST_LIMIT_REACHED',
         'Mỗi cửa hàng chỉ được gửi tối đa hai yêu cầu trong một phiên',

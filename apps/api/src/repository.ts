@@ -1,4 +1,5 @@
 import type {
+  OrderingContext,
   Account,
   AdminAuditLog,
   AllocationResult,
@@ -286,6 +287,11 @@ export interface WarehouseRepository {
   ): Promise<void>;
 
   listOrderSessions(query: ListOrderSessionsQuery): Promise<Page<OrderSession>>;
+  prepareOrderingContext(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+    context: RequestContext,
+  ): Promise<OrderingContext>;
   listAllocations(
     actor: AuthenticatedPrincipal,
     query: ListAllocationsQuery,

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   AccountParamsSchema,
+  PrepareOrderingRequestSchema,
   CancelInboundReceiptRequestSchema,
   CancelStoreOrderRequestSchema,
   CancelWaitTicketRequestSchema,
@@ -453,6 +454,18 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     await authenticate(request, repository);
     const query = ListOrderSessionsQuerySchema.parse(request.query);
     return repository.listOrderSessions(query);
+  });
+
+  app.post('/api/v1/ordering-context', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    const { storeId } = PrepareOrderingRequestSchema.parse(request.body);
+    const data = await repository.prepareOrderingContext(
+      session.principal,
+      storeId,
+      requestContext(request),
+    );
+    reply.header('cache-control', 'no-store');
+    return { data };
   });
 
   app.get('/api/v1/allocations', async (request, reply) => {
@@ -1558,6 +1571,32 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: { '200': { description: 'Dispatched or replayed warehouse outbound' } },
+        },
+      },
+      '/api/v1/ordering-context': {
+        post: {
+          summary:
+            'Idempotently prepare the next allocation session and read the two-request quota for an authorized store',
+          security: cookieSecurity,
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['storeId'],
+                  additionalProperties: false,
+                  properties: { storeId: { type: 'string', format: 'uuid' } },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Next session and current normal-order quota, excluding priority offers',
+            },
+            '403': { description: 'Store outside active account scope' },
+          },
         },
       },
       '/api/v1/order-sessions': {

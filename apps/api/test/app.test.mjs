@@ -53,6 +53,80 @@ describe('KHOHANG-IDOSI API', () => {
     assert.ok(specification.json().paths['/api/v1/integrations/idosi/order-statistics/sync']);
   });
 
+  test('prepares continuous ordering with scoped stores, two slots and cutoff-safe replay', async () => {
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const headers = { cookie: storeCookie };
+    const prepare = () =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/ordering-context',
+        headers,
+        payload: { storeId: MEMORY_SEED_IDS.nvtStore },
+      });
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/v1/ordering-context',
+          payload: { storeId: MEMORY_SEED_IDS.nvtStore },
+        })
+      ).statusCode,
+      401,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/v1/ordering-context',
+          headers,
+          payload: { storeId: MEMORY_SEED_IDS.bdStore },
+        })
+      ).statusCode,
+      403,
+    );
+    const initial = await prepare();
+    assert.equal(initial.statusCode, 200, initial.body);
+    const context = initial.json().data;
+    assert.equal(context.maxSlots, 2);
+    assert.equal(context.usedSlots, 0);
+    assert.equal((await prepare()).json().data.session.id, context.session.id);
+    const payload = {
+      businessSessionId: context.session.id,
+      storeId: MEMORY_SEED_IDS.nvtStore,
+      items: [{ productId: await firstProductId(storeCookie), quantity: 1 }],
+    };
+    const submit = (key) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/order-requests',
+        headers: { ...headers, 'idempotency-key': key },
+        payload,
+      });
+    const first = await submit('continuous-first-order');
+    assert.equal(first.statusCode, 201, first.body);
+    assert.equal((await prepare()).json().data.usedSlots, 1);
+    assert.equal((await submit('continuous-second-order')).statusCode, 201);
+    assert.equal(
+      (await submit('continuous-third-order')).json().error.code,
+      'REQUEST_LIMIT_REACHED',
+    );
+    assert.equal((await prepare()).json().data.usedSlots, 2);
+    const adminCookie = cookieOf(await login('admin'));
+    const closed = await app.inject({
+      method: 'POST',
+      url: `/api/v1/order-sessions/${context.session.id}/transition`,
+      headers: { cookie: adminCookie, 'idempotency-key': 'continuous-close-session' },
+      payload: { status: 'CLOSED', expectedVersion: context.session.version },
+    });
+    assert.equal(closed.statusCode, 200, closed.body);
+    const replay = await submit('continuous-first-order');
+    assert.equal(replay.statusCode, 201);
+    assert.equal(replay.headers['idempotency-replayed'], 'true');
+    const next = (await prepare()).json().data;
+    assert.notEqual(next.session.id, context.session.id);
+    assert.equal(next.usedSlots, 2);
+  });
+
   test('versions operational settings for ADMIN without accepting or returning secrets', async () => {
     await app.close();
     app = await createApi({

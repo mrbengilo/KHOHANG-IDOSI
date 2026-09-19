@@ -39,6 +39,7 @@ function validateOrderSessionWindow(
     readonly allocationStartsAt: string;
   },
   context: z.RefinementCtx,
+  allowEarlierOpening = false,
 ): void {
   if (Date.parse(value.requestOpensAt) >= Date.parse(value.requestClosesAt)) {
     context.addIssue({
@@ -55,6 +56,7 @@ function validateOrderSessionWindow(
     });
   }
   for (const field of ['requestOpensAt', 'requestClosesAt', 'allocationStartsAt'] as const) {
+    if (field === 'requestOpensAt' && allowEarlierOpening) continue;
     if (hoChiMinhBusinessDate(value[field]) !== value.businessDate) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -89,7 +91,7 @@ export const OrderSessionSchema = z
     updatedAt: IsoDateTimeSchema,
   })
   .strict()
-  .superRefine(validateOrderSessionWindow);
+  .superRefine((value, context) => validateOrderSessionWindow(value, context, true));
 export type OrderSession = z.infer<typeof OrderSessionSchema>;
 
 export const OrderSessionParamsSchema = z.object({ sessionId: EntityIdSchema }).strict();
