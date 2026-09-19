@@ -2766,6 +2766,35 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(audit.json().pagination.totalItems, 2);
   });
 
+  test('returns a retryable conflict after database contention without leaking SQL', async () => {
+    const cookie = cookieOf(await login('admin'));
+    const productId = await firstProductId(cookie);
+    const receive = repository.receiveSupplierInbound.bind(repository);
+    for (const code of ['40001', '40P01']) {
+      repository.receiveSupplierInbound = async () => {
+        throw new Error('sensitive SQL must not leave the server', {
+          cause: Object.assign(new Error('database conflict'), { code }),
+        });
+      };
+      const response = await mutateReceipt(
+        cookie,
+        'POST',
+        '/api/v1/inbound-receipts',
+        `contention-${code}`,
+        {
+          referenceCode: `CONTENTION-${code}`,
+          supplierName: 'Test',
+          receivedAt: '2026-09-17T08:00:00+07:00',
+          bags: [{ productId, bagCode: `CONTENTION-BAG-${code}`, weightKg: '1.000' }],
+        },
+      );
+      assert.equal(response.statusCode, 409);
+      assert.equal(response.json().error.code, 'CONFLICT');
+      assert.ok(!response.body.includes('sensitive SQL'));
+    }
+    repository.receiveSupplierInbound = receive;
+  });
+
   test('receives supplier bags into warehouse stock and confirms exact costs idempotently', async () => {
     const adminCookie = cookieOf(await login('admin'));
     const storeCookie = cookieOf(await login('ds_nvt'));

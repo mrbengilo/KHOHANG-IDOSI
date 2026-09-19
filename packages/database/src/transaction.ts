@@ -80,7 +80,7 @@ export async function withAdvisoryLock<T>(
   return operation();
 }
 
-function isRetryableTransactionError(error: unknown): boolean {
+export function isRetryableTransactionError(error: unknown): boolean {
   let current = error;
   const visited = new Set<object>();
 

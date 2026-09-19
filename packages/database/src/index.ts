@@ -235,7 +235,12 @@ export {
 } from './seed-data.js';
 export type { ProductConversionSeed, ProductSeed, StoreGroupSeed, StoreSeed } from './seed-data.js';
 
-export { withAdvisoryLock, withSerializableTransaction, withTransaction } from './transaction.js';
+export {
+  withAdvisoryLock,
+  withSerializableTransaction,
+  withTransaction,
+  isRetryableTransactionError,
+} from './transaction.js';
 export type {
   RetryableTransactionOptions,
   Transaction,

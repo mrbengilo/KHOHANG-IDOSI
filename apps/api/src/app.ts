@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isRetryableTransactionError } from '@idosi/database';
 
 import {
   UpdateInboundVatRequestSchema,
@@ -218,6 +219,18 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
       return reply
         .status(400)
         .send(errorEnvelope('VALIDATION_ERROR', 'Nội dung JSON không hợp lệ', request.id));
+    }
+    if (isRetryableTransactionError(error)) {
+      request.log.warn({ requestId: request.id }, 'transaction contention exhausted retry budget');
+      return reply
+        .status(409)
+        .send(
+          errorEnvelope(
+            'CONFLICT',
+            'Dữ liệu đang được xử lý đồng thời. Vui lòng thử lại thao tác.',
+            request.id,
+          ),
+        );
     }
     request.log.error({ err: error, requestId: request.id }, 'request failed');
     return reply
