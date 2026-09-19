@@ -432,6 +432,18 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   await page.getByRole('checkbox').nth(1).check();
   await page.getByRole('checkbox').nth(1).uncheck();
   await expect(page.getByRole('spinbutton')).toHaveCount(1);
+  for (const width of [360, 390, 768, 1366, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect
+      .poll(() => page.evaluate(() => document.body.scrollWidth <= innerWidth))
+      .toBe(true);
+    const checkbox = (await page.getByRole('checkbox').first().boundingBox())!;
+    const quantity = (await page.getByRole('spinbutton').boundingBox())!;
+    expect(
+      Math.abs(checkbox.y + checkbox.height / 2 - quantity.y - quantity.height / 2),
+    ).toBeLessThan(2);
+    expect(quantity.x).toBeGreaterThan(checkbox.x + checkbox.width);
+  }
 
   const orderResponsePromise = page.waitForResponse(
     (response) =>

@@ -33,6 +33,12 @@ test('Admin selects products and persists exactly the selected bags in the wareh
     const plus = await page.getByRole('button', { name: /^Tăng số bao/ }).boundingBox();
     expect(plus?.width).toBeGreaterThanOrEqual(44);
     expect(plus?.height).toBeGreaterThanOrEqual(44);
+    const checkbox = (await page.getByRole('checkbox').first().boundingBox())!;
+    const quantity = (await page.getByRole('spinbutton').boundingBox())!;
+    expect(
+      Math.abs(checkbox.y + checkbox.height / 2 - quantity.y - quantity.height / 2),
+    ).toBeLessThan(2);
+    expect(quantity.x).toBeGreaterThan(checkbox.x + checkbox.width);
   }
   await page.screenshot({
     path: testInfo.outputPath('warehouse-inbound-desktop.png'),

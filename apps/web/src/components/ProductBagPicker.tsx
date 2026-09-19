@@ -32,18 +32,20 @@ export function ProductBagPicker({
         const inputId = `${prefix}-${product.id}`;
         return (
           <div className="bag-picker__item" key={product.id}>
-            <label className="bag-picker__choice">
-              <input
-                type="checkbox"
-                checked={selected}
-                onChange={(event) => onSelect(product.id, event.target.checked)}
-              />
-              <span>{product.name}</span>
-            </label>
-            {selected ? (
-              <div className="bag-picker__details">
-                <label htmlFor={inputId}>Số bao — {product.name}</label>
+            <div className="bag-picker__row">
+              <label className="bag-picker__choice">
+                <input
+                  type="checkbox"
+                  checked={selected}
+                  onChange={(event) => onSelect(product.id, event.target.checked)}
+                />
+                <span>{product.name}</span>
+              </label>
+              {selected ? (
                 <div className="bag-picker__stepper">
+                  <label className="sr-only" htmlFor={inputId}>
+                    Số bao — {product.name}
+                  </label>
                   <Button
                     tone="secondary"
                     aria-label={`Giảm số bao ${product.name}`}
@@ -79,8 +81,10 @@ export function ProductBagPicker({
                     +
                   </Button>
                 </div>
-                {renderDetails?.(product.id)}
-              </div>
+              ) : null}
+            </div>
+            {selected && renderDetails ? (
+              <div className="bag-picker__details">{renderDetails(product.id)}</div>
             ) : null}
           </div>
         );
