@@ -213,7 +213,7 @@ describePostgres('supplier inbound PostgreSQL lifecycle', () => {
     });
     if (received.replayed) throw new Error('Unexpected replay');
     const receiptId = received.value.receiptId;
-    await confirmSupplierInboundCosts(db, {
+    const unknownVatConfirmation = await confirmSupplierInboundCosts(db, {
       receiptId,
       expectedVersion: 0,
       productCosts: [{ productId: fixture.productId, priceVndPerKg: 1000n }],
@@ -225,6 +225,10 @@ describePostgres('supplier inbound PostgreSQL lifecycle', () => {
       requestHash: randomUUID(),
     });
     const before = await balanceFor(fixture.productId);
+    expect(unknownVatConfirmation.replayed).toBe(false);
+    if (!unknownVatConfirmation.replayed) {
+      expect(unknownVatConfirmation.value.totalCostVnd).toBeNull();
+    }
     const input = {
       receiptId,
       expectedVersion: 1,

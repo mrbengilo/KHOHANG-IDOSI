@@ -85,7 +85,7 @@ export interface ConfirmedSupplierInboundCosts {
   readonly goodsCostVnd: bigint;
   readonly transportationFeeVnd: bigint;
   readonly handlingFeeVnd: bigint;
-  readonly totalCostVnd: bigint;
+  readonly totalCostVnd: bigint | null;
 }
 
 export interface CancelSupplierInboundInput extends SupplierInboundRequestContext {
@@ -546,7 +546,7 @@ export async function confirmSupplierInboundCostsInTransaction(
         transportationFeeVnd: input.transportationFeeVnd.toString(),
         handlingFeeVnd: input.handlingFeeVnd.toString(),
         vatAmountVnd: receipt.vatAmountVnd?.toString() ?? null,
-        totalCostVnd: totalCostVnd.toString(),
+        totalCostVnd: receipt.vatAmountVnd === null ? null : totalCostVnd.toString(),
       },
       ipAddress: input.ipAddress ?? null,
       userAgent: input.userAgent ?? null,
@@ -559,7 +559,7 @@ export async function confirmSupplierInboundCostsInTransaction(
       goodsCostVnd,
       transportationFeeVnd: input.transportationFeeVnd,
       handlingFeeVnd: input.handlingFeeVnd,
-      totalCostVnd,
+      totalCostVnd: receipt.vatAmountVnd === null ? null : totalCostVnd,
     };
   });
 }
@@ -988,6 +988,6 @@ function supplierInboundCostBody(result: ConfirmedSupplierInboundCosts): JsonObj
     goodsCostVnd: result.goodsCostVnd.toString(),
     transportationFeeVnd: result.transportationFeeVnd.toString(),
     handlingFeeVnd: result.handlingFeeVnd.toString(),
-    totalCostVnd: result.totalCostVnd.toString(),
+    totalCostVnd: result.totalCostVnd?.toString() ?? null,
   };
 }

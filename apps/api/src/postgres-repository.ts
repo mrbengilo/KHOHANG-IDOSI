@@ -3175,9 +3175,9 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
             productCosts,
             transportationFeeVnd: safeVnd(receipt.totalShippingCostVnd),
             handlingFeeVnd: safeVnd(receipt.totalHandlingCostVnd),
-            vatAmountVnd: safeVnd(receipt.vatAmountVnd ?? 0n),
+            vatAmountVnd: receipt.vatAmountVnd === null ? null : safeVnd(receipt.vatAmountVnd),
             goodsCostVnd: safeVnd(receipt.totalGoodsCostVnd),
-            totalCostVnd: safeVnd(totalCostVnd),
+            totalCostVnd: receipt.vatAmountVnd === null ? null : safeVnd(totalCostVnd),
             confirmedByAccountId: receipt.confirmedByUserId as string,
             confirmedAt: (receipt.confirmedAt as Date).toISOString(),
           }

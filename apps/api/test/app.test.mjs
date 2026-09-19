@@ -2619,6 +2619,54 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(nonAdminAudit.statusCode, 403);
   });
 
+  test('keeps confirmed totals unknown until deferred VAT is recorded', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const productId = await firstProductId(adminCookie);
+    const created = await mutateReceipt(
+      adminCookie,
+      'POST',
+      '/api/v1/inbound-receipts',
+      'unknown-vat-create',
+      {
+        referenceCode: 'UNKNOWN-VAT',
+        supplierName: 'VAT test',
+        receivedAt: new Date().toISOString(),
+        bags: [{ productId, bagCode: 'UNKNOWN-VAT-BAG', weightKg: '2.000' }],
+      },
+    );
+    assert.equal(created.statusCode, 201, created.body);
+    const id = created.json().data.id;
+    const confirmation = {
+      expectedVersion: 0,
+      productCosts: [{ productId, priceVndPerKg: 1000 }],
+      transportationFeeVnd: 100,
+      handlingFeeVnd: 50,
+    };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await mutateReceipt(
+        adminCookie,
+        'POST',
+        `/api/v1/inbound-receipts/${id}/confirm-costs`,
+        'unknown-vat-confirm',
+        confirmation,
+      );
+      assert.equal(result.statusCode, 200, result.body);
+      assert.equal(result.json().data.vat, null);
+      assert.equal(result.json().data.cost.vatAmountVnd, null);
+      assert.equal(result.json().data.cost.totalCostVnd, null);
+      assert.equal(result.json().data.cost.goodsCostVnd, 2000);
+    }
+    const updated = await mutateReceipt(
+      adminCookie,
+      'PATCH',
+      `/api/v1/inbound-receipts/${id}/vat`,
+      'unknown-vat-update',
+      { expectedVersion: 1, vat: { amountVnd: 80, ratePercent: 8 }, reason: 'Bổ sung số tiền VAT' },
+    );
+    assert.equal(updated.statusCode, 200, updated.body);
+    assert.equal(updated.json().data.cost.totalCostVnd, 2230);
+  });
+
   test('allows only ADMIN to fill deferred VAT and correct a confirmed receipt with audit and replay', async () => {
     const adminCookie = cookieOf(await login('admin'));
     const productId = await firstProductId(adminCookie);

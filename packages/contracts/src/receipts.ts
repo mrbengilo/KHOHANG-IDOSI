@@ -55,21 +55,30 @@ export const ReceiptCostConfirmationSchema = z
     productCosts: z.array(ReceiptProductCostSchema).min(1),
     transportationFeeVnd: MoneyVndSchema,
     handlingFeeVnd: MoneyVndSchema,
-    vatAmountVnd: MoneyVndSchema.optional(),
+    vatAmountVnd: MoneyVndSchema.nullish(),
     goodsCostVnd: MoneyVndSchema,
-    totalCostVnd: MoneyVndSchema,
+    totalCostVnd: MoneyVndSchema.nullable(),
     confirmedByAccountId: EntityIdSchema,
     confirmedAt: IsoDateTimeSchema,
   })
   .strict()
   .superRefine((cost, context) => {
+    // Omitted VAT is accepted for pre-VAT clients; explicit null means unknown.
+    if ((cost.vatAmountVnd === null) !== (cost.totalCostVnd === null)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['totalCostVnd'],
+        message: 'Total cost must remain unknown until VAT is captured',
+      });
+    }
     const expectedTotal = sumRefinementValues([
       safeIntegerToBigIntForRefinement(cost.goodsCostVnd),
       safeIntegerToBigIntForRefinement(cost.transportationFeeVnd),
       safeIntegerToBigIntForRefinement(cost.handlingFeeVnd),
       safeIntegerToBigIntForRefinement(cost.vatAmountVnd ?? 0),
     ]);
-    const declaredTotal = safeIntegerToBigIntForRefinement(cost.totalCostVnd);
+    const declaredTotal =
+      cost.totalCostVnd === null ? null : safeIntegerToBigIntForRefinement(cost.totalCostVnd);
     if (expectedTotal !== null && declaredTotal !== null && declaredTotal !== expectedTotal) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
