@@ -337,6 +337,10 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   const htkdResponse = await htkdResponsePromise;
   expect(htkdResponse.status()).toBe(201);
   const htkdAccount = (await htkdResponse.json()) as { data: { id: string } };
+  // Integration fixtures may fill several account pages. Find the new account
+  // through the real server-side filter instead of assuming it is on page one.
+  await page.getByLabel('Tìm tài khoản').fill(htkdUsername);
+  await page.getByRole('button', { name: 'Lọc', exact: true }).click();
   const htkdRow = page.getByRole('row').filter({ hasText: htkdUsername });
   await expect(htkdRow).toBeVisible();
   await htkdRow.getByRole('button', { name: 'Phân công cửa hàng' }).click();
