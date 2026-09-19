@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { canAccessRoute } from './access';
+import { canAccessRoute, canShowNavigation } from './access';
 
 describe('route access policy', () => {
   it('keeps store ordering, receiving and opening out of the admin workspace', () => {
     for (const route of ['/requests', '/receive', '/open-bag']) {
-      expect(canAccessRoute(route, 'ADMIN', null)).toBe(false);
+      expect(canShowNavigation(route, 'ADMIN', null)).toBe(false);
+      expect(canAccessRoute(route, 'ADMIN', null)).toBe(true);
       expect(canAccessRoute(route, 'HTKD', null)).toBe(true);
       expect(canAccessRoute(route, 'STORE', 'RETAIL')).toBe(true);
     }
