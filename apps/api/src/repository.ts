@@ -1,5 +1,6 @@
 import type {
   OrderingContext,
+  UpdateInboundVatRequest,
   Account,
   AdminAuditLog,
   AllocationResult,
@@ -329,6 +330,14 @@ export interface WarehouseRepository {
     actor: AuthenticatedPrincipal,
     receiptId: string,
     input: ConfirmReceiptCostsRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<InboundReceipt>>;
+  updateSupplierInboundVat(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: UpdateInboundVatRequest,
     idempotencyKey: string,
     requestHash: string,
     context: RequestContext,

@@ -94,7 +94,15 @@ describe('monthly operational summary', () => {
           vatAmountVnd: 1000000n as bigint | null,
         },
       ],
-      inboundProducts: [],
+      inboundProducts: [
+        {
+          productId: 'vat-product',
+          sku: 'VAT',
+          productName: 'VAT product',
+          weightKg: '2.000',
+          goodsCostVnd: 5000000n,
+        },
+      ],
       sales: [],
       outboundOrderIds: [],
       allocationRunIds: [],
@@ -105,6 +113,10 @@ describe('monthly operational summary', () => {
     expect(result.totals.vatCostVnd.value).toBe(1000000n);
     expect(result.totals.landedInboundCostVnd.value).toBe(6000000n);
     rows.inboundHeaders[0]!.vatAmountVnd = null;
+    expect(summarizeMonthlyReport(input, rows).totals.landedInboundCostVnd.value).toBeNull();
+    expect(
+      summarizeMonthlyReport(input, rows).ratios.averageInboundCostPerKgVnd.unavailableReason,
+    ).toBe('VAT_NOT_CAPTURED');
     expect(summarizeMonthlyReport(input, rows).totals.vatCostVnd.unavailableReason).toBe(
       'VAT_NOT_CAPTURED',
     );
@@ -122,6 +134,7 @@ describe('monthly operational summary', () => {
             transportationFeeVnd: 50_000n,
             handlingFeeVnd: 25_000n,
             otherCostVnd: 5_000n,
+            vatAmountVnd: 0n,
           },
         ],
         inboundProducts: [

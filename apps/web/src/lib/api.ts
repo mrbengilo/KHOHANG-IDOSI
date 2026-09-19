@@ -1,5 +1,7 @@
 import {
   OrderingContextResponseSchema,
+  UpdateInboundVatRequestSchema,
+  type UpdateInboundVatRequest,
   CreateInboundReceiptRequestSchema,
   InboundReceiptResponseSchema,
   ListInboundReceiptsResponseSchema,
@@ -375,6 +377,20 @@ export async function listWarehouseInbounds(page = 1) {
   return ListInboundReceiptsResponseSchema.parse(
     await request(`/inbound-receipts?page=${page}&pageSize=20`),
   );
+}
+
+export async function updateWarehouseInboundVat(
+  receiptId: string,
+  input: UpdateInboundVatRequest,
+  key: string,
+) {
+  return InboundReceiptResponseSchema.parse(
+    await request(`/inbound-receipts/${receiptId}/vat`, {
+      method: 'PATCH',
+      headers: { 'idempotency-key': key },
+      body: JSON.stringify(UpdateInboundVatRequestSchema.parse(input)),
+    }),
+  ).data;
 }
 
 export async function createOrderSession(

@@ -2274,8 +2274,8 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(allStores.json().data.dataOrigin, 'LOCAL_TRANSACTIONAL_DATA');
     assert.equal(allStores.json().data.period.timeZone, 'Asia/Ho_Chi_Minh');
     assert.equal(typeof allStores.json().data.totals.inboundWeightGrams.value, 'string');
-    assert.equal(allStores.json().data.totals.vatCostVnd.value, null);
-    assert.equal(allStores.json().data.totals.vatCostVnd.unavailableReason, 'VAT_NOT_CAPTURED');
+    assert.equal(allStores.json().data.totals.vatCostVnd.value, '0');
+    assert.equal(allStores.json().data.totals.vatCostVnd.unavailableReason, null);
     assert.equal(allStores.json().data.ratios.effectiveCostPerSoldKgVnd.value, null);
     assert.equal(
       allStores.json().data.ratios.effectiveCostPerSoldKgVnd.unavailableReason,
@@ -2691,6 +2691,79 @@ describe('KHOHANG-IDOSI API', () => {
       headers: { cookie: cookieOf(await login('ds_nvt')) },
     });
     assert.equal(nonAdminAudit.statusCode, 403);
+  });
+
+  test('allows only ADMIN to fill deferred VAT and correct a confirmed receipt with audit and replay', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const productId = await firstProductId(adminCookie);
+    const created = await mutateReceipt(
+      adminCookie,
+      'POST',
+      '/api/v1/inbound-receipts',
+      'vat-deferred-create',
+      {
+        referenceCode: 'VAT-LATER',
+        supplierName: 'VAT test',
+        receivedAt: new Date().toISOString(),
+        bags: [{ productId, bagCode: 'VAT-LATER-BAG', weightKg: '2.000' }],
+      },
+    );
+    assert.equal(created.statusCode, 201);
+    const id = created.json().data.id;
+    const url = `/api/v1/inbound-receipts/${id}/vat`;
+    const input = {
+      expectedVersion: 0,
+      vat: { amountVnd: 1000000, ratePercent: 8 },
+      reason: 'Bổ sung số tiền VAT',
+    };
+    const denied = await mutateReceipt(
+      cookieOf(await login('htkd')),
+      'PATCH',
+      url,
+      'vat-forbidden',
+      input,
+    );
+    assert.equal(denied.statusCode, 403);
+    const updated = await mutateReceipt(adminCookie, 'PATCH', url, 'vat-update', input);
+    assert.equal(updated.statusCode, 200, updated.body);
+    assert.deepEqual(updated.json().data.vat, input.vat);
+    assert.equal(
+      (await mutateReceipt(adminCookie, 'PATCH', url, 'vat-update', input)).headers[
+        'idempotency-replayed'
+      ],
+      'true',
+    );
+    assert.equal(
+      (await mutateReceipt(adminCookie, 'PATCH', url, 'vat-stale', input)).statusCode,
+      409,
+    );
+    const confirmed = await mutateReceipt(
+      adminCookie,
+      'POST',
+      `/api/v1/inbound-receipts/${id}/confirm-costs`,
+      'vat-confirm',
+      {
+        expectedVersion: 1,
+        productCosts: [{ productId, priceVndPerKg: 1000 }],
+        transportationFeeVnd: 0,
+        handlingFeeVnd: 0,
+      },
+    );
+    assert.equal(confirmed.json().data.cost.totalCostVnd, 1002000);
+    const correction = await mutateReceipt(adminCookie, 'PATCH', url, 'vat-correct', {
+      ...input,
+      expectedVersion: 2,
+      vat: { amountVnd: 0, ratePercent: 8 },
+    });
+    assert.equal(correction.statusCode, 200, correction.body);
+    assert.equal(correction.json().data.cost.totalCostVnd, 2000);
+    assert.equal(correction.json().data.cost.vatAmountVnd, 0);
+    const audit = await app.inject({
+      method: 'GET',
+      url: `/api/v1/admin/audit-logs?action=SUPPLIER_INBOUND_VAT_UPDATED&entityId=${id}`,
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(audit.json().pagination.totalItems, 2);
   });
 
   test('receives supplier bags into warehouse stock and confirms exact costs idempotently', async () => {

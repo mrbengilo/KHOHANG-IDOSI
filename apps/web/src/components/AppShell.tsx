@@ -24,7 +24,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { DashboardSkeleton } from './Skeleton';
 import { ApiClientError, getStoreKind, logout, mockModeEnabled } from '../lib/api';
-import { canAccessRoute } from '../lib/access';
+import { canAccessRoute, canShowNavigation } from '../lib/access';
 import { clearAuthenticatedSession, useSession } from '../lib/auth';
 import { onSessionExpired } from '../lib/session-expiry';
 import type { DemoMode, Role, StoreKind } from '../lib/types';
@@ -151,7 +151,7 @@ export function AppShell() {
         : null
     : (storeKindQuery.data ?? null);
   const links = useMemo(
-    () => navEntries.filter((entry) => canAccessRoute(entry.to, role, storeKind)),
+    () => navEntries.filter((entry) => canShowNavigation(entry.to, role, storeKind)),
     [role, storeKind],
   );
 

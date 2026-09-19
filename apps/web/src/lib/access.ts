@@ -8,10 +8,10 @@ export interface RouteAccessPolicy {
 export const routeAccessPolicies = {
   '/': { roles: ['ADMIN', 'HTKD', 'STORE'] },
   '/allocations': { roles: ['ADMIN', 'HTKD', 'STORE'] },
-  '/requests': { roles: ['HTKD', 'STORE'] },
+  '/requests': { roles: ['ADMIN', 'HTKD', 'STORE'] },
   '/warehouse-inbound': { roles: ['ADMIN'] },
   '/receive': {
-    roles: ['HTKD', 'STORE'],
+    roles: ['ADMIN', 'HTKD', 'STORE'],
     storeKinds: ['RETAIL'],
   },
   '/inventory': {
@@ -19,7 +19,7 @@ export const routeAccessPolicies = {
     storeKinds: ['RETAIL'],
   },
   '/open-bag': {
-    roles: ['HTKD', 'STORE'],
+    roles: ['ADMIN', 'HTKD', 'STORE'],
     storeKinds: ['RETAIL'],
   },
   '/sales': {
@@ -46,6 +46,16 @@ export const routeAccessPolicies = {
 function normalizePath(pathname: string): string {
   if (pathname === '/') return pathname;
   return pathname.replace(/\/+$/, '');
+}
+
+export function canShowNavigation(
+  pathname: string,
+  role: Role,
+  storeKind: StoreKind | null,
+): boolean {
+  if (role === 'ADMIN' && ['/requests', '/receive', '/open-bag'].includes(normalizePath(pathname)))
+    return false;
+  return canAccessRoute(pathname, role, storeKind);
 }
 
 export function canAccessRoute(pathname: string, role: Role, storeKind: StoreKind | null): boolean {

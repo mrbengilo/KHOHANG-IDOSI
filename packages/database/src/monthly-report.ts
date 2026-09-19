@@ -270,7 +270,6 @@ export function summarizeMonthlyReport(
   const vatCostVnd = sum(rows.inboundHeaders, (row) => row.vatAmountVnd ?? 0n);
   const vatComplete =
     rows.inboundSource === 'WAREHOUSE_RECEIPTS' &&
-    rows.inboundHeaders.length > 0 &&
     rows.inboundHeaders.every((row) => row.vatAmountVnd != null);
   const landedInboundCostVnd =
     inboundGoodsCostVnd + transportationFeeVnd + handlingFeeVnd + otherInboundCostVnd + vatCostVnd;
@@ -332,17 +331,18 @@ export function summarizeMonthlyReport(
       transportationFeeVnd: available(transportationFeeVnd, rows.inboundSource),
       handlingFeeVnd: available(handlingFeeVnd, rows.inboundSource),
       otherInboundCostVnd: available(otherInboundCostVnd, rows.inboundSource),
-      landedInboundCostVnd: available(landedInboundCostVnd, rows.inboundSource),
+      landedInboundCostVnd: vatComplete
+        ? available(landedInboundCostVnd, rows.inboundSource)
+        : unavailable('VAT_NOT_CAPTURED', 'NOT_AVAILABLE'),
       vatCostVnd: vatComplete
         ? available(vatCostVnd, rows.inboundSource)
         : unavailable('VAT_NOT_CAPTURED', 'NOT_AVAILABLE'),
     },
     ratios: {
-      averageInboundCostPerKgVnd: costPerInboundKilogram(
-        landedInboundCostVnd,
-        inboundWeightGrams,
-        rows.inboundSource,
-      ),
+      averageInboundCostPerKgVnd:
+        !vatComplete && inboundWeightGrams !== null && inboundWeightGrams > 0n
+          ? unavailable('VAT_NOT_CAPTURED', 'NOT_AVAILABLE')
+          : costPerInboundKilogram(landedInboundCostVnd, inboundWeightGrams, rows.inboundSource),
       revenuePerInboundKgVnd:
         revenueVnd === null
           ? unavailable('MISSING_SALE_REVENUE', 'STORE_OUTBOUNDS')
