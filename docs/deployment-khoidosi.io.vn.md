@@ -32,6 +32,21 @@ không được publish ra Internet. Khóa file bằng `chmod 600` và không đ
 
 ## Preflight trên VPS
 
+### Kết nối thống kê IDOSI
+
+Đặt `IDOSI_INTEGRATION_SECRET` bằng khóa `WAREHOUSE_API_KEY` do hệ thống IDOSI cấp,
+chỉ trong file môi trường riêng tư trên VPS. Không đưa khóa vào frontend hoặc Git.
+`IDOSI_STORE_ID_MAP` là JSON ánh xạ mã cửa hàng kho sang ID cửa hàng trên API IDOSI,
+ví dụ `IDOSI_STORE_ID_MAP={"DS_BMT":"CH003"}`. Xác minh tên cửa hàng qua API thực
+trước khi thêm từng ánh xạ; không suy đoán từ dữ liệu mẫu. Không đổi mã/UUID trong
+database kho để khớp hệ thống bên ngoài.
+
+API và worker cùng đọc ánh xạ này. Khi ánh xạ có nội dung, cửa hàng chưa được cấu
+hình sẽ báo lỗi đồng bộ, không tự gửi mã kho sang IDOSI. Giá trị trống hoặc `{}`
+giữ hành vi cũ cho hệ thống có mã hai bên giống nhau. Cấu hình sai hoặc trùng ID
+đích sẽ ngăn service khởi động. Worker cần mạng `edge` để gọi HTTPS ra ngoài;
+database vẫn chỉ nằm trên mạng `data` nội bộ, không publish cổng.
+
 Chạy từ checkout sạch tại commit sẽ phát hành:
 
 ```bash

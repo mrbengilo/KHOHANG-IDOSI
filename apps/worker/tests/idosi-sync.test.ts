@@ -67,12 +67,14 @@ describe('scheduled IDOSI statistics sync', () => {
       expect(url.toString()).not.toContain('worker-secret');
       expect(new Headers(init?.headers).get('authorization')).toBe('Bearer worker-secret');
       const requestedCode = url.searchParams.get('storeId') ?? '';
-      const responseCode = requestedCode === 'DS_BD' ? 'WRONG_STORE' : requestedCode;
+      expect(['S01', 'S02']).toContain(requestedCode);
+      const responseCode = requestedCode === 'S02' ? 'WRONG_STORE' : requestedCode;
       return new Response(JSON.stringify(payload(responseCode)));
     });
     const worker = new IdosiStatisticsSyncWorker(repository, {
       endpoint: 'https://idosi.io.vn/api/integrations/warehouse/v1/order-statistics',
       secret: 'worker-secret',
+      storeIdMap: { DS_NVT: 'S01', DS_BD: 'S02' },
       timeZone: 'Asia/Ho_Chi_Minh',
       maxStoresPerTick: 10,
       fetch: fetchMock,
