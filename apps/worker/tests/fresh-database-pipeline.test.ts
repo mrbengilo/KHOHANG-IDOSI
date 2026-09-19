@@ -42,8 +42,8 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
         .from(users)
         .where(and(eq(users.role, 'admin'), eq(users.status, 'active'), isNull(users.deletedAt)))
         .limit(1);
-      const [store] = await client.db
-        .select({ id: stores.id })
+      const [referenceStore] = await client.db
+        .select({ groupId: stores.groupId })
         .from(stores)
         .where(and(eq(stores.isActive, true), isNull(stores.deletedAt)))
         .limit(1);
@@ -52,7 +52,7 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
         .from(products)
         .where(and(eq(products.isActive, true), isNull(products.deletedAt)))
         .limit(1);
-      if (!administrator || !store || !product) {
+      if (!administrator || !referenceStore || !product) {
         throw new Error('Reference seed and administrator bootstrap must run before this test.');
       }
 
@@ -60,7 +60,14 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
       // this end-to-end database fixture must use today's Ho Chi Minh date.
       // The session is soft-deleted in finally so the later live browser suite
       // can create its own same-day session in this shared CI database.
-      const runKey = randomUUID();
+      const runKey = randomUUID().replaceAll('-', '');
+      // Quotas persist across sessions until allocation completes. Use a new store
+      // so repeated integration runs cannot inherit another test's two used slots.
+      const [store] = await client.db
+        .insert(stores)
+        .values({ code: `PIPE-${runKey}`, name: 'Pipeline test', groupId: referenceStore.groupId })
+        .returning();
+      if (!store) throw new Error('Could not create the isolated pipeline store.');
       const now = new Date();
       const businessDate = hoChiMinhDate(now);
       const requestOpensAt = new Date(`${businessDate}T00:00:00+07:00`);

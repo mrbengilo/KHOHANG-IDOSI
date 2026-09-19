@@ -8,6 +8,9 @@ const webOrigin = `http://127.0.0.1:${webPort}`;
 export default defineConfig({
   testDir: './e2e-live',
   fullyParallel: false,
+  // These workflows share the reference catalog, allocation calendar and admin
+  // account. Independent concurrency behavior is covered by PostgreSQL tests.
+  workers: 1,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? 'github' : 'list',
   timeout: 60_000,

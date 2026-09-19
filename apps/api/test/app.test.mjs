@@ -53,6 +53,106 @@ describe('KHOHANG-IDOSI API', () => {
     assert.ok(specification.json().paths['/api/v1/integrations/idosi/order-statistics/sync']);
   });
 
+  test('prepares the next date instead of recreating an explicitly cancelled cycle', async () => {
+    await app.close();
+    repository = await MemoryWarehouseRepository.create({
+      bootstrapPassword: PASSWORD,
+      now: () => new Date('2020-04-05T07:00:00+07:00'),
+    });
+    app = await createApi({ repository, corsOrigin: 'http://localhost:5173' });
+    const adminCookie = cookieOf(await login('admin'));
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const cancelled = await mutateSession(
+      adminCookie,
+      `/api/v1/order-sessions/${MEMORY_SEED_IDS.orderSession}/transition`,
+      'cancel-before-snapshot',
+      { status: 'CANCELLED', expectedVersion: 0, reason: 'Admin hủy phiên trong ngày' },
+    );
+    assert.equal(cancelled.statusCode, 200, cancelled.body);
+    const prepared = await app.inject({
+      method: 'POST',
+      url: '/api/v1/ordering-context',
+      headers: { cookie: storeCookie },
+      payload: { storeId: MEMORY_SEED_IDS.nvtStore },
+    });
+    assert.equal(prepared.statusCode, 200, prepared.body);
+    assert.equal(prepared.json().data.session.businessDate, '2020-04-06');
+  });
+
+  test('prepares continuous ordering with scoped stores, two slots and cutoff-safe replay', async () => {
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const headers = { cookie: storeCookie };
+    const prepare = () =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/ordering-context',
+        headers,
+        payload: { storeId: MEMORY_SEED_IDS.nvtStore },
+      });
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/v1/ordering-context',
+          payload: { storeId: MEMORY_SEED_IDS.nvtStore },
+        })
+      ).statusCode,
+      401,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/v1/ordering-context',
+          headers,
+          payload: { storeId: MEMORY_SEED_IDS.bdStore },
+        })
+      ).statusCode,
+      403,
+    );
+    const initial = await prepare();
+    assert.equal(initial.statusCode, 200, initial.body);
+    const context = initial.json().data;
+    assert.equal(context.maxSlots, 2);
+    assert.equal(context.usedSlots, 0);
+    assert.equal((await prepare()).json().data.session.id, context.session.id);
+    const payload = {
+      businessSessionId: context.session.id,
+      storeId: MEMORY_SEED_IDS.nvtStore,
+      items: [{ productId: await firstProductId(storeCookie), quantity: 1 }],
+    };
+    const submit = (key) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/order-requests',
+        headers: { ...headers, 'idempotency-key': key },
+        payload,
+      });
+    const first = await submit('continuous-first-order');
+    assert.equal(first.statusCode, 201, first.body);
+    assert.equal((await prepare()).json().data.usedSlots, 1);
+    assert.equal((await submit('continuous-second-order')).statusCode, 201);
+    assert.equal(
+      (await submit('continuous-third-order')).json().error.code,
+      'REQUEST_LIMIT_REACHED',
+    );
+    assert.equal((await prepare()).json().data.usedSlots, 2);
+    const adminCookie = cookieOf(await login('admin'));
+    const closed = await app.inject({
+      method: 'POST',
+      url: `/api/v1/order-sessions/${context.session.id}/transition`,
+      headers: { cookie: adminCookie, 'idempotency-key': 'continuous-close-session' },
+      payload: { status: 'CLOSED', expectedVersion: context.session.version },
+    });
+    assert.equal(closed.statusCode, 200, closed.body);
+    const replay = await submit('continuous-first-order');
+    assert.equal(replay.statusCode, 201);
+    assert.equal(replay.headers['idempotency-replayed'], 'true');
+    const next = (await prepare()).json().data;
+    assert.notEqual(next.session.id, context.session.id);
+    assert.equal(next.usedSlots, 2);
+  });
+
   test('versions operational settings for ADMIN without accepting or returning secrets', async () => {
     await app.close();
     app = await createApi({
@@ -2738,6 +2838,35 @@ describe('KHOHANG-IDOSI API', () => {
       headers: { cookie: adminCookie },
     });
     assert.equal(audit.json().pagination.totalItems, 2);
+  });
+
+  test('returns a retryable conflict after database contention without leaking SQL', async () => {
+    const cookie = cookieOf(await login('admin'));
+    const productId = await firstProductId(cookie);
+    const receive = repository.receiveSupplierInbound.bind(repository);
+    for (const code of ['40001', '40P01']) {
+      repository.receiveSupplierInbound = async () => {
+        throw new Error('sensitive SQL must not leave the server', {
+          cause: Object.assign(new Error('database conflict'), { code }),
+        });
+      };
+      const response = await mutateReceipt(
+        cookie,
+        'POST',
+        '/api/v1/inbound-receipts',
+        `contention-${code}`,
+        {
+          referenceCode: `CONTENTION-${code}`,
+          supplierName: 'Test',
+          receivedAt: '2026-09-17T08:00:00+07:00',
+          bags: [{ productId, bagCode: `CONTENTION-BAG-${code}`, weightKg: '1.000' }],
+        },
+      );
+      assert.equal(response.statusCode, 409);
+      assert.equal(response.json().error.code, 'CONFLICT');
+      assert.ok(!response.body.includes('sensitive SQL'));
+    }
+    repository.receiveSupplierInbound = receive;
   });
 
   test('receives supplier bags into warehouse stock and confirms exact costs idempotently', async () => {

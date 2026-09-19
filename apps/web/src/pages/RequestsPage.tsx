@@ -1,4 +1,5 @@
 import { Clock3, RotateCcw, Send, Trash2 } from 'lucide-react';
+import type { CreateStoreOrderRequest } from '@idosi/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
@@ -12,7 +13,7 @@ import {
   cancelStoreOrderRequest,
   listAccessibleStores,
   listCatalog,
-  listOpenOrderSessions,
+  prepareOrderingContext,
   listStoreOrderRequests,
   mockModeEnabled,
   submitStoreOrderRequest,
@@ -215,11 +216,6 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
     retry: false,
   });
   const catalogQuery = useQuery({ queryFn: listCatalog, queryKey: ['catalog'], retry: false });
-  const sessionsQuery = useQuery({
-    queryFn: listOpenOrderSessions,
-    queryKey: ['order-sessions', 'open'],
-    retry: false,
-  });
   const [selectedStoreId, setSelectedStoreId] = useState('');
   const [selectedSessionId, setSelectedSessionId] = useState('');
   const [draftLines, setDraftLines] = useState<ProductionDraftLine[]>([]);
@@ -230,16 +226,26 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
   const [cancellingRequestId, setCancellingRequestId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const idempotencyKey = useRef<string | null>(null);
+  const submittedInput = useRef<CreateStoreOrderRequest | null>(null);
   const cancellationKeys = useRef(new Map<string, { key: string; reason: string }>());
 
-  const stores = storesQuery.data ?? [];
+  const stores = (storesQuery.data ?? []).filter((store) => store.status === 'ACTIVE');
   const catalogProducts = catalogQuery.data ?? [];
   const activeProducts = catalogProducts.filter((product) => product.status === 'ACTIVE');
-  const sessions = sessionsQuery.data ?? [];
-  const activeSession = sessions.find((session) => session.id === selectedSessionId) ?? sessions[0];
   const principalStoreId = sessionQuery.data?.principal.storeId ?? '';
   const effectiveStoreId =
-    role === 'STORE' ? principalStoreId : selectedStoreId || stores[0]?.id || '';
+    role === 'STORE'
+      ? principalStoreId
+      : stores.find((store) => store.id === selectedStoreId)?.id || stores[0]?.id || '';
+  const sessionsQuery = useQuery({
+    enabled: Boolean(effectiveStoreId),
+    queryFn: () => prepareOrderingContext(effectiveStoreId),
+    queryKey: ['ordering-context', effectiveStoreId],
+    retry: false,
+    refetchInterval: 30_000,
+  });
+  const sessions = sessionsQuery.data ? [sessionsQuery.data.session] : [];
+  const activeSession = sessions.find((session) => session.id === selectedSessionId) ?? sessions[0];
   const selectedStore = stores.find((store) => store.id === effectiveStoreId);
   const requestsQuery = useQuery({
     enabled: Boolean(effectiveStoreId && activeSession),
@@ -251,7 +257,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
     retry: false,
   });
   const submittedRequests = requestsQuery.data ?? [];
-  const usedSlots = submittedRequests.length;
+  const usedSlots = sessionsQuery.data?.usedSlots ?? submittedRequests.length;
   const remainingSlots = Math.max(0, 2 - usedSlots);
   const productNameById = useMemo(
     () => new Map(catalogProducts.map((product) => [product.id, product.name])),
@@ -261,11 +267,17 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
 
   const resetMutationKey = () => {
     idempotencyKey.current = null;
+    submittedInput.current = null;
     setNotice(null);
   };
 
   const submit = async () => {
-    if (!activeSession || !effectiveStoreId || draftLines.length === 0 || remainingSlots === 0) {
+    if (
+      !activeSession ||
+      !effectiveStoreId ||
+      draftLines.length === 0 ||
+      (remainingSlots === 0 && !submittedInput.current)
+    ) {
       return;
     }
     if (
@@ -286,27 +298,31 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
     setSubmitting(true);
     setNotice(null);
     idempotencyKey.current ??= crypto.randomUUID();
+    submittedInput.current ??= {
+      businessSessionId: activeSession.id,
+      storeId: effectiveStoreId,
+      items: draftLines.map((line) => ({
+        productId: line.productId,
+        quantity: line.quantity,
+        ...(line.note ? { note: line.note } : {}),
+      })),
+    };
     try {
-      await submitStoreOrderRequest(
-        {
-          businessSessionId: activeSession.id,
-          items: draftLines.map((line) => ({
-            productId: line.productId,
-            quantity: line.quantity,
-            ...(line.note ? { note: line.note } : {}),
-          })),
-          storeId: effectiveStoreId,
-        },
-        idempotencyKey.current,
-      );
+      await submitStoreOrderRequest(submittedInput.current, idempotencyKey.current);
       setDraftLines([]);
       idempotencyKey.current = null;
+      submittedInput.current = null;
       setNotice({
         kind: 'success',
         message: 'Đã gửi yêu cầu. Kho chỉ giữ hàng sau khi chạy phân bổ.',
       });
-      await requestsQuery.refetch();
+      await Promise.all([requestsQuery.refetch(), sessionsQuery.refetch()]);
     } catch (cause) {
+      if (cause instanceof ApiClientError && cause.code === 'SESSION_NOT_OPEN') {
+        idempotencyKey.current = null;
+        submittedInput.current = null;
+        await sessionsQuery.refetch();
+      }
       setNotice({
         kind: 'error',
         message:
@@ -352,13 +368,11 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
     }
   };
 
-  const initialLoading =
-    sessionQuery.isPending ||
-    storesQuery.isPending ||
-    catalogQuery.isPending ||
-    sessionsQuery.isPending;
+  const initialLoading = sessionQuery.isPending || storesQuery.isPending || catalogQuery.isPending;
   const loading =
-    initialLoading || (Boolean(effectiveStoreId && activeSession) && requestsQuery.isPending);
+    initialLoading ||
+    (Boolean(effectiveStoreId) && sessionsQuery.isPending) ||
+    (Boolean(effectiveStoreId && activeSession) && requestsQuery.isPending);
   const loadError =
     sessionQuery.error ??
     storesQuery.error ??
@@ -371,7 +385,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
     void sessionQuery.refetch();
     void storesQuery.refetch();
     void catalogQuery.refetch();
-    void sessionsQuery.refetch();
+    if (effectiveStoreId) void sessionsQuery.refetch();
     if (effectiveStoreId && activeSession) void requestsQuery.refetch();
   };
 
@@ -380,8 +394,8 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
       <PageHeader
         description={
           activeSession
-            ? `${selectedStore?.name ?? 'Phạm vi cửa hàng'} • nhận yêu cầu đến ${new Date(activeSession.requestClosesAt).toLocaleString('vi-VN')}`
-            : 'Chưa có phiên đặt hàng đang mở'
+            ? `${selectedStore?.name ?? 'Phạm vi cửa hàng'} • Đặt hàng 24/7 · đợt phân bổ ${activeSession.businessDate}`
+            : 'Đặt hàng 24/7 · chọn cửa hàng để chuẩn bị đợt phân bổ kế tiếp'
         }
         title={isWholesale ? 'Đặt hàng khách sỉ' : 'Đặt hàng & kết quả'}
       />
@@ -409,6 +423,9 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
               }}
               value={effectiveStoreId}
             >
+              {stores.length === 0 ? (
+                <option value="">Chưa có cửa hàng được phân công</option>
+              ) : null}
               {stores.map((store) => (
                 <option key={store.id} value={store.id}>
                   {store.code} • {store.name}
@@ -416,6 +433,9 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
               ))}
             </select>
           </label>
+          <Button tone="secondary" onClick={retryLoading} disabled={submitting}>
+            Làm mới cửa hàng và hạn mức
+          </Button>
           {sessions.length > 1 ? (
             <label>
               Phiên đặt hàng
@@ -437,6 +457,13 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
               </select>
             </label>
           ) : null}
+        </section>
+      ) : null}
+
+      {!initialLoading && !loadError && stores.length === 0 ? (
+        <section className="panel" role="status">
+          Chưa có cửa hàng hoạt động trong phạm vi tài khoản. Liên hệ Admin kiểm tra phân công cửa
+          hàng.
         </section>
       ) : null}
 
@@ -467,7 +494,10 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
       <section className="quota-card">
         <div>
           <strong>{usedSlots} / 2 phiếu</strong>
-          <span>Còn {remainingSlots} yêu cầu mới trong phiên hiện tại</span>
+          <span>
+            Còn {remainingSlots} phiếu đặt thường. Hạn mức mở lại sau khi phân bổ hoàn tất; phiếu ưu
+            tiên không tính lượt.
+          </span>
         </div>
         <progress max="2" value={usedSlots} />
         <Badge tone={remainingSlots > 0 ? 'info' : 'warning'}>
@@ -497,7 +527,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
               draftLines.map((line) => [line.productId, line.quantity]),
             )}
             max={100000}
-            disabled={formDisabled || !activeSession || remainingSlots === 0}
+            disabled={formDisabled || !effectiveStoreId || !activeSession || remainingSlots === 0}
             onSelect={(productId, selected) => {
               setDraftLines((current) =>
                 selected
@@ -581,7 +611,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
               !activeSession ||
               !effectiveStoreId ||
               draftLines.length === 0 ||
-              remainingSlots === 0
+              (remainingSlots === 0 && !submittedInput.current)
             }
             onClick={() => void submit()}
           >

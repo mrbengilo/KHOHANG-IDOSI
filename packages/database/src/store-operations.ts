@@ -367,13 +367,23 @@ export async function finalizeStoreReceiptInTransaction(
 
         await settleReservations(tx, activeReservations, persistedLine.receivedQuantity, now);
         if (shortage > 0) {
-          await restoreShortageWait(
-            tx,
-            receipt.storeId,
-            persistedLine.productId,
-            shortage,
-            activeReservations.map((reservation) => reservation.allocationLineId),
-          );
+          // A shipment can combine several allocation cycles. Restore only each
+          // source's unreceived quantity, in the same order used to settle its reservation.
+          let receivedToAssign = persistedLine.receivedQuantity;
+          for (const reservation of activeReservations) {
+            const consumed = Math.min(receivedToAssign, reservation.quantity);
+            receivedToAssign -= consumed;
+            const sourceShortage = reservation.quantity - consumed;
+            if (sourceShortage > 0) {
+              await restoreShortageWait(
+                tx,
+                receipt.storeId,
+                persistedLine.productId,
+                sourceShortage,
+                [reservation.allocationLineId],
+              );
+            }
+          }
         }
 
         let lineGoodsCostVnd = 0n;

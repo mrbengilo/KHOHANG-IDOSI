@@ -1,4 +1,5 @@
 import {
+  OrderingContextResponseSchema,
   UpdateInboundVatRequestSchema,
   type UpdateInboundVatRequest,
   CreateInboundReceiptRequestSchema,
@@ -316,6 +317,12 @@ export async function getMonthlyOperationalReport(
   if (input.scopeId) query.set('scopeId', input.scopeId);
   const payload = await request(`/reports/monthly?${query.toString()}`);
   return MonthlyOperationalReportResponseSchema.parse(payload).data;
+}
+
+export async function prepareOrderingContext(storeId: string) {
+  return OrderingContextResponseSchema.parse(
+    await request('/ordering-context', { method: 'POST', body: JSON.stringify({ storeId }) }),
+  ).data;
 }
 
 export async function listOpenOrderSessions(): Promise<OrderSession[]> {

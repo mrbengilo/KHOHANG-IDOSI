@@ -144,6 +144,13 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   expect((await createStoreResponse).status()).toBe(201);
   await expect(page.getByText(`Đã tạo cửa hàng ${storeCode}.`)).toBeVisible();
 
+  // Other integration scenarios also create stores. Locate this fixture through
+  // the real server-side filter rather than assuming it is on the first page.
+  await page.getByLabel('Tìm cửa hàng', { exact: true }).fill(storeCode);
+  await page
+    .locator('.store-lifecycle-filters--stores')
+    .getByRole('button', { name: 'Lọc', exact: true })
+    .click();
   let storeRow = page.getByRole('row').filter({ hasText: storeCode });
   await storeRow.getByRole('button', { name: `Chỉnh sửa cửa hàng ${storeCode}` }).click();
   await page.locator('#store-editor').getByLabel('Tên cửa hàng').fill(updatedStoreName);

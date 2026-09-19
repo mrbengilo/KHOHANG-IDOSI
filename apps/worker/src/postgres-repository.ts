@@ -6,6 +6,7 @@ import {
   applyWarehouseMovement,
   auditLogs,
   dailyPriorityOffers,
+  ensureDailyOrderingSession,
   inventorySnapshotItems,
   inventorySnapshots,
   loadWarehouseBalancesAt,
@@ -38,7 +39,7 @@ import {
   type StoreOrderRequest,
   type WaitTicket,
 } from '@idosi/domain';
-import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, max, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, max, or, sql } from 'drizzle-orm';
 
 import { planPriorityOffers, planProductAllocation } from './planning.js';
 import {
@@ -88,6 +89,7 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
   public async listDueSessions(
     query: DueSessionQuery,
   ): Promise<readonly ScheduledAllocationSession[]> {
+    await ensureDailyOrderingSession(this.#database, query.now);
     const rows = await this.#database
       .select({
         id: orderSessions.id,
@@ -695,12 +697,37 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
   }
 }
 
-async function materializeOutboundRequests(
+export async function materializeOutboundRequests(
   tx: Transaction,
   allocationRunId: string,
   session: ScheduledAllocationSession,
   processedAt: Date,
 ): Promise<number> {
+  // An ordinary request is the shipping trigger, not the priority allocation itself.
+  // Reservations from earlier completed cycles remain held and are attached here once.
+  const ordinaryOrders = await tx
+    .select({ storeId: orderRequests.storeId, requestedByUserId: orderRequests.requestedByUserId })
+    .from(orderRequests)
+    .where(
+      and(
+        eq(orderRequests.orderSessionId, session.id),
+        inArray(orderRequests.status, [
+          'submitted',
+          'merged',
+          'allocated',
+          'partially_allocated',
+          'waitlisted',
+        ]),
+        isNull(orderRequests.deletedAt),
+      ),
+    )
+    .orderBy(asc(orderRequests.storeId), asc(orderRequests.submittedAt), asc(orderRequests.id));
+  const requesterByStore = new Map<string, string>();
+  for (const order of ordinaryOrders) {
+    if (!requesterByStore.has(order.storeId))
+      requesterByStore.set(order.storeId, order.requestedByUserId);
+  }
+  if (requesterByStore.size === 0) return 0;
   const lines = await tx
     .select({
       id: allocationLines.id,
@@ -711,127 +738,106 @@ async function materializeOutboundRequests(
       requestedQuantity: allocationLines.requestedQuantity,
       allocatedQuantity: allocationLines.allocatedQuantity,
       sequenceInRound: allocationLines.sequenceInRound,
+      sourceRunId: allocationLines.allocationRunId,
+      reservationId: reservations.id,
+      reservationQuantity: reservations.quantity,
     })
     .from(allocationLines)
+    .innerJoin(allocationRuns, eq(allocationRuns.id, allocationLines.allocationRunId))
+    .innerJoin(reservations, eq(reservations.allocationLineId, allocationLines.id))
     .where(
       and(
-        eq(allocationLines.allocationRunId, allocationRunId),
+        inArray(allocationLines.storeId, [...requesterByStore.keys()]),
+        or(
+          eq(allocationLines.allocationRunId, allocationRunId),
+          eq(allocationRuns.status, 'completed'),
+        ),
         sql`${allocationLines.allocatedQuantity} > 0`,
+        eq(reservations.status, 'active'),
+        isNull(reservations.deletedAt),
+        isNull(reservations.outboundRequestLineId),
+        eq(reservations.storeId, allocationLines.storeId),
+        eq(reservations.productId, allocationLines.productId),
       ),
     )
-    .orderBy(asc(allocationLines.sequenceInRound), asc(allocationLines.id));
+    .orderBy(
+      asc(allocationLines.storeId),
+      asc(allocationLines.createdAt),
+      asc(allocationLines.sequenceInRound),
+      asc(allocationLines.id),
+    )
+    .for('update', { of: reservations });
 
-  let affectedRows = 0;
+  const byStore = new Map<string, typeof lines>();
   for (const line of lines) {
-    const [existing] = await tx
-      .select({ id: outboundRequestLines.id })
-      .from(outboundRequestLines)
-      .where(eq(outboundRequestLines.allocationLineId, line.id))
-      .limit(1);
-    if (existing) continue;
-
-    let sourceOrderRequestItemId = line.orderRequestItemId;
-    if (sourceOrderRequestItemId === null && line.waitTicketId !== null) {
-      const [ticket] = await tx
-        .select({ sourceOrderRequestItemId: waitTickets.sourceOrderRequestItemId })
-        .from(waitTickets)
-        .where(eq(waitTickets.id, line.waitTicketId))
-        .limit(1);
-      sourceOrderRequestItemId = ticket?.sourceOrderRequestItemId ?? null;
+    if (line.reservationQuantity !== line.allocatedQuantity) {
+      throw new Error(`Allocation line ${line.id} does not conserve its reserved quantity.`);
     }
-    if (sourceOrderRequestItemId === null) {
-      throw new Error(`Allocation line ${line.id} has no request provenance for outbound.`);
-    }
-
-    const [requestSource] = await tx
-      .select({
-        requestedByUserId: orderRequests.requestedByUserId,
-        storeId: orderRequests.storeId,
-      })
-      .from(orderRequestItems)
-      .innerJoin(orderRequests, eq(orderRequests.id, orderRequestItems.orderRequestId))
-      .where(eq(orderRequestItems.id, sourceOrderRequestItemId))
-      .limit(1);
-    if (!requestSource || requestSource.storeId !== line.storeId) {
-      throw new Error(`Allocation line ${line.id} has invalid outbound requester provenance.`);
-    }
-
-    const [reservation] = await tx
-      .select({
-        id: reservations.id,
-        productId: reservations.productId,
-        storeId: reservations.storeId,
-        quantity: reservations.quantity,
-        outboundRequestLineId: reservations.outboundRequestLineId,
-      })
-      .from(reservations)
-      .where(
-        and(
-          eq(reservations.allocationLineId, line.id),
-          eq(reservations.status, 'active'),
-          isNull(reservations.deletedAt),
-        ),
-      )
-      .for('update')
-      .limit(1);
-    if (
-      !reservation ||
-      reservation.storeId !== line.storeId ||
-      reservation.productId !== line.productId ||
-      reservation.quantity !== line.allocatedQuantity ||
-      reservation.outboundRequestLineId !== null
-    ) {
-      throw new Error(`Allocation line ${line.id} has no matching active reservation.`);
-    }
-
-    const outboundRequestId = deterministicUuid(`outbound-request:${line.id}`);
-    const outboundLineId = deterministicUuid(`outbound-request-line:${line.id}`);
-    const requestNumber = [
-      'OUT',
-      session.businessDate.replaceAll('-', ''),
-      String(line.sequenceInRound).padStart(3, '0'),
-      line.id.replaceAll('-', '').toUpperCase(),
-    ].join('-');
+    const group = byStore.get(line.storeId) ?? [];
+    group.push(line);
+    byStore.set(line.storeId, group);
+  }
+  let affectedRows = 0;
+  for (const [storeId, storeLines] of byStore) {
+    const outboundRequestId = deterministicUuid(`outbound-shipment:${allocationRunId}:${storeId}`);
+    const requestNumber = `OUT-${session.businessDate.replaceAll('-', '')}-${outboundRequestId.replaceAll('-', '').toUpperCase()}`;
     await tx.insert(outboundRequests).values({
       id: outboundRequestId,
       requestNumber,
-      storeId: line.storeId,
+      storeId,
       orderSessionId: session.id,
       allocationRunId,
       status: 'reserved',
-      requestedByUserId: requestSource.requestedByUserId,
+      requestedByUserId: requesterByStore.get(storeId)!,
       submittedAt: processedAt,
       approvedAt: processedAt,
-      notes: `Automatically materialized from allocation line ${line.id}`,
+      notes: 'Giao chung đơn thường và hàng ưu tiên đã giữ của cửa hàng',
       createdAt: processedAt,
       updatedAt: processedAt,
     });
-    await tx.insert(outboundRequestLines).values({
-      id: outboundLineId,
-      outboundRequestId,
-      productId: line.productId,
-      allocationLineId: line.id,
-      requestedQuantity: line.requestedQuantity,
-      approvedQuantity: line.allocatedQuantity,
-      reservedQuantity: line.allocatedQuantity,
-      dispatchedQuantity: 0,
-      receivedQuantity: 0,
-      createdAt: processedAt,
-      updatedAt: processedAt,
-    });
-    const linkedReservations = await tx
-      .update(reservations)
-      .set({ outboundRequestLineId: outboundLineId, updatedAt: processedAt })
-      .where(
-        and(
-          eq(reservations.id, reservation.id),
-          eq(reservations.status, 'active'),
-          isNull(reservations.outboundRequestLineId),
-        ),
-      )
-      .returning({ id: reservations.id });
-    if (linkedReservations.length !== 1) {
-      throw new Error(`Reservation ${reservation.id} changed during outbound materialization.`);
+    const byProduct = new Map<string, typeof lines>();
+    for (const line of storeLines) {
+      const group = byProduct.get(line.productId) ?? [];
+      group.push(line);
+      byProduct.set(line.productId, group);
+    }
+    for (const [productId, sources] of byProduct) {
+      const outboundLineId = deterministicUuid(
+        `outbound-shipment-line:${outboundRequestId}:${productId}`,
+      );
+      const quantity = sources.reduce((total, line) => total + line.allocatedQuantity, 0);
+      await tx.insert(outboundRequestLines).values({
+        id: outboundLineId,
+        outboundRequestId,
+        productId,
+        // Legacy representative pointer. Every source and quantity remains linked through reservations.
+        allocationLineId: sources[0]!.id,
+        requestedQuantity: sources.reduce((total, line) => total + line.requestedQuantity, 0),
+        approvedQuantity: quantity,
+        reservedQuantity: quantity,
+        dispatchedQuantity: 0,
+        receivedQuantity: 0,
+        createdAt: processedAt,
+        updatedAt: processedAt,
+      });
+      const linkedReservations = await tx
+        .update(reservations)
+        .set({ outboundRequestLineId: outboundLineId, updatedAt: processedAt })
+        .where(
+          and(
+            inArray(
+              reservations.id,
+              sources.map((line) => line.reservationId),
+            ),
+            eq(reservations.status, 'active'),
+            isNull(reservations.outboundRequestLineId),
+          ),
+        )
+        .returning({ id: reservations.id });
+      if (linkedReservations.length !== sources.length) {
+        throw new Error(`Reservations changed during shipment materialization for ${storeId}.`);
+      }
+      affectedRows += 1 + linkedReservations.length;
     }
     await tx.insert(auditLogs).values({
       id: deterministicUuid(`audit:outbound-materialized:${outboundRequestId}`),
@@ -839,17 +845,21 @@ async function materializeOutboundRequests(
       entityType: 'outbound_request',
       entityId: outboundRequestId,
       after: {
-        allocationLineId: line.id,
+        sources: storeLines.map((line) => ({
+          allocationLineId: line.id,
+          allocationRunId: line.sourceRunId,
+          reservationId: line.reservationId,
+          productId: line.productId,
+          quantity: line.allocatedQuantity,
+        })),
         allocationRunId,
-        approvedQuantity: line.allocatedQuantity,
-        productId: line.productId,
         requestNumber,
         status: 'reserved',
-        storeId: line.storeId,
+        storeId,
       },
       createdAt: processedAt,
     });
-    affectedRows += 3;
+    affectedRows += 2;
   }
   return affectedRows;
 }
