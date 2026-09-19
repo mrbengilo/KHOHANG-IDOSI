@@ -36,6 +36,7 @@ const idosiSyncWorker = config.idosiIntegrationSecret
   ? new IdosiStatisticsSyncWorker(new PostgresScheduledIdosiSyncRepository(client.db), {
       endpoint: config.idosiIntegrationEndpoint,
       secret: config.idosiIntegrationSecret,
+      storeIdMap: config.idosiStoreIdMap,
       timeZone: config.timeZone,
       maxStoresPerTick: config.maxSessionsPerTick,
       logger,

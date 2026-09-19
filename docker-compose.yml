@@ -116,6 +116,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       IDOSI_INTEGRATION_ENDPOINT: ${IDOSI_INTEGRATION_ENDPOINT:-https://idosi.io.vn/api/integrations/warehouse/v1/order-statistics}
       IDOSI_INTEGRATION_SECRET: ${IDOSI_INTEGRATION_SECRET:-}
+      IDOSI_STORE_ID_MAP: ${IDOSI_STORE_ID_MAP:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: production
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
@@ -159,6 +160,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       IDOSI_INTEGRATION_ENDPOINT: ${IDOSI_INTEGRATION_ENDPOINT:-https://idosi.io.vn/api/integrations/warehouse/v1/order-statistics}
       IDOSI_INTEGRATION_SECRET: ${IDOSI_INTEGRATION_SECRET:-}
+      IDOSI_STORE_ID_MAP: ${IDOSI_STORE_ID_MAP:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: production
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
@@ -193,6 +195,8 @@ services:
     <<: *node-security
     networks:
       - data
+      # Scheduled IDOSI requests require outbound HTTPS, unavailable on internal data.
+      - edge
 
   web:
     image: ${IMAGE_PREFIX:?IMAGE_PREFIX is required}-web:${IMAGE_TAG:?IMAGE_TAG must be an immutable commit SHA}

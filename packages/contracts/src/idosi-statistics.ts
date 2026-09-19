@@ -282,11 +282,53 @@ export interface FetchIdosiStatisticsOptions {
   readonly endpoint: string;
   readonly secret: string;
   readonly storeCode: string;
+  readonly storeIdMap?: Readonly<Record<string, string>>;
   readonly scope: Omit<IdosiStatisticsScope, 'storeId'>;
   readonly requestId: string;
   readonly fetch?: IdosiFetch;
   readonly timeoutMs?: number;
   readonly maxResponseBytes?: number;
+}
+
+/** Server-side configuration only; warehouse identifiers are never rewritten. */
+export function parseIdosiStoreIdMap(raw: string | undefined): Readonly<Record<string, string>> {
+  if (!raw?.trim()) return {};
+  try {
+    // This configuration is a flat string-to-string object. Validate that grammar
+    // and inspect decoded key tokens before JSON.parse can discard duplicates.
+    const stringToken = '"(?:[^"\\\\]|\\\\.)*"';
+    const pair = `(${stringToken})\\s*:\\s*${stringToken}`;
+    const flatObject = new RegExp(`^\\s*\\{\\s*(?:${pair}(?:\\s*,\\s*${pair})*)?\\s*\\}\\s*$`, 'u');
+    if (raw.length > 500_000 || !flatObject.test(raw)) throw new Error();
+    const localKeys = [...raw.matchAll(new RegExp(pair, 'gu'))].map(
+      (match) => JSON.parse(match[1]!) as string,
+    );
+    if (new Set(localKeys).size !== localKeys.length) throw new Error();
+    const input: unknown = JSON.parse(raw);
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error();
+    const keys = Object.keys(input);
+    if (
+      keys.some(
+        (key) => key !== key.trim() || ['__proto__', 'constructor', 'prototype'].includes(key),
+      )
+    )
+      throw new Error();
+    const map = z
+      .record(z.string().min(1).max(200), z.string().trim().min(1).max(200))
+      .parse(input);
+    const entries = Object.entries(map);
+    if (
+      entries.length > 1000 ||
+      new Set(Object.values(map)).size !== entries.length ||
+      entries.some(([key]) => ['__proto__', 'constructor', 'prototype'].includes(key))
+    )
+      throw new Error();
+    return Object.freeze(map);
+  } catch {
+    throw new TypeError(
+      'IDOSI_STORE_ID_MAP must be a JSON object with unique, nonempty external store IDs.',
+    );
+  }
 }
 
 export type IdosiGatewayErrorCode =
@@ -309,8 +351,20 @@ export async function fetchIdosiOrderStatistics(
   const secret = options.secret.trim();
   if (!secret) throw new TypeError('IDOSI integration secret is required');
   const endpoint = new URL(options.endpoint);
-  const storeCode = options.storeCode.trim();
-  if (!storeCode) throw new TypeError('IDOSI store code is required');
+  const localCode = options.storeCode.trim();
+  if (!localCode) throw new TypeError('IDOSI store code is required');
+  const map = options.storeIdMap ?? {};
+  const storeCode =
+    Object.keys(map).length === 0
+      ? localCode
+      : Object.hasOwn(map, localCode)
+        ? map[localCode]!
+        : '';
+  if (!storeCode)
+    throw new IdosiGatewayError(
+      'IDOSI_REQUEST_FAILED',
+      'Chưa cấu hình mã cửa hàng IDOSI tương ứng.',
+    );
   const timeoutMs = options.timeoutMs ?? 15_000;
   const maxResponseBytes = options.maxResponseBytes ?? MAX_RESPONSE_BYTES;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {

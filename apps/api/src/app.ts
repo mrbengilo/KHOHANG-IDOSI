@@ -141,6 +141,7 @@ export interface CreateApiOptions {
   readonly idosiIntegrationEndpoint?: string;
   readonly idosiIntegrationSecretConfigured?: boolean;
   readonly idosiIntegrationSecret?: string;
+  readonly idosiStoreIdMap?: Readonly<Record<string, string>>;
   readonly idosiFetch?: IdosiFetch;
 }
 
@@ -408,6 +409,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
         endpoint: idosiIntegration.endpoint,
         secret: idosiIntegrationSecret,
         storeCode: target.storeCode,
+        ...(options.idosiStoreIdMap ? { storeIdMap: options.idosiStoreIdMap } : {}),
         scope: externalIdosiScope(scope),
         requestId: request.id,
         ...(options.idosiFetch ? { fetch: options.idosiFetch } : {}),

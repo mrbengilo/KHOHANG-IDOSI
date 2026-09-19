@@ -38,6 +38,7 @@ export interface ScheduledIdosiSyncRepository {
 export interface IdosiSyncWorkerOptions {
   readonly endpoint: string;
   readonly secret: string;
+  readonly storeIdMap?: Readonly<Record<string, string>>;
   readonly timeZone: string;
   readonly maxStoresPerTick: number;
   readonly fetch?: IdosiFetch;
@@ -96,6 +97,7 @@ export class IdosiStatisticsSyncWorker {
           endpoint: this.#options.endpoint,
           secret: this.#options.secret,
           storeCode: target.storeCode,
+          ...(this.#options.storeIdMap ? { storeIdMap: this.#options.storeIdMap } : {}),
           scope: {
             period: target.scope.period,
             date: target.scope.date,
