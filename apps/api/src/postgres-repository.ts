@@ -1,4 +1,6 @@
+import { updateSupplierInboundVat as updateDatabaseInboundVat } from '@idosi/database';
 import type {
+  UpdateInboundVatRequest,
   Account,
   AdminAuditLog,
   AllocationResult,
@@ -1157,6 +1159,30 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       const resourceId = result.replayed ? result.resourceId : result.value.receiptId;
       if (!resourceId) throw new Error('Idempotent supplier cost confirmation has no resource id.');
       return { data: await this.inboundReceiptDto(resourceId), replayed: result.replayed };
+    });
+  }
+
+  public async updateSupplierInboundVat(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+    input: UpdateInboundVatRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<InboundReceipt>> {
+    if (actor.role !== 'ADMIN') throw forbidden();
+    return withSupplierInboundErrors(async () => {
+      const result = await updateDatabaseInboundVat(db, {
+        receiptId,
+        expectedVersion: input.expectedVersion,
+        vat: { amountVnd: BigInt(input.vat.amountVnd), ratePercent: 8 },
+        reason: input.reason,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        ...context,
+      });
+      return { data: await this.inboundReceiptDto(receiptId), replayed: result.replayed };
     });
   }
 

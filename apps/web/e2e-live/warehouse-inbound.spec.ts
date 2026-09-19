@@ -97,6 +97,17 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   expect(replay.status()).toBe(201);
   expect(replay.headers()['idempotency-replayed']).toBe('true');
   expect((await replay.json()).data.id).toBe(receipt.id);
+  const historyRow = page.locator('article').filter({ hasText: reference });
+  await historyRow.getByText('Cập nhật VAT · 8%', { exact: true }).click();
+  await historyRow.getByLabel(`Số tiền VAT cho ${reference}`, { exact: true }).fill('1100000');
+  await historyRow
+    .getByLabel(`Lý do cập nhật VAT cho ${reference}`, { exact: true })
+    .fill('Điều chỉnh theo hóa đơn thuế');
+  await historyRow.getByRole('button', { name: 'Lưu VAT', exact: true }).click();
+  await expect(historyRow.getByRole('status')).toContainText('Đã lưu VAT 8%');
+  const corrected = await page.request.get(`${api}/api/v1/inbound-receipts/${receipt.id}`);
+  expect((await corrected.json()).data.vat).toEqual({ amountVnd: 1100000, ratePercent: 8 });
+  await expect.poll(() => page.evaluate(() => document.body.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({
     path: testInfo.outputPath('warehouse-inbound-mobile.png'),
     fullPage: true,

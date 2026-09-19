@@ -187,6 +187,15 @@ export const CancelInboundReceiptRequestSchema = z
   .strict();
 export type CancelInboundReceiptRequest = z.infer<typeof CancelInboundReceiptRequestSchema>;
 
+export const UpdateInboundVatRequestSchema = z
+  .object({
+    vat: InboundVatSchema,
+    expectedVersion: z.number().int().nonnegative(),
+    reason: AuditReasonSchema,
+  })
+  .strict();
+export type UpdateInboundVatRequest = z.infer<typeof UpdateInboundVatRequestSchema>;
+
 export const InboundReceiptParamsSchema = z.object({ receiptId: EntityIdSchema }).strict();
 export type InboundReceiptParams = z.infer<typeof InboundReceiptParamsSchema>;
 

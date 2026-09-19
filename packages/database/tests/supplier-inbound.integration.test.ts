@@ -7,6 +7,8 @@ import {
   auditLogs,
   calculateWeightedCostVnd,
   cancelSupplierInbound,
+  updateSupplierInboundVat,
+  receiptCosts,
   closeDatabase,
   confirmSupplierInboundCosts,
   db,
@@ -194,6 +196,86 @@ describePostgres('supplier inbound PostgreSQL lifecycle', () => {
         ),
       );
     expect(audit?.after).toMatchObject({ goodsCostVnd: goodsCostVnd.toString() });
+  });
+
+  it('adds deferred VAT after confirmation with optimistic locking, replay and no stock mutation', async () => {
+    const fixture = await loadFixture();
+    const suffix = randomUUID();
+    const received = await receiveSupplierInbound(db, {
+      referenceCode: `VAT-LATER-${suffix}`,
+      supplierName: 'VAT test',
+      receivedAt: new Date(),
+      bags: [{ productId: fixture.productId, bagCode: `VAT-${suffix}`, weightKg: '2.000' }],
+      receivedByUserId: fixture.actorId,
+      actorRole: 'admin',
+      idempotencyKey: randomUUID(),
+      requestHash: randomUUID(),
+    });
+    if (received.replayed) throw new Error('Unexpected replay');
+    const receiptId = received.value.receiptId;
+    await confirmSupplierInboundCosts(db, {
+      receiptId,
+      expectedVersion: 0,
+      productCosts: [{ productId: fixture.productId, priceVndPerKg: 1000n }],
+      transportationFeeVnd: 0n,
+      handlingFeeVnd: 0n,
+      confirmedByUserId: fixture.actorId,
+      actorRole: 'admin',
+      idempotencyKey: randomUUID(),
+      requestHash: randomUUID(),
+    });
+    const before = await balanceFor(fixture.productId);
+    const input = {
+      receiptId,
+      expectedVersion: 1,
+      vat: { amountVnd: 1000000n, ratePercent: 8 as const },
+      reason: 'Bổ sung hóa đơn VAT',
+      actorUserId: fixture.actorId,
+      idempotencyKey: randomUUID(),
+      requestHash: randomUUID(),
+    };
+    const attempts = await Promise.allSettled([
+      updateSupplierInboundVat(db, input),
+      updateSupplierInboundVat(db, { ...input, idempotencyKey: randomUUID() }),
+    ]);
+    expect(attempts.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(attempts.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    const [receipt] = await db.select().from(receipts).where(eq(receipts.id, receiptId));
+    expect(receipt).toMatchObject({
+      vatAmountVnd: 1000000n,
+      vatRatePercent: 8,
+      version: 2,
+      status: 'confirmed',
+    });
+    const costs = await db
+      .select()
+      .from(receiptCosts)
+      .where(and(eq(receiptCosts.receiptId, receiptId), eq(receiptCosts.costType, 'vat')));
+    expect(costs).toHaveLength(1);
+    expect(costs[0]!.amountVnd).toBe(1000000n);
+    const correction = {
+      ...input,
+      expectedVersion: 2,
+      vat: { amountVnd: 0n, ratePercent: 8 as const },
+      idempotencyKey: randomUUID(),
+      requestHash: randomUUID(),
+    };
+    await updateSupplierInboundVat(db, correction);
+    expect((await updateSupplierInboundVat(db, correction)).replayed).toBe(true);
+    expect(await balanceFor(fixture.productId)).toEqual(before);
+    const audits = await db
+      .select()
+      .from(auditLogs)
+      .where(
+        and(
+          eq(auditLogs.entityId, receiptId),
+          eq(auditLogs.action, 'SUPPLIER_INBOUND_VAT_UPDATED'),
+        ),
+      );
+    expect(audits).toHaveLength(2);
+    expect(audits.map((audit) => audit.before)).toContainEqual(
+      expect.objectContaining({ amountVnd: null }),
+    );
   });
 
   it('serializes concurrent receipts and reverses only uncommitted pending stock', async () => {

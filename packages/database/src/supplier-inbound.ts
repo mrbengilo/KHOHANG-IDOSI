@@ -564,6 +564,119 @@ export async function confirmSupplierInboundCostsInTransaction(
   });
 }
 
+export async function updateSupplierInboundVat(
+  database: Database,
+  input: SupplierInboundRequestContext & {
+    readonly receiptId: string;
+    readonly expectedVersion: number;
+    readonly vat: { readonly amountVnd: bigint; readonly ratePercent: 8 };
+    readonly reason: string;
+    readonly actorUserId: string;
+    readonly idempotencyKey: string;
+    readonly requestHash: string;
+  },
+) {
+  assertVnd(input.vat.amountVnd, 'vatAmountVnd');
+  if (
+    input.vat.ratePercent !== 8 ||
+    input.reason.trim().length < 3 ||
+    input.reason.trim().length > 500
+  ) {
+    throw new SupplierInboundValidationError(
+      'VAT requires an entered amount, 8% rate and audit reason.',
+    );
+  }
+  return withIdempotency(
+    database,
+    {
+      scope: `supplier-inbound.vat:${input.receiptId}`,
+      key: input.idempotencyKey,
+      requestHash: input.requestHash,
+    },
+    async (tx) => {
+      await assertWarehouseActor(tx, input.actorUserId, 'admin');
+      return withAdvisoryLock(tx, 'supplier-inbound-receipt', input.receiptId, async () => {
+        const [receipt] = await tx
+          .select()
+          .from(receipts)
+          .where(and(eq(receipts.id, input.receiptId), isNull(receipts.deletedAt)))
+          .for('update')
+          .limit(1);
+        if (!receipt) throw new SupplierInboundNotFoundError('Supplier receipt was not found.');
+        if (
+          receipt.version !== input.expectedVersion ||
+          !['submitted', 'confirmed'].includes(receipt.status)
+        )
+          throw new SupplierInboundConflictError('Receipt is stale or cancelled.');
+        const totalCostVnd =
+          receipt.totalGoodsCostVnd +
+          receipt.totalShippingCostVnd +
+          receipt.totalHandlingCostVnd +
+          receipt.totalOtherCostVnd +
+          input.vat.amountVnd;
+        assertVnd(totalCostVnd, 'receipt total including VAT');
+        if (receipt.status === 'confirmed') {
+          const costs = await tx
+            .select({ id: receiptCosts.id })
+            .from(receiptCosts)
+            .where(and(eq(receiptCosts.receiptId, receipt.id), eq(receiptCosts.costType, 'vat')));
+          if (costs.length > 1)
+            throw new SupplierInboundValidationError('Receipt has conflicting VAT cost lines.');
+          if (costs[0])
+            await tx
+              .update(receiptCosts)
+              .set({
+                amountVnd: input.vat.amountVnd,
+                description: 'VAT 8% (entered amount; correction recorded in audit)',
+              })
+              .where(eq(receiptCosts.id, costs[0].id));
+          else
+            await tx.insert(receiptCosts).values({
+              receiptId: receipt.id,
+              costType: 'vat',
+              amountVnd: input.vat.amountVnd,
+              description: 'VAT 8% (entered amount)',
+            });
+        }
+        const version = receipt.version + 1;
+        await tx
+          .update(receipts)
+          .set({
+            vatAmountVnd: input.vat.amountVnd,
+            vatRatePercent: 8,
+            version,
+            updatedAt: new Date(),
+          })
+          .where(eq(receipts.id, receipt.id));
+        await tx.insert(auditLogs).values({
+          action: 'SUPPLIER_INBOUND_VAT_UPDATED',
+          actorUserId: input.actorUserId,
+          actorRole: 'admin',
+          entityType: 'supplier_inbound_receipt',
+          entityId: receipt.id,
+          requestId: input.requestId ?? null,
+          ipAddress: input.ipAddress ?? null,
+          userAgent: input.userAgent ?? null,
+          before: {
+            amountVnd: receipt.vatAmountVnd?.toString() ?? null,
+            ratePercent: receipt.vatRatePercent,
+            version: receipt.version,
+          },
+          after: { amountVnd: input.vat.amountVnd.toString(), ratePercent: 8, version },
+          metadata: { reason: input.reason.trim() },
+        });
+        return {
+          value: { receiptId: receipt.id, version },
+          responseStatus: 200,
+          responseBody: { receiptId: receipt.id, version },
+          resourceType: 'supplier_inbound_receipt',
+          resourceId: receipt.id,
+        };
+      });
+    },
+  );
+}
+
 export async function cancelSupplierInbound(
   database: Database,
   input: CancelSupplierInboundInput,

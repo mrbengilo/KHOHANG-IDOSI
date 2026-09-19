@@ -112,6 +112,7 @@ export type {
 
 export {
   cancelSupplierInbound,
+  updateSupplierInboundVat,
   cancelSupplierInboundInTransaction,
   confirmSupplierInboundCosts,
   confirmSupplierInboundCostsInTransaction,

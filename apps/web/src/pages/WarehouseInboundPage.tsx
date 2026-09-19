@@ -1,6 +1,7 @@
 import {
   CreateInboundReceiptRequestSchema,
   type CreateInboundReceiptRequest,
+  type InboundReceipt,
 } from '@idosi/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState, type FormEvent } from 'react';
@@ -8,7 +9,12 @@ import { AdminAccess } from '../features/admin/AdminAccess';
 import { Button } from '../components/Button';
 import { PageHeader } from '../components/PageHeader';
 import { ProductBagPicker } from '../components/ProductBagPicker';
-import { createWarehouseInbound, listCatalog, listWarehouseInbounds } from '../lib/api';
+import {
+  createWarehouseInbound,
+  listCatalog,
+  listWarehouseInbounds,
+  updateWarehouseInboundVat,
+} from '../lib/api';
 import { formatVnd } from '../lib/format';
 
 interface DraftProduct {
@@ -196,7 +202,7 @@ function WarehouseInboundContent() {
                 />
                 <small>
                   Nhập trực tiếp tiền thuế. Để trống nếu chưa ghi nhận; nhập 0 nếu đã xác nhận không
-                  phát sinh.
+                  phát sinh. Có thể bổ sung/sửa ở lịch sử phiếu nhập bên dưới.
                 </small>
               </label>
               <label>
@@ -334,6 +340,7 @@ function WarehouseInboundContent() {
                     ? 'Đã hủy'
                     : 'Đã nhập, chờ xác nhận chi phí'}
               </span>
+              {receipt.status !== 'CANCELLED' ? <InboundVatEditor receipt={receipt} /> : null}
             </div>
           </article>
         ))}
@@ -358,5 +365,90 @@ function WarehouseInboundContent() {
         </div>
       </section>
     </>
+  );
+}
+
+function InboundVatEditor({ receipt }: { receipt: InboundReceipt }) {
+  const client = useQueryClient();
+  const [amount, setAmount] = useState(receipt.vat?.amountVnd.toString() ?? '');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<{ error: boolean; message: string } | null>(null);
+  const attempt = useRef<{ key: string; serialized: string } | null>(null);
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (
+      !/^\d+$/.test(amount) ||
+      !Number.isSafeInteger(Number(amount)) ||
+      reason.trim().length < 3
+    ) {
+      setNotice({
+        error: true,
+        message: 'Nhập số tiền VND nguyên không âm và lý do ít nhất 3 ký tự.',
+      });
+      return;
+    }
+    const input = {
+      vat: { amountVnd: Number(amount), ratePercent: 8 as const },
+      expectedVersion: receipt.version,
+      reason: reason.trim(),
+    };
+    const serialized = JSON.stringify(input);
+    if (attempt.current?.serialized !== serialized)
+      attempt.current = { key: crypto.randomUUID(), serialized };
+    setBusy(true);
+    setNotice(null);
+    try {
+      await updateWarehouseInboundVat(receipt.id, input, attempt.current.key);
+      attempt.current = null;
+      setNotice({
+        error: false,
+        message: 'Đã lưu VAT 8% và lịch sử thay đổi; số lượng kho không đổi.',
+      });
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ['warehouse-inbounds'] }),
+        client.invalidateQueries({ queryKey: ['reports'] }),
+        client.invalidateQueries({ queryKey: ['dashboard'] }),
+      ]);
+    } catch (error) {
+      setNotice({
+        error: true,
+        message: error instanceof Error ? error.message : 'Không lưu được VAT.',
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <details>
+      <summary>Cập nhật VAT · 8%</summary>
+      <form onSubmit={save}>
+        <fieldset disabled={busy} className="form-grid">
+          <label>
+            Số tiền VAT cho {receipt.referenceCode}
+            <input
+              inputMode="numeric"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value)}
+              required
+            />
+          </label>
+          <label>
+            Lý do cập nhật VAT cho {receipt.referenceCode}
+            <input
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              minLength={3}
+              maxLength={500}
+              required
+            />
+          </label>
+          <Button type="submit" busy={busy}>
+            Lưu VAT
+          </Button>
+        </fieldset>
+        {notice ? <p role={notice.error ? 'alert' : 'status'}>{notice.message}</p> : null}
+      </form>
+    </details>
   );
 }
