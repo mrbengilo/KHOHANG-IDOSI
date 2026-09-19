@@ -271,6 +271,7 @@ export function summarizeMonthlyReport(
   const vatComplete =
     rows.inboundSource === 'WAREHOUSE_RECEIPTS' &&
     rows.inboundHeaders.every((row) => row.vatAmountVnd != null);
+  const landedCostComplete = rows.inboundSource === 'STORE_RECEIPTS' || vatComplete;
   const landedInboundCostVnd =
     inboundGoodsCostVnd + transportationFeeVnd + handlingFeeVnd + otherInboundCostVnd + vatCostVnd;
 
@@ -331,7 +332,7 @@ export function summarizeMonthlyReport(
       transportationFeeVnd: available(transportationFeeVnd, rows.inboundSource),
       handlingFeeVnd: available(handlingFeeVnd, rows.inboundSource),
       otherInboundCostVnd: available(otherInboundCostVnd, rows.inboundSource),
-      landedInboundCostVnd: vatComplete
+      landedInboundCostVnd: landedCostComplete
         ? available(landedInboundCostVnd, rows.inboundSource)
         : unavailable('VAT_NOT_CAPTURED', 'NOT_AVAILABLE'),
       vatCostVnd: vatComplete
@@ -340,7 +341,7 @@ export function summarizeMonthlyReport(
     },
     ratios: {
       averageInboundCostPerKgVnd:
-        !vatComplete && inboundWeightGrams !== null && inboundWeightGrams > 0n
+        !landedCostComplete && inboundWeightGrams !== null && inboundWeightGrams > 0n
           ? unavailable('VAT_NOT_CAPTURED', 'NOT_AVAILABLE')
           : costPerInboundKilogram(landedInboundCostVnd, inboundWeightGrams, rows.inboundSource),
       revenuePerInboundKgVnd:

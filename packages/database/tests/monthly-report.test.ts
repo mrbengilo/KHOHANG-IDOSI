@@ -120,6 +120,13 @@ describe('monthly operational summary', () => {
     expect(summarizeMonthlyReport(input, rows).totals.vatCostVnd.unavailableReason).toBe(
       'VAT_NOT_CAPTURED',
     );
+    const scoped = summarizeMonthlyReport(
+      { ...input, scope: { kind: 'STORE', id: 'store-1' } },
+      { ...rows, inboundSource: 'STORE_RECEIPTS' },
+    );
+    expect(scoped.totals.vatCostVnd.unavailableReason).toBe('VAT_NOT_CAPTURED');
+    expect(scoped.totals.landedInboundCostVnd.value).toBe(5000000n);
+    expect(scoped.ratios.averageInboundCostPerKgVnd.value).toBe(2500000n);
   });
   it('reports trustworthy totals and refuses revenue or margin when source data is incomplete', () => {
     const generatedAt = new Date('2026-10-01T00:00:00.000Z');

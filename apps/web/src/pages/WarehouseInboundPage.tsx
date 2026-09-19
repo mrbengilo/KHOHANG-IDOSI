@@ -371,12 +371,15 @@ function WarehouseInboundContent() {
 function InboundVatEditor({ receipt }: { receipt: InboundReceipt }) {
   const client = useQueryClient();
   const [amount, setAmount] = useState(receipt.vat?.amountVnd.toString() ?? '');
+  const [draftVersion, setDraftVersion] = useState(receipt.version);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ error: boolean; message: string } | null>(null);
   const attempt = useRef<{ key: string; serialized: string } | null>(null);
+  const stale = receipt.version !== draftVersion;
   async function save(event: FormEvent) {
     event.preventDefault();
+    if (busy || stale) return;
     if (
       !/^\d+$/.test(amount) ||
       !Number.isSafeInteger(Number(amount)) ||
@@ -390,7 +393,7 @@ function InboundVatEditor({ receipt }: { receipt: InboundReceipt }) {
     }
     const input = {
       vat: { amountVnd: Number(amount), ratePercent: 8 as const },
-      expectedVersion: receipt.version,
+      expectedVersion: draftVersion,
       reason: reason.trim(),
     };
     const serialized = JSON.stringify(input);
@@ -399,7 +402,10 @@ function InboundVatEditor({ receipt }: { receipt: InboundReceipt }) {
     setBusy(true);
     setNotice(null);
     try {
-      await updateWarehouseInboundVat(receipt.id, input, attempt.current.key);
+      const saved = await updateWarehouseInboundVat(receipt.id, input, attempt.current.key);
+      setDraftVersion(saved.version);
+      setAmount(saved.vat?.amountVnd.toString() ?? '');
+      setReason('');
       attempt.current = null;
       setNotice({
         error: false,
@@ -443,10 +449,28 @@ function InboundVatEditor({ receipt }: { receipt: InboundReceipt }) {
               required
             />
           </label>
-          <Button type="submit" busy={busy}>
+          <Button type="submit" busy={busy} disabled={stale}>
             Lưu VAT
           </Button>
         </fieldset>
+        {stale && !busy ? (
+          <div role="alert">
+            Phiếu đã được cập nhật ở phiên khác. Tải bản mới trước khi sửa VAT.
+            <Button
+              type="button"
+              tone="secondary"
+              onClick={() => {
+                setAmount(receipt.vat?.amountVnd.toString() ?? '');
+                setDraftVersion(receipt.version);
+                setReason('');
+                setNotice(null);
+                attempt.current = null;
+              }}
+            >
+              Tải bản VAT mới
+            </Button>
+          </div>
+        ) : null}
         {notice ? <p role={notice.error ? 'alert' : 'status'}>{notice.message}</p> : null}
       </form>
     </details>
