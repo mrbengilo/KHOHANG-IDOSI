@@ -430,7 +430,8 @@ async function createFixture({
         orderRequestItemId: requestItem.id,
         priorityLevel: 'P1',
         roundNumber: 1,
-        sequenceInRound: index + 1,
+        // Tier P1 must precede P3 even when P3 has an earlier local sequence.
+        sequenceInRound: index === 0 ? 3 : index,
         requestedQuantity: input.requested,
         allocatedQuantity: input.allocated,
         waitlistedQuantity: input.waitlisted,
@@ -438,7 +439,7 @@ async function createFixture({
         reasonCode: input.reasonCode,
         decisionMetadata: {
           policyRounds: input.policyRounds,
-          appliedPriority: 'P1',
+          appliedPriority: index === 0 ? 'P1' : 'P3',
           ...(policyRoundsVersion === undefined ? {} : { policyRoundsVersion }),
         },
         createdAt: allocationAt,

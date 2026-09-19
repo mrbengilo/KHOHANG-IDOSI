@@ -32,8 +32,10 @@ The writer validates round values once and records `policyRoundsVersion: 1` in t
 immutable metadata. Large unversioned legacy arrays remain unavailable, even if
 their length matches; GET never expands them to revalidate every entry. Small
 legacy arrays still receive full validation. No historical audit is rewritten.
-Pagination orders newest runs first, then round, sequence and line ID within each
-run; UUIDs are only a final tie-breaker, not the business execution order.
+Pagination orders newest runs first, then applied priority (P0A through P3), round,
+sequence and line ID within each run. Round/sequence restart for each tier; unknown
+legacy applied priority sorts last. UUIDs are only a final tie-breaker, not the
+business execution order. Source priority is not used to infer missing metadata.
 
 The proposed 0007 filtered-index migration was removed before merge/deployment.
 Existing indexes remain unchanged. Any additional index rollout needs measured

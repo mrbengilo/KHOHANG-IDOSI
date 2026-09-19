@@ -126,6 +126,11 @@ export async function listAllocationResults(
         .orderBy(
           desc(allocationRuns.createdAt),
           desc(allocationRuns.id),
+          // Planner round/sequence coordinates restart for each priority tier.
+          // Unknown legacy applied priority sorts last; never infer it from source priority.
+          asc(sql`case ${allocationLines.decisionMetadata}->>'appliedPriority'
+            when 'P0A' then 0 when 'P0B' then 1 when 'P1' then 2
+            when 'P2' then 3 when 'P3' then 4 else 5 end`),
           asc(allocationLines.roundNumber),
           asc(allocationLines.sequenceInRound),
           asc(allocationLines.id),
