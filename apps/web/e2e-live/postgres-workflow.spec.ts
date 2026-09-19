@@ -424,10 +424,26 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
     page.getByRole('heading', { exact: true, name: 'Đặt hàng & kết quả' }),
   ).toBeVisible();
   const lineNote = `REF-${runSuffix}-${testInfo.retry}-${'X'.repeat(180)}`;
-  await page.getByLabel('Số bao').fill('2');
-  await page.getByLabel('Ghi chú mặt hàng').fill(lineNote);
-  await page.getByRole('button', { name: 'Thêm mặt hàng' }).click();
+  await page.getByRole('checkbox').first().check();
+  await expect(page.getByRole('button', { name: /^Giảm số bao/ })).toBeDisabled();
+  await page.getByRole('button', { name: /^Tăng số bao/ }).click();
+  await page.getByLabel(/^Ghi chú mặt hàng/).fill(lineNote);
   await expect(page.getByText(`2 bao • ${lineNote}`)).toBeVisible();
+  await page.getByRole('checkbox').nth(1).check();
+  await page.getByRole('checkbox').nth(1).uncheck();
+  await expect(page.getByRole('spinbutton')).toHaveCount(1);
+  for (const width of [360, 390, 768, 1366, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect
+      .poll(() => page.evaluate(() => document.body.scrollWidth <= innerWidth))
+      .toBe(true);
+    const checkbox = (await page.getByRole('checkbox').first().boundingBox())!;
+    const quantity = (await page.getByRole('spinbutton').boundingBox())!;
+    expect(
+      Math.abs(checkbox.y + checkbox.height / 2 - quantity.y - quantity.height / 2),
+    ).toBeLessThan(2);
+    expect(quantity.x).toBeGreaterThan(checkbox.x + checkbox.width);
+  }
 
   const orderResponsePromise = page.waitForResponse(
     (response) =>
@@ -441,6 +457,7 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
     data: { id: string; lines: Array<{ note?: string }>; storeId: string };
   };
   expect(orderPayload.data.lines).toContainEqual(expect.objectContaining({ note: lineNote }));
+  expect(orderPayload.data.lines).toHaveLength(1);
   await expect(
     page.getByText('Đã gửi yêu cầu. Kho chỉ giữ hàng sau khi chạy phân bổ.'),
   ).toBeVisible();

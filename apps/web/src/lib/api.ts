@@ -1,4 +1,8 @@
 import {
+  CreateInboundReceiptRequestSchema,
+  InboundReceiptResponseSchema,
+  ListInboundReceiptsResponseSchema,
+  type CreateInboundReceiptRequest,
   ErrorEnvelopeSchema,
   CancelWaitTicketRequestSchema,
   CancelStoreOrderRequestSchema,
@@ -344,6 +348,24 @@ export async function listAllocationResults(
   if (filters.storeId) query.set('storeId', filters.storeId);
   const payload = await request(`/allocations?${query.toString()}`);
   return ListAllocationsResponseSchema.parse(payload);
+}
+
+export async function createWarehouseInbound(
+  input: CreateInboundReceiptRequest,
+  idempotencyKey: string,
+) {
+  const payload = await request('/inbound-receipts', {
+    method: 'POST',
+    headers: { 'idempotency-key': idempotencyKey },
+    body: JSON.stringify(CreateInboundReceiptRequestSchema.parse(input)),
+  });
+  return InboundReceiptResponseSchema.parse(payload).data;
+}
+
+export async function listWarehouseInbounds(page = 1) {
+  return ListInboundReceiptsResponseSchema.parse(
+    await request(`/inbound-receipts?page=${page}&pageSize=20`),
+  );
 }
 
 export async function createOrderSession(

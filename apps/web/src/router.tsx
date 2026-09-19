@@ -6,6 +6,11 @@ import { DashboardSkeleton } from './components/Skeleton';
 const DashboardPage = lazy(() =>
   import('./pages/DashboardPage').then((module) => ({ default: module.DashboardPage })),
 );
+const WarehouseInboundPage = lazy(() =>
+  import('./pages/WarehouseInboundPage').then((module) => ({
+    default: module.WarehouseInboundPage,
+  })),
+);
 const AllocationPage = lazy(() =>
   import('./pages/AllocationPage').then((module) => ({ default: module.AllocationPage })),
 );
@@ -74,6 +79,7 @@ export const router = createBrowserRouter([
       { index: true, element: suspense(<DashboardPage />) },
       { path: 'allocations', element: suspense(<AllocationPage />) },
       { path: 'requests', element: suspense(<RequestsPage />) },
+      { path: 'warehouse-inbound', element: suspense(<WarehouseInboundPage />) },
       { path: 'receive', element: suspense(<ReceivePage />) },
       { path: 'inventory', element: suspense(<InventoryPage />) },
       { path: 'open-bag', element: suspense(<OpenBagPage />) },
