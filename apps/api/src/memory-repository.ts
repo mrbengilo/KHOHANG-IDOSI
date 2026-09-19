@@ -802,13 +802,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const lastCompletedAt = Math.max(
       0,
       ...[...this.orderSessions.values()]
-        .filter(
-          (session) =>
-            session.status === 'ALLOCATED' &&
-            [...this.orderRequests.values()].some(
-              (request) => request.storeId === storeId && request.sessionId === session.id,
-            ),
-        )
+        .filter((session) => session.status === 'ALLOCATED')
         .map((session) => Date.parse(session.updatedAt)),
     );
     return [...this.orderRequests.values()].filter(

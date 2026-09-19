@@ -3,7 +3,9 @@
 ## Business rules
 
 - Ordering is available at any time. Server configuration determines the next snapshot/allocation date; the submission window may start on the preceding date.
+- The worker prepares today's cycle on every poll using the same business-date lock as the ordering API. Quiet days do not depend on page visits; restarting after 08:00 still prepares today's due cycle. Existing custom schedules and explicit cancellations are respected; historical dates are not invented.
 - Two ordinary requests per store; closing a session does not reset the quota. Completed allocation is the reset boundary. Requests already queued for the next session still occupy its slots. Cancelling a request does not refund its slot.
+- The completion boundary is global, including when a cancelled cycle is replaced by a completed allocation with no requests from that store.
 - Priority acceptance is not an ordinary request and consumes no ordinary slot.
 - Allocated priority goods remain actively reserved without an outbound until that store has an ordinary request in a later allocation (or the same allocation). They are excluded from stock available to other allocations.
 - A normal order still triggers shipment of the held priority goods if the new normal demand is entirely waitlisted.

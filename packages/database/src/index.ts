@@ -1,5 +1,5 @@
 export { closeDatabase, createDatabase, db, pool } from './client.js';
-export { prepareOrderingContext } from './continuous-ordering.js';
+export { prepareOrderingContext, ensureDailyOrderingSession } from './continuous-ordering.js';
 export type { Database, DatabaseClient } from './client.js';
 
 export { allocationRoundsFromMetadata, listAllocationResults } from './allocation-results.js';

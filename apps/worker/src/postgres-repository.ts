@@ -6,6 +6,7 @@ import {
   applyWarehouseMovement,
   auditLogs,
   dailyPriorityOffers,
+  ensureDailyOrderingSession,
   inventorySnapshotItems,
   inventorySnapshots,
   loadWarehouseBalancesAt,
@@ -88,6 +89,7 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
   public async listDueSessions(
     query: DueSessionQuery,
   ): Promise<readonly ScheduledAllocationSession[]> {
+    await ensureDailyOrderingSession(this.#database, query.now);
     const rows = await this.#database
       .select({
         id: orderSessions.id,

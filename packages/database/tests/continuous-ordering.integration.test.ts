@@ -80,7 +80,7 @@ describePostgres('24/7 ordering and allocation-completion quota', () => {
         requestNumber,
         status: 'submitted' as const,
         requestedByUserId: admin.id,
-        submittedAt: new Date(now - 5400000),
+        submittedAt: new Date(now),
       })),
     );
     const [next] = await db
@@ -116,6 +116,58 @@ describePostgres('24/7 ordering and allocation-completion quota', () => {
     expect(attempts.filter((result) => result.status === 'fulfilled')).toHaveLength(2);
     expect(attempts.filter((result) => result.status === 'rejected')).toHaveLength(1);
     expect(await db.transaction((tx) => countOrderingQuota(tx, store.id, next!.id))).toBe(2);
+  });
+
+  it('resets cancelled-cycle requests when a replacement completes without that store', async () => {
+    const { admin, store, product } = await createFixture();
+    const makeSession = async (status: 'cancelled' | 'open' | 'completed') => {
+      const [session] = await db
+        .insert(orderSessions)
+        .values({
+          code: `RESET-${randomUUID()}`,
+          businessDate: new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10),
+          status,
+          openedAt: new Date(Date.now() - 3600000),
+          inventorySnapshotDueAt: new Date(Date.now() + 3600000),
+          requestDeadlineAt: new Date(Date.now() + 7200000),
+          policyVersion: 'idosi-round-robin-p0a-p3-v1',
+        })
+        .returning();
+      sessionIds.add(session!.id);
+      return session!;
+    };
+    const cancelled = await makeSession('cancelled');
+    const next = await makeSession('open');
+    await db.insert(orderRequests).values(
+      [1, 2].map((requestNumber) => ({
+        orderSessionId: cancelled.id,
+        storeId: store.id,
+        requestNumber,
+        requestedByUserId: admin.id,
+        submittedAt: new Date(),
+      })),
+    );
+    expect(await db.transaction((tx) => countOrderingQuota(tx, store.id, next.id))).toBe(2);
+    const replacement = await makeSession('completed');
+    await db
+      .update(orderSessions)
+      .set({ completedAt: new Date() })
+      .where(eq(orderSessions.id, replacement.id));
+    expect(await db.transaction((tx) => countOrderingQuota(tx, store.id, next.id))).toBe(0);
+    await submitOrderRequest(db, {
+      orderSessionId: next.id,
+      storeId: store.id,
+      requestedByUserId: admin.id,
+      items: [{ productId: product.id, quantity: 1 }],
+      idempotencyKey: randomUUID(),
+      requestHash: randomUUID(),
+    });
+    // A further completed cycle cannot erase a request already queued for next.
+    await db
+      .update(orderSessions)
+      .set({ completedAt: new Date() })
+      .where(eq(orderSessions.id, replacement.id));
+    expect(await db.transaction((tx) => countOrderingQuota(tx, store.id, next.id))).toBe(1);
   });
 });
 

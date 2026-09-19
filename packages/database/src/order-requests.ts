@@ -98,7 +98,7 @@ export async function countOrderingQuota(
         eq(orderRequests.storeId, storeId),
         or(
           eq(orderRequests.orderSessionId, sessionId),
-          sql`${orderRequests.submittedAt} > coalesce((select max(s.completed_at) from order_sessions s where s.status = 'completed' and s.deleted_at is null and exists (select 1 from order_requests r where r.order_session_id = s.id and r.store_id = ${storeId})), '-infinity'::timestamptz)`,
+          sql`${orderRequests.submittedAt} > coalesce((select max(s.completed_at) from order_sessions s where s.status = 'completed' and s.deleted_at is null), '-infinity'::timestamptz)`,
         ),
       ),
     );
