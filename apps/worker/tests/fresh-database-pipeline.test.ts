@@ -163,6 +163,7 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
         sequenceInRound: 1,
         decisionMetadata: expect.objectContaining({
           policyRounds: [1, 2, 3],
+          policyRoundsVersion: 1,
           appliedPriority: expect.stringMatching(/^P[0-3]/u),
         }),
       });

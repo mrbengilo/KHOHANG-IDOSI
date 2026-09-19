@@ -1212,10 +1212,14 @@ export function allocationMetadata(
   steps: readonly AllocationPolicyStep[],
   appliedPriority: AllocationRemainder['priority'],
 ): JsonObject {
+  if (steps.some((step) => !Number.isSafeInteger(step.round) || step.round < 1)) {
+    throw new Error('Allocation audit rounds must be positive safe integers.');
+  }
   return {
     cursorBefore: result.cursorBefore,
     nextCursor: result.nextCursor,
     policyRounds: steps.map((step) => step.round),
+    policyRoundsVersion: 1,
     appliedPriority,
     snapshotAvailable: result.availableBefore,
     snapshotId: result.snapshotId,

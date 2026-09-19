@@ -110,15 +110,10 @@ export async function listAllocationResults(
             when jsonb_typeof(${allocationLines.decisionMetadata}->'policyRounds') = 'array' then
               case when jsonb_array_length(${allocationLines.decisionMetadata}->'policyRounds') > 100
                 then jsonb_build_object(
-                  'roundsOmitted', case
-                    when jsonb_array_length(${allocationLines.decisionMetadata}->'policyRounds') = ${allocationLines.allocatedQuantity}
-                    then not exists (
-                      select 1 from jsonb_array_elements(${allocationLines.decisionMetadata}->'policyRounds') as audit_round(value)
-                      where not (case when jsonb_typeof(audit_round.value) = 'number'
-                        then (audit_round.value::text)::numeric between 1 and 9007199254740991
-                          and trunc((audit_round.value::text)::numeric) = (audit_round.value::text)::numeric
-                        else false end)
-                    ) else false end,
+                  'roundsOmitted', coalesce(
+                    ${allocationLines.decisionMetadata}->'policyRoundsVersion' = '1'::jsonb
+                    and jsonb_array_length(${allocationLines.decisionMetadata}->'policyRounds') = ${allocationLines.allocatedQuantity},
+                    false),
                   'appliedPriority', ${allocationLines.decisionMetadata}->'appliedPriority'
                 )
                 else ${allocationLines.decisionMetadata} end
@@ -128,7 +123,13 @@ export async function listAllocationResults(
         .from(allocationLines)
         .innerJoin(allocationRuns, eq(allocationLines.allocationRunId, allocationRuns.id))
         .where(where)
-        .orderBy(desc(allocationLines.createdAt), asc(allocationLines.id))
+        .orderBy(
+          desc(allocationRuns.createdAt),
+          desc(allocationRuns.id),
+          asc(allocationLines.roundNumber),
+          asc(allocationLines.sequenceInRound),
+          asc(allocationLines.id),
+        )
         .limit(input.pageSize)
         .offset(offset);
       const totalItems = totalRows[0]?.value ?? 0;

@@ -22,10 +22,18 @@ CI additionally exercises migrations and the worker against PostgreSQL.
 
 The v2 response uses `Content-Type: application/vnd.idosi.allocations.v2+json`.
 List details are limited to 100 grant entries per line. Larger audit arrays stay
-in PostgreSQL: the projection returns `rounds: []` and `roundsOmitted: true`, while
+in PostgreSQL: for new writer-validated, versioned metadata the projection returns
+`rounds: []` and `roundsOmitted: true`, while
 preserving the actual requested/allocated/waitlisted totals and applied priority.
 The UI labels omitted detail separately from missing legacy metadata. No partial
 round list is presented as a complete audit.
+
+The writer validates round values once and records `policyRoundsVersion: 1` in the
+immutable metadata. Large unversioned legacy arrays remain unavailable, even if
+their length matches; GET never expands them to revalidate every entry. Small
+legacy arrays still receive full validation. No historical audit is rewritten.
+Pagination orders newest runs first, then round, sequence and line ID within each
+run; UUIDs are only a final tie-breaker, not the business execution order.
 
 The proposed 0007 filtered-index migration was removed before merge/deployment.
 Existing indexes remain unchanged. Any additional index rollout needs measured

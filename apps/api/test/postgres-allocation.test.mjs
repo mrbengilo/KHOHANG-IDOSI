@@ -53,6 +53,19 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
         totalPages: 2,
       });
       assert.equal(adminPage.json().data.length, 2);
+      assert.deepEqual(
+        adminPage.json().data.map((line) => line.storeId),
+        [fixture.storeIds.assignedA, fixture.storeIds.assignedB],
+      );
+      const secondPage = await app.inject({
+        method: 'GET',
+        url: `${baseUrl}&page=2&pageSize=2`,
+        headers: { cookie: sessionCookie(fixture.tokens.admin) },
+      });
+      assert.deepEqual(
+        secondPage.json().data.map((line) => line.storeId),
+        [fixture.storeIds.unassigned],
+      );
 
       const unsafePage = await app.inject({
         method: 'GET',
@@ -136,7 +149,11 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
       });
       assert.equal(storeDenied.statusCode, 403);
       const largeRounds = Array.from({ length: 100000 }, (_, index) => index + 1);
-      const largeFixture = await createFixture({ quantity: 100000, policyRounds: largeRounds });
+      const largeFixture = await createFixture({
+        quantity: 100000,
+        policyRounds: largeRounds,
+        policyRoundsVersion: 1,
+      });
       const bounded = await app.inject({
         method: 'GET',
         url: `/api/v1/allocations?sessionId=${largeFixture.sessionId}`,
@@ -157,7 +174,14 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
         .where(eq(allocationLines.id, bounded.json().data[0].id));
       assert.equal(stored.metadata.policyRounds.length, 100000);
       for (const audit of [
+        { quantity: 100000, policyRounds: largeRounds, label: 'unversioned large legacy audit' },
         { quantity: 5, policyRounds: largeRounds, label: 'legacy merged source mismatch' },
+        {
+          quantity: 5,
+          policyRounds: largeRounds,
+          policyRoundsVersion: 1,
+          label: 'versioned count mismatch',
+        },
         { quantity: 101, policyRounds: [...Array(100).fill(1), '1'], label: 'string round' },
         { quantity: 101, policyRounds: [...Array(100).fill(1), 1.5], label: 'fractional round' },
         { quantity: 101, policyRounds: [...Array(100).fill(1), 0], label: 'zero round' },
@@ -188,7 +212,11 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
   });
 });
 
-async function createFixture({ quantity = 5, policyRounds = [1, 2, 3, 4, 5] } = {}) {
+async function createFixture({
+  quantity = 5,
+  policyRounds = [1, 2, 3, 4, 5],
+  policyRoundsVersion,
+} = {}) {
   const suffix = randomUUID();
   const [administrator] = await db
     .select({ id: users.id, tokenVersion: users.tokenVersion })
@@ -393,6 +421,8 @@ async function createFixture({ quantity = 5, policyRounds = [1, 2, 3, 4, 5] } = 
         requestedQuantity: input.requested,
       });
       await tx.insert(allocationLines).values({
+        // Reverse ID order deliberately: pagination must follow planner coordinates.
+        id: `${3 - index}0000000-${randomUUID().slice(9)}`,
         allocationRunId: run.id,
         mergedOrderId: mergedOrder.id,
         storeId: input.storeId,
@@ -406,7 +436,11 @@ async function createFixture({ quantity = 5, policyRounds = [1, 2, 3, 4, 5] } = 
         waitlistedQuantity: input.waitlisted,
         status: input.status,
         reasonCode: input.reasonCode,
-        decisionMetadata: { policyRounds: input.policyRounds, appliedPriority: 'P1' },
+        decisionMetadata: {
+          policyRounds: input.policyRounds,
+          appliedPriority: 'P1',
+          ...(policyRoundsVersion === undefined ? {} : { policyRoundsVersion }),
+        },
         createdAt: allocationAt,
       });
     }
