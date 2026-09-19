@@ -89,7 +89,10 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
       const storePage = await app.inject({
         method: 'GET',
         url: `${baseUrl}&pageSize=100`,
-        headers: { cookie: sessionCookie(fixture.tokens.store) },
+        headers: {
+          cookie: sessionCookie(fixture.tokens.store),
+          accept: 'application/vnd.idosi.allocations.v2+json',
+        },
       });
       assert.equal(storePage.statusCode, 200);
       assert.equal(storePage.json().pagination.totalItems, 1);

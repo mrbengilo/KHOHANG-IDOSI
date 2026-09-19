@@ -457,7 +457,16 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     const session = await authenticate(request, repository);
     const query = ListAllocationsQuerySchema.parse(request.query);
     reply.header('cache-control', 'no-store');
-    return repository.listAllocations(session.principal, query);
+    const result = await repository.listAllocations(session.principal, query);
+    if (request.headers.accept === 'application/vnd.idosi.allocations.v2+json') return result;
+    // Existing browser bundles validate the v1 shape strictly. Opt in to the
+    // expanded projection without changing responses for those clients.
+    return {
+      ...result,
+      data: result.data.map(
+        ({ rounds: _rounds, appliedPriority: _appliedPriority, ...legacy }) => legacy,
+      ),
+    };
   });
 
   app.post('/api/v1/order-sessions', async (request, reply) => {
@@ -1551,6 +1560,13 @@ function openApiDocument(): Record<string, unknown> {
           summary: 'List persisted allocation results visible to the current store scope',
           security: cookieSecurity,
           parameters: [
+            {
+              name: 'Accept',
+              in: 'header',
+              description:
+                'Use application/vnd.idosi.allocations.v2+json to include rounds and appliedPriority. Omit for the legacy response shape.',
+              schema: { type: 'string', enum: ['application/vnd.idosi.allocations.v2+json'] },
+            },
             {
               name: 'page',
               in: 'query',

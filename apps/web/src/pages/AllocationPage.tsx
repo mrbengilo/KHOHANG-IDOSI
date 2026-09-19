@@ -1128,8 +1128,13 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                       </td>
                       <td data-label="Ưu tiên / vòng">
                         <Badge tone={result.priority.startsWith('P0') ? 'priority' : 'info'}>
-                          {result.priority}
+                          Nguồn: {result.priority}
                         </Badge>
+                        <small>
+                          {result.appliedPriority
+                            ? `Áp dụng: ${result.appliedPriority}`
+                            : 'Chưa có dữ liệu ưu tiên áp dụng'}
+                        </small>
                         <small>{allocationRoundText(result)}</small>
                       </td>
                       <td className="allocation-result-decision" data-label="Kết quả / lý do">

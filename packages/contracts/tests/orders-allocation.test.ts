@@ -242,6 +242,14 @@ describe('order, allocation and wait-list contracts', () => {
       createdAt: '2026-09-10T09:00:00Z',
     };
     expect(AllocationResultSchema.safeParse(result).success).toBe(true);
+    const { rounds: _rounds, ...legacy } = result;
+    expect(AllocationResultSchema.parse(legacy).rounds).toEqual([]);
+    expect(
+      AllocationResultSchema.parse({ ...result, priority: 'P3', appliedPriority: 'P1' }),
+    ).toMatchObject({
+      priority: 'P3',
+      appliedPriority: 'P1',
+    });
     expect(AllocationResultSchema.safeParse({ ...result, allocatedQuantity: 4 }).success).toBe(
       false,
     );

@@ -140,6 +140,11 @@ export const AllocationResultSchema = z
     storeId: EntityIdSchema,
     productId: EntityIdSchema,
     priority: AllocationPrioritySchema,
+    appliedPriority: AllocationPrioritySchema.nullable()
+      .optional()
+      .describe(
+        'Planner priority for the merged demand; priority retains the original source priority. Unknown for legacy rows.',
+      ),
     roundNumber: z
       .number()
       .int()
@@ -154,6 +159,7 @@ export const AllocationResultSchema = z
       .describe('Deprecated persistence coordinate; use rounds for policy-round audit data.'),
     rounds: z
       .array(AllocationResultRoundSchema)
+      .default([])
       .describe(
         'Authoritative allocated quantity grouped by planner round; empty for zero-grant or legacy rows without complete round metadata.',
       ),

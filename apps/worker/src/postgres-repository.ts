@@ -1215,6 +1215,7 @@ function allocationMetadata(
     cursorBefore: result.cursorBefore,
     nextCursor: result.nextCursor,
     policyRounds: steps.map((step) => step.round),
+    appliedPriority: steps[0]?.priority ?? null,
     snapshotAvailable: result.availableBefore,
     snapshotId: result.snapshotId,
   };

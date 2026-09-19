@@ -54,7 +54,7 @@ describe('allocation result projection query guards', () => {
             mergedOrderId: null,
             storeId: '44444444-4444-4444-8444-444444444444',
             productId: '55555555-5555-4555-8555-555555555555',
-            priority: 'P1' as const,
+            priority: 'P3' as const,
             roundNumber: 1,
             sequenceInRound: 1,
             requestedQuantity: 3,
@@ -62,7 +62,7 @@ describe('allocation result projection query guards', () => {
             waitlistedQuantity: 0,
             status: 'allocated' as const,
             reasonCode: 'ALLOCATED_BY_PRIORITY_ROUND_ROBIN',
-            decisionMetadata: { policyRounds: [1, 2, 2] },
+            decisionMetadata: { policyRounds: [1, 2, 2], appliedPriority: 'P1' },
             createdAt: new Date('2026-09-17T02:00:00.000Z'),
           },
         ]),
@@ -80,6 +80,7 @@ describe('allocation result projection query guards', () => {
       deferrable: false,
     });
     expect(select).toHaveBeenCalledTimes(2);
+    expect(page.data[0]).toMatchObject({ priority: 'P3', appliedPriority: 'P1' });
     expect(page.data[0]?.rounds).toEqual([
       { roundNumber: 1, allocatedQuantity: 1 },
       { roundNumber: 2, allocatedQuantity: 2 },

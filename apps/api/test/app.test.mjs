@@ -475,7 +475,7 @@ describe('KHOHANG-IDOSI API', () => {
     const ownResults = await app.inject({
       method: 'GET',
       url: '/api/v1/allocations?page=1&pageSize=100',
-      headers: { cookie: storeCookie },
+      headers: { cookie: storeCookie, accept: 'application/vnd.idosi.allocations.v2+json' },
     });
     assert.equal(ownResults.statusCode, 200);
     assert.equal(ownResults.headers['cache-control'], 'no-store');
@@ -508,6 +508,18 @@ describe('KHOHANG-IDOSI API', () => {
       reasonCode: 'ALLOCATED_BY_PRIORITY_ROUND_ROBIN',
       createdAt: ownResults.json().data[0].createdAt,
     });
+
+    const legacyResults = await app.inject({
+      method: 'GET',
+      url: '/api/v1/allocations?page=1&pageSize=100',
+      headers: { cookie: storeCookie },
+    });
+    const {
+      rounds: _rounds,
+      appliedPriority: _appliedPriority,
+      ...legacyResult
+    } = ownResults.json().data[0];
+    assert.deepEqual(legacyResults.json().data[0], legacyResult);
 
     const denied = await app.inject({
       method: 'GET',

@@ -161,7 +161,10 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
         waitlistedQuantity: 0,
         roundNumber: 1,
         sequenceInRound: 1,
-        decisionMetadata: expect.objectContaining({ policyRounds: [1, 2, 3] }),
+        decisionMetadata: expect.objectContaining({
+          policyRounds: [1, 2, 3],
+          appliedPriority: expect.stringMatching(/^P[0-3]/u),
+        }),
       });
       if (!allocationLine?.mergedOrderId) {
         throw new Error('Fresh allocation did not preserve merged-order provenance.');

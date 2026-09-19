@@ -3884,6 +3884,7 @@ function allocationResultDto(record: AllocationResultRecord): AllocationResult {
     storeId: record.storeId,
     productId: record.productId,
     priority: record.priority,
+    appliedPriority: record.appliedPriority,
     roundNumber: record.roundNumber,
     sequenceInRound: record.sequenceInRound,
     rounds: record.rounds.map((round) => ({ ...round })),

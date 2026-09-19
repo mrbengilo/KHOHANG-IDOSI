@@ -86,7 +86,7 @@ export class ApiClientError extends Error {
 
 async function request(path: string, init?: RequestInit): Promise<unknown> {
   const headers = new Headers(init?.headers);
-  headers.set('Accept', 'application/json');
+  if (!headers.has('Accept')) headers.set('Accept', 'application/json');
   if (init?.body !== undefined && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
@@ -342,7 +342,9 @@ export async function listAllocationResults(
   if (filters.sessionId) query.set('sessionId', filters.sessionId);
   if (filters.status) query.set('status', filters.status);
   if (filters.storeId) query.set('storeId', filters.storeId);
-  const payload = await request(`/allocations?${query.toString()}`);
+  const payload = await request(`/allocations?${query.toString()}`, {
+    headers: { Accept: 'application/vnd.idosi.allocations.v2+json' },
+  });
   return ListAllocationsResponseSchema.parse(payload);
 }
 

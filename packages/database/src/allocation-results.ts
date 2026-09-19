@@ -21,6 +21,7 @@ export interface AllocationResultRecord {
   readonly storeId: string;
   readonly productId: string;
   readonly priority: AllocationResultPriority;
+  readonly appliedPriority: AllocationResultPriority | null;
   /** @deprecated Persistence coordinate only; use `rounds` for policy-round audit data. */
   readonly roundNumber: number;
   /** @deprecated Persistence coordinate only; use `rounds` for policy-round audit data. */
@@ -115,6 +116,11 @@ export async function listAllocationResults(
       return {
         data: rows.map(({ decisionMetadata, ...row }) => ({
           ...row,
+          appliedPriority: ['P0A', 'P0B', 'P1', 'P2', 'P3'].includes(
+            String(decisionMetadata.appliedPriority),
+          )
+            ? (decisionMetadata.appliedPriority as AllocationResultPriority)
+            : null,
           rounds: allocationRoundsFromMetadata(decisionMetadata, row.allocatedQuantity),
         })),
         pagination: {
