@@ -180,7 +180,7 @@ async function createFixture() {
   const [store] = await db
     .insert(stores)
     .values({
-      code: `CYCLE-${randomUUID()}`,
+      code: `CYCLE-${randomUUID().replaceAll('-', '')}`,
       name: 'Cycle test',
       groupId: group.id,
       kind: 'retail',

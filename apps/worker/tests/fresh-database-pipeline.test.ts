@@ -60,7 +60,7 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
       // this end-to-end database fixture must use today's Ho Chi Minh date.
       // The session is soft-deleted in finally so the later live browser suite
       // can create its own same-day session in this shared CI database.
-      const runKey = randomUUID();
+      const runKey = randomUUID().replaceAll('-', '');
       // Quotas persist across sessions until allocation completes. Use a new store
       // so repeated integration runs cannot inherit another test's two used slots.
       const [store] = await client.db

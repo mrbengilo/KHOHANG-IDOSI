@@ -42,7 +42,7 @@ describePostgres('priority goods join the next ordinary shipment', () => {
         const [admin] = await db.select().from(users).where(eq(users.role, 'admin')).limit(1);
         const [group] = await db.select().from(storeGroups).limit(1);
         if (!admin || !group) throw new Error('Bootstrap admin and reference seed required.');
-        const token = randomUUID();
+        const token = randomUUID().replaceAll('-', '');
         const [store] = await db
           .insert(stores)
           .values({ code: `SHIP-${token}`, name: 'Shipment test', groupId: group.id })
