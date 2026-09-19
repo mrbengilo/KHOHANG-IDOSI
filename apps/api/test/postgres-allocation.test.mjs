@@ -20,7 +20,7 @@ import {
   stores,
   users,
 } from '@idosi/database';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 
 import { createApi } from '../dist/app.js';
 import { PostgresWarehouseRepository } from '../dist/postgres-repository.js';
@@ -29,18 +29,6 @@ import { hashSessionToken } from '../dist/security.js';
 const describePostgres = process.env.RUN_POSTGRES_TESTS === '1' ? describe : describe.skip;
 
 describePostgres('allocation result projection on fresh PostgreSQL', () => {
-  test('installs indexes for filtered newest-first allocation result scans', async () => {
-    const indexes = await db.execute(sql`
-      SELECT indexname
-      FROM pg_indexes
-      WHERE schemaname = 'public'
-        AND tablename = 'allocation_lines'
-    `);
-    const names = new Set(indexes.rows.map((row) => row.indexname));
-    assert.equal(names.has('allocation_lines_product_created_id_idx'), true);
-    assert.equal(names.has('allocation_lines_status_created_id_idx'), true);
-  });
-
   test('enforces ADMIN, assigned HTKD and own STORE scope through the API', async () => {
     if (!process.env.DATABASE_URL) {
       throw new Error('DATABASE_URL is required when RUN_POSTGRES_TESTS=1.');
@@ -147,6 +135,35 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
         headers: { cookie: sessionCookie(fixture.tokens.store) },
       });
       assert.equal(storeDenied.statusCode, 403);
+      const largeRounds = Array.from({ length: 100000 }, (_, index) => index + 1);
+      const lineId = storePage.json().data[0].id;
+      await db
+        .update(allocationLines)
+        .set({
+          requestedQuantity: 100000,
+          allocatedQuantity: 100000,
+          decisionMetadata: { policyRounds: largeRounds, appliedPriority: 'P1' },
+        })
+        .where(eq(allocationLines.id, lineId));
+      const bounded = await app.inject({
+        method: 'GET',
+        url: baseUrl,
+        headers: {
+          cookie: sessionCookie(fixture.tokens.store),
+          accept: 'application/vnd.idosi.allocations.v2+json',
+        },
+      });
+      assert.equal(bounded.statusCode, 200);
+      assert.equal(bounded.json().data[0].allocatedQuantity, 100000);
+      assert.equal(bounded.json().data[0].appliedPriority, 'P1');
+      assert.equal(bounded.json().data[0].roundsOmitted, true);
+      assert.deepEqual(bounded.json().data[0].rounds, []);
+      assert.ok(Buffer.byteLength(bounded.body) < 2000);
+      const [stored] = await db
+        .select({ metadata: allocationLines.decisionMetadata })
+        .from(allocationLines)
+        .where(eq(allocationLines.id, lineId));
+      assert.equal(stored.metadata.policyRounds.length, 100000);
     } finally {
       if (app) await app.close();
       else await repository.close();

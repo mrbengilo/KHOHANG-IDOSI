@@ -19,3 +19,16 @@ No API write, historical row rewrite, or new migration is required for this chan
 Regression checks cover both wire formats, a new client parsing an old response,
 and a P3 source projected with the P1 priority actually applied by the planner.
 CI additionally exercises migrations and the worker against PostgreSQL.
+
+The v2 response uses `Content-Type: application/vnd.idosi.allocations.v2+json`.
+List details are limited to 100 grant entries per line. Larger audit arrays stay
+in PostgreSQL: the projection returns `rounds: []` and `roundsOmitted: true`, while
+preserving the actual requested/allocated/waitlisted totals and applied priority.
+The UI labels omitted detail separately from missing legacy metadata. No partial
+round list is presented as a complete audit.
+
+The proposed 0007 filtered-index migration was removed before merge/deployment.
+Existing indexes remain unchanged. Any additional index rollout needs measured
+query plans and a separately tested concurrent-index migration, not a blocking
+index build in the transactional application migration. No deployed migration is
+rewritten or rolled back by this PR.
