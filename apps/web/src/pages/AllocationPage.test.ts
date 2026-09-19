@@ -102,5 +102,8 @@ describe('production allocation session helpers', () => {
     ).toBe('Vòng 1: 1 · Vòng 2: 2');
     expect(allocationRoundText({ allocatedQuantity: 0, rounds: [] })).toBe('Không có lượt cấp');
     expect(allocationRoundText({ allocatedQuantity: 2, rounds: [] })).toBe('Chưa có dữ liệu vòng');
+    expect(
+      allocationRoundText({ allocatedQuantity: 100000, rounds: [], roundsOmitted: true }),
+    ).toBe('Chi tiết vòng vượt giới hạn danh sách; tổng đã cấp: 100000');
   });
 });

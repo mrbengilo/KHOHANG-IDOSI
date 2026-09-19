@@ -39,6 +39,12 @@ describe('allocation result projection query guards', () => {
     expect(allocationRoundsFromMetadata({}, 2)).toEqual([]);
     expect(allocationRoundsFromMetadata({ policyRounds: [1, 2, 3] }, 2)).toEqual([]);
     expect(allocationRoundsFromMetadata({ policyRounds: [1, 0] }, 2)).toEqual([]);
+    expect(
+      allocationRoundsFromMetadata(
+        { policyRounds: Array.from({ length: 100000 }, (_, index) => index + 1) },
+        100000,
+      ),
+    ).toEqual([]);
   });
 
   it('reads count and rows sequentially in one read-only repeatable-read snapshot', async () => {

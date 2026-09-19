@@ -533,6 +533,10 @@ describe('KHOHANG-IDOSI API', () => {
       });
       assert.equal(negotiated.statusCode, 200);
       assert.equal(Object.hasOwn(negotiated.json().data[0], 'rounds'), hasRounds);
+      assert.equal(
+        negotiated.headers['content-type'].split(';')[0],
+        hasRounds ? 'application/vnd.idosi.allocations.v2+json' : 'application/json',
+      );
     }
 
     const denied = await app.inject({

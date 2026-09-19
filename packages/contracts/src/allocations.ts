@@ -159,9 +159,16 @@ export const AllocationResultSchema = z
       .describe('Deprecated persistence coordinate; use rounds for policy-round audit data.'),
     rounds: z
       .array(AllocationResultRoundSchema)
+      .max(100)
       .default([])
       .describe(
-        'Authoritative allocated quantity grouped by planner round; empty for zero-grant or legacy rows without complete round metadata.',
+        'Complete allocated quantity grouped by planner round when within the 100-grant list budget; empty for zero-grant, omitted, or legacy metadata.',
+      ),
+    roundsOmitted: z
+      .boolean()
+      .optional()
+      .describe(
+        'True when complete round audit exceeds the list detail budget; stored audit is unchanged.',
       ),
     requestedQuantity: z.number().int().positive().safe(),
     allocatedQuantity: z.number().int().nonnegative().safe(),

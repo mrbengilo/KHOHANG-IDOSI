@@ -329,8 +329,10 @@ export function allocationResultsViewState(input: {
 }
 
 export function allocationRoundText(
-  result: Pick<AllocationResult, 'allocatedQuantity' | 'rounds'>,
+  result: Pick<AllocationResult, 'allocatedQuantity' | 'rounds' | 'roundsOmitted'>,
 ): string {
+  if (result.roundsOmitted)
+    return `Chi tiết vòng vượt giới hạn danh sách; tổng đã cấp: ${result.allocatedQuantity}`;
   if (result.rounds.length === 0) {
     return result.allocatedQuantity === 0 ? 'Không có lượt cấp' : 'Chưa có dữ liệu vòng';
   }

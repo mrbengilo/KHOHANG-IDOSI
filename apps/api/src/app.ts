@@ -469,13 +469,18 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
       const quality = qualities[0]!.split('=')[1]?.trim() ?? '';
       return /^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/u.test(quality) && Number(quality) > 0;
     });
-    if (acceptsV2) return result;
+    if (acceptsV2) return reply.type('application/vnd.idosi.allocations.v2+json').send(result);
     // Existing browser bundles validate the v1 shape strictly. Opt in to the
     // expanded projection without changing responses for those clients.
     return {
       ...result,
       data: result.data.map(
-        ({ rounds: _rounds, appliedPriority: _appliedPriority, ...legacy }) => legacy,
+        ({
+          rounds: _rounds,
+          appliedPriority: _appliedPriority,
+          roundsOmitted: _roundsOmitted,
+          ...legacy
+        }) => legacy,
       ),
     };
   });

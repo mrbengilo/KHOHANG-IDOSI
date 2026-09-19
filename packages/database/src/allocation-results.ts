@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNull, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import { allocationLines, allocationRuns, type JsonObject } from './schema.js';
@@ -27,6 +27,7 @@ export interface AllocationResultRecord {
   /** @deprecated Persistence coordinate only; use `rounds` for policy-round audit data. */
   readonly sequenceInRound: number;
   readonly rounds: readonly AllocationResultRoundRecord[];
+  readonly roundsOmitted: boolean;
   readonly requestedQuantity: number;
   readonly allocatedQuantity: number;
   readonly waitlistedQuantity: number;
@@ -103,7 +104,14 @@ export async function listAllocationResults(
           waitlistedQuantity: allocationLines.waitlistedQuantity,
           status: allocationLines.status,
           reasonCode: allocationLines.reasonCode,
-          decisionMetadata: allocationLines.decisionMetadata,
+          // Keep large historical audit arrays in PostgreSQL, not in paginated
+          // list responses. The immutable source metadata remains unchanged.
+          decisionMetadata: sql<JsonObject>`case
+            when jsonb_typeof(${allocationLines.decisionMetadata}->'policyRounds') = 'array' then
+              case when jsonb_array_length(${allocationLines.decisionMetadata}->'policyRounds') > 100
+                then jsonb_build_object('roundsOmitted', true, 'appliedPriority', ${allocationLines.decisionMetadata}->'appliedPriority')
+                else ${allocationLines.decisionMetadata} end
+            else ${allocationLines.decisionMetadata} end`,
           createdAt: allocationLines.createdAt,
         })
         .from(allocationLines)
@@ -122,6 +130,7 @@ export async function listAllocationResults(
             ? (decisionMetadata.appliedPriority as AllocationResultPriority)
             : null,
           rounds: allocationRoundsFromMetadata(decisionMetadata, row.allocatedQuantity),
+          roundsOmitted: decisionMetadata.roundsOmitted === true,
         })),
         pagination: {
           page: input.page,
@@ -142,6 +151,7 @@ export function allocationRoundsFromMetadata(
   const policyRounds = metadata.policyRounds;
   if (
     !Array.isArray(policyRounds) ||
+    policyRounds.length > 100 ||
     !Number.isSafeInteger(allocatedQuantity) ||
     allocatedQuantity < 0 ||
     policyRounds.length !== allocatedQuantity
