@@ -174,7 +174,7 @@ describe('KHOHANG-IDOSI API', () => {
     let shouldFail = false;
     const remoteFetch = async (input, init) => {
       const url = new URL(String(input));
-      assert.equal(url.searchParams.get('storeId'), 'DS_NVT');
+      assert.equal(url.searchParams.get('storeId'), 'S01');
       assert.equal(url.searchParams.get('period'), '2026-09');
       assert.equal(url.toString().includes('warehouse-server-secret'), false);
       assert.equal(
@@ -182,12 +182,16 @@ describe('KHOHANG-IDOSI API', () => {
         'Bearer warehouse-server-secret',
       );
       if (shouldFail) return new Response('{}', { status: 503 });
-      return new Response(JSON.stringify(idosiStatisticsPayload(remoteRevenue)));
+      const payload = idosiStatisticsPayload(remoteRevenue);
+      return new Response(
+        JSON.stringify({ ...payload, storeId: 'S01', store: { ...payload.store, id: 'S01' } }),
+      );
     };
     app = await createApi({
       repository,
       corsOrigin: 'http://localhost:5173',
       idosiIntegrationSecret: 'warehouse-server-secret',
+      idosiStoreIdMap: { DS_NVT: 'S01' },
       idosiFetch: remoteFetch,
     });
     const storeCookie = cookieOf(await login('ds_nvt'));
@@ -227,6 +231,8 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(first.statusCode, 200);
     assert.equal(first.headers['cache-control'], 'no-store');
     assert.equal(first.json().data.freshness, 'CURRENT');
+    assert.equal(first.json().data.snapshot.storeId, MEMORY_SEED_IDS.nvtStore);
+    assert.equal(first.json().data.snapshot.payload.storeId, 'S01');
     assert.equal(first.json().data.snapshot.payload.totals.revenue, 300_000);
     const snapshotId = first.json().data.snapshot.id;
 

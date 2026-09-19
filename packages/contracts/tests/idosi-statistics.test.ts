@@ -4,6 +4,7 @@ import {
   fetchIdosiOrderStatistics,
   IdosiGatewayError,
   IdosiOrderStatisticsPayloadSchema,
+  parseIdosiStoreIdMap,
   SyncIdosiStatisticsRequestSchema,
 } from '../src/index.js';
 
@@ -85,6 +86,51 @@ const payload = {
 };
 
 describe('IDOSI statistics contracts and gateway', () => {
+  it('validates server mappings without accepting ambiguous or unsafe keys', () => {
+    expect(parseIdosiStoreIdMap(undefined)).toEqual({});
+    expect(parseIdosiStoreIdMap('{}')).toEqual({});
+    expect(parseIdosiStoreIdMap('{"LOCAL":"S01"}')).toEqual({ LOCAL: 'S01' });
+    for (const value of [
+      'null',
+      '[]',
+      'bad',
+      '{"LOCAL":""}',
+      '{"A":"S01","B":"S01"}',
+      '{"__proto__":"S01"}',
+      '{"constructor":"S01"}',
+      '{" A":"S01"}',
+    ]) {
+      expect(() => parseIdosiStoreIdMap(value)).toThrow('IDOSI_STORE_ID_MAP');
+    }
+  });
+
+  it('maps local codes, validates upstream scope and fails closed for unmapped stores', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      expect(new URL(String(input)).searchParams.get('storeId')).toBe('S01');
+      return new Response(JSON.stringify(payload));
+    });
+    const options = {
+      endpoint: 'https://idosi.io.vn/api/integrations/warehouse/v1/order-statistics',
+      secret: 'test-secret',
+      storeCode: 'LOCAL',
+      storeIdMap: parseIdosiStoreIdMap('{"LOCAL":"S01"}'),
+      scope: { period: '2026-09', date: null, shiftId: null, paymentMethod: null },
+      requestId: 'mapped-request',
+      fetch: fetchMock,
+    };
+    await expect(fetchIdosiOrderStatistics(options)).resolves.toMatchObject({ storeId: 'S01' });
+    await expect(
+      fetchIdosiOrderStatistics({ ...options, storeCode: 'UNMAPPED' }),
+    ).rejects.toMatchObject({ code: 'IDOSI_REQUEST_FAILED' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await expect(
+      fetchIdosiOrderStatistics({
+        ...options,
+        fetch: async () => new Response(JSON.stringify({ ...payload, storeId: 'WRONG' })),
+      }),
+    ).rejects.toMatchObject({ code: 'IDOSI_RESPONSE_INVALID' });
+  });
+
   it('validates the official aggregate while accepting additive v1 fields', () => {
     expect(IdosiOrderStatisticsPayloadSchema.parse(payload)).toMatchObject({
       futureCompatibleField: true,

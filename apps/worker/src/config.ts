@@ -1,4 +1,7 @@
+import { parseIdosiStoreIdMap } from '@idosi/contracts';
+
 export interface WorkerConfig {
+  readonly idosiStoreIdMap: Readonly<Record<string, string>>;
   readonly databaseUrl: string;
   readonly catchUpDays: number;
   readonly pollMs: number;
@@ -27,6 +30,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
   validateTimeZone(timeZone);
 
   return {
+    idosiStoreIdMap: parseIdosiStoreIdMap(env.IDOSI_STORE_ID_MAP),
     databaseUrl,
     catchUpDays: integer(env.WORKER_CATCH_UP_DAYS, 0, 0, 30, 'WORKER_CATCH_UP_DAYS'),
     pollMs: integer(env.WORKER_POLL_MS, 30_000, 250, 3_600_000, 'WORKER_POLL_MS'),

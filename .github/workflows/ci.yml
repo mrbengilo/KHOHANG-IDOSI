@@ -129,6 +129,16 @@ jobs:
           node --check infra/scripts/run-migrations.mjs
           node --check infra/web-server.mjs
           docker compose --file docker-compose.yml config --quiet
+          docker compose --file docker-compose.yml config --format json | node --input-type=module -e '
+            import assert from "node:assert/strict";
+            let input = "";
+            for await (const chunk of process.stdin) input += chunk;
+            const config = JSON.parse(input);
+            assert.ok(Object.keys(config.services.worker.networks).some(name => !config.networks[name].internal), "worker requires external HTTPS egress");
+            assert.ok(Object.keys(config.services.db.networks).every(name => config.networks[name].internal), "database must remain internal");
+            assert.ok(!config.services.db.ports?.length, "database must not publish ports");
+            assert.equal(config.services.api.environment.IDOSI_STORE_ID_MAP, config.services.worker.environment.IDOSI_STORE_ID_MAP);
+          '
           docker run --rm \
             --env APP_DOMAIN=localhost \
             --volume "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \

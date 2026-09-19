@@ -1,3 +1,5 @@
+import { parseIdosiStoreIdMap } from '@idosi/contracts';
+
 import { createApi } from './app.js';
 
 const environment = process.env.NODE_ENV ?? 'development';
@@ -5,6 +7,7 @@ const storage = process.env.API_STORAGE ?? 'postgres';
 const port = parsePort(process.env.API_PORT ?? process.env.PORT ?? '3000');
 const host = process.env.API_HOST ?? process.env.HOST ?? '0.0.0.0';
 const sessionTtlMs = parseSessionTtl(process.env.SESSION_TTL_HOURS ?? '12');
+const idosiStoreIdMap = parseIdosiStoreIdMap(process.env.IDOSI_STORE_ID_MAP);
 
 if (environment === 'production' && storage !== 'postgres') {
   throw new Error('API_STORAGE must be "postgres" in production');
@@ -21,6 +24,7 @@ const repository =
       : throwUnsupportedStorage(storage);
 
 const app = await createApi({
+  idosiStoreIdMap,
   repository,
   sessionTtlMs,
   ...(process.env.WEB_ORIGIN ? { corsOrigin: splitOrigins(process.env.WEB_ORIGIN) } : {}),
