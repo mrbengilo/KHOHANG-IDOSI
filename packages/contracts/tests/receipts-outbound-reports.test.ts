@@ -84,6 +84,26 @@ describe('receipt, outbound and report contracts', () => {
     expect(
       ReceiptCostConfirmationSchema.safeParse({
         ...confirmation,
+        vatAmountVnd: null,
+        totalCostVnd: null,
+      }).success,
+    ).toBe(true);
+    expect(
+      ReceiptCostConfirmationSchema.safeParse({ ...confirmation, vatAmountVnd: null }).success,
+    ).toBe(false);
+    expect(
+      ReceiptCostConfirmationSchema.safeParse({ ...confirmation, vatAmountVnd: 0 }).success,
+    ).toBe(true);
+    expect(
+      ReceiptCostConfirmationSchema.safeParse({
+        ...confirmation,
+        vatAmountVnd: 0,
+        totalCostVnd: null,
+      }).success,
+    ).toBe(false);
+    expect(
+      ReceiptCostConfirmationSchema.safeParse({
+        ...confirmation,
         vatAmountVnd: 1000000,
         totalCostVnd: 2120000,
       }).success,

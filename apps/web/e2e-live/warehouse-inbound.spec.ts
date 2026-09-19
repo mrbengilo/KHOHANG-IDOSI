@@ -133,4 +133,49 @@ test('Admin selects products and persists exactly the selected bags in the wareh
     path: testInfo.outputPath('warehouse-inbound-mobile.png'),
     fullPage: true,
   });
+  // The PostgreSQL DTO must distinguish unknown tax from an explicitly entered zero.
+  const deferred = await page.request.post(`${api}/api/v1/inbound-receipts`, {
+    headers: { 'idempotency-key': `deferred-${reference}` },
+    data: {
+      referenceCode: `DEFERRED-${reference}`,
+      supplierName: 'Kiểm thử VAT chưa có',
+      receivedAt: new Date().toISOString(),
+      bags: [
+        { productId: receipt.bags[0].productId, bagCode: `D-${reference}`, weightKg: '2.000' },
+      ],
+    },
+  });
+  expect(deferred.status()).toBe(201);
+  const deferredReceipt = (await deferred.json()).data;
+  const confirmed = await page.request.post(
+    `${api}/api/v1/inbound-receipts/${deferredReceipt.id}/confirm-costs`,
+    {
+      headers: { 'idempotency-key': `confirm-deferred-${reference}` },
+      data: {
+        expectedVersion: 0,
+        productCosts: [{ productId: receipt.bags[0].productId, priceVndPerKg: 1000 }],
+        transportationFeeVnd: 0,
+        handlingFeeVnd: 0,
+      },
+    },
+  );
+  expect(confirmed.status()).toBe(200);
+  expect((await confirmed.json()).data.cost).toMatchObject({
+    goodsCostVnd: 2000,
+    vatAmountVnd: null,
+    totalCostVnd: null,
+  });
+  const zeroTax = await page.request.patch(
+    `${api}/api/v1/inbound-receipts/${deferredReceipt.id}/vat`,
+    {
+      headers: { 'idempotency-key': `zero-vat-${reference}` },
+      data: {
+        expectedVersion: 1,
+        vat: { amountVnd: 0, ratePercent: 8 },
+        reason: 'Xác nhận tiền VAT bằng không',
+      },
+    },
+  );
+  expect(zeroTax.status()).toBe(200);
+  expect((await zeroTax.json()).data.cost).toMatchObject({ vatAmountVnd: 0, totalCostVnd: 2000 });
 });
