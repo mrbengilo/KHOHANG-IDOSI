@@ -99,6 +99,27 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   expect((await replay.json()).data.id).toBe(receipt.id);
   const historyRow = page.locator('article').filter({ hasText: reference });
   await historyRow.getByText('Cập nhật VAT · 8%', { exact: true }).click();
+  // Refetch while a local edit exists must not silently adopt a newer version.
+  await historyRow.getByLabel(`Số tiền VAT cho ${reference}`, { exact: true }).fill('999999');
+  const external = await page.request.patch(`${api}/api/v1/inbound-receipts/${receipt.id}/vat`, {
+    headers: { 'idempotency-key': `external-vat-${reference}` },
+    data: {
+      vat: { amountVnd: 1050000, ratePercent: 8 },
+      expectedVersion: receipt.version,
+      reason: 'Admin khác cập nhật hóa đơn',
+    },
+  });
+  expect(external.status()).toBe(200);
+  await page.getByRole('button', { name: 'Làm mới phiếu nhập' }).click();
+  await expect(historyRow.getByRole('button', { name: 'Tải bản VAT mới' })).toBeVisible();
+  await expect(historyRow.getByRole('button', { name: 'Lưu VAT', exact: true })).toBeDisabled();
+  await expect(historyRow.getByLabel(`Số tiền VAT cho ${reference}`, { exact: true })).toHaveValue(
+    '999999',
+  );
+  await historyRow.getByRole('button', { name: 'Tải bản VAT mới' }).click();
+  await expect(historyRow.getByLabel(`Số tiền VAT cho ${reference}`, { exact: true })).toHaveValue(
+    '1050000',
+  );
   await historyRow.getByLabel(`Số tiền VAT cho ${reference}`, { exact: true }).fill('1100000');
   await historyRow
     .getByLabel(`Lý do cập nhật VAT cho ${reference}`, { exact: true })
