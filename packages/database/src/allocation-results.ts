@@ -109,7 +109,18 @@ export async function listAllocationResults(
           decisionMetadata: sql<JsonObject>`case
             when jsonb_typeof(${allocationLines.decisionMetadata}->'policyRounds') = 'array' then
               case when jsonb_array_length(${allocationLines.decisionMetadata}->'policyRounds') > 100
-                then jsonb_build_object('roundsOmitted', true, 'appliedPriority', ${allocationLines.decisionMetadata}->'appliedPriority')
+                then jsonb_build_object(
+                  'roundsOmitted', case
+                    when jsonb_array_length(${allocationLines.decisionMetadata}->'policyRounds') = ${allocationLines.allocatedQuantity}
+                    then not exists (
+                      select 1 from jsonb_array_elements(${allocationLines.decisionMetadata}->'policyRounds') as audit_round(value)
+                      where not (case when jsonb_typeof(audit_round.value) = 'number'
+                        then (audit_round.value::text)::numeric between 1 and 9007199254740991
+                          and trunc((audit_round.value::text)::numeric) = (audit_round.value::text)::numeric
+                        else false end)
+                    ) else false end,
+                  'appliedPriority', ${allocationLines.decisionMetadata}->'appliedPriority'
+                )
                 else ${allocationLines.decisionMetadata} end
             else ${allocationLines.decisionMetadata} end`,
           createdAt: allocationLines.createdAt,
