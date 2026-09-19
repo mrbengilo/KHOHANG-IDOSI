@@ -28,11 +28,14 @@ preserving the actual requested/allocated/waitlisted totals and applied priority
 The UI labels omitted detail separately from missing legacy metadata. No partial
 round list is presented as a complete audit.
 
-The writer validates round values once and records `policyRoundsVersion: 1` in the
+The writer validates positive, unique round values once and records `policyRoundsVersion: 1` in the
 immutable metadata. Large unversioned legacy arrays remain unavailable, even if
 their length matches; GET never expands them to revalidate every entry. Small
 legacy arrays still receive full validation. No historical audit is rewritten.
-Pagination orders newest runs first, then applied priority (P0A through P3), round,
+Duplicate rounds are invalid, not multiple grants in one round. Within each priority
+tier, zero-grant outcomes sort after executed grants; their fallback coordinates
+do not represent execution order.
+Pagination orders newest runs first, then applied priority (P0A through P3), grant presence, round,
 sequence and line ID within each run. Round/sequence restart for each tier; unknown
 legacy applied priority sorts last. UUIDs are only a final tie-breaker, not the
 business execution order. Source priority is not used to infer missing metadata.

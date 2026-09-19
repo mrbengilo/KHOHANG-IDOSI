@@ -174,6 +174,7 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
         .where(eq(allocationLines.id, bounded.json().data[0].id));
       assert.equal(stored.metadata.policyRounds.length, 100000);
       for (const audit of [
+        { quantity: 2, policyRounds: [1, 1], label: 'duplicate legacy rounds' },
         { quantity: 100000, policyRounds: largeRounds, label: 'unversioned large legacy audit' },
         { quantity: 5, policyRounds: largeRounds, label: 'legacy merged source mismatch' },
         {
@@ -430,8 +431,8 @@ async function createFixture({
         orderRequestItemId: requestItem.id,
         priorityLevel: 'P1',
         roundNumber: 1,
-        // Tier P1 must precede P3 even when P3 has an earlier local sequence.
-        sequenceInRound: index === 0 ? 3 : index,
+        // Tier P1 precedes P3; zero grants sort last despite earlier fallback coordinates.
+        sequenceInRound: index === 0 ? 5 : index === 1 ? 3 : 1,
         requestedQuantity: input.requested,
         allocatedQuantity: input.allocated,
         waitlistedQuantity: input.waitlisted,

@@ -1215,6 +1215,9 @@ export function allocationMetadata(
   if (steps.some((step) => !Number.isSafeInteger(step.round) || step.round < 1)) {
     throw new Error('Allocation audit rounds must be positive safe integers.');
   }
+  if (new Set(steps.map((step) => step.round)).size !== steps.length) {
+    throw new Error('Allocation audit rounds must be unique within a source line.');
+  }
   return {
     cursorBefore: result.cursorBefore,
     nextCursor: result.nextCursor,

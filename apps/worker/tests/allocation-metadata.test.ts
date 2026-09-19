@@ -45,5 +45,8 @@ describe('allocation audit priority without grants', () => {
         'positive safe integers',
       );
     }
+    expect(() => allocationMetadata(plan, [step, { ...step, sequence: 2 }], 'P1')).toThrow(
+      'must be unique',
+    );
   });
 });

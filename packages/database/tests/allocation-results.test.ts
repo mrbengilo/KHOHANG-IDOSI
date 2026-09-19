@@ -31,10 +31,13 @@ describe('allocation result projection query guards', () => {
   });
 
   it('derives authoritative round aggregates only from complete planner metadata', () => {
-    expect(allocationRoundsFromMetadata({ policyRounds: [1, 2, 2] }, 3)).toEqual([
+    expect(allocationRoundsFromMetadata({ policyRounds: [3, 1, 2] }, 3)).toEqual([
       { roundNumber: 1, allocatedQuantity: 1 },
-      { roundNumber: 2, allocatedQuantity: 2 },
+      { roundNumber: 2, allocatedQuantity: 1 },
+      { roundNumber: 3, allocatedQuantity: 1 },
     ]);
+    expect(allocationRoundsFromMetadata({ policyRounds: [1, 1] }, 2)).toEqual([]);
+    expect(allocationRoundsFromMetadata({ policyRounds: [1, 2, 2] }, 3)).toEqual([]);
     expect(allocationRoundsFromMetadata({ policyRounds: [] }, 0)).toEqual([]);
     expect(allocationRoundsFromMetadata({}, 2)).toEqual([]);
     expect(allocationRoundsFromMetadata({ policyRounds: [1, 2, 3] }, 2)).toEqual([]);
@@ -68,7 +71,7 @@ describe('allocation result projection query guards', () => {
             waitlistedQuantity: 0,
             status: 'allocated' as const,
             reasonCode: 'ALLOCATED_BY_PRIORITY_ROUND_ROBIN',
-            decisionMetadata: { policyRounds: [1, 2, 2], appliedPriority: 'P1' },
+            decisionMetadata: { policyRounds: [1, 2, 3], appliedPriority: 'P1' },
             createdAt: new Date('2026-09-17T02:00:00.000Z'),
           },
         ]),
@@ -89,7 +92,8 @@ describe('allocation result projection query guards', () => {
     expect(page.data[0]).toMatchObject({ priority: 'P3', appliedPriority: 'P1' });
     expect(page.data[0]?.rounds).toEqual([
       { roundNumber: 1, allocatedQuantity: 1 },
-      { roundNumber: 2, allocatedQuantity: 2 },
+      { roundNumber: 2, allocatedQuantity: 1 },
+      { roundNumber: 3, allocatedQuantity: 1 },
     ]);
   });
 });

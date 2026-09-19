@@ -131,6 +131,8 @@ export async function listAllocationResults(
           asc(sql`case ${allocationLines.decisionMetadata}->>'appliedPriority'
             when 'P0A' then 0 when 'P0B' then 1 when 'P1' then 2
             when 'P2' then 3 when 'P3' then 4 else 5 end`),
+          // Zero-grant rows have fallback coordinates, not executed planner steps.
+          asc(sql`case when ${allocationLines.allocatedQuantity} > 0 then 0 else 1 end`),
           asc(allocationLines.roundNumber),
           asc(allocationLines.sequenceInRound),
           asc(allocationLines.id),
@@ -178,8 +180,14 @@ export function allocationRoundsFromMetadata(
 
   const quantityByRound = new Map<number, number>();
   for (const round of policyRounds) {
-    if (typeof round !== 'number' || !Number.isSafeInteger(round) || round < 1) return [];
-    quantityByRound.set(round, (quantityByRound.get(round) ?? 0) + 1);
+    if (
+      typeof round !== 'number' ||
+      !Number.isSafeInteger(round) ||
+      round < 1 ||
+      quantityByRound.has(round)
+    )
+      return [];
+    quantityByRound.set(round, 1);
   }
   return [...quantityByRound.entries()]
     .sort(([left], [right]) => left - right)
