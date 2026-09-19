@@ -9,6 +9,7 @@ export const routeAccessPolicies = {
   '/': { roles: ['ADMIN', 'HTKD', 'STORE'] },
   '/allocations': { roles: ['ADMIN', 'HTKD', 'STORE'] },
   '/requests': { roles: ['ADMIN', 'HTKD', 'STORE'] },
+  '/warehouse-inbound': { roles: ['ADMIN'] },
   '/receive': {
     roles: ['ADMIN', 'HTKD', 'STORE'],
     storeKinds: ['RETAIL'],
