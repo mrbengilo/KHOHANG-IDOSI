@@ -2913,6 +2913,88 @@ describe('KHOHANG-IDOSI API', () => {
     repository.receiveSupplierInbound = receive;
   });
 
+  test('creates a server-numbered receipt for three unweighed bags and replays it', async () => {
+    const cookie = cookieOf(await login('admin'));
+    const productId = await firstProductId(cookie);
+    const payload = {
+      supplierName: 'Three bags',
+      receivedAt: '2026-09-20T01:00:00Z',
+      bags: [1, 2, 3].map((n) => ({ productId, bagCode: `AUTO-BAG-${n}` })),
+    };
+    const first = await mutateReceipt(
+      cookie,
+      'POST',
+      '/api/v1/inbound-receipts',
+      'auto-three-bags',
+      payload,
+    );
+    assert.equal(first.statusCode, 201, first.body);
+    assert.match(first.json().data.referenceCode, /^PN\d{5,}-\d{2}\/\d{2}\/\d{4}$/);
+    assert.equal(first.json().data.bags.length, 3);
+    assert.equal(first.json().data.totalWeightKg, null);
+    const replay = await mutateReceipt(
+      cookie,
+      'POST',
+      '/api/v1/inbound-receipts',
+      'auto-three-bags',
+      payload,
+    );
+    assert.equal(replay.headers['idempotency-replayed'], 'true');
+    assert.deepEqual(replay.json().data, first.json().data);
+  });
+
+  test('accepts unknown supplier weights without fabricating kg or kg-based costs', async () => {
+    const cookie = cookieOf(await login('admin'));
+    const productId = await firstProductId(cookie);
+    const payload = {
+      referenceCode: 'OPTIONAL-WEIGHTS',
+      supplierName: 'Supplier',
+      receivedAt: '2026-09-20T01:00:00Z',
+      bags: [
+        { productId, bagCode: 'UNKNOWN-BAG' },
+        { productId, bagCode: 'WEIGHED-BAG', weightKg: '2.333' },
+      ],
+    };
+    const first = await mutateReceipt(
+      cookie,
+      'POST',
+      '/api/v1/inbound-receipts',
+      'optional-weights',
+      payload,
+    );
+    assert.equal(first.statusCode, 201, first.body);
+    assert.equal(first.json().data.totalWeightKg, null);
+    assert.equal(first.json().data.bags[0].weightKg, null);
+    assert.equal(first.json().data.bags[1].weightKg, '2.333');
+    const replay = await mutateReceipt(
+      cookie,
+      'POST',
+      '/api/v1/inbound-receipts',
+      'optional-weights',
+      payload,
+    );
+    assert.equal(replay.headers['idempotency-replayed'], 'true');
+    const confirm = await mutateReceipt(
+      cookie,
+      'POST',
+      `/api/v1/inbound-receipts/${first.json().data.id}/confirm-costs`,
+      'unknown-costs',
+      {
+        expectedVersion: 0,
+        productCosts: [{ productId, priceVndPerKg: 10000 }],
+        transportationFeeVnd: 0,
+        handlingFeeVnd: 0,
+      },
+    );
+    assert.equal(confirm.statusCode, 400);
+    assert.match(confirm.json().error.message, /khối lượng/);
+    const invalid = await mutateReceipt(cookie, 'POST', '/api/v1/inbound-receipts', 'zero-weight', {
+      ...payload,
+      bags: [{ productId, bagCode: 'ZERO', weightKg: '0' }],
+    });
+    assert.equal(invalid.statusCode, 400);
+  });
+
   test('receives supplier bags into warehouse stock and confirms exact costs idempotently', async () => {
     const adminCookie = cookieOf(await login('admin'));
     const storeCookie = cookieOf(await login('ds_nvt'));

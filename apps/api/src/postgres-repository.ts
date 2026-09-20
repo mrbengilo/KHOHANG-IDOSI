@@ -3157,13 +3157,16 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       if (!item || bag.labelCode === null) {
         throw new Error('Supplier receipt bag evidence is incomplete.');
       }
-      totalWeightGrams += kilogramsToGramsExact(bag.netWeightKg);
+      if (bag.netWeightKg !== null) totalWeightGrams += kilogramsToGramsExact(bag.netWeightKg);
       return {
         id: bag.id,
         receiptId: receipt.id,
         productId: item.productId,
         bagCode: bag.labelCode,
-        weightKg: gramsToKilogramsExact(kilogramsToGramsExact(bag.netWeightKg)),
+        weightKg:
+          bag.netWeightKg === null
+            ? null
+            : gramsToKilogramsExact(kilogramsToGramsExact(bag.netWeightKg)),
         createdAt: bag.createdAt.toISOString(),
       };
     });
@@ -3201,7 +3204,9 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
           : { amountVnd: safeVnd(receipt.vatAmountVnd), ratePercent: 8 },
       status: inboundReceiptStatus(receipt.status),
       bags,
-      totalWeightKg: gramsToKilogramsExact(totalWeightGrams),
+      totalWeightKg: bags.some((bag) => bag.weightKg === null)
+        ? null
+        : gramsToKilogramsExact(totalWeightGrams),
       cost: isConfirmed
         ? {
             productCosts,

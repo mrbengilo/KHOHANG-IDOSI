@@ -667,6 +667,7 @@ function CreateReceiptForm({
                     <label>
                       Thực nhận
                       <input
+                        required
                         disabled={disabled}
                         max={line.approvedUnits}
                         min="0"
@@ -688,6 +689,7 @@ function CreateReceiptForm({
               <label>
                 Ghi chú / bằng chứng chênh lệch
                 <textarea
+                  required={lines.some((line) => line.receivedUnits < line.approvedUnits)}
                   disabled={disabled}
                   onChange={(event) => setDiscrepancyNote(event.target.value)}
                   placeholder="Bắt buộc khi nhận thiếu; ghi rõ chênh lệch giao nhận"
@@ -894,6 +896,7 @@ function StoreReceiptForm({
       <label>
         Ghi chú / bằng chứng
         <textarea
+          required={lines.some((line) => line.receivedUnits < line.approvedUnits)}
           disabled={!editable || mutationPending}
           onChange={(event) => setNote(event.target.value)}
           placeholder="Mô tả chênh lệch hoặc tình trạng niêm phong"
@@ -965,8 +968,10 @@ function ReviewerReceiptForm({
   const mutationPending = pendingOperation !== null;
 
   const finalize = async () => {
-    const invalidWeight = receipt.lines.some((line) =>
-      (weights[line.productId] ?? []).some((weight) => !isPositiveKilograms(weight)),
+    const invalidWeight = receipt.lines.some(
+      (line) =>
+        (weights[line.productId] ?? []).length !== line.receivedUnits ||
+        (weights[line.productId] ?? []).some((weight) => !isPositiveKilograms(weight)),
     );
     const invalidPrice = receipt.lines.some(
       (line) => line.receivedUnits > 0 && !isMoney(prices[line.productId] ?? ''),
@@ -1045,6 +1050,7 @@ function ReviewerReceiptForm({
             <label>
               Giá nhập / kg (VND)
               <input
+                required={line.receivedUnits > 0}
                 disabled={mutationPending || line.receivedUnits === 0}
                 inputMode="numeric"
                 min="0"
@@ -1058,8 +1064,12 @@ function ReviewerReceiptForm({
             </label>
             {(weights[line.productId] ?? []).map((weight, index) => (
               <label key={`${line.productId}:bag:${index + 1}`}>
-                Mã bao {index + 1} · kg
+                Khối lượng bao {index + 1} (kg){' '}
+                <span aria-hidden="true" style={{ color: '#dc2626' }}>
+                  *
+                </span>
                 <input
+                  required
                   disabled={mutationPending}
                   inputMode="decimal"
                   min="0.001"
@@ -1068,23 +1078,27 @@ function ReviewerReceiptForm({
                       ...current,
                       [line.productId]: (current[line.productId] ?? []).map(
                         (candidate, currentIndex) =>
-                          currentIndex === index ? event.target.value : candidate,
+                          currentIndex === index ? event.target.value.replace(',', '.') : candidate,
                       ),
                     }))
                   }
-                  placeholder="Ví dụ 92.500"
+                  placeholder="Ví dụ 30 hoặc 2,33"
                   step="0.001"
                   value={weight}
                 />
               </label>
             ))}
           </div>
+          <p aria-live="polite">
+            Tổng khối lượng: {receiptWeightTotal(weights[line.productId] ?? [])}
+          </p>
         </article>
       ))}
       <div className="receipt-fees">
         <label>
           Phí vận chuyển (VND)
           <input
+            required
             disabled={mutationPending}
             inputMode="numeric"
             min="0"
@@ -1096,6 +1110,7 @@ function ReviewerReceiptForm({
         <label>
           Phí bốc xếp (VND)
           <input
+            required
             disabled={mutationPending}
             inputMode="numeric"
             min="0"
@@ -1230,6 +1245,15 @@ function isMoney(value: string): boolean {
 
 function isPositiveKilograms(value: string): boolean {
   return /^(?:0\.\d{1,3}|[1-9]\d*(?:\.\d{1,3})?)$/.test(value) && Number(value) > 0;
+}
+
+export function receiptWeightTotal(weights: readonly string[]): string {
+  if (weights.some((weight) => !isPositiveKilograms(weight))) return 'Chưa nhập đủ';
+  const grams = weights.reduce((total, weight) => {
+    const [whole = '0', fraction = ''] = weight.split('.');
+    return total + BigInt(whole) * 1000n + BigInt(fraction.padEnd(3, '0'));
+  }, 0n);
+  return formatKg(`${grams / 1000n}.${String(grams % 1000n).padStart(3, '0')}`);
 }
 
 function formatDateTime(value: string): string {

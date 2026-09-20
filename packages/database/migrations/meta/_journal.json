@@ -57,6 +57,13 @@
       "when": 1789832680716,
       "tag": "0007_receipt_vat",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789866863642,
+      "tag": "0008_optional_supplier_weight",
+      "breakpoints": true
     }
   ]
 }

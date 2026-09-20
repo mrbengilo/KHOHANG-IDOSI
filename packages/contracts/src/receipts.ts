@@ -29,7 +29,7 @@ export const InboundReceiptBagSchema = z
     receiptId: EntityIdSchema,
     productId: EntityIdSchema,
     bagCode: z.string().trim().min(1).max(100),
-    weightKg: PositiveKilogramsDecimalSchema,
+    weightKg: PositiveKilogramsDecimalSchema.nullable(),
     createdAt: IsoDateTimeSchema,
   })
   .strict();
@@ -106,7 +106,7 @@ export const InboundReceiptSchema = z
     vat: InboundVatSchema.nullish(),
     status: InboundReceiptStatusSchema,
     bags: z.array(InboundReceiptBagSchema).min(1),
-    totalWeightKg: PositiveKilogramsDecimalSchema,
+    totalWeightKg: PositiveKilogramsDecimalSchema.nullable(),
     cost: ReceiptCostConfirmationSchema.nullable(),
     version: z.number().int().nonnegative(),
     receivedByAccountId: EntityIdSchema,
@@ -134,6 +134,13 @@ export const InboundReceiptSchema = z
       receipt.bags.map((bag) => kilogramsToGramsForRefinement(bag.weightKg)),
     );
     const declaredTotal = kilogramsToGramsForRefinement(receipt.totalWeightKg);
+    if (receipt.bags.some((bag) => bag.weightKg === null) !== (receipt.totalWeightKg === null)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['totalWeightKg'],
+        message: 'Total weight is unknown exactly when any bag weight is unknown',
+      });
+    }
     if (bagsTotal !== null && declaredTotal !== null && bagsTotal !== declaredTotal) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -148,14 +155,14 @@ export const CreateInboundReceiptBagSchema = z
   .object({
     productId: EntityIdSchema,
     bagCode: z.string().trim().min(1).max(100),
-    weightKg: PositiveKilogramsDecimalSchema,
+    weightKg: PositiveKilogramsDecimalSchema.nullable().default(null),
   })
   .strict();
 export type CreateInboundReceiptBag = z.infer<typeof CreateInboundReceiptBagSchema>;
 
 export const CreateInboundReceiptRequestSchema = z
   .object({
-    referenceCode: z.string().trim().min(1).max(100),
+    referenceCode: z.string().trim().min(1).max(100).optional(),
     supplierName: z.string().trim().min(1).max(200),
     vat: InboundVatSchema.optional(),
     receivedAt: IsoDateTimeSchema,
@@ -170,6 +177,18 @@ export const CreateInboundReceiptRequestSchema = z
   })
   .strict();
 export type CreateInboundReceiptRequest = z.infer<typeof CreateInboundReceiptRequestSchema>;
+
+/** Server-owned sequence; Vietnam calendar date, independent of server timezone. */
+export function formatInboundReceiptNumber(sequence: string, now: Date): string {
+  if (!/^[1-9]\d*$/.test(sequence)) throw new Error('Invalid receipt sequence');
+  const date = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(now);
+  return `PN${sequence.padStart(5, '0')}-${date}`;
+}
 
 export const ConfirmReceiptCostsRequestSchema = z
   .object({

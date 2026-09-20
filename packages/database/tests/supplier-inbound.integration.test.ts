@@ -30,6 +30,92 @@ const describePostgres = process.env.RUN_POSTGRES_TESTS === '1' ? describe : des
 describePostgres('supplier inbound PostgreSQL lifecycle', () => {
   afterAll(async () => closeDatabase());
 
+  it('generates distinct PN numbers concurrently and replays without a second receipt', async () => {
+    const fixture = await loadFixture();
+    const inputs = [1, 2].map(() => {
+      const key = randomUUID();
+      return {
+        referenceCode: undefined,
+        supplierName: 'Auto numbered',
+        receivedAt: new Date(),
+        bags: [1, 2, 3].map((n) => ({
+          productId: fixture.productId,
+          bagCode: `${key}-${n}`,
+          weightKg: null,
+        })),
+        receivedByUserId: fixture.actorId,
+        actorRole: 'admin' as const,
+        idempotencyKey: key,
+        requestHash: key,
+      };
+    });
+    const results = await Promise.all(inputs.map((input) => receiveSupplierInbound(db, input)));
+    const numbers: string[] = [];
+    for (const [index, result] of results.entries()) {
+      if (result.replayed) throw new Error('Expected new receipt');
+      const [row] = await db.select().from(receipts).where(eq(receipts.id, result.value.receiptId));
+      expect(row!.receiptNumber).toMatch(/^PN\d{5,}-\d{2}\/\d{2}\/\d{4}$/);
+      numbers.push(row!.receiptNumber);
+      const replay = await receiveSupplierInbound(db, inputs[index]!);
+      expect(replay.replayed).toBe(true);
+      expect(replay.resourceId).toBe(result.value.receiptId);
+    }
+    expect(new Set(numbers).size).toBe(2);
+  });
+
+  it('persists unknown and mixed weights as null totals while counting stock exactly once', async () => {
+    const fixture = await loadFixture();
+    const before = await balanceFor(fixture.productId);
+    const suffix = randomUUID();
+    const input = {
+      referenceCode: `UNKNOWN-${suffix}`,
+      supplierName: 'Supplier',
+      receivedAt: new Date(),
+      bags: [
+        { productId: fixture.productId, bagCode: `UNKNOWN-${suffix}`, weightKg: null },
+        { productId: fixture.productId, bagCode: `KNOWN-${suffix}`, weightKg: '2.333' },
+      ],
+      receivedByUserId: fixture.actorId,
+      actorRole: 'admin' as const,
+      idempotencyKey: suffix,
+      requestHash: suffix,
+    };
+    const result = await receiveSupplierInbound(db, input);
+    if (result.replayed) throw new Error('Expected new receipt');
+    expect(result.value.totalWeightKg).toBeNull();
+    expect((await receiveSupplierInbound(db, input)).replayed).toBe(true);
+    expect((await balanceFor(fixture.productId)).onHandQuantity).toBe(before.onHandQuantity + 2);
+    const [item] = await db
+      .select()
+      .from(receiptItems)
+      .where(eq(receiptItems.receiptId, result.value.receiptId));
+    expect(item!.totalNetWeightKg).toBeNull();
+    const bags = await db
+      .select()
+      .from(receiptBagWeights)
+      .where(eq(receiptBagWeights.receiptItemId, item!.id));
+    expect(bags.map((bag) => bag.netWeightKg)).toEqual(expect.arrayContaining([null, '2.333']));
+    await expect(
+      confirmSupplierInboundCosts(db, {
+        receiptId: result.value.receiptId,
+        expectedVersion: 0,
+        productCosts: [{ productId: fixture.productId, priceVndPerKg: 10000n }],
+        transportationFeeVnd: 0n,
+        handlingFeeVnd: 0n,
+        confirmedByUserId: fixture.actorId,
+        actorRole: 'admin',
+        idempotencyKey: `cost-${suffix}`,
+        requestHash: `cost-${suffix}`,
+      }),
+    ).rejects.toThrow('khối lượng');
+    const [receipt] = await db
+      .select()
+      .from(receipts)
+      .where(eq(receipts.id, result.value.receiptId));
+    expect(receipt!.status).toBe('submitted');
+    expect(receipt!.version).toBe(0);
+  });
+
   it('makes a fresh-database receipt visible to the canonical snapshot projection exactly once', async () => {
     const fixture = await loadFixture();
     const balanceBefore = await balanceFor(fixture.productId);

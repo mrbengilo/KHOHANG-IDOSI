@@ -20,11 +20,11 @@ import { formatVnd } from '../lib/format';
 interface DraftProduct {
   productId: string;
   quantity: number;
-  bags: { bagCode: string; weightKg: string }[];
+  bags: { bagCode: string; weightKg: null }[];
 }
 
 function newBag() {
-  return { bagCode: `B-${crypto.randomUUID()}`, weightKg: '' };
+  return { bagCode: `B-${crypto.randomUUID()}`, weightKg: null };
 }
 
 export function WarehouseInboundPage() {
@@ -45,7 +45,6 @@ function WarehouseInboundContent() {
     retry: false,
   });
   const [draft, setDraft] = useState<DraftProduct[]>([]);
-  const [referenceCode, setReferenceCode] = useState('');
   const [supplierName, setSupplierName] = useState('');
   const [vatAmount, setVatAmount] = useState('');
   const [entryTab, setEntryTab] = useState<'GOODS' | 'VAT'>('GOODS');
@@ -87,12 +86,15 @@ function WarehouseInboundContent() {
     }
     const parsed = CreateInboundReceiptRequestSchema.safeParse(
       operation.current?.input ?? {
-        referenceCode,
         supplierName,
         ...(vatAmount === '' ? {} : { vat: { amountVnd: Number(vatAmount), ratePercent: 8 } }),
         receivedAt: new Date().toISOString(),
         bags: draft.flatMap((item) =>
-          item.bags.map((bag) => ({ ...bag, productId: item.productId })),
+          item.bags.map((bag) => ({
+            ...bag,
+            weightKg: null,
+            productId: item.productId,
+          })),
         ),
       },
     );
@@ -101,7 +103,7 @@ function WarehouseInboundContent() {
       setNotice({
         error: true,
         message:
-          'Nhập mã phiếu, nhà cung cấp và khối lượng kg dương (tối đa 3 số thập phân) cho từng bao; một phiếu từ 1 đến 2000 bao.',
+          'Nhập nhà cung cấp và chọn từ 1 đến 2000 bao. HTKD nhập khối lượng sau khi cửa hàng gửi kết quả thực nhận.',
       });
       return;
     }
@@ -111,7 +113,6 @@ function WarehouseInboundContent() {
     try {
       const receipt = await createWarehouseInbound(operation.current.input, operation.current.key);
       setDraft([]);
-      setReferenceCode('');
       setSupplierName('');
       setVatAmount('');
       setEntryTab('GOODS');
@@ -148,15 +149,7 @@ function WarehouseInboundContent() {
           <div className="form-grid">
             <label>
               Mã phiếu nhập
-              <input
-                required
-                maxLength={100}
-                value={referenceCode}
-                onChange={(event) => {
-                  setReferenceCode(event.target.value);
-                  changed();
-                }}
-              />
+              <input readOnly value="Tự tạo khi lưu · PN00001-dd/MM/yyyy" />
             </label>
             <label>
               Nhà cung cấp
@@ -243,43 +236,6 @@ function WarehouseInboundContent() {
                 );
                 changed();
               }}
-              renderDetails={(productId) =>
-                draft
-                  .find((item) => item.productId === productId)
-                  ?.bags.map((bag, index) => (
-                    <label key={bag.bagCode}>
-                      Khối lượng bao {index + 1} (kg) —{' '}
-                      {products.find((product) => product.id === productId)?.name}
-                      <input
-                        required
-                        inputMode="decimal"
-                        placeholder="Ví dụ: 80,5"
-                        value={bag.weightKg}
-                        onChange={(event) => {
-                          setDraft((current) =>
-                            current.map((item) =>
-                              item.productId === productId
-                                ? {
-                                    ...item,
-                                    bags: item.bags.map((candidate, bagIndex) =>
-                                      bagIndex === index
-                                        ? {
-                                            ...candidate,
-                                            weightKg: event.target.value.replace(',', '.'),
-                                          }
-                                        : candidate,
-                                    ),
-                                  }
-                                : item,
-                            ),
-                          );
-                          changed();
-                        }}
-                      />
-                      <small>Mã bao: {bag.bagCode}</small>
-                    </label>
-                  ))
-              }
             />
           </div>
           <p aria-live="polite">

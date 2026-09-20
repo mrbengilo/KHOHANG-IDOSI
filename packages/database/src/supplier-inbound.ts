@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { formatInboundReceiptNumber } from '@idosi/contracts';
 
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
@@ -35,12 +36,12 @@ export interface SupplierInboundRequestContext {
 export interface SupplierInboundBagInput {
   readonly productId: string;
   readonly bagCode: string;
-  readonly weightKg: string;
+  readonly weightKg: string | null;
 }
 
 export interface ReceiveSupplierInboundInput extends SupplierInboundRequestContext {
   readonly vat?: { readonly amountVnd: bigint; readonly ratePercent: 8 };
-  readonly referenceCode: string;
+  readonly referenceCode: string | undefined;
   readonly supplierName: string;
   readonly receivedAt: Date;
   readonly bags: readonly SupplierInboundBagInput[];
@@ -53,7 +54,7 @@ export interface ReceiveSupplierInboundInput extends SupplierInboundRequestConte
 export interface ReceivedSupplierInbound {
   readonly receiptId: string;
   readonly version: number;
-  readonly totalWeightKg: string;
+  readonly totalWeightKg: string | null;
   readonly productBalances: readonly {
     readonly productId: string;
     readonly receivedQuantity: number;
@@ -113,10 +114,10 @@ interface AggregatedInboundItem {
   readonly productId: string;
   readonly bags: readonly {
     readonly bagCode: string;
-    readonly weightKg: string;
-    readonly weightGrams: bigint;
+    readonly weightKg: string | null;
+    readonly weightGrams: bigint | null;
   }[];
-  readonly totalWeightGrams: bigint;
+  readonly totalWeightGrams: bigint | null;
 }
 
 export class SupplierInboundNotFoundError extends Error {
@@ -163,7 +164,7 @@ export async function receiveSupplierInbound(
   database: Database,
   input: ReceiveSupplierInboundInput,
 ): Promise<IdempotencyResult<ReceivedSupplierInbound>> {
-  const normalized = normalizeReceiveInput(input);
+  normalizeReceiveInput(input);
   return withIdempotency(
     database,
     {
@@ -172,10 +173,7 @@ export async function receiveSupplierInbound(
       requestHash: input.requestHash,
     },
     async (tx) => {
-      const received = await receiveSupplierInboundInTransaction(tx, {
-        ...input,
-        ...normalized,
-      });
+      const received = await receiveSupplierInboundInTransaction(tx, input);
       return {
         value: received,
         responseStatus: 201,
@@ -191,12 +189,19 @@ export async function receiveSupplierInboundInTransaction(
   tx: Transaction,
   input: Omit<ReceiveSupplierInboundInput, 'bags' | 'referenceCode' | 'supplierName'> & {
     readonly bags: readonly SupplierInboundBagInput[];
-    readonly referenceCode: string;
+    readonly referenceCode: string | undefined;
     readonly supplierName: string;
   },
 ): Promise<ReceivedSupplierInbound> {
   const normalized = normalizeReceiveInput(input);
   await assertWarehouseActor(tx, input.receivedByUserId, input.actorRole);
+  if (!normalized.referenceCode) {
+    // Sequence allocation happens only after the idempotency replay gate. Gaps are allowed.
+    const result = await tx.execute<{ value: string }>(
+      sql`SELECT nextval('supplier_receipt_number_seq')::text AS value`,
+    );
+    normalized.referenceCode = formatInboundReceiptNumber(result.rows[0]!.value, new Date());
+  }
   return withAdvisoryLock(tx, 'supplier-inbound-reference', normalized.referenceCode, async () => {
     for (const bagCode of normalized.bags.map((bag) => bag.bagCode).sort()) {
       await withAdvisoryLock(tx, 'supplier-inbound-bag', bagCode, async () => undefined);
@@ -265,7 +270,8 @@ export async function receiveSupplierInboundInTransaction(
           productId: item.productId,
           quantity: item.bags.length,
           bagCount: item.bags.length,
-          totalNetWeightKg: gramsToKilogramsExact(item.totalWeightGrams),
+          totalNetWeightKg:
+            item.totalWeightGrams === null ? null : gramsToKilogramsExact(item.totalWeightGrams),
         })),
       )
       .returning({ id: receiptItems.id, productId: receiptItems.productId });
@@ -299,7 +305,8 @@ export async function receiveSupplierInboundInTransaction(
         metadata: {
           bagCount: item.bags.length,
           supplierName: normalized.supplierName,
-          totalWeightKg: gramsToKilogramsExact(item.totalWeightGrams),
+          totalWeightKg:
+            item.totalWeightGrams === null ? null : gramsToKilogramsExact(item.totalWeightGrams),
         },
         actorUserId: input.receivedByUserId,
         occurredAt: input.receivedAt,
@@ -312,9 +319,11 @@ export async function receiveSupplierInboundInTransaction(
       });
     }
 
-    const totalWeightKg = gramsToKilogramsExact(
-      items.reduce((total, item) => total + item.totalWeightGrams, 0n),
-    );
+    const totalWeightKg = items.some((item) => item.totalWeightGrams === null)
+      ? null
+      : gramsToKilogramsExact(
+          items.reduce((total, item) => total + (item.totalWeightGrams ?? 0n), 0n),
+        );
     await tx.insert(auditLogs).values({
       requestId: input.requestId ?? null,
       actorUserId: input.receivedByUserId,
@@ -442,6 +451,10 @@ export async function confirmSupplierInboundCostsInTransaction(
       }
       let itemCostVnd = 0n;
       for (const bag of itemBags) {
+        if (bag.netWeightKg === null)
+          throw new SupplierInboundValidationError(
+            'Chưa đủ khối lượng từng bao để xác nhận chi phí theo kg.',
+          );
         itemCostVnd += calculateWeightedCostVnd(bag.netWeightKg, priceVndPerKg);
       }
       assertVnd(itemCostVnd, 'product goods cost');
@@ -830,23 +843,26 @@ export async function cancelSupplierInboundInTransaction(
 
 function normalizeReceiveInput(input: {
   readonly vat?: { readonly amountVnd: bigint; readonly ratePercent: 8 };
-  readonly referenceCode: string;
+  readonly referenceCode: string | undefined;
   readonly supplierName: string;
   readonly receivedAt: Date;
   readonly bags: readonly SupplierInboundBagInput[];
 }): {
-  readonly referenceCode: string;
+  referenceCode: string;
   readonly supplierName: string;
   readonly bags: readonly SupplierInboundBagInput[];
 } {
-  const referenceCode = input.referenceCode.trim();
+  const referenceCode = input.referenceCode?.trim() ?? '';
   if (input.vat) {
     assertVnd(input.vat.amountVnd, 'vatAmountVnd');
     if (input.vat.ratePercent !== 8)
       throw new SupplierInboundValidationError('VAT rate must be 8%.');
   }
   const supplierName = input.supplierName.trim();
-  if (referenceCode.length === 0 || referenceCode.length > 100) {
+  if (
+    (input.referenceCode !== undefined && referenceCode.length === 0) ||
+    referenceCode.length > 100
+  ) {
     throw new SupplierInboundValidationError(
       'Supplier receipt reference must contain 1 to 100 characters.',
     );
@@ -871,7 +887,7 @@ function normalizeReceiveInput(input: {
     if (bagCode.length === 0 || bagCode.length > 100) {
       throw new SupplierInboundValidationError('Bag codes must contain 1 to 100 characters.');
     }
-    if (kilogramsToGramsExact(bag.weightKg) <= 0n) {
+    if (bag.weightKg !== null && kilogramsToGramsExact(bag.weightKg) <= 0n) {
       throw new SupplierInboundValidationError('Supplier bag weight must be positive.');
     }
     return { productId: bag.productId, bagCode, weightKg: bag.weightKg };
@@ -892,13 +908,18 @@ function aggregateInboundBags(
 ): readonly AggregatedInboundItem[] {
   const grouped = new Map<
     string,
-    { bags: { bagCode: string; weightKg: string; weightGrams: bigint }[]; total: bigint }
+    {
+      bags: { bagCode: string; weightKg: string | null; weightGrams: bigint | null }[];
+      total: bigint;
+      complete: boolean;
+    }
   >();
   for (const bag of bags) {
-    const weightGrams = kilogramsToGramsExact(bag.weightKg);
-    const item = grouped.get(bag.productId) ?? { bags: [], total: 0n };
+    const weightGrams = bag.weightKg === null ? null : kilogramsToGramsExact(bag.weightKg);
+    const item = grouped.get(bag.productId) ?? { bags: [], total: 0n, complete: true };
     item.bags.push({ bagCode: bag.bagCode, weightKg: bag.weightKg, weightGrams });
-    item.total += weightGrams;
+    item.total += weightGrams ?? 0n;
+    if (weightGrams === null) item.complete = false;
     grouped.set(bag.productId, item);
   }
   return [...grouped.entries()]
@@ -909,7 +930,7 @@ function aggregateInboundBags(
           `Total bag weight for product ${productId} exceeds the supported range.`,
         );
       }
-      return { productId, bags: item.bags, totalWeightGrams: item.total };
+      return { productId, bags: item.bags, totalWeightGrams: item.complete ? item.total : null };
     });
 }
 
