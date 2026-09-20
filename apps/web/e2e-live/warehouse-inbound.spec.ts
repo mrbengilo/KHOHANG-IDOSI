@@ -10,8 +10,7 @@ test('Admin selects products and persists exactly the selected bags in the wareh
     .fill(process.env.LIVE_E2E_ADMIN_PASSWORD ?? 'ci-bootstrap-password-not-for-production');
   await page.getByRole('button', { name: 'Đăng nhập' }).click();
   await page.getByRole('link', { name: 'Nhập kho tổng' }).click();
-  const reference = `UI-IN-${Date.now()}-${testInfo.retry}`;
-  await page.getByLabel('Mã phiếu nhập').fill(reference);
+  await expect(page.getByLabel('Mã phiếu nhập')).toHaveAttribute('readonly', '');
   await page.getByLabel('Nhà cung cấp').fill('Nhà cung cấp kiểm thử');
   await expect(page.getByRole('spinbutton')).toHaveCount(0);
   await page.getByRole('checkbox').first().check();
@@ -23,8 +22,7 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   await page.getByRole('checkbox').nth(1).check();
   await page.getByRole('checkbox').nth(1).uncheck();
   await expect(page.getByRole('spinbutton')).toHaveCount(1);
-  await page.getByLabel(/^Khối lượng bao 1/).fill('80.500');
-  await page.getByLabel(/^Khối lượng bao 2/).fill('79.250');
+  await expect(page.getByLabel(/^Khối lượng bao/)).toHaveCount(0);
   await page.getByRole('button', { name: 'Nhập VAT · 8%' }).click();
   await page.getByLabel('Số tiền VAT (VND)').fill('1000000');
   await expect(page.getByLabel('Thuế suất mặc định')).toHaveValue('8%');
@@ -79,8 +77,10 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   expect(response.request().postDataJSON()).toEqual(failedInput);
   expect(response.request().headers()['idempotency-key']).toBe(failedKey);
   const receipt = (await response.json()).data;
+  const reference = receipt.referenceCode;
+  expect(reference).toMatch(/^PN\d{5,}-\d{2}\/\d{2}\/\d{4}$/);
   expect(receipt.bags).toHaveLength(2);
-  expect(receipt.totalWeightKg).toBe('159.750');
+  expect(receipt.totalWeightKg).toBeNull();
   expect(receipt.vat).toEqual({ amountVnd: 1000000, ratePercent: 8 });
   await expect(page.getByRole('status')).toContainText(`Đã nhập phiếu ${reference}`);
   await expect(page.getByRole('checkbox').first()).not.toBeChecked();
