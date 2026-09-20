@@ -59,12 +59,16 @@ export function IdosiSalesWorkspace({
         <p>Thống kê từ idosi.io.vn; bộ lọc này độc lập với chứng từ xuất kho bên dưới.</p>
       </div>
       <IdosiSalesSummary
-        key={`${period}:${storeId}`}
+        key={`summary:${period}:${storeId}`}
         period={period}
         {...(storeId ? { storeId } : {})}
       />
       {storeId ? (
-        <IdosiStatisticsPanel key={`${period}:${storeId}`} storeId={storeId} period={period} />
+        <IdosiStatisticsPanel
+          key={`detail:${period}:${storeId}`}
+          storeId={storeId}
+          period={period}
+        />
       ) : (
         <p>Chọn một cửa hàng để xem trạng thái kết nối và đồng bộ ngay.</p>
       )}
