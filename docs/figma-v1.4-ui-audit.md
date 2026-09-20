@@ -61,16 +61,21 @@ Trang 1–8, 21, 41, 66–67, 82 và 108 là phần giới thiệu/phân nhóm, 
 
 ## Bằng chứng hiện có
 
-- Đã xem 46/115 mẫu: Admin desktop 9–20, HTKD desktop 22–40, cửa hàng
-  desktop 42–51 và 61–65. Còn 9 mẫu desktop 52–60 và toàn bộ 60 mẫu mobile.
+- Đã xem 47/115 mẫu: Admin desktop 9–20, HTKD desktop 22–40, cửa hàng
+  desktop 42–51 và 61–65, mobile khui kiện 110. Còn 9 mẫu desktop 52–60 và 59 mẫu mobile.
   Con số này là tiến độ đọc thiết kế, không phải số màn hình thực tế đã đạt.
 - Phần bán hàng IDOSI đã tách khỏi nhánh loading/error của chứng từ kho và dùng chung
   kỳ thống kê giữa tổng hợp/chi tiết. Sáu test hồi quy kiểm tra phạm vi cửa hàng,
   kỳ lịch sử, loading, lỗi catalog và không tải IDOSI ở màn hình lọc/xử lý.
   Web có 136/136 unit test đạt, typecheck/lint đạt và production build đạt.
   Đây là kiểm tra code/static render, chưa thay thế kiểm thử thao tác trình duyệt.
-- Các khoảng thiếu đã xác định từ mẫu cửa hàng: khui kiện thiếu bước xem trước
-  trước/sau; xử lý hàng còn dùng biểu mẫu lý do chung thay vì các nhánh nghiệp vụ;
+- Khui kiện: đã thêm bước xem trước/xác nhận từng bao, giữ nguyên kg và chặn xác nhận
+  khi phiên bản/trạng thái/phạm vi sở hữu thay đổi. Khóa idempotency theo bao + phiên bản.
+  Bốn test bổ sung đưa tổng web test lên 140/140; typecheck, lint và build đạt.
+  Chưa kiểm thử tương tác trình duyệt. Chưa đạt đầy đủ mẫu 43/110: còn chọn mặt hàng,
+  khui nhiều bao nguyên tử và tổng hợp tồn trước/sau theo mặt hàng. API hiện chỉ khui từng bao;
+  không thay giao dịch nhiều bao bằng một chuỗi lệnh riêng lẻ rồi báo thành công chung.
+- Các khoảng thiếu đã xác định từ mẫu cửa hàng: xử lý hàng còn dùng biểu mẫu lý do chung thay vì các nhánh nghiệp vụ;
   thống kê theo mặt hàng chưa có nguồn doanh thu/giá vốn tương đương mẫu.
   Không dùng số minh họa hoặc suy diễn nguồn còn thiếu để làm dashboard giống mẫu.
 

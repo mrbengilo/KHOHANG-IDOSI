@@ -165,6 +165,47 @@
   width: 100%;
 }
 
+.open-bag-preview {
+  grid-column: 1 / -1;
+  min-width: 0;
+  padding: 0.85rem;
+  border: 1px solid var(--brand);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--brand) 5%, var(--surface));
+  overflow-wrap: anywhere;
+}
+
+.open-bag-preview h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.open-bag-preview p,
+.open-bag-preview dt {
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.open-bag-preview dl {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.open-bag-preview dd {
+  margin: 0.25rem 0 0;
+  font-weight: 700;
+}
+
+.open-bag-preview [role='alert'] {
+  color: var(--danger);
+}
+
+.open-bag-preview .button {
+  flex: 1 1 10rem;
+  width: auto;
+}
+
 .operation-notice {
   border: 1px solid var(--border);
   border-radius: 0.8rem;
