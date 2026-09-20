@@ -4,6 +4,24 @@
   margin-top: 20px;
 }
 
+.idosi-sales-workspace {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.idosi-sales-workspace > p,
+.idosi-sales-workspace .inventory-toolbar p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.idosi-sales-workspace .idosi-statistics {
+  margin-top: 0;
+}
+
 .idosi-statistics .section-heading {
   margin-bottom: 0;
 }

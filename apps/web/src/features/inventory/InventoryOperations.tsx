@@ -27,9 +27,7 @@ import { StatCard } from '../../components/StatCard';
 import { ApiClientError, listAccessibleStores, listCatalog } from '../../lib/api';
 import { useSession } from '../../lib/auth';
 import { formatKg, formatVnd } from '../../lib/format';
-import { IdosiStatisticsPanel } from '../idosi/IdosiStatisticsPanel';
-import { currentIdosiPeriod } from '../idosi/IdosiStatisticsPanel';
-import { IdosiSalesSummary } from '../idosi/IdosiSalesSummary';
+import { IdosiSalesWorkspace } from '../idosi/IdosiSalesWorkspace';
 import {
   createStoreOutbound,
   listInventoryBags,
@@ -712,6 +710,9 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
         }
         title={mode === 'SALE' ? 'Bán & đồng bộ' : 'Lọc & xử lý'}
       />
+      {mode === 'SALE' ? (
+        <IdosiSalesWorkspace role={role} principalStoreId={defaultStoreId} stores={stores} />
+      ) : null}
       {notice ? (
         <div className="operation-notice operation-notice--success" role="status">
           {notice}
@@ -774,7 +775,11 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
               <div className="outbound-form-grid">
                 <label>
                   Mã bao
-                  <select onChange={(event) => setBagId(event.target.value)} value={effectiveBagId}>
+                  <select
+                    required
+                    onChange={(event) => setBagId(event.target.value)}
+                    value={effectiveBagId}
+                  >
                     <option value="">Chọn Mã bao</option>
                     {eligibleBags.map((bag) => (
                       <option key={bag.id} value={bag.id}>
@@ -787,6 +792,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                 <label>
                   Khối lượng (kg)
                   <input
+                    required
                     inputMode="decimal"
                     min="0.001"
                     onChange={(event) => setWeightKg(event.target.value)}
@@ -805,6 +811,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                   <label>
                     Doanh thu (VND)
                     <input
+                      required
                       inputMode="numeric"
                       min="0"
                       onChange={(event) => setRevenueVnd(event.target.value)}
@@ -817,6 +824,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                   <label>
                     Lý do
                     <select
+                      required
                       onChange={(event) => setReason(event.target.value as OutboundReason)}
                       value={reason}
                     >
@@ -860,16 +868,6 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
               </label>
             </section>
           )}
-          {mode === 'SALE' ? (
-            <>
-              <IdosiSalesSummary
-                key={effectiveStoreId || 'ALL'}
-                period={currentIdosiPeriod()}
-                {...(effectiveStoreId ? { storeId: effectiveStoreId } : {})}
-              />
-              <IdosiStatisticsPanel storeId={effectiveStoreId} />
-            </>
-          ) : null}
           <section className="panel table-panel">
             <div className="section-heading section-heading--compact">
               <div>

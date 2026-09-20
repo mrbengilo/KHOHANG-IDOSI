@@ -22,6 +22,7 @@ import './idosi-statistics.css';
 
 interface IdosiStatisticsPanelProps {
   readonly storeId: string;
+  readonly period?: string;
 }
 
 interface FreshnessView {
@@ -104,9 +105,10 @@ function weightDetail(weight: IdosiWeightSummary): string {
   return `${formatInteger(weight.missingFactorLines)} dòng thiếu hệ số; chỉ tính phần đã biết`;
 }
 
-export function IdosiStatisticsPanel({ storeId }: IdosiStatisticsPanelProps) {
+export function IdosiStatisticsPanel({ storeId, period: sharedPeriod }: IdosiStatisticsPanelProps) {
   const queryClient = useQueryClient();
-  const [period, setPeriod] = useState(currentIdosiPeriod);
+  const [localPeriod, setPeriod] = useState(currentIdosiPeriod);
+  const period = sharedPeriod ?? localPeriod;
   const scope = monthScope(storeId, period);
   const queryKey = statisticsKey(storeId, period);
   const stateQuery = useQuery({
@@ -168,20 +170,24 @@ export function IdosiStatisticsPanel({ storeId }: IdosiStatisticsPanelProps) {
           {view ? <Badge tone={view.tone}>{view.label}</Badge> : <Database aria-hidden="true" />}
         </div>
         <div className="idosi-statistics__controls">
-          <label>
-            Kỳ thống kê
-            <input
-              disabled={syncMutation.isPending}
-              max={currentIdosiPeriod()}
-              onChange={(event) => {
-                if (!event.target.value) return;
-                setPeriod(event.target.value);
-                syncMutation.reset();
-              }}
-              type="month"
-              value={period}
-            />
-          </label>
+          {sharedPeriod ? (
+            <span>Kỳ thống kê: {period}</span>
+          ) : (
+            <label>
+              Kỳ thống kê
+              <input
+                disabled={syncMutation.isPending}
+                max={currentIdosiPeriod()}
+                onChange={(event) => {
+                  if (!event.target.value) return;
+                  setPeriod(event.target.value);
+                  syncMutation.reset();
+                }}
+                type="month"
+                value={period}
+              />
+            </label>
+          )}
           <Button
             busy={mutationMatchesScope && syncMutation.isPending}
             disabled={syncDisabled || syncMutation.isPending || stateQuery.isPending}

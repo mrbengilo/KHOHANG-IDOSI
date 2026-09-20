@@ -44,9 +44,9 @@ Chưa nhóm nào được nghiệm thu toàn bộ desktop/mobile ở thời đi�
 | HTKD kho / xử lý / chuyển      | 26–27 / 87–88                        | Đã đọc mẫu desktop; cần đối chiếu sổ bao, hai đầu điều chuyển và phân nhánh                                                     |
 | HTKD ưu tiên                   | 29–37 / 90–97                        | Đã đọc đủ mẫu desktop: thông báo, chi tiết, xác nhận, hủy lượt, đóng phiếu chờ, sắp hết hạn và hết hạn; chưa nghiệm thu thực tế |
 | HTKD danh mục                  | 38–40 / 98–107                       | Đã đọc mẫu desktop; quyền tạo/sửa/ngừng đã có, còn kiểm tra thực tế và mobile                                                   |
-| Cửa hàng tổng quan / vận hành  | 42–51, 63–65 / 109–117, 120–124, 129 | Chờ đọc đủ mẫu và đối chiếu thực tế                                                                                             |
+| Cửa hàng tổng quan / vận hành  | 42–51, 63–65 / 109–117, 120–124, 129 | Đã đọc mẫu desktop; còn thiếu các bước xem trước, phân nhánh xử lý và bộ lọc tương ứng; chưa nghiệm thu mobile                  |
 | Cửa hàng ưu tiên               | 52–60 / 125–128                      | Chờ đọc đủ trạng thái mẫu và đối chiếu thực tế                                                                                  |
-| Cửa hàng chênh lệch nhận       | 61–62 / 118–119                      | Chờ đọc đủ mẫu và đối chiếu thực tế                                                                                             |
+| Cửa hàng chênh lệch nhận       | 61–62 / 118–119                      | Đã đọc mẫu desktop; cần kiểm tra khai thực nhận độc lập, cách ly sai SKU và khóa chứng từ sau gửi                               |
 
 Trang 1–8, 21, 41, 66–67, 82 và 108 là phần giới thiệu/phân nhóm, không phải màn hình ứng dụng.
 
@@ -60,6 +60,19 @@ Trang 1–8, 21, 41, 66–67, 82 và 108 là phần giới thiệu/phân nhóm, 
 6. Chỉ merge/deploy sau CI, kiểm tra migration, backup và nghiệm thu các nhóm liên quan.
 
 ## Bằng chứng hiện có
+
+- Đã xem 46/115 mẫu: Admin desktop 9–20, HTKD desktop 22–40, cửa hàng
+  desktop 42–51 và 61–65. Còn 9 mẫu desktop 52–60 và toàn bộ 60 mẫu mobile.
+  Con số này là tiến độ đọc thiết kế, không phải số màn hình thực tế đã đạt.
+- Phần bán hàng IDOSI đã tách khỏi nhánh loading/error của chứng từ kho và dùng chung
+  kỳ thống kê giữa tổng hợp/chi tiết. Sáu test hồi quy kiểm tra phạm vi cửa hàng,
+  kỳ lịch sử, loading, lỗi catalog và không tải IDOSI ở màn hình lọc/xử lý.
+  Web có 136/136 unit test đạt, typecheck/lint đạt và production build đạt.
+  Đây là kiểm tra code/static render, chưa thay thế kiểm thử thao tác trình duyệt.
+- Các khoảng thiếu đã xác định từ mẫu cửa hàng: khui kiện thiếu bước xem trước
+  trước/sau; xử lý hàng còn dùng biểu mẫu lý do chung thay vì các nhánh nghiệp vụ;
+  thống kê theo mặt hàng chưa có nguồn doanh thu/giá vốn tương đương mẫu.
+  Không dùng số minh họa hoặc suy diễn nguồn còn thiếu để làm dashboard giống mẫu.
 
 - `f81ead1`: endpoint tổng hợp snapshot IDOSI có kiểm tra phạm vi; UI tổng hợp và chi tiết
   từng sản phẩm/cửa hàng. Đã push nhánh `feat/idosi-sales-dashboard-refresh`.
