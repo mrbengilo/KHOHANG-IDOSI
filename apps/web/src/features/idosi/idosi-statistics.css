@@ -4,6 +4,24 @@
   margin-top: 20px;
 }
 
+.idosi-sales-workspace {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.idosi-sales-workspace > p,
+.idosi-sales-workspace .inventory-toolbar p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.idosi-sales-workspace .idosi-statistics {
+  margin-top: 0;
+}
+
 .idosi-statistics .section-heading {
   margin-bottom: 0;
 }
@@ -186,4 +204,40 @@
   .idosi-statistics__spinner {
     animation: none;
   }
+}
+.idosi-sales-summary {
+  margin-bottom: 18px;
+}
+.idosi-sales-coverage,
+.idosi-sales-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+}
+.idosi-sales-coverage,
+.idosi-sales-sources {
+  color: var(--muted);
+  font-size: 12px;
+}
+.idosi-sales-sources {
+  margin-bottom: 16px;
+}
+.idosi-sales-sources summary {
+  cursor: pointer;
+  min-height: 44px;
+  padding: 10px 0;
+}
+.idosi-sales-summary .section-heading label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+.idosi-sales-summary input {
+  min-height: 44px;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
 }

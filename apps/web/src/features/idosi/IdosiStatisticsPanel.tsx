@@ -22,6 +22,7 @@ import './idosi-statistics.css';
 
 interface IdosiStatisticsPanelProps {
   readonly storeId: string;
+  readonly period?: string;
 }
 
 interface FreshnessView {
@@ -104,9 +105,10 @@ function weightDetail(weight: IdosiWeightSummary): string {
   return `${formatInteger(weight.missingFactorLines)} dòng thiếu hệ số; chỉ tính phần đã biết`;
 }
 
-export function IdosiStatisticsPanel({ storeId }: IdosiStatisticsPanelProps) {
+export function IdosiStatisticsPanel({ storeId, period: sharedPeriod }: IdosiStatisticsPanelProps) {
   const queryClient = useQueryClient();
-  const [period, setPeriod] = useState(currentIdosiPeriod);
+  const [localPeriod, setPeriod] = useState(currentIdosiPeriod);
+  const period = sharedPeriod ?? localPeriod;
   const scope = monthScope(storeId, period);
   const queryKey = statisticsKey(storeId, period);
   const stateQuery = useQuery({
@@ -118,10 +120,13 @@ export function IdosiStatisticsPanel({ storeId }: IdosiStatisticsPanelProps) {
   const syncMutation = useMutation({
     mutationFn: syncIdosiStatistics,
     onSettled: async (_state, _error, syncedScope) => {
-      await queryClient.invalidateQueries({
-        exact: true,
-        queryKey: statisticsKey(syncedScope.storeId, syncedScope.period),
-      });
+      await Promise.all([
+        queryClient.invalidateQueries({
+          exact: true,
+          queryKey: statisticsKey(syncedScope.storeId, syncedScope.period),
+        }),
+        queryClient.invalidateQueries({ queryKey: ['idosi-sales-summary', syncedScope.period] }),
+      ]);
     },
     onSuccess: (state, syncedScope) => {
       queryClient.setQueryData(statisticsKey(syncedScope.storeId, syncedScope.period), state);
@@ -165,20 +170,24 @@ export function IdosiStatisticsPanel({ storeId }: IdosiStatisticsPanelProps) {
           {view ? <Badge tone={view.tone}>{view.label}</Badge> : <Database aria-hidden="true" />}
         </div>
         <div className="idosi-statistics__controls">
-          <label>
-            Kỳ thống kê
-            <input
-              disabled={syncMutation.isPending}
-              max={currentIdosiPeriod()}
-              onChange={(event) => {
-                if (!event.target.value) return;
-                setPeriod(event.target.value);
-                syncMutation.reset();
-              }}
-              type="month"
-              value={period}
-            />
-          </label>
+          {sharedPeriod ? (
+            <span>Kỳ thống kê: {period}</span>
+          ) : (
+            <label>
+              Kỳ thống kê
+              <input
+                disabled={syncMutation.isPending}
+                max={currentIdosiPeriod()}
+                onChange={(event) => {
+                  if (!event.target.value) return;
+                  setPeriod(event.target.value);
+                  syncMutation.reset();
+                }}
+                type="month"
+                value={period}
+              />
+            </label>
+          )}
           <Button
             busy={mutationMatchesScope && syncMutation.isPending}
             disabled={syncDisabled || syncMutation.isPending || stateQuery.isPending}
@@ -327,7 +336,7 @@ export function IdosiStatisticsPanel({ storeId }: IdosiStatisticsPanelProps) {
             <div className="section-heading section-heading--compact">
               <div>
                 <h3>Sản phẩm trong snapshot</h3>
-                <p>Tối đa 8 dòng đầu theo thứ tự nguồn IDOSI.</p>
+                <p>Toàn bộ mặt hàng theo thứ tự nguồn IDOSI.</p>
               </div>
             </div>
             {payload.products.items.length === 0 ? (
@@ -348,7 +357,7 @@ export function IdosiStatisticsPanel({ storeId }: IdosiStatisticsPanelProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {payload.products.items.slice(0, 8).map((item) => (
+                    {payload.products.items.map((item) => (
                       <tr key={`${item.productId}:${item.revenueType}:${item.unit}`}>
                         <td data-label="Sản phẩm">
                           <strong>{item.productName}</strong>

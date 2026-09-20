@@ -269,6 +269,11 @@ export interface WarehouseRepository {
     actor: AuthenticatedPrincipal,
     scope: IdosiStatisticsScope,
   ): Promise<PersistedIdosiStatisticsState>;
+  getIdosiStatisticsStates(
+    actor: AuthenticatedPrincipal,
+    storeIds: readonly string[],
+    period: string,
+  ): Promise<PersistedIdosiStatisticsState[]>;
   recordIdosiStatisticsSuccess(
     actor: AuthenticatedPrincipal,
     scope: IdosiStatisticsScope,

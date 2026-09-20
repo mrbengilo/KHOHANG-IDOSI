@@ -107,6 +107,52 @@ export async function loadIdosiStatisticsState(
   };
 }
 
+/** Two bounded reads, irrespective of the number of stores on a page. */
+export async function loadIdosiStatisticsStates(
+  database: Database,
+  storeIds: readonly string[],
+  period: string,
+): Promise<StoredIdosiStatisticsState[]> {
+  if (storeIds.length === 0) return [];
+  const scopeKey = idosiStatisticsScopeKey({
+    period,
+    date: null,
+    shiftId: null,
+    paymentMethod: null,
+  });
+  const [snapshots, attempts] = await Promise.all([
+    database
+      .select()
+      .from(idosiStatisticsSnapshots)
+      .where(
+        and(
+          inArray(idosiStatisticsSnapshots.storeId, [...storeIds]),
+          eq(idosiStatisticsSnapshots.scopeKey, scopeKey),
+        ),
+      ),
+    database
+      .selectDistinctOn([idosiStatisticsSyncAttempts.storeId])
+      .from(idosiStatisticsSyncAttempts)
+      .where(
+        and(
+          inArray(idosiStatisticsSyncAttempts.storeId, [...storeIds]),
+          eq(idosiStatisticsSyncAttempts.scopeKey, scopeKey),
+        ),
+      )
+      .orderBy(
+        idosiStatisticsSyncAttempts.storeId,
+        desc(idosiStatisticsSyncAttempts.completedAt),
+        desc(idosiStatisticsSyncAttempts.id),
+      ),
+  ]);
+  const snapshotByStore = new Map(snapshots.map((row) => [row.storeId, snapshotDto(row)]));
+  const attemptByStore = new Map(attempts.map((row) => [row.storeId, attemptDto(row)]));
+  return storeIds.map((id) => ({
+    snapshot: snapshotByStore.get(id) ?? null,
+    latestAttempt: attemptByStore.get(id) ?? null,
+  }));
+}
+
 export async function recordIdosiStatisticsSuccess(
   database: Database,
   input: RecordIdosiStatisticsSuccessInput,

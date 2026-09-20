@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
-import { EntityIdSchema, IsoDateSchema, IsoDateTimeSchema, MoneyVndSchema } from './common.js';
+import {
+  EntityIdSchema,
+  IsoDateSchema,
+  IsoDateTimeSchema,
+  MoneyVndSchema,
+  PaginationMetaSchema,
+  PaginationQuerySchema,
+} from './common.js';
 
 const PERIOD_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])$/u;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
@@ -277,6 +284,18 @@ export const IdosiStatisticsStateResponseSchema: z.ZodType<
 > = z.object({ data: IdosiStatisticsStateSchema }).strict();
 
 export type IdosiFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
+export const ListIdosiStatisticsQuerySchema = PaginationQuerySchema.extend({
+  period: IdosiStatisticsPeriodSchema,
+  storeId: EntityIdSchema.optional(),
+}).strict();
+export type ListIdosiStatisticsQuery = z.infer<typeof ListIdosiStatisticsQuerySchema>;
+export const ListIdosiStatisticsResponseSchema = z
+  .object({
+    data: z.array(IdosiStatisticsStateSchema),
+    pagination: PaginationMetaSchema,
+  })
+  .strict();
 
 export interface FetchIdosiStatisticsOptions {
   readonly endpoint: string;

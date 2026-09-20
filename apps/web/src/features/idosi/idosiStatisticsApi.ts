@@ -2,6 +2,7 @@ import {
   ErrorEnvelopeSchema,
   GetIdosiStatisticsQuerySchema,
   IdosiStatisticsStateResponseSchema,
+  ListIdosiStatisticsResponseSchema,
   SyncIdosiStatisticsRequestSchema,
   type IdosiStatisticsScope,
   type IdosiStatisticsState,
@@ -80,6 +81,24 @@ export async function getIdosiStatistics(
   const scope = GetIdosiStatisticsQuerySchema.parse(input);
   const payload = await request(`/integrations/idosi/order-statistics?${scopeQuery(scope)}`);
   return IdosiStatisticsStateResponseSchema.parse(payload).data;
+}
+
+export async function listIdosiStatistics(
+  period: string,
+  storeId?: string,
+): Promise<IdosiStatisticsState[]> {
+  const load = async (page: number) => {
+    const query = new URLSearchParams({ period, page: String(page), pageSize: '100' });
+    if (storeId) query.set('storeId', storeId);
+    return ListIdosiStatisticsResponseSchema.parse(
+      await request(`/integrations/idosi/statistics-summary?${query}`),
+    );
+  };
+  const first = await load(1);
+  const states = [...first.data];
+  for (let page = 2; page <= first.pagination.totalPages; page += 1)
+    states.push(...(await load(page)).data);
+  return states;
 }
 
 export async function syncIdosiStatistics(

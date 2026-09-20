@@ -27,7 +27,8 @@ import { StatCard } from '../../components/StatCard';
 import { ApiClientError, listAccessibleStores, listCatalog } from '../../lib/api';
 import { useSession } from '../../lib/auth';
 import { formatKg, formatVnd } from '../../lib/format';
-import { IdosiStatisticsPanel } from '../idosi/IdosiStatisticsPanel';
+import { IdosiSalesWorkspace } from '../idosi/IdosiSalesWorkspace';
+import { isOpenBagSelectionCurrent, OpenBagConfirmation } from './OpenBagConfirmation';
 import {
   createStoreOutbound,
   listInventoryBags,
@@ -427,6 +428,7 @@ export function ProductionOpenBagPage({ role }: AppOutletContext) {
   const [storeId, setStoreId] = useState('');
   const [notice, setNotice] = useState('');
   const [mutationError, setMutationError] = useState('');
+  const [selectedBag, setSelectedBag] = useState<StoreInventoryBag | null>(null);
   const operationKeys = useRef(new Map<string, string>());
   const effectiveStoreId = role === 'STORE' ? defaultStoreId : storeId;
   const bagsQuery = useQuery({
@@ -441,13 +443,15 @@ export function ProductionOpenBagPage({ role }: AppOutletContext) {
   });
   const mutation = useMutation({
     mutationFn: async (bag: StoreInventoryBag) => {
-      const key = operationKeys.current.get(bag.id) ?? uuid();
-      operationKeys.current.set(bag.id, key);
+      const signature = `${bag.id}:${bag.version}`;
+      const key = operationKeys.current.get(signature) ?? uuid();
+      operationKeys.current.set(signature, key);
       return openInventoryBag(bag.id, { expectedVersion: bag.version }, key);
     },
     onError: (error) => setMutationError(errorMessage(error)),
-    onSuccess: async (bag) => {
-      operationKeys.current.delete(bag.id);
+    onSuccess: async (bag, submittedBag) => {
+      operationKeys.current.delete(`${submittedBag.id}:${submittedBag.version}`);
+      setSelectedBag(null);
       setMutationError('');
       setNotice(`Đã khui ${bag.bagCode}; khối lượng không thay đổi và phiên bản đã tăng.`);
       await queryClient.invalidateQueries({ queryKey: ['store-inventory-bags'] });
@@ -541,12 +545,36 @@ export function ProductionOpenBagPage({ role }: AppOutletContext) {
               <Badge tone="success">Chưa khui</Badge>
               {role === 'STORE' ? (
                 <Button
-                  busy={mutation.isPending && mutation.variables?.id === bag.id}
                   disabled={mutation.isPending}
-                  onClick={() => mutation.mutate(bag)}
+                  aria-expanded={selectedBag?.id === bag.id}
+                  onClick={() => {
+                    setMutationError('');
+                    setNotice('');
+                    setSelectedBag(bag);
+                  }}
                 >
-                  Xác nhận khui
+                  Xem trước khui
                 </Button>
+              ) : null}
+              {role === 'STORE' && selectedBag?.id === bag.id ? (
+                <OpenBagConfirmation
+                  bag={selectedBag}
+                  busy={mutation.isPending}
+                  canConfirm={
+                    !bagsQuery.isFetching &&
+                    isOpenBagSelectionCurrent(selectedBag, bag, defaultStoreId)
+                  }
+                  onCancel={() => setSelectedBag(null)}
+                  onConfirm={() => {
+                    if (
+                      !mutation.isPending &&
+                      !bagsQuery.isFetching &&
+                      isOpenBagSelectionCurrent(selectedBag, bag, defaultStoreId)
+                    ) {
+                      mutation.mutate(selectedBag);
+                    }
+                  }}
+                />
               ) : null}
             </article>
           ))}
@@ -710,6 +738,9 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
         }
         title={mode === 'SALE' ? 'Bán & đồng bộ' : 'Lọc & xử lý'}
       />
+      {mode === 'SALE' ? (
+        <IdosiSalesWorkspace role={role} principalStoreId={defaultStoreId} stores={stores} />
+      ) : null}
       {notice ? (
         <div className="operation-notice operation-notice--success" role="status">
           {notice}
@@ -772,7 +803,11 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
               <div className="outbound-form-grid">
                 <label>
                   Mã bao
-                  <select onChange={(event) => setBagId(event.target.value)} value={effectiveBagId}>
+                  <select
+                    required
+                    onChange={(event) => setBagId(event.target.value)}
+                    value={effectiveBagId}
+                  >
                     <option value="">Chọn Mã bao</option>
                     {eligibleBags.map((bag) => (
                       <option key={bag.id} value={bag.id}>
@@ -785,6 +820,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                 <label>
                   Khối lượng (kg)
                   <input
+                    required
                     inputMode="decimal"
                     min="0.001"
                     onChange={(event) => setWeightKg(event.target.value)}
@@ -803,6 +839,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                   <label>
                     Doanh thu (VND)
                     <input
+                      required
                       inputMode="numeric"
                       min="0"
                       onChange={(event) => setRevenueVnd(event.target.value)}
@@ -815,6 +852,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                   <label>
                     Lý do
                     <select
+                      required
                       onChange={(event) => setReason(event.target.value as OutboundReason)}
                       value={reason}
                     >
@@ -858,7 +896,6 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
               </label>
             </section>
           )}
-          {mode === 'SALE' ? <IdosiStatisticsPanel storeId={effectiveStoreId} /> : null}
           <section className="panel table-panel">
             <div className="section-heading section-heading--compact">
               <div>

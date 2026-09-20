@@ -10,6 +10,9 @@ describe('route access policy', () => {
       expect(canAccessRoute(route, 'STORE', 'RETAIL')).toBe(true);
     }
     expect(canAccessRoute('/costs', 'ADMIN', null)).toBe(true);
+    expect(canShowNavigation('/costs', 'ADMIN', null)).toBe(true);
+    expect(canShowNavigation('/costs', 'HTKD', null)).toBe(true);
+    expect(canShowNavigation('/costs', 'STORE', 'RETAIL')).toBe(false);
   });
   it('keeps admin-only screens unavailable to stores', () => {
     expect(canAccessRoute('/users', 'STORE', 'RETAIL')).toBe(false);

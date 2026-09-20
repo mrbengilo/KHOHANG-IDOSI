@@ -706,6 +706,28 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     };
   }
 
+  public async getIdosiStatisticsStates(
+    actor: AuthenticatedPrincipal,
+    storeIds: readonly string[],
+    period: string,
+  ) {
+    if (storeIds.some((id) => !canAccessStore(actor, id)))
+      throw forbidden('Không có quyền xem cửa hàng này');
+    return storeIds.map((storeId) => {
+      const key = memoryIdosiScopeKey({
+        storeId,
+        period,
+        date: null,
+        shiftId: null,
+        paymentMethod: null,
+      });
+      return {
+        snapshot: this.idosiStatisticsSnapshots.get(key) ?? null,
+        latestAttempt: this.idosiStatisticsAttempts.get(key) ?? null,
+      };
+    });
+  }
+
   public async recordIdosiStatisticsSuccess(
     actor: AuthenticatedPrincipal,
     scope: IdosiStatisticsScope,
