@@ -53,6 +53,7 @@ const navEntries: NavEntry[] = [
     label: 'Nhận hàng',
     icon: PackageCheck,
   },
+  { to: '/costs', label: 'Phiếu nhập & giá vốn', icon: ClipboardCheck },
   {
     to: '/inventory',
     label: 'Tồn kho / Lịch sử',
@@ -268,7 +269,7 @@ export function AppShell() {
               to={to}
             >
               <Icon aria-hidden="true" size={18} />
-              <span>{label}</span>
+              <span>{to === '/costs' && role === 'HTKD' ? 'Nhập kg & chi phí' : label}</span>
             </NavLink>
           ))}
         </nav>
@@ -316,7 +317,7 @@ export function AppShell() {
         {links.slice(0, 4).map(({ icon: Icon, label, to }) => (
           <NavLink end={to === '/'} key={to} to={to}>
             <Icon aria-hidden="true" size={18} />
-            <span>{label}</span>
+            <span>{to === '/costs' && role === 'HTKD' ? 'Nhập kg & chi phí' : label}</span>
           </NavLink>
         ))}
       </nav>
