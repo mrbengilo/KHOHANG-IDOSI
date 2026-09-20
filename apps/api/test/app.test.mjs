@@ -373,6 +373,50 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(stale.json().data.snapshot.payload.totals.revenue, 450_000);
     assert.equal(stale.json().data.latestAttempt.status, 'FAILED');
 
+    const summaryUrl = '/api/v1/integrations/idosi/statistics-summary?period=2026-09&pageSize=100';
+    assert.equal((await app.inject({ method: 'GET', url: summaryUrl })).statusCode, 401);
+    const summary = await app.inject({
+      method: 'GET',
+      url: summaryUrl,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(summary.statusCode, 200, summary.body);
+    assert.equal(summary.headers['cache-control'], 'no-store');
+    assert.equal(summary.json().data.length, 1);
+    assert.equal(summary.json().data[0].scope.storeId, MEMORY_SEED_IDS.nvtStore);
+    assert.equal(summary.json().data[0].snapshot.payload.totals.revenue, 450_000);
+    assert.equal(summary.json().data[0].freshness, 'STALE');
+    const deniedSummary = await app.inject({
+      method: 'GET',
+      url: summaryUrl + `&storeId=${MEMORY_SEED_IDS.bdStore}`,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(deniedSummary.statusCode, 403);
+    const allSummary = await app.inject({
+      method: 'GET',
+      url: summaryUrl,
+      headers: { cookie: adminCookie },
+    });
+    assert.ok(allSummary.json().data.length > 1);
+    assert.ok(
+      allSummary
+        .json()
+        .data.some((state) => state.snapshot === null && state.freshness === 'EMPTY'),
+    );
+    const anotherMonth = await app.inject({
+      method: 'GET',
+      url: summaryUrl.replace('2026-09', '2026-08'),
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(anotherMonth.json().data[0].snapshot, null);
+    const firstPage = await app.inject({
+      method: 'GET',
+      url: summaryUrl.replace('pageSize=100', 'pageSize=1'),
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(firstPage.json().data.length, 1);
+    assert.equal(firstPage.json().pagination.totalItems, allSummary.json().data.length);
+
     const audit = await app.inject({
       method: 'GET',
       url: '/api/v1/admin/audit-logs?entityType=idosi_statistics_snapshot&pageSize=100',

@@ -327,7 +327,7 @@ export function IdosiStatisticsPanel({ storeId }: IdosiStatisticsPanelProps) {
             <div className="section-heading section-heading--compact">
               <div>
                 <h3>Sản phẩm trong snapshot</h3>
-                <p>Tối đa 8 dòng đầu theo thứ tự nguồn IDOSI.</p>
+                <p>Toàn bộ mặt hàng theo thứ tự nguồn IDOSI.</p>
               </div>
             </div>
             {payload.products.items.length === 0 ? (
@@ -348,7 +348,7 @@ export function IdosiStatisticsPanel({ storeId }: IdosiStatisticsPanelProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {payload.products.items.slice(0, 8).map((item) => (
+                    {payload.products.items.map((item) => (
                       <tr key={`${item.productId}:${item.revenueType}:${item.unit}`}>
                         <td data-label="Sản phẩm">
                           <strong>{item.productName}</strong>

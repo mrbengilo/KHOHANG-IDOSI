@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { isRetryableTransactionError } from '@idosi/database';
 
 import {
+  ListIdosiStatisticsQuerySchema,
   UpdateInboundVatRequestSchema,
   AccountParamsSchema,
   PrepareOrderingRequestSchema,
@@ -397,6 +398,45 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     const settings = await repository.getOperationalSettings(session.principal, 10);
     reply.header('cache-control', 'no-store');
     return { data: { ...settings, integration: idosiIntegration } };
+  });
+
+  app.get('/api/v1/integrations/idosi/statistics-summary', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    const query = ListIdosiStatisticsQuerySchema.parse(request.query);
+    const page = query.storeId
+      ? {
+          data: [
+            await repository.resolveIdosiStatisticsTarget(session.principal, query.storeId),
+          ].map((target) => ({ id: target.storeId })),
+          pagination: { page: 1, pageSize: 1, totalItems: 1, totalPages: 1 },
+        }
+      : await repository.listStores(session.principal, {
+          page: query.page,
+          pageSize: query.pageSize,
+          kind: 'RETAIL',
+        });
+    const persisted = await repository.getIdosiStatisticsStates(
+      session.principal,
+      page.data.map((store) => store.id),
+      query.period,
+    );
+    reply.header('cache-control', 'no-store');
+    return {
+      pagination: page.pagination,
+      data: page.data.map((store, index) =>
+        idosiStatisticsState(
+          {
+            storeId: store.id,
+            period: query.period,
+            date: null,
+            shiftId: null,
+            paymentMethod: null,
+          },
+          persisted[index]!,
+          idosiIntegration.status,
+        ),
+      ),
+    };
   });
 
   app.get('/api/v1/integrations/idosi/order-statistics', async (request, reply) => {
@@ -1937,6 +1977,17 @@ function openApiDocument(): Record<string, unknown> {
         get: {
           security: cookieSecurity,
           responses: { '200': { description: 'Source-backed monthly operational report' } },
+        },
+      },
+      '/api/v1/integrations/idosi/statistics-summary': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': {
+              description:
+                'Paginated retail snapshots for authorized stores and one month; missing snapshots remain null',
+            },
+          },
         },
       },
       '/api/v1/integrations/idosi/order-statistics': {

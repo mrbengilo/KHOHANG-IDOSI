@@ -1,4 +1,5 @@
 import {
+  loadIdosiStatisticsStates,
   prepareOrderingContext as prepareDatabaseOrdering,
   updateSupplierInboundVat as updateDatabaseInboundVat,
 } from '@idosi/database';
@@ -853,6 +854,16 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
   public async getIdosiStatisticsState(actor: AuthenticatedPrincipal, scope: IdosiStatisticsScope) {
     await this.resolveIdosiStatisticsTarget(actor, scope.storeId);
     return loadDatabaseIdosiStatisticsState(db, scope);
+  }
+
+  public async getIdosiStatisticsStates(
+    actor: AuthenticatedPrincipal,
+    storeIds: readonly string[],
+    period: string,
+  ) {
+    if (storeIds.some((id) => !canAccessStore(actor, id)))
+      throw forbidden('Không có quyền xem cửa hàng này');
+    return loadIdosiStatisticsStates(db, storeIds, period);
   }
 
   public async recordIdosiStatisticsSuccess(

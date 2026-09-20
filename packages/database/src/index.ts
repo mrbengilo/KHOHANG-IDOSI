@@ -27,6 +27,7 @@ export {
   idosiStatisticsScopeKey,
   listDueIdosiStatisticsTargets,
   loadIdosiStatisticsState,
+  loadIdosiStatisticsStates,
   recordIdosiStatisticsFailure,
   recordIdosiStatisticsSuccess,
 } from './idosi-statistics.js';

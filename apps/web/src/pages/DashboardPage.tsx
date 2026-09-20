@@ -7,6 +7,7 @@ import type {
   Store,
 } from '@idosi/contracts';
 import { useQuery } from '@tanstack/react-query';
+import { IdosiSalesSummary } from '../features/idosi/IdosiSalesSummary';
 import {
   AlertTriangle,
   ArrowRight,
@@ -435,14 +436,23 @@ export function DashboardPage() {
       ) : null}
 
       {!roleMismatch && viewState === 'READY' && bootstrap && snapshotQuery.data ? (
-        <DashboardContent
-          onNavigate={(target) => navigate(target)}
-          role={sessionRole}
-          scope={scope as DashboardScope}
-          snapshot={snapshotQuery.data}
-          storeKind={effectiveStoreKind}
-          stores={bootstrap.stores}
-        />
+        <>
+          {effectiveStoreKind !== 'WHOLESALE' ? (
+            <IdosiSalesSummary
+              key={`${yearMonth}:${scopeKey}`}
+              period={yearMonth}
+              {...(scope?.kind === 'STORE' ? { storeId: scope.storeId } : {})}
+            />
+          ) : null}
+          <DashboardContent
+            onNavigate={(target) => navigate(target)}
+            role={sessionRole}
+            scope={scope as DashboardScope}
+            snapshot={snapshotQuery.data}
+            storeKind={effectiveStoreKind}
+            stores={bootstrap.stores}
+          />
+        </>
       ) : null}
     </div>
   );

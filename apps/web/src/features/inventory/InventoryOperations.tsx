@@ -28,6 +28,8 @@ import { ApiClientError, listAccessibleStores, listCatalog } from '../../lib/api
 import { useSession } from '../../lib/auth';
 import { formatKg, formatVnd } from '../../lib/format';
 import { IdosiStatisticsPanel } from '../idosi/IdosiStatisticsPanel';
+import { currentIdosiPeriod } from '../idosi/IdosiStatisticsPanel';
+import { IdosiSalesSummary } from '../idosi/IdosiSalesSummary';
 import {
   createStoreOutbound,
   listInventoryBags,
@@ -858,7 +860,16 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
               </label>
             </section>
           )}
-          {mode === 'SALE' ? <IdosiStatisticsPanel storeId={effectiveStoreId} /> : null}
+          {mode === 'SALE' ? (
+            <>
+              <IdosiSalesSummary
+                key={effectiveStoreId || 'ALL'}
+                period={currentIdosiPeriod()}
+                {...(effectiveStoreId ? { storeId: effectiveStoreId } : {})}
+              />
+              <IdosiStatisticsPanel storeId={effectiveStoreId} />
+            </>
+          ) : null}
           <section className="panel table-panel">
             <div className="section-heading section-heading--compact">
               <div>
