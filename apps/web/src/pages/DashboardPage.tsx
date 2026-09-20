@@ -607,9 +607,9 @@ function DashboardContent({
         <div className="section-heading">
           <div>
             <h2 id="dashboard-kpi-title">Chỉ số theo nguồn đã ghi nhận</h2>
-            <p>Mỗi số liệu phản ánh đúng kỳ và phạm vi đang chọn.</p>
+            <p>Chỉ số tài chính theo kỳ đã chọn; công việc chờ theo trạng thái hiện tại.</p>
           </div>
-          <Badge tone="info">Tối đa 100 bản ghi hoạt động gần nhất</Badge>
+          <Badge tone="info">Theo phạm vi được phân quyền</Badge>
         </div>
         <div className="stats-grid">
           {isWholesale ? (
@@ -821,8 +821,8 @@ function DashboardContent({
       <section className="dashboard-data-note">
         <Clock3 aria-hidden="true" size={17} />
         <span>
-          Số đếm hoạt động lấy từ tối đa 100 bản ghi mỗi endpoint. Chỉ số tháng dùng nguồn tổng hợp
-          /reports/monthly và giữ nguyên số nguyên từ backend.
+          Công việc chờ phản ánh trạng thái hiện tại, không phải số dư lịch sử của kỳ đã chọn. Chỉ
+          số tháng dùng nguồn tổng hợp /reports/monthly và giữ nguyên số nguyên từ backend.
         </span>
       </section>
     </>

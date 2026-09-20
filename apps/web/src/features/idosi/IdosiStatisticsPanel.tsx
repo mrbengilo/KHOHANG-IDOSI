@@ -118,10 +118,13 @@ export function IdosiStatisticsPanel({ storeId }: IdosiStatisticsPanelProps) {
   const syncMutation = useMutation({
     mutationFn: syncIdosiStatistics,
     onSettled: async (_state, _error, syncedScope) => {
-      await queryClient.invalidateQueries({
-        exact: true,
-        queryKey: statisticsKey(syncedScope.storeId, syncedScope.period),
-      });
+      await Promise.all([
+        queryClient.invalidateQueries({
+          exact: true,
+          queryKey: statisticsKey(syncedScope.storeId, syncedScope.period),
+        }),
+        queryClient.invalidateQueries({ queryKey: ['idosi-sales-summary', syncedScope.period] }),
+      ]);
     },
     onSuccess: (state, syncedScope) => {
       queryClient.setQueryData(statisticsKey(syncedScope.storeId, syncedScope.period), state);
