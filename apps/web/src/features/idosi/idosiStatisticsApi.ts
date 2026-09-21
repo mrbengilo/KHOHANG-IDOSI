@@ -119,3 +119,23 @@ export function idosiStatisticsErrorMessage(error: unknown): string {
   }
   return 'Máy chủ trả về dữ liệu thống kê IDOSI không hợp lệ.';
 }
+
+/** Resolve the authorized month/store scope, then refresh each source snapshot once. */
+export async function syncIdosiSalesSummary(period: string, storeId?: string) {
+  const states = await listIdosiStatistics(period, storeId);
+  const failures: string[] = [];
+  let succeeded = 0;
+  for (const state of states) {
+    try {
+      await syncIdosiStatistics(state.scope);
+      succeeded += 1;
+    } catch (error) {
+      if (error instanceof IdosiStatisticsApiError && [401, 403].includes(error.status))
+        throw error;
+      failures.push(
+        `${state.snapshot?.payload.store.name ?? state.scope.storeId}: ${idosiStatisticsErrorMessage(error)}`,
+      );
+    }
+  }
+  return { succeeded, total: states.length, failures };
+}

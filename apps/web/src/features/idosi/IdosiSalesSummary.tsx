@@ -1,11 +1,15 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { Badge } from '../../components/Badge';
 import { StatCard } from '../../components/StatCard';
 import { formatKg, formatInteger } from '../../lib/format';
-import { listIdosiStatistics, idosiStatisticsErrorMessage } from './idosiStatisticsApi';
+import {
+  listIdosiStatistics,
+  idosiStatisticsErrorMessage,
+  syncIdosiSalesSummary,
+} from './idosiStatisticsApi';
 import { summarizeIdosiSales } from './sales-summary';
 import './idosi-statistics.css';
 
@@ -23,14 +27,30 @@ export function IdosiSalesSummary({
     readonly onStoreChange: (value: string) => void;
   };
 }) {
+  const queryClient = useQueryClient();
+  const sync = useMutation({
+    mutationFn: (scope: { period: string; storeId?: string }) =>
+      syncIdosiSalesSummary(scope.period, scope.storeId),
+    onSettled: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['idosi-sales-summary'] }),
+        queryClient.invalidateQueries({ queryKey: ['idosi-statistics'] }),
+      ]);
+    },
+  });
   const query = useQuery({
     queryKey: ['idosi-sales-summary', period, storeId ?? 'ALL'],
     queryFn: () => listIdosiStatistics(period, storeId),
     retry: false,
+    refetchInterval: sync.isPending ? false : 30_000,
   });
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const summary = summarizeIdosiSales(query.data ?? []);
+  const sourceTimes = summary.snapshots.map((snapshot) => snapshot.payload.generatedAt).sort();
+  const formatTime = (value: string) =>
+    new Date(value).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+  const syncMatchesScope = sync.variables?.period === period && sync.variables?.storeId === storeId;
   const rows = summary.productTotals.filter((item) =>
     `${item.productName} ${item.productCode ?? ''}`
       .toLocaleLowerCase('vi-VN')
@@ -48,10 +68,47 @@ export function IdosiSalesSummary({
           <h2 id="idosi-sales-heading">Doanh thu & hàng đã bán · IDOSI</h2>
           <p>Kỳ {period} · dữ liệu từ idosi.io.vn, độc lập với phiếu xuất kho nội bộ.</p>
         </div>
-        <Button busy={query.isFetching} tone="secondary" onClick={() => void query.refetch()}>
-          <RefreshCw size={16} aria-hidden="true" /> Cập nhật hiển thị
+        <Button
+          busy={sync.isPending}
+          disabled={query.isPending || !!query.error || !query.data?.length}
+          tone="secondary"
+          onClick={() => sync.mutate({ period, ...(storeId ? { storeId } : {}) })}
+        >
+          <RefreshCw size={16} aria-hidden="true" /> Đồng bộ từ IDOSI
         </Button>
       </div>
+      <p>
+        Dữ liệu cập nhật theo lịch đồng bộ. Bấm “Đồng bộ từ IDOSI” để lấy số liệu mới nhất của kỳ và
+        cửa hàng đang chọn.
+      </p>
+      {sourceTimes.length > 0 ? (
+        <p>
+          Dữ liệu nguồn lúc {formatTime(sourceTimes[0]!)}
+          {sourceTimes.at(-1) !== sourceTimes[0] ? ` – ${formatTime(sourceTimes.at(-1)!)}` : ''}.
+          Đơn phát sinh sau thời điểm này sẽ có trong lần đồng bộ tiếp theo.
+        </p>
+      ) : null}
+      {sync.isPending ? <p role="status">Đang lấy dữ liệu mới từ IDOSI…</p> : null}
+      {syncMatchesScope && sync.error ? (
+        <p role="alert">{idosiStatisticsErrorMessage(sync.error)}</p>
+      ) : null}
+      {syncMatchesScope && sync.isSuccess ? (
+        <div role={sync.data.failures.length ? 'alert' : 'status'}>
+          <p>
+            Đã đồng bộ {sync.data.succeeded}/{sync.data.total} cửa hàng từ IDOSI.
+          </p>
+          {sync.data.failures.length ? (
+            <>
+              <p>Cửa hàng lỗi vẫn giữ số liệu của lần đồng bộ thành công trước đó:</p>
+              <ul>
+                {sync.data.failures.map((failure) => (
+                  <li key={failure}>{failure}</li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+        </div>
+      ) : null}
       {query.isPending ? (
         <p role="status">Đang tải dữ liệu bán hàng…</p>
       ) : query.error ? (
@@ -91,7 +148,7 @@ export function IdosiSalesSummary({
               tone={summary.incompleteWeight ? 'warning' : 'success'}
               detail={
                 summary.incompleteWeight
-                  ? 'Chưa đủ hệ số; không phải tổng đầy đủ'
+                  ? 'Còn đơn thiếu chi tiết hoặc hệ số; chưa tính đủ kg'
                   : 'Gồm kg thực tế và kg quy đổi từ cái'
               }
             />
