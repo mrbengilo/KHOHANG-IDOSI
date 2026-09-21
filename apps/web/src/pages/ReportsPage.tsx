@@ -9,7 +9,8 @@ import type {
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, ArrowDownToLine, Database, RefreshCw } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useOutletContext, useSearchParams } from 'react-router-dom';
+import { readReportNavigation, updateReportNavigation } from '../lib/report-navigation';
 import type { AppOutletContext } from '../components/AppShell';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
@@ -266,8 +267,16 @@ function demoReport(yearMonth: string, role: Role): MonthlyOperationalReport {
 export function ReportsPage() {
   const { role } = useOutletContext<AppOutletContext>();
   const sessionQuery = useSession();
-  const [yearMonth, setYearMonth] = useState(currentBusinessMonth);
-  const [scopeSelection, setScopeSelection] = useState(role === 'ADMIN' ? 'ALL' : '');
+  const [search, setSearch] = useSearchParams();
+  const { period: yearMonth, scope: scopeSelection } = readReportNavigation(
+    search,
+    currentBusinessMonth(),
+    role === 'ADMIN',
+  );
+  const setYearMonth = (value: string) =>
+    setSearch((previous) => updateReportNavigation(previous, 'period', value), { replace: true });
+  const setScopeSelection = (value: string) =>
+    setSearch((previous) => updateReportNavigation(previous, 'scope', value), { replace: true });
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState('');
   const storesQuery = useQuery({
@@ -369,6 +378,7 @@ export function ReportsPage() {
         <label>
           Phạm vi
           <select
+            aria-label="Phạm vi báo cáo"
             disabled={mockModeEnabled || storesQuery.isPending || noAssignedStores}
             onChange={(event) => setScopeSelection(event.target.value)}
             value={
