@@ -102,14 +102,14 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   // Refetch while a local edit exists must not silently adopt a newer version.
   await historyRow.getByLabel(`Số tiền VAT cho ${reference}`, { exact: true }).fill('999999');
   const external = await page.request.patch(`${api}/api/v1/inbound-receipts/${receipt.id}/vat`, {
-    headers: { 'idempotency-key': `external-vat-${reference}` },
+    headers: { 'idempotency-key': `external-vat-${receipt.id}` },
     data: {
       vat: { amountVnd: 1050000, ratePercent: 8 },
       expectedVersion: receipt.version,
       reason: 'Admin khác cập nhật hóa đơn',
     },
   });
-  expect(external.status()).toBe(200);
+  expect(external.status(), await external.text()).toBe(200);
   await page.getByRole('button', { name: 'Làm mới phiếu nhập' }).click();
   await expect(historyRow.getByRole('button', { name: 'Tải bản VAT mới' })).toBeVisible();
   await expect(historyRow.getByRole('button', { name: 'Lưu VAT', exact: true })).toBeDisabled();
@@ -135,7 +135,7 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   });
   // The PostgreSQL DTO must distinguish unknown tax from an explicitly entered zero.
   const deferred = await page.request.post(`${api}/api/v1/inbound-receipts`, {
-    headers: { 'idempotency-key': `deferred-${reference}` },
+    headers: { 'idempotency-key': `deferred-${receipt.id}` },
     data: {
       referenceCode: `DEFERRED-${reference}`,
       supplierName: 'Kiểm thử VAT chưa có',
@@ -150,7 +150,7 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   const confirmed = await page.request.post(
     `${api}/api/v1/inbound-receipts/${deferredReceipt.id}/confirm-costs`,
     {
-      headers: { 'idempotency-key': `confirm-deferred-${reference}` },
+      headers: { 'idempotency-key': `confirm-deferred-${receipt.id}` },
       data: {
         expectedVersion: 0,
         productCosts: [{ productId: receipt.bags[0].productId, priceVndPerKg: 1000 }],
@@ -168,7 +168,7 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   const zeroTax = await page.request.patch(
     `${api}/api/v1/inbound-receipts/${deferredReceipt.id}/vat`,
     {
-      headers: { 'idempotency-key': `zero-vat-${reference}` },
+      headers: { 'idempotency-key': `zero-vat-${receipt.id}` },
       data: {
         expectedVersion: 1,
         vat: { amountVnd: 0, ratePercent: 8 },
