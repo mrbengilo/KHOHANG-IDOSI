@@ -176,6 +176,7 @@ p {
   min-height: 42px;
   align-items: center;
   gap: 11px;
+  border: 1px solid transparent;
   border-radius: 10px;
   color: var(--text-secondary);
   font-size: 13px;
@@ -195,8 +196,33 @@ p {
 
 .sidebar__link--active {
   background: var(--brand-soft);
+  border-color: var(--brand);
   color: var(--brand-dark);
   font-weight: 700;
+}
+
+.sidebar__link svg {
+  flex-shrink: 0;
+  color: var(--brand);
+}
+
+.sidebar__link:is([href='/warehouse-inbound'], [href='/receive'], [href='/sales']) svg {
+  color: var(--success);
+}
+
+.sidebar__link:is([href='/allocations'], [href='/open-bag'], [href='/sorting'], [href='/costs'])
+  svg {
+  color: var(--warning);
+}
+
+.sidebar__link:is([href='/inventory'], [href='/transfers'], [href='/stores'], [href='/reports'])
+  svg {
+  color: var(--info);
+}
+
+.sidebar__link:hover,
+.sidebar__link:focus-visible {
+  border-color: var(--brand);
 }
 
 .sidebar__profile {
