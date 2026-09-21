@@ -17,6 +17,8 @@ import {
   updateWarehouseInboundVat,
 } from '../lib/api';
 import { formatVnd } from '../lib/format';
+import { InboundReceiptDetails } from './InboundReceiptDetails';
+import './warehouse-inbound.css';
 
 interface DraftProduct {
   productId: string;
@@ -153,9 +155,15 @@ function WarehouseInboundContent() {
               <input readOnly value="Tự tạo khi lưu · PN00001-dd/MM/yyyy" />
             </label>
             <label>
-              Nhà cung cấp
+              <span>
+                Nhà cung cấp{' '}
+                <span className="inbound-required" aria-hidden="true">
+                  *
+                </span>
+              </span>
               <input
                 required
+                aria-label="Nhà cung cấp"
                 maxLength={200}
                 value={supplierName}
                 onChange={(event) => {
@@ -208,6 +216,7 @@ function WarehouseInboundContent() {
           </section>
           <div hidden={entryTab !== 'GOODS'}>
             <ProductBagPicker
+              required
               products={products}
               disabled={busy || catalog.isPending || catalog.isError}
               quantities={Object.fromEntries(draft.map((item) => [item.productId, item.quantity]))}
@@ -267,7 +276,7 @@ function WarehouseInboundContent() {
           </Button>
         </fieldset>
       </form>
-      <section className="panel">
+      <section className="panel inbound-history">
         <h2>Phiếu nhập kho tổng</h2>
         <Button tone="secondary" onClick={() => void history.refetch()} busy={history.isFetching}>
           Làm mới phiếu nhập
@@ -278,11 +287,12 @@ function WarehouseInboundContent() {
         {history.isPending ? <p role="status">Đang tải phiếu nhập…</p> : null}
         {history.data?.data.length === 0 ? <p>Chưa có phiếu nhập.</p> : null}
         {history.data?.data.map((receipt) => (
-          <article className="request-line" key={receipt.id}>
+          <article className="inbound-receipt" key={receipt.id}>
             <div>
               <strong>
                 {receipt.referenceCode} · {receipt.supplierName}
               </strong>
+              <InboundReceiptDetails receipt={receipt} products={catalog.data ?? []} />
               <span>
                 VAT:{' '}
                 {receipt.vat
@@ -392,9 +402,11 @@ function InvoiceCostEditor({ receipt }: { receipt: InboundReceipt }) {
       <form onSubmit={save} noValidate>
         <fieldset className="form-grid" disabled={busy}>
           <label>
-            Tổng tiền hàng theo hóa đơn (VND){' '}
-            <span className="form-error" aria-hidden="true">
-              *
+            <span>
+              Tổng tiền hàng theo hóa đơn (VND){' '}
+              <span className="inbound-required" aria-hidden="true">
+                *
+              </span>
             </span>
             <input
               required
@@ -404,9 +416,11 @@ function InvoiceCostEditor({ receipt }: { receipt: InboundReceipt }) {
             />
           </label>
           <label>
-            Phí vận chuyển (VND){' '}
-            <span className="form-error" aria-hidden="true">
-              *
+            <span>
+              Phí vận chuyển (VND){' '}
+              <span className="inbound-required" aria-hidden="true">
+                *
+              </span>
             </span>
             <input
               required
@@ -416,9 +430,11 @@ function InvoiceCostEditor({ receipt }: { receipt: InboundReceipt }) {
             />
           </label>
           <label>
-            Phí bốc vác (VND){' '}
-            <span className="form-error" aria-hidden="true">
-              *
+            <span>
+              Phí bốc vác (VND){' '}
+              <span className="inbound-required" aria-hidden="true">
+                *
+              </span>
             </span>
             <input
               required
@@ -515,7 +531,12 @@ function InboundVatEditor({ receipt }: { receipt: InboundReceipt }) {
       <form onSubmit={save}>
         <fieldset disabled={busy} className="form-grid">
           <label>
-            Số tiền VAT cho {receipt.referenceCode}
+            <span>
+              Số tiền VAT cho {receipt.referenceCode}{' '}
+              <span className="inbound-required" aria-hidden="true">
+                *
+              </span>
+            </span>
             <input
               inputMode="numeric"
               value={amount}
@@ -524,7 +545,12 @@ function InboundVatEditor({ receipt }: { receipt: InboundReceipt }) {
             />
           </label>
           <label>
-            Lý do cập nhật VAT cho {receipt.referenceCode}
+            <span>
+              Lý do cập nhật VAT cho {receipt.referenceCode}{' '}
+              <span className="inbound-required" aria-hidden="true">
+                *
+              </span>
+            </span>
             <input
               value={reason}
               onChange={(event) => setReason(event.target.value)}

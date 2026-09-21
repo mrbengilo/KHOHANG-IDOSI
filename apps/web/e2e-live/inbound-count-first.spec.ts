@@ -37,6 +37,10 @@ test('warehouse accepts three bags without a weight field and generates its rece
     page.getByText(`Đã nhập phiếu ${data.referenceCode} vào kho tổng.`, { exact: true }),
   ).toBeVisible();
   const row = page.locator('article').filter({ hasText: data.referenceCode });
+  await expect(row.locator('.inbound-receipt__products tbody tr')).toHaveCount(1);
+  await expect(row.locator('.inbound-receipt__products tbody td')).toHaveText('3 bao');
+  await expect(row.locator('time')).toHaveAttribute('datetime', data.receivedAt);
+  await expect(row.locator('.inbound-receipt__products tbody th')).not.toContainText('Chưa tải');
   await row.getByText('Chốt chi phí theo hóa đơn', { exact: true }).click();
   await row.getByLabel('Tổng tiền hàng theo hóa đơn (VND)').fill('1234567');
   await row.getByLabel('Phí vận chuyển (VND)').fill('10000');
