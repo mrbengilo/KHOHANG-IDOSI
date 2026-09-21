@@ -98,10 +98,29 @@ export async function seedReferenceData(database: Database): Promise<void> {
       persistedProducts.map((product) => [product.sku, product.id] as const),
     );
 
+    // Một mặt hàng đã có bản quy đổi trong database là mặt hàng đã được quản trị:
+    // bản gốc có thể đã retire và thay bằng version mới có kỳ hiệu lực khác.
+    // Insert lại seed sẽ chồng lấn kỳ và bị trigger product_conversions_validate_period
+    // chặn trước cả khi ON CONFLICT kịp bỏ qua, nên phải loại hẳn mặt hàng đó khỏi seed.
+    const productIds = Array.from(productIdBySku.values());
+    const existingConversions = productIds.length
+      ? await tx
+          .selectDistinct({ productId: productConversions.productId })
+          .from(productConversions)
+          .where(inArray(productConversions.productId, productIds))
+      : [];
+    const productsWithConversions = new Set(
+      existingConversions.map((conversion) => conversion.productId),
+    );
+
     for (const conversion of PRODUCT_CONVERSION_SEEDS) {
       const productId = productIdBySku.get(conversion.productSku);
       if (!productId) {
         throw new Error(`Seed product "${conversion.productSku}" was not persisted.`);
+      }
+
+      if (productsWithConversions.has(productId)) {
+        continue;
       }
 
       await tx
