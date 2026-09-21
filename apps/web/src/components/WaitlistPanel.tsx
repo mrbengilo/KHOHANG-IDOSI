@@ -541,7 +541,7 @@ function CancelDialog({
           </button>
         </div>
         <label>
-          Lý do hủy
+          <span className="field-label">Lý do hủy</span>
           <textarea
             aria-describedby={invalid && reason.length > 0 ? reasonErrorId : undefined}
             autoFocus

@@ -977,7 +977,7 @@ function HtkdAssignmentsForm({
         </p>
       ) : null}
       <label className="admin-field admin-assignment-reason">
-        <span>Lý do thay đổi</span>
+        <span className="field-label">Lý do thay đổi</span>
         <textarea
           aria-describedby="htkd-assignment-reason-help"
           disabled={busy}
@@ -1047,7 +1047,7 @@ function CreateAccountForm({
       </div>
       <form className="admin-form-grid" onSubmit={onSubmit}>
         <label className="admin-field">
-          <span>Tên đăng nhập</span>
+          <span className="field-label">Tên đăng nhập</span>
           <input
             autoComplete="off"
             disabled={busy}
@@ -1059,7 +1059,7 @@ function CreateAccountForm({
           />
         </label>
         <label className="admin-field">
-          <span>Tên hiển thị</span>
+          <span className="field-label">Tên hiển thị</span>
           <input
             disabled={busy}
             maxLength={120}
@@ -1085,7 +1085,7 @@ function CreateAccountForm({
         </label>
         {draft.role === 'STORE' ? (
           <label className="admin-field">
-            <span>Cửa hàng</span>
+            <span className="field-label">Cửa hàng</span>
             <select
               disabled={busy || Boolean(storesError)}
               onChange={(event) => update('storeId', event.target.value)}
@@ -1103,7 +1103,7 @@ function CreateAccountForm({
           </label>
         ) : null}
         <label className="admin-field">
-          <span>Mật khẩu ban đầu</span>
+          <span className="field-label">Mật khẩu ban đầu</span>
           <input
             autoComplete="new-password"
             disabled={busy}
@@ -1116,7 +1116,7 @@ function CreateAccountForm({
           />
         </label>
         <label className="admin-field">
-          <span>Nhập lại mật khẩu</span>
+          <span className="field-label">Nhập lại mật khẩu</span>
           <input
             autoComplete="new-password"
             disabled={busy}
@@ -1244,7 +1244,7 @@ function PasswordResetPanel({
       </div>
       <form className="admin-form-grid" onSubmit={submit}>
         <label className="admin-field">
-          <span>Mật khẩu mới</span>
+          <span className="field-label">Mật khẩu mới</span>
           <input
             autoComplete="new-password"
             disabled={busy}
@@ -1257,7 +1257,7 @@ function PasswordResetPanel({
           />
         </label>
         <label className="admin-field">
-          <span>Nhập lại mật khẩu mới</span>
+          <span className="field-label">Nhập lại mật khẩu mới</span>
           <input
             autoComplete="new-password"
             disabled={busy}

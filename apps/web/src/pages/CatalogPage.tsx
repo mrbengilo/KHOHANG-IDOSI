@@ -595,8 +595,8 @@ export function CatalogPage() {
         </article>
         <article>
           <span>Chăn, ga, bao gối, nệm gòn</span>
-          <strong>1 cái × 3 = 3,000 kg</strong>
-          <small>Tỷ lệ nguồn chính xác: 1 cái tương ứng 3,000 kg</small>
+          <strong>1 cái × 3 = 3 kg</strong>
+          <small>Tỷ lệ nguồn chính xác: 1 cái tương ứng 3 kg</small>
         </article>
       </div>
 
@@ -908,7 +908,7 @@ function ConversionDialog({ busy, draft, onChange, onClose, onSubmit }: Conversi
         </div>
         <div className="catalog-dialog__grid">
           <label>
-            Mã SKU
+            <span className="field-label">Mã SKU</span>
             <input
               autoFocus={draft.mode === 'CREATE_PRODUCT'}
               disabled={draft.mode !== 'CREATE_PRODUCT' || busy}
@@ -919,7 +919,7 @@ function ConversionDialog({ busy, draft, onChange, onClose, onSubmit }: Conversi
             />
           </label>
           <label>
-            Tên mặt hàng
+            <span className="field-label">Tên mặt hàng</span>
             <input
               disabled={draft.mode !== 'CREATE_PRODUCT' || busy}
               maxLength={200}
@@ -929,7 +929,7 @@ function ConversionDialog({ busy, draft, onChange, onClose, onSubmit }: Conversi
             />
           </label>
           <label>
-            Số cái trong tỷ lệ
+            <span className="field-label">Số cái trong tỷ lệ</span>
             <input
               disabled={busy}
               inputMode="numeric"
@@ -942,7 +942,7 @@ function ConversionDialog({ busy, draft, onChange, onClose, onSubmit }: Conversi
             />
           </label>
           <label>
-            Khối lượng tương ứng (kg)
+            <span className="field-label">Khối lượng tương ứng (kg)</span>
             <input
               disabled={busy}
               inputMode="decimal"
@@ -955,7 +955,7 @@ function ConversionDialog({ busy, draft, onChange, onClose, onSubmit }: Conversi
             />
           </label>
           <label>
-            Hiệu lực từ
+            <span className="field-label">Hiệu lực từ</span>
             <input
               disabled={busy}
               min={
@@ -970,7 +970,7 @@ function ConversionDialog({ busy, draft, onChange, onClose, onSubmit }: Conversi
             />
           </label>
           <label className="catalog-dialog__wide">
-            Lý do thay đổi
+            <span className="field-label">Lý do thay đổi</span>
             <textarea
               disabled={busy}
               maxLength={500}
@@ -1036,7 +1036,7 @@ function RetireDialog({ busy, draft, onChange, onClose, onSubmit }: RetireDialog
           </button>
         </div>
         <label>
-          Lý do ngừng hệ số
+          <span className="field-label">Lý do ngừng hệ số</span>
           <textarea
             autoFocus
             disabled={busy}

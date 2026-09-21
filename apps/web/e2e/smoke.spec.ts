@@ -74,7 +74,7 @@ test('admin can review the dashboard and updated product catalog', async ({ page
   await page.getByRole('link', { name: 'Danh mục & quy đổi' }).click();
   await expect(page.getByRole('heading', { name: 'Danh mục & quy đổi bán hàng' })).toBeVisible();
   await expect(page.getByText('25/25 mặt hàng')).toBeVisible();
-  await expect(page.getByText('1 cái × 3 = 3,000 kg')).toBeVisible();
+  await expect(page.getByText('1 cái × 3 = 3 kg')).toBeVisible();
 });
 
 test('catalog dialog traps focus, closes with Escape, and restores its trigger', async ({
@@ -88,6 +88,37 @@ test('catalog dialog traps focus, closes with Escape, and restores its trigger',
   const dialog = page.getByRole('dialog', { name: 'Thêm mặt hàng và hệ số' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByLabel('Mã SKU')).toBeFocused();
+
+  const requiredLabels = dialog.locator('label:has(:required) > .field-label');
+  expect(await requiredLabels.count()).toBeGreaterThan(0);
+  for (const label of await requiredLabels.all()) {
+    const marker = await label.evaluate((element) => {
+      const style = getComputedStyle(element, '::after');
+      return { content: style.content, color: style.color };
+    });
+    expect(marker.content).toContain('*');
+    expect(marker.color).not.toBe(
+      await label.evaluate((element) => getComputedStyle(element).color),
+    );
+  }
+  // Markers follow native validity, including fields that become optional.
+  const skuInput = dialog.getByLabel('Mã SKU');
+  await skuInput.evaluate((element: HTMLInputElement) => {
+    element.required = false;
+  });
+  await expect(
+    dialog.locator('label:has(input:not(:required)) > .field-label').first(),
+  ).toBeVisible();
+  expect(
+    await skuInput.evaluate(
+      (element) =>
+        getComputedStyle(element.closest('label')!.querySelector('.field-label')!, '::after')
+          .content,
+    ),
+  ).not.toContain('*');
+  await skuInput.evaluate((element: HTMLInputElement) => {
+    element.required = true;
+  });
 
   const controls = dialog.locator('button, input, select, textarea');
   await controls.evaluateAll((elements) => {

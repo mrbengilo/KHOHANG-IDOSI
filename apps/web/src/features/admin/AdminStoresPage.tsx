@@ -735,7 +735,7 @@ function StoreGroupEditor({
       />
       <form className="admin-form-grid" onSubmit={submit}>
         <label className="admin-field">
-          <span>Mã nhóm</span>
+          <span className="field-label">Mã nhóm</span>
           <input
             autoFocus={!group}
             disabled={busy || Boolean(group)}
@@ -746,7 +746,7 @@ function StoreGroupEditor({
           />
         </label>
         <label className="admin-field">
-          <span>Tên nhóm</span>
+          <span className="field-label">Tên nhóm</span>
           <input
             autoFocus={Boolean(group)}
             disabled={busy}
@@ -833,7 +833,7 @@ function StoreEditor({
       />
       <form className="admin-form-grid" onSubmit={submit}>
         <label className="admin-field">
-          <span>Mã cửa hàng</span>
+          <span className="field-label">Mã cửa hàng</span>
           <input
             autoFocus={!store}
             disabled={busy || Boolean(store)}
@@ -844,7 +844,7 @@ function StoreEditor({
           />
         </label>
         <label className="admin-field">
-          <span>Tên cửa hàng</span>
+          <span className="field-label">Tên cửa hàng</span>
           <input
             autoFocus={Boolean(store)}
             disabled={busy}
@@ -855,7 +855,7 @@ function StoreEditor({
           />
         </label>
         <label className="admin-field">
-          <span>Nhóm cửa hàng</span>
+          <span className="field-label">Nhóm cửa hàng</span>
           <select
             disabled={busy}
             onChange={(event) =>

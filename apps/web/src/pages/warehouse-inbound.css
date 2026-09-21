@@ -1,0 +1,110 @@
+.inbound-required {
+  color: var(--danger);
+  font-weight: 700;
+}
+.inbound-history .inbound-receipt {
+  margin: 14px 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.inbound-receipt > div {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.inbound-receipt p {
+  margin: 0;
+}
+.inbound-receipt__time {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.inbound-receipt__products {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 13px;
+}
+.inbound-receipt__products th,
+.inbound-receipt__products td {
+  display: table-cell;
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  text-transform: none;
+  border-radius: 0;
+}
+.inbound-receipt__products thead {
+  display: table-header-group;
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip: auto;
+}
+.inbound-receipt__products tbody {
+  display: table-row-group;
+}
+.inbound-receipt__products tr {
+  display: table-row;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.inbound-receipt__products td::before {
+  content: none;
+}
+.inbound-receipt__products th:last-child,
+.inbound-receipt__products td:last-child {
+  width: 88px;
+  text-align: right;
+  white-space: nowrap;
+}
+.inbound-receipt__products thead {
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+}
+.inbound-receipt__products tbody th {
+  font-weight: 500;
+}
+.inbound-receipt__products tfoot {
+  background: var(--brand-soft);
+  color: var(--brand-dark);
+  font-weight: 700;
+}
+.inbound-receipt details {
+  min-width: 0;
+}
+.inbound-receipt summary {
+  cursor: pointer;
+  padding: 10px 0;
+  font-weight: 600;
+  color: var(--brand-dark);
+}
+.inbound-receipt fieldset {
+  min-width: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.inbound-receipt input {
+  min-width: 0;
+  max-width: 100%;
+}
+@media (max-width: 600px) {
+  .inbound-history .inbound-receipt {
+    padding: 10px;
+  }
+  .inbound-receipt__products th,
+  .inbound-receipt__products td {
+    padding: 8px 6px;
+  }
+}

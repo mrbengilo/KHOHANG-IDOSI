@@ -176,6 +176,7 @@ p {
   min-height: 42px;
   align-items: center;
   gap: 11px;
+  border: 1px solid transparent;
   border-radius: 10px;
   color: var(--text-secondary);
   font-size: 13px;
@@ -195,8 +196,33 @@ p {
 
 .sidebar__link--active {
   background: var(--brand-soft);
+  border-color: var(--brand);
   color: var(--brand-dark);
   font-weight: 700;
+}
+
+.sidebar__link svg {
+  flex-shrink: 0;
+  color: var(--brand);
+}
+
+.sidebar__link:is([href='/warehouse-inbound'], [href='/receive'], [href='/sales']) svg {
+  color: var(--success);
+}
+
+.sidebar__link:is([href='/allocations'], [href='/open-bag'], [href='/sorting'], [href='/costs'])
+  svg {
+  color: var(--warning);
+}
+
+.sidebar__link:is([href='/inventory'], [href='/transfers'], [href='/stores'], [href='/reports'])
+  svg {
+  color: var(--info);
+}
+
+.sidebar__link:hover,
+.sidebar__link:focus-visible {
+  border-color: var(--brand);
 }
 
 .sidebar__profile {
@@ -2397,6 +2423,30 @@ body.dialog-open {
   min-height: 100vh;
   grid-template-columns: minmax(360px, 1.05fr) minmax(420px, 0.95fr);
   background: white;
+}
+.login-page.login-page--compact {
+  grid-template-columns: minmax(0, 1fr);
+}
+.login-page--compact .login-panel h1 {
+  font-size: 28px;
+  line-height: 1.3;
+  letter-spacing: -0.04em;
+  margin: 6px 0;
+}
+.login-page--compact .login-slogan {
+  color: var(--brand-dark);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+.required-mark {
+  color: var(--danger);
+  font-weight: 700;
+}
+label:has(:required) > .field-label::after {
+  content: ' *';
+  color: var(--danger);
+  font-weight: 700;
 }
 .login-visual {
   display: flex;

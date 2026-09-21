@@ -6,6 +6,7 @@ interface ProductBagPickerProps {
   products: readonly { id: string; name: string }[];
   quantities: Readonly<Record<string, number>>;
   disabled?: boolean;
+  required?: boolean;
   max?: number;
   onSelect: (id: string, selected: boolean) => void;
   onQuantityChange: (id: string, quantity: number) => void;
@@ -16,6 +17,7 @@ export function ProductBagPicker({
   products,
   quantities,
   disabled = false,
+  required = false,
   max = 2000,
   onSelect,
   onQuantityChange,
@@ -24,7 +26,17 @@ export function ProductBagPicker({
   const prefix = useId();
   return (
     <fieldset className="product-bag-picker" disabled={disabled}>
-      <legend>Chọn mặt hàng và số bao</legend>
+      <legend>
+        Chọn mặt hàng và số bao{' '}
+        {required ? (
+          <span style={{ color: 'var(--danger)' }} aria-hidden="true">
+            *
+          </span>
+        ) : null}
+      </legend>
+      {required ? (
+        <small>Chọn ít nhất một mặt hàng. Số bao của mặt hàng đã chọn là bắt buộc.</small>
+      ) : null}
       {products.length === 0 ? <p>Không có mặt hàng đang hoạt động.</p> : null}
       {products.map((product) => {
         const selected = Object.hasOwn(quantities, product.id);
@@ -39,7 +51,17 @@ export function ProductBagPicker({
                   checked={selected}
                   onChange={(event) => onSelect(product.id, event.target.checked)}
                 />
-                <span>{product.name}</span>
+                <span>
+                  {product.name}
+                  {required && selected ? (
+                    <>
+                      {' '}
+                      <span style={{ color: 'var(--danger)' }} aria-hidden="true">
+                        *
+                      </span>
+                    </>
+                  ) : null}
+                </span>
               </label>
               {selected ? (
                 <div className="bag-picker__stepper">
@@ -57,6 +79,7 @@ export function ProductBagPicker({
                   <input
                     id={inputId}
                     type="number"
+                    required={required}
                     inputMode="numeric"
                     min={1}
                     max={max}

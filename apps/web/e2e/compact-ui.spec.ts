@@ -7,6 +7,18 @@ test('admin menu and branding match the warehouse role', async ({ page }) => {
     await expect(nav.getByRole('link', { name, exact: true })).toHaveCount(0);
   }
   await expect(nav.getByRole('link', { name: 'Nhập kho tổng' })).toHaveCount(1);
+  const selected = nav.getByRole('link', { name: 'Tổng quan', exact: true });
+  await expect(selected).toHaveAttribute('aria-current', 'page');
+  const selectedStyle = await selected.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { border: style.borderTopWidth, color: style.borderTopColor };
+  });
+  expect(selectedStyle.border).toBe('1px');
+  expect(selectedStyle.color).not.toBe('rgba(0, 0, 0, 0)');
+  const iconColors = await nav
+    .locator('a svg')
+    .evaluateAll((elements) => elements.map((element) => getComputedStyle(element).color));
+  expect(new Set(iconColors).size).toBeGreaterThanOrEqual(3);
   expect(
     await page
       .locator('.sidebar .app-logo')
