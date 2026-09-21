@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { nextOrderingWindow, type OrderingContext } from '@idosi/contracts';
 
 import type {
+  WarehouseInventoryQuery,
+  WarehouseInventoryResponse,
   UpdateInboundVatRequest,
   Account,
   AdminAuditLog,
@@ -264,6 +266,37 @@ export interface MemoryRepositoryOptions {
 
 /** Deterministic in-memory adapter for inject tests and local demos. Never used by default in production. */
 export class MemoryWarehouseRepository implements WarehouseRepository {
+  public async listWarehouseInventory(
+    actor: AuthenticatedPrincipal,
+    query: WarehouseInventoryQuery,
+  ): Promise<WarehouseInventoryResponse> {
+    if (actor.role !== 'ADMIN') throw forbidden('Chỉ Admin được xem tồn kho tổng.');
+    const search = query.search?.toLocaleLowerCase('vi-VN') ?? '';
+    const values = [...this.products.values()]
+      .filter((product) =>
+        `${product.name} ${product.sku}`.toLocaleLowerCase('vi-VN').includes(search),
+      )
+      .sort((a, b) => a.sku.localeCompare(b.sku));
+    const data = slicePage(values, query.page, query.pageSize).map((product) => {
+      const balance = this.warehouseBalances.get(product.id);
+      const onHandBags = balance?.onHandQuantity ?? 0;
+      const reservedBags = balance?.reservedQuantity ?? 0;
+      return {
+        productId: product.id,
+        productName: product.name,
+        sku: product.sku,
+        onHandBags,
+        reservedBags,
+        availableBags: onHandBags - reservedBags,
+        dispatchedBags: [...this.dispatchedOutbounds.values()]
+          .flatMap((outbound) => outbound.lines)
+          .filter((line) => line.productId === product.id)
+          .reduce((sum, line) => sum + line.dispatchedUnits, 0),
+      };
+    });
+    return { data, pagination: pagination(query.page, query.pageSize, values.length) };
+  }
+
   private readonly now: () => Date;
   private readonly accounts = new Map<string, MutableAccount>();
   private readonly htkdAssignments = new Map<string, HtkdAssignment>();

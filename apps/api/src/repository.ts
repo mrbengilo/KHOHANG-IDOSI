@@ -1,4 +1,6 @@
 import type {
+  WarehouseInventoryQuery,
+  WarehouseInventoryResponse,
   OrderingContext,
   UpdateInboundVatRequest,
   Account,
@@ -319,6 +321,10 @@ export interface WarehouseRepository {
   ): Promise<IdempotentResource<OrderSession>>;
 
   listWarehouseBalances(actor: AuthenticatedPrincipal): Promise<WarehouseBalancesResponse>;
+  listWarehouseInventory(
+    actor: AuthenticatedPrincipal,
+    query: WarehouseInventoryQuery,
+  ): Promise<WarehouseInventoryResponse>;
   listInboundReceipts(
     actor: AuthenticatedPrincipal,
     query: ListInboundReceiptsQuery,

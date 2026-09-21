@@ -1,4 +1,6 @@
 import {
+  WarehouseInventoryResponseSchema,
+  ListWarehouseOutboundRequestsResponseSchema,
   CreateStoreOutboundRequestSchema,
   ErrorEnvelopeSchema,
   ListStoreInventoryBagLedgerResponseSchema,
@@ -24,6 +26,22 @@ import { ApiClientError } from '../../lib/api';
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
 const apiBaseUrl = (configuredBaseUrl || '/api/v1').replace(/\/$/, '');
+
+export async function loadWarehouseInventory(page: number, search: string) {
+  return WarehouseInventoryResponseSchema.parse(
+    await request(
+      `/warehouse-inventory?${new URLSearchParams({ page: String(page), pageSize: '20', search })}`,
+    ),
+  );
+}
+
+export async function loadWarehouseOutboundHistory(page: number) {
+  return ListWarehouseOutboundRequestsResponseSchema.parse(
+    await request(
+      `/outbound-requests?${new URLSearchParams({ page: String(page), pageSize: '20' })}`,
+    ),
+  );
+}
 
 interface InventoryFilters {
   readonly storeId?: string;

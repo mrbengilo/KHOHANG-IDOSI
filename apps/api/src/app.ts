@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { isRetryableTransactionError } from '@idosi/database';
 
 import {
+  WarehouseInventoryQuerySchema,
   ListIdosiStatisticsQuerySchema,
   UpdateInboundVatRequestSchema,
   AccountParamsSchema,
@@ -678,6 +679,15 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     const session = await authenticate(request, repository);
     requireRole(session.principal, ['ADMIN', 'HTKD']);
     return repository.listWarehouseBalances(session.principal);
+  });
+
+  app.get('/api/v1/warehouse-inventory', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    return repository.listWarehouseInventory(
+      session.principal,
+      WarehouseInventoryQuerySchema.parse(request.query),
+    );
   });
 
   app.get('/api/v1/inbound-receipts', async (request) => {
@@ -1747,6 +1757,25 @@ function openApiDocument(): Record<string, unknown> {
         get: {
           security: cookieSecurity,
           responses: { '200': { description: 'Current warehouse balances (ADMIN/HTKD)' } },
+        },
+      },
+      '/api/v1/warehouse-inventory': {
+        get: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 } },
+            {
+              name: 'pageSize',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1, maximum: 100 },
+            },
+            { name: 'search', in: 'query', schema: { type: 'string', maxLength: 120 } },
+          ],
+          responses: {
+            '200': {
+              description: 'ADMIN paginated current warehouse bags and cumulative dispatched bags',
+            },
+          },
         },
       },
       '/api/v1/inbound-receipts': {
