@@ -39,6 +39,39 @@ describe('monthly report period', () => {
 });
 
 describe('exact report arithmetic', () => {
+  it('keeps invoice totals but never presents unallocated product costs as zero', () => {
+    const report = summarizeMonthlyReport(
+      { year: 2026, month: 9, scope: { kind: 'ALL' } },
+      {
+        ...emptyRows,
+        inboundHeaders: [
+          {
+            receiptId: 'r1',
+            goodsCostVnd: 1000000n,
+            transportationFeeVnd: 0n,
+            handlingFeeVnd: 0n,
+            otherCostVnd: 0n,
+            vatAmountVnd: 80000n,
+          },
+        ],
+        inboundProducts: [
+          {
+            productId: 'p1',
+            sku: 'P1',
+            productName: 'Product',
+            weightKg: null,
+            goodsCostVnd: null,
+          },
+        ],
+      },
+      new Date(),
+    );
+    expect(report.totals.inboundGoodsCostVnd.value).toBe(1000000n);
+    expect(report.products[0]!.inboundGoodsCostVnd).toMatchObject({
+      value: null,
+      unavailableReason: 'INVOICE_COST_NOT_ALLOCATED',
+    });
+  });
   it('parses grams and rounds VND per kg without floating point', () => {
     expect(kilogramsToGramsForReport('12.345')).toBe(12_345n);
     expect(vndPerKilogram(430_000n, 15_500n)).toBe(27_742n);

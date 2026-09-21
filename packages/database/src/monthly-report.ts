@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, isNull, lt, type SQL } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull, lt, sql, type SQL } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import {
@@ -47,6 +47,7 @@ export type ReportMetricSource =
   | 'NOT_AVAILABLE';
 
 export type ReportUnavailableReason =
+  | 'INVOICE_COST_NOT_ALLOCATED'
   | 'MISSING_INBOUND_WEIGHT'
   | 'MISSING_SALE_REVENUE'
   | 'ZERO_INBOUND_WEIGHT'
@@ -74,7 +75,7 @@ export interface MonthlyInboundProductRow {
   readonly productName: string;
   /** Null means the persisted receipt did not record an actual weight. */
   readonly weightKg: string | null;
-  readonly goodsCostVnd: bigint;
+  readonly goodsCostVnd: bigint | null;
 }
 
 export interface MonthlySaleRow {
@@ -293,6 +294,7 @@ export function summarizeMonthlyReport(
       inboundWeightGrams: bigint;
       inboundWeightComplete: boolean;
       inboundGoodsCostVnd: bigint;
+      inboundCostComplete: boolean;
       soldWeightGrams: bigint;
       revenueVnd: bigint;
       revenueComplete: boolean;
@@ -301,7 +303,8 @@ export function summarizeMonthlyReport(
 
   for (const row of rows.inboundProducts) {
     const product = productAccumulator(productsById, row);
-    product.inboundGoodsCostVnd += row.goodsCostVnd;
+    if (row.goodsCostVnd === null) product.inboundCostComplete = false;
+    else product.inboundGoodsCostVnd += row.goodsCostVnd;
     if (row.weightKg === null) product.inboundWeightComplete = false;
     else product.inboundWeightGrams += kilogramsToGramsForReport(row.weightKg);
   }
@@ -368,7 +371,9 @@ export function summarizeMonthlyReport(
         inboundWeightGrams: product.inboundWeightComplete
           ? available(product.inboundWeightGrams, rows.inboundSource)
           : unavailable('MISSING_INBOUND_WEIGHT', rows.inboundSource),
-        inboundGoodsCostVnd: available(product.inboundGoodsCostVnd, rows.inboundSource),
+        inboundGoodsCostVnd: product.inboundCostComplete
+          ? available(product.inboundGoodsCostVnd, rows.inboundSource)
+          : unavailable<bigint>('INVOICE_COST_NOT_ALLOCATED', rows.inboundSource),
         soldWeightGrams: available(product.soldWeightGrams, 'STORE_OUTBOUNDS'),
         revenueVnd: product.revenueComplete
           ? available(product.revenueVnd, 'STORE_OUTBOUNDS')
@@ -513,7 +518,11 @@ async function loadWarehouseInbound(database: Database, period: MonthWindow) {
         sku: products.sku,
         productName: products.name,
         weightKg: receiptItems.totalNetWeightKg,
-        goodsCostVnd: receiptItems.goodsCostVnd,
+        goodsCostVnd: sql<
+          bigint | null
+        >`CASE WHEN ${receiptItems.pricePerKgVnd} IS NULL THEN NULL ELSE ${receiptItems.goodsCostVnd} END`.mapWith(
+          (value) => (value === null ? null : BigInt(value)),
+        ),
       })
       .from(receiptItems)
       .innerJoin(receipts, eq(receiptItems.receiptId, receipts.id))
@@ -641,6 +650,7 @@ function productAccumulator(
       inboundWeightGrams: bigint;
       inboundWeightComplete: boolean;
       inboundGoodsCostVnd: bigint;
+      inboundCostComplete: boolean;
       soldWeightGrams: bigint;
       revenueVnd: bigint;
       revenueComplete: boolean;
@@ -657,6 +667,7 @@ function productAccumulator(
     inboundWeightGrams: 0n,
     inboundWeightComplete: true,
     inboundGoodsCostVnd: 0n,
+    inboundCostComplete: true,
     soldWeightGrams: 0n,
     revenueVnd: 0n,
     revenueComplete: true,
