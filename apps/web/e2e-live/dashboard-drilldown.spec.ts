@@ -31,7 +31,10 @@ test('dashboard report drill-down preserves month and store across reload and Ba
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
       .toBe(true);
-    await page.screenshot({ path: testInfo.outputPath(`report-drilldown-${width}.png`) });
+    await page.screenshot({
+      animations: 'disabled',
+      path: testInfo.outputPath(`report-drilldown-${width}.png`),
+    });
   }
   await page.reload();
   await expect(page.getByLabel('Kỳ báo cáo', { exact: true })).toHaveValue('2024-02');
