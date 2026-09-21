@@ -11,9 +11,10 @@ test('sales totals group source products and month/store filters preserve scope'
     .getByLabel('Mật khẩu')
     .fill(process.env.LIVE_E2E_ADMIN_PASSWORD ?? 'ci-bootstrap-password-not-for-production');
   await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
-  const scope = page.getByLabel('Phạm vi cửa hàng dashboard');
-  await expect.poll(() => scope.locator('option').count()).toBeGreaterThan(2);
-  const stores = await scope.locator('option').evaluateAll((options) =>
+  const region = page.getByRole('region', { name: 'Doanh thu & hàng đã bán · IDOSI', exact: true });
+  const storeFilter = region.getByLabel('Cửa hàng thống kê bán hàng');
+  await expect.poll(() => storeFilter.locator('option').count()).toBeGreaterThan(2);
+  const stores = await storeFilter.locator('option').evaluateAll((options) =>
     options
       .map((option) => ({
         id: (option as HTMLOptionElement).value,
@@ -22,7 +23,10 @@ test('sales totals group source products and month/store filters preserve scope'
       .filter((option) => option.id !== 'ALL')
       .slice(0, 2),
   );
+  expect(stores).toHaveLength(2);
+  let interceptedRequests = 0;
   await page.route('**/integrations/idosi/statistics-summary?*', async (route) => {
+    interceptedRequests += 1;
     const url = new URL(route.request().url());
     const period = url.searchParams.get('period')!;
     const selected = stores.filter(
@@ -114,7 +118,7 @@ test('sales totals group source products and month/store filters preserve scope'
     });
   });
   await page.reload();
-  const region = page.getByRole('region', { name: 'Doanh thu & hàng đã bán · IDOSI', exact: true });
+  await expect.poll(() => interceptedRequests).toBeGreaterThan(0);
   const row = region.getByRole('row', { name: /Mặt hàng kiểm thử tổng hợp/ });
   await expect(row).toHaveCount(1);
   await expect(row).toContainText('12 cái');
@@ -122,7 +126,7 @@ test('sales totals group source products and month/store filters preserve scope'
   await region.getByLabel('Tháng thống kê bán hàng').fill('2024-02');
   await expect(row).toContainText('6 cái');
   await expect(row).toContainText('2 kg');
-  await region.getByLabel('Cửa hàng thống kê bán hàng').selectOption(stores[0]!.id);
+  await storeFilter.selectOption(stores[0]!.id);
   await expect(row).toContainText('3 cái');
   await expect(row).toContainText('1 kg');
   for (const width of [375, 768, 1440]) {
