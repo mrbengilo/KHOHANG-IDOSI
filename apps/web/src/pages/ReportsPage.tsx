@@ -268,9 +268,10 @@ export function ReportsPage() {
   const { role } = useOutletContext<AppOutletContext>();
   const sessionQuery = useSession();
   const [search, setSearch] = useSearchParams();
+  const [defaultPeriod] = useState(currentBusinessMonth);
   const { period: yearMonth, scope: scopeSelection } = readReportNavigation(
     search,
-    currentBusinessMonth(),
+    defaultPeriod,
     role === 'ADMIN',
   );
   const setYearMonth = (value: string) =>
@@ -285,7 +286,7 @@ export function ReportsPage() {
     queryKey: ['stores', 'accessible'],
     retry: false,
   });
-  const stores = storesQuery.data ?? [];
+  const stores = (storesQuery.data ?? []).filter((store) => store.status === 'ACTIVE');
   const effectiveScopeSelection =
     role === 'ADMIN'
       ? scopeSelection || 'ALL'

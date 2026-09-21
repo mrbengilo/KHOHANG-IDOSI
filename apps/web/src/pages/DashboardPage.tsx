@@ -7,6 +7,7 @@ import type {
   Store,
 } from '@idosi/contracts';
 import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { IdosiSalesSummary } from '../features/idosi/IdosiSalesSummary';
 import {
   AlertTriangle,
@@ -283,9 +284,10 @@ export function DashboardPage() {
   const { role: shellRole, storeKind: shellStoreKind } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
   const [search, setSearch] = useSearchParams();
+  const [defaultPeriod] = useState(currentBusinessMonth);
   const { period: yearMonth, scope: requestedScope } = readReportNavigation(
     search,
-    currentBusinessMonth(),
+    defaultPeriod,
     shellRole === 'ADMIN',
   );
   const setYearMonth = (value: string) =>
