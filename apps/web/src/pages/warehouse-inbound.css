@@ -39,6 +39,7 @@
   border-radius: 12px;
   background: var(--surface);
   min-width: 0;
+  max-width: 900px;
   overflow-wrap: anywhere;
 }
 .inbound-receipt > div {
@@ -53,12 +54,14 @@
   color: var(--text-secondary);
   font-size: 12px;
 }
+/* Cột tên mặt hàng bám sát cột số bao; không kéo giãn hết bề ngang phiếu. */
 .inbound-receipt__products {
   display: table;
   width: 100%;
+  max-width: 520px;
   border-collapse: collapse;
-  table-layout: fixed;
-  font-size: 13px;
+  table-layout: auto;
+  font-size: 14px;
 }
 .inbound-receipt__products th,
 .inbound-receipt__products td {
@@ -92,9 +95,15 @@
 .inbound-receipt__products td::before {
   content: none;
 }
+.inbound-receipt__products th:first-child,
+.inbound-receipt__products td:first-child {
+  width: 100%;
+}
+
 .inbound-receipt__products th:last-child,
 .inbound-receipt__products td:last-child {
-  width: 88px;
+  width: 1%;
+  padding-left: 24px;
   text-align: right;
   white-space: nowrap;
 }
