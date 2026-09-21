@@ -84,8 +84,8 @@ export function InventoryPage() {
                 <th>Mặt hàng</th>
                 <th>Nghiệp vụ</th>
                 <th>± Bao</th>
-                <th>± Kg</th>
-                <th>Số dư kg</th>
+                <th>± Khối lượng</th>
+                <th>Số dư khối lượng</th>
               </tr>
             </thead>
             <tbody>
@@ -102,11 +102,11 @@ export function InventoryPage() {
                     {row.bagsDelta > 0 ? '+' : ''}
                     {row.bagsDelta}
                   </td>
-                  <td data-label="± Kg">
+                  <td data-label="± Khối lượng">
                     {row.kgDelta > 0 ? '+' : ''}
                     {formatKg(row.kgDelta)}
                   </td>
-                  <td data-label="Số dư kg">
+                  <td data-label="Số dư khối lượng">
                     <strong>{formatKg(row.balanceKg)}</strong>
                   </td>
                 </tr>
@@ -251,7 +251,7 @@ export function SalesPage() {
                 <th>Mặt hàng</th>
                 <th>Số cái</th>
                 <th>Hệ số</th>
-                <th>Kg ước tính</th>
+                <th>Khối lượng ước tính</th>
                 <th>Doanh thu</th>
                 <th>Đối soát</th>
               </tr>
@@ -269,7 +269,7 @@ export function SalesPage() {
                           return value === null ? 'Thiếu hệ số' : `${value} cái/kg`;
                         })()}
                   </td>
-                  <td data-label="Kg ước tính">
+                  <td data-label="Khối lượng ước tính">
                     {(() => {
                       const value = estimateKilograms(product, [18, 12, 22, 30, 44][index] ?? 0);
                       return value === null ? 'Thiếu hệ số' : formatKg(value);
@@ -514,7 +514,7 @@ export function ReportsPage() {
         <article className="panel">
           <h2>Phễu nhập → bán</h2>
           {[
-            ['Kg nhập', 58_420, 100],
+            ['Khối lượng nhập', 58_420, 100],
             ['Đã khui', 41_260, 71],
             ['Đã bán', 18_540, 32],
             ['Chờ lọc', 4_480, 8],

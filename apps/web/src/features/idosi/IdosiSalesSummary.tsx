@@ -143,7 +143,7 @@ export function IdosiSalesSummary({
               detail="Chỉ cộng dòng đơn vị cái, không cộng số kg vào số cái"
             />
             <StatCard
-              label={summary.incompleteWeight ? 'Kg bán đã biết' : 'Tổng kg đã bán'}
+              label={summary.incompleteWeight ? 'Khối lượng bán đã biết' : 'Tổng khối lượng đã bán'}
               value={hasData ? formatKg(summary.knownKg) : 'Chưa có dữ liệu'}
               tone={summary.incompleteWeight ? 'warning' : 'success'}
               detail={

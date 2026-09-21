@@ -194,7 +194,8 @@ p {
   border-radius: 10px;
   color: var(--text-secondary);
   font-size: 13px;
-  font-weight: 500;
+  /* Danh mục điều hướng chính luôn in đậm. */
+  font-weight: 700;
   padding: 10px 12px;
   transition:
     background 140ms ease,
@@ -293,17 +294,16 @@ p {
   opacity: 0.65;
 }
 
+/*
+ * Figma V1.4: nội dung nằm trong khung 1192px, không kéo hết bề ngang màn hình.
+ * Căn bằng padding thay vì margin trên từng con, vì nhiều box tự khai báo
+ * `margin` rút gọn và sẽ ghi đè mất margin-inline khiến các box lệch nhau.
+ */
 .app-main {
   min-height: 100vh;
   margin-left: 224px;
   overflow: hidden;
-  padding: 18px;
-}
-
-/* Figma V1.4: nội dung nằm trong khung 1192px, không kéo hết bề ngang màn hình. */
-.app-main > * {
-  max-width: var(--content-max);
-  margin-inline: auto;
+  padding: 18px max(18px, calc((100% - var(--content-max)) / 2));
 }
 
 .mobile-menu-trigger,
@@ -383,7 +383,9 @@ p {
   opacity: 0.52;
 }
 
+/* Mọi nút đều có viền rõ để phân định khối, kể cả nút nền đặc. */
 .button--primary {
+  border-color: var(--brand-dark);
   background: var(--brand);
   color: white;
 }
@@ -399,11 +401,13 @@ p {
 }
 
 .button--danger {
+  border-color: #b91c1c;
   background: var(--danger);
   color: white;
 }
 
 .button--success {
+  border-color: #86efac;
   background: white;
   color: #0a7a33;
 }
@@ -484,7 +488,13 @@ p {
 .permission-card,
 .sync-status,
 .conservation-banner,
-.operation-step {
+.operation-step,
+.report-metric,
+.empty-state,
+.request-summary,
+.login-panel,
+.alerts-panel,
+.waitlist-panel {
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--surface);
@@ -526,6 +536,35 @@ textarea {
   border-radius: 8px;
   background: white;
   padding: 9px 11px;
+}
+
+/*
+ * Ô chọn ngày: vùng bấm phủ kín ô nên nhấn bất kỳ đâu cũng mở lịch,
+ * icon mặc định của trình duyệt được thay bằng icon màu thương hiệu.
+ */
+input[type='date'] {
+  position: relative;
+  padding-right: 42px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%234f46e5'%20stroke-width='2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Crect%20x='3'%20y='4'%20width='18'%20height='18'%20rx='3'/%3E%3Cpath%20d='M16%202v4M8%202v4M3%2010h18'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 18px 18px;
+  cursor: pointer;
+}
+
+input[type='date']:hover {
+  border-color: var(--brand);
+}
+
+input[type='date']::-webkit-calendar-picker-indicator {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 
 textarea {
@@ -837,15 +876,23 @@ textarea:focus {
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 13px;
 }
+/* Tiêu đề bảng in đậm và đủ lớn để đọc được với font serif. */
 th {
-  background: #f1f5f9;
-  color: var(--muted);
-  font-size: 9px;
+  background: var(--brand-soft);
+  color: var(--brand-dark);
+  border-bottom: 2px solid var(--brand);
+  font-size: 12px;
   font-weight: 700;
+  letter-spacing: 0.04em;
   text-align: left;
   text-transform: uppercase;
+}
+/* Tên mặt hàng, tên danh mục trong ô đầu mỗi dòng in đậm. */
+tbody th,
+tbody td:first-child {
+  font-weight: 700;
 }
 th:first-child {
   border-radius: 8px 0 0 8px;
@@ -876,7 +923,8 @@ td small {
   align-items: center;
   gap: 4px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
+  font-weight: 400;
   margin-top: 3px;
 }
 .table-actions {
@@ -2819,23 +2867,28 @@ label:has(:required) > .field-label::after {
     padding-right: 16px;
     padding-left: 16px;
   }
+  /* Header là một box có viền như mọi box khác, không tràn ra mép màn hình. */
   .page-header {
-    align-items: flex-start;
-    margin-right: -16px;
-    margin-left: -16px;
-    padding-right: 16px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
   }
   .page-header h1 {
     font-size: 21px;
   }
   .page-header p {
-    font-size: 10px;
+    font-size: 12px;
   }
+  /*
+   * Không ẩn nút phụ trên mobile: người dùng sẽ mất hẳn thao tác đó.
+   * Cho hàng nút xuống dòng và chia đều bề ngang thay vì giấu đi.
+   */
   .page-header__actions {
     max-width: none;
+    flex-wrap: wrap;
   }
-  .page-header__actions .button--secondary {
-    display: none;
+  .page-header__actions > * {
+    flex: 1 1 auto;
   }
   .stats-grid {
     grid-template-columns: 1fr 1fr;
@@ -3076,11 +3129,25 @@ label:has(:required) > .field-label::after {
   }
   td::before {
     content: attr(data-label);
-    color: var(--muted);
-    font-size: 9px;
+    color: var(--text-secondary);
+    font-size: 11px;
     font-weight: 700;
     text-align: left;
     text-transform: uppercase;
+  }
+  /*
+   * Ô tiêu đề dòng (tên mặt hàng, tên cửa hàng) nằm trong tbody: trên mobile
+   * phải đọc như tiêu đề của thẻ, không mang nền xám và chữ hoa của thead.
+   */
+  tbody th {
+    background: transparent;
+    color: var(--text);
+    border-bottom: 0;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: normal;
+    text-align: left;
+    text-transform: none;
   }
   td strong,
   td small {
