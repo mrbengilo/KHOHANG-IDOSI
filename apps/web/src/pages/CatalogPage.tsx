@@ -710,7 +710,7 @@ export function CatalogPage() {
                   <tr>
                     <th>Mặt hàng</th>
                     <th>Quy đổi số cái</th>
-                    <th>1 cái = kg</th>
+                    <th>Khối lượng 1 cái</th>
                     <th>Phiên bản / hiệu lực</th>
                     <th>Trạng thái</th>
                     <th>Thao tác</th>
@@ -727,7 +727,7 @@ export function CatalogPage() {
                           <small>{entry.product.sku}</small>
                         </td>
                         <td data-label="Quy đổi số cái">{ratios.itemsPerKilogram}</td>
-                        <td data-label="1 cái = kg">{ratios.kilogramsPerItem}</td>
+                        <td data-label="Khối lượng 1 cái">{ratios.kilogramsPerItem}</td>
                         <td data-label="Phiên bản / hiệu lực">
                           {entry.conversion ? (
                             <>
