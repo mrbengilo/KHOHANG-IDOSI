@@ -595,8 +595,8 @@ export function CatalogPage() {
         </article>
         <article>
           <span>Chăn, ga, bao gối, nệm gòn</span>
-          <strong>1 cái × 3 = 3,000 kg</strong>
-          <small>Tỷ lệ nguồn chính xác: 1 cái tương ứng 3,000 kg</small>
+          <strong>1 cái × 3 = 3 kg</strong>
+          <small>Tỷ lệ nguồn chính xác: 1 cái tương ứng 3 kg</small>
         </article>
       </div>
 

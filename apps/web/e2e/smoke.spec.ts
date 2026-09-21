@@ -74,7 +74,7 @@ test('admin can review the dashboard and updated product catalog', async ({ page
   await page.getByRole('link', { name: 'Danh mục & quy đổi' }).click();
   await expect(page.getByRole('heading', { name: 'Danh mục & quy đổi bán hàng' })).toBeVisible();
   await expect(page.getByText('25/25 mặt hàng')).toBeVisible();
-  await expect(page.getByText('1 cái × 3 = 3,000 kg')).toBeVisible();
+  await expect(page.getByText('1 cái × 3 = 3 kg')).toBeVisible();
 });
 
 test('catalog dialog traps focus, closes with Escape, and restores its trigger', async ({
