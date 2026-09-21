@@ -60,10 +60,52 @@ describe('production reference bootstrap', () => {
       warehouseBalances.productId,
     );
   });
+
+  it('skips conversion seeds for products that already carry an administered conversion', async () => {
+    const administeredSku = PRODUCT_CONVERSION_SEEDS[0]!.productSku;
+    const skipped = PRODUCT_CONVERSION_SEEDS.filter(
+      (conversion) => conversion.productSku === administeredSku,
+    ).length;
+    const inserts: RecordedInsert[] = [];
+    const database = recordingDatabase(inserts, [`product-${administeredSku}`]);
+
+    await seedReferenceData(database);
+
+    expect(skipped).toBeGreaterThan(0);
+    expect(inserts.filter(({ table }) => table === productConversions)).toHaveLength(
+      PRODUCT_CONVERSION_SEEDS.length - skipped,
+    );
+    expect(
+      inserts
+        .filter(({ table }) => table === productConversions)
+        .some(
+          ({ values }) =>
+            (values as { productId: string }).productId === `product-${administeredSku}`,
+        ),
+    ).toBe(false);
+    expect(inserts.filter(({ table }) => table === products)).toHaveLength(PRODUCT_SEEDS.length);
+  });
 });
 
-function recordingDatabase(inserts: RecordedInsert[]): Database {
+function recordingDatabase(
+  inserts: RecordedInsert[],
+  productIdsWithConversions: readonly string[] = [],
+): Database {
   const transaction = {
+    selectDistinct() {
+      return {
+        from(table: unknown) {
+          return {
+            async where() {
+              if (table === productConversions) {
+                return productIdsWithConversions.map((productId) => ({ productId }));
+              }
+              throw new Error('Unexpected reference seed selectDistinct');
+            },
+          };
+        },
+      };
+    },
     insert(table: unknown) {
       return {
         values(values: unknown) {
