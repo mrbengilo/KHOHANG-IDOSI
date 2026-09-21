@@ -31,6 +31,9 @@ test('dashboard report drill-down preserves month and store across reload and Ba
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
       .toBe(true);
+    const heading = await page.locator('.page-header h1').boundingBox();
+    const actions = await page.locator('.page-header__actions').boundingBox();
+    expect(heading!.x + heading!.width).toBeLessThanOrEqual(actions!.x);
     await page.screenshot({
       animations: 'disabled',
       path: testInfo.outputPath(`report-drilldown-${width}.png`),

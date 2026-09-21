@@ -303,7 +303,12 @@ p {
   padding: 14px 18px;
 }
 
+.page-header > div:first-child {
+  min-width: 0;
+}
+
 .page-header h1 {
+  overflow-wrap: anywhere;
   color: var(--text);
   font-size: clamp(22px, 2vw, 26px);
   letter-spacing: -0.035em;
