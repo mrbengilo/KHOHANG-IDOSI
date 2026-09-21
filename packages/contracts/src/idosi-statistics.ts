@@ -43,6 +43,25 @@ export type SyncIdosiStatisticsRequest = z.infer<typeof SyncIdosiStatisticsReque
 
 const NonNegativeNumberSchema = z.number().finite().nonnegative();
 const NonNegativeIntegerSchema = z.number().int().nonnegative().safe();
+const productNameKey = (value: string) =>
+  value.normalize('NFC').trim().replace(/\s+/gu, ' ').toLocaleLowerCase('vi-VN');
+const CURRENT_MENS_PRODUCT_NAME = 'Quần áo nam';
+
+/** Keep report/history labels current while retaining source IDs and immutable source records. */
+export function canonicalIdosiProductName(value: string): string {
+  const normalized = value.normalize('NFC').trim().replace(/\s+/gu, ' ');
+  const key = productNameKey(normalized);
+  return key === productNameKey('Đồ nam') || key === productNameKey(CURRENT_MENS_PRODUCT_NAME)
+    ? CURRENT_MENS_PRODUCT_NAME
+    : normalized;
+}
+
+const IdosiProductNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(500)
+  .transform(canonicalIdosiProductName);
 
 export const IdosiRevenueByTypeSchema = z
   .object({
@@ -83,7 +102,7 @@ const IdosiProductItemSchema = z
   .object({
     productId: z.string().trim().min(1).max(200),
     productCode: z.string().trim().max(200).optional(),
-    productName: z.string().trim().min(1).max(500),
+    productName: IdosiProductNameSchema,
     quantity: NonNegativeNumberSchema,
     unit: z.enum(['PIECE', 'KG']),
     revenueType: z.enum(['NORMAL', 'SALE_KG', 'SALE_PIECE']),
@@ -96,7 +115,7 @@ const IdosiProductWeightSchema = z
   .object({
     productId: z.string().trim().min(1).max(200),
     productCode: z.string().trim().max(200).optional(),
-    productName: z.string().trim().min(1).max(500),
+    productName: IdosiProductNameSchema,
     orders: NonNegativeIntegerSchema,
     totalQuantity: NonNegativeIntegerSchema,
     weight: IdosiWeightSummarySchema,

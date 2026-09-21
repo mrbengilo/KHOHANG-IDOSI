@@ -184,7 +184,7 @@ export function RequestsPage() {
           <div>
             <strong>YC-GV-260912-032</strong>
             <span>
-              <Clock3 size={14} /> Đồ nam 3 bao • Áo nữ 2 bao
+              <Clock3 size={14} /> Quần áo nam 3 bao • Áo nữ 2 bao
             </span>
           </div>
           <Badge tone="warning">Chờ phân bổ</Badge>

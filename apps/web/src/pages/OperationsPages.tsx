@@ -540,7 +540,7 @@ export function ReportsPage() {
               <em>Biên +31,4%</em>
             </span>
             <span>
-              <b>Đồ nam • BD-DN-021</b>
+              <b>Quần áo nam • BD-DN-021</b>
               <em>Đang chạy • tạm tính</em>
             </span>
           </div>

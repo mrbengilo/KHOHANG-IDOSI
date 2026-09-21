@@ -141,6 +141,10 @@ describe('IDOSI statistics contracts and gateway', () => {
     expect(IdosiOrderStatisticsPayloadSchema.parse(payload)).toMatchObject({
       futureCompatibleField: true,
       totals: { revenue: 300_000 },
+      products: {
+        items: [expect.objectContaining({ productName: 'Quần áo nam' })],
+        weightByProduct: [expect.objectContaining({ productName: 'Quần áo nam' })],
+      },
     });
   });
 

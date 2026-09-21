@@ -183,7 +183,14 @@ const events = [
     '428 bao / 14 cửa hàng',
     'job_0900',
   ],
-  ['08:42:19', 'htkd.an', 'PRIORITY_CONFIRMED', 'PU-GV-260912-003', 'Giữ 3 bao Đồ nam', 'req_d901'],
+  [
+    '08:42:19',
+    'htkd.an',
+    'PRIORITY_CONFIRMED',
+    'PU-GV-260912-003',
+    'Giữ 3 bao Quần áo nam',
+    'req_d901',
+  ],
   ['08:00:01', 'worker', 'SNAPSHOT_CREATED', 'SS-260912', 'Snapshot 428 bao', 'job_0800'],
 ];
 
