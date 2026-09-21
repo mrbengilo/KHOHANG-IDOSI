@@ -11,9 +11,12 @@ test('dashboard report drill-down preserves month and store across reload and Ba
   await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
   const scope = page.getByLabel('Phạm vi cửa hàng dashboard');
   await expect.poll(() => scope.locator('option').count()).toBeGreaterThan(1);
-  await scope.selectOption({ index: 1 });
-  const storeId = await scope.inputValue();
+  const [storeId] = await scope.selectOption({ index: 1 });
+  expect(storeId).toBeTruthy();
+  await expect(scope).toHaveValue(storeId!);
+  await expect(page).toHaveURL(new RegExp(`scope=${storeId}`));
   await page.getByLabel('Kỳ báo cáo dashboard').fill('2024-02');
+  await expect(page).toHaveURL(/period=2024-02/);
   const response = page.waitForResponse((response) => {
     const url = new URL(response.url());
     return (
@@ -23,9 +26,9 @@ test('dashboard report drill-down preserves month and store across reload and Ba
     );
   });
   await page.getByRole('button', { name: 'Xem báo cáo', exact: true }).click();
-  expect((await response).ok()).toBe(true);
   await expect(page.getByLabel('Kỳ báo cáo', { exact: true })).toHaveValue('2024-02');
-  await expect(page.getByLabel('Phạm vi báo cáo', { exact: true })).toHaveValue(storeId);
+  await expect(page.getByLabel('Phạm vi báo cáo', { exact: true })).toHaveValue(storeId!);
+  expect((await response).ok()).toBe(true);
   for (const width of [375, 768, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await expect
@@ -41,8 +44,8 @@ test('dashboard report drill-down preserves month and store across reload and Ba
   }
   await page.reload();
   await expect(page.getByLabel('Kỳ báo cáo', { exact: true })).toHaveValue('2024-02');
-  await expect(page.getByLabel('Phạm vi báo cáo', { exact: true })).toHaveValue(storeId);
+  await expect(page.getByLabel('Phạm vi báo cáo', { exact: true })).toHaveValue(storeId!);
   await page.goBack();
   await expect(page.getByLabel('Kỳ báo cáo dashboard')).toHaveValue('2024-02');
-  await expect(page.getByLabel('Phạm vi cửa hàng dashboard')).toHaveValue(storeId);
+  await expect(page.getByLabel('Phạm vi cửa hàng dashboard')).toHaveValue(storeId!);
 });
