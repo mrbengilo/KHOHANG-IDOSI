@@ -77,15 +77,11 @@ export function IdosiSalesSummary({
           <RefreshCw size={16} aria-hidden="true" /> Đồng bộ từ IDOSI
         </Button>
       </div>
-      <p>
-        Dữ liệu cập nhật theo lịch đồng bộ. Bấm “Đồng bộ từ IDOSI” để lấy số liệu mới nhất của kỳ và
-        cửa hàng đang chọn.
-      </p>
       {sourceTimes.length > 0 ? (
         <p>
           Dữ liệu nguồn lúc {formatTime(sourceTimes[0]!)}
           {sourceTimes.at(-1) !== sourceTimes[0] ? ` – ${formatTime(sourceTimes.at(-1)!)}` : ''}.
-          Đơn phát sinh sau thời điểm này sẽ có trong lần đồng bộ tiếp theo.
+          Đơn sau mốc này vào lần đồng bộ kế tiếp.
         </p>
       ) : null}
       {sync.isPending ? <p role="status">Đang lấy dữ liệu mới từ IDOSI…</p> : null}

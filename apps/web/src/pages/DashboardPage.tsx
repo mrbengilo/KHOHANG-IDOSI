@@ -382,7 +382,7 @@ export function DashboardPage() {
             ) : null}
           </>
         }
-        description="Số liệu trực tiếp từ giao dịch được phân quyền; dữ liệu thiếu nguồn không tự thay bằng số demo"
+        description="Số liệu trực tiếp từ giao dịch được phân quyền"
         title={title}
       />
 
