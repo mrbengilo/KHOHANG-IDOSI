@@ -36,6 +36,14 @@ test('sales workspace groups source products and month/store filters preserve sc
     exact: true,
   });
   let interceptedRequests = 0;
+  const refreshedStores = new Set<string>();
+  const sourceStates = new Map<string, unknown>();
+  await page.route('**/integrations/idosi/order-statistics/sync', async (route) => {
+    const scope = route.request().postDataJSON() as { storeId: string; period: string };
+    expect(scope.period).toBe('2024-02');
+    refreshedStores.add(scope.storeId);
+    await route.fulfill({ json: { data: sourceStates.get(scope.storeId) } });
+  });
   await page.route('**/integrations/idosi/statistics-summary?*', async (route) => {
     interceptedRequests += 1;
     const url = new URL(route.request().url());
@@ -43,8 +51,8 @@ test('sales workspace groups source products and month/store filters preserve sc
     const selected = stores.filter(
       (store) => !url.searchParams.has('storeId') || store.id === url.searchParams.get('storeId'),
     );
-    const quantity = period === '2024-02' ? 3 : 6;
     const data = selected.map((store, index) => {
+      const quantity = (period === '2024-02' ? 3 : 6) + (refreshedStores.has(store.id) ? 3 : 0);
       const bucket = {
         actualKg: 0,
         estimatedKg: quantity / 3,
@@ -121,6 +129,7 @@ test('sales workspace groups source products and month/store filters preserve sc
         },
       };
     });
+    data.forEach((state) => sourceStates.set(state.scope.storeId, state));
     await route.fulfill({
       json: {
         data,
@@ -141,6 +150,12 @@ test('sales workspace groups source products and month/store filters preserve sc
   await storeFilter.selectOption(stores[0]!.id);
   await expect(row).toContainText('3 cái');
   await expect(row).toContainText('1 kg');
+  await region.getByRole('button', { name: 'Đồng bộ từ IDOSI', exact: true }).click();
+  await expect(region.getByRole('status')).toContainText('Đã đồng bộ 1/1 cửa hàng');
+  expect([...refreshedStores]).toEqual([stores[0]!.id]);
+  await expect(row).toContainText('6 cái');
+  await expect(row).toContainText('2 kg');
+  await expect(region).toContainText('Dữ liệu nguồn lúc');
   for (const width of [375, 768, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await expect

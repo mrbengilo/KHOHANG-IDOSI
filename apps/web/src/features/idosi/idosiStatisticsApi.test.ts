@@ -1,7 +1,11 @@
 import type { IdosiStatisticsScope } from '@idosi/contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { getIdosiStatistics, syncIdosiStatistics } from './idosiStatisticsApi';
+import {
+  getIdosiStatistics,
+  syncIdosiStatistics,
+  syncIdosiSalesSummary,
+} from './idosiStatisticsApi';
 
 const scope: IdosiStatisticsScope = {
   date: null,
@@ -94,6 +98,85 @@ const response = {
 
 describe('IDOSI statistics API client', () => {
   afterEach(() => vi.unstubAllGlobals());
+
+  it('refreshes every authorized store including stores without a snapshot and reports partial failure', async () => {
+    const second = {
+      ...response.data,
+      scope: { ...scope, storeId: '20000000-0000-4000-8000-000000000002' },
+      snapshot: null,
+      freshness: 'EMPTY',
+    };
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method !== 'POST')
+        return new Response(
+          JSON.stringify({
+            data: [response.data, second],
+            pagination: { page: 1, pageSize: 100, totalItems: 2, totalPages: 1 },
+          }),
+        );
+      const body = JSON.parse(String(init.body));
+      return body.storeId === scope.storeId
+        ? new Response(JSON.stringify(response))
+        : new Response(
+            JSON.stringify({
+              error: { code: 'INTEGRATION_UNAVAILABLE', message: 'Nguồn tạm ngừng' },
+            }),
+            { status: 502 },
+          );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await syncIdosiSalesSummary(scope.period);
+    expect(result).toMatchObject({ succeeded: 1, total: 2 });
+    expect(result.failures).toHaveLength(1);
+    expect(
+      fetchMock.mock.calls
+        .filter(([, init]) => init?.method === 'POST')
+        .map(([, init]) => JSON.parse(String(init?.body)).storeId),
+    ).toEqual([scope.storeId, second.scope.storeId]);
+  });
+
+  it('preserves the selected month and store when refreshing the source', async () => {
+    const historicalScope = { ...scope, period: '2024-02' };
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method !== 'POST') {
+        expect(String(input)).toContain('period=2024-02');
+        expect(String(input)).toContain(`storeId=${scope.storeId}`);
+        return new Response(
+          JSON.stringify({
+            data: [{ ...response.data, scope: historicalScope }],
+            pagination: { page: 1, pageSize: 100, totalItems: 1, totalPages: 1 },
+          }),
+        );
+      }
+      expect(JSON.parse(String(init.body))).toEqual(historicalScope);
+      return new Response(
+        JSON.stringify({ ...response, data: { ...response.data, scope: historicalScope } }),
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(syncIdosiSalesSummary('2024-02', scope.storeId)).resolves.toMatchObject({
+      succeeded: 1,
+      total: 1,
+      failures: [],
+    });
+  });
+
+  it('stops refreshing when authentication expires', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) =>
+        init?.method === 'POST'
+          ? new Response('{}', { status: 401 })
+          : new Response(
+              JSON.stringify({
+                data: [response.data],
+                pagination: { page: 1, pageSize: 100, totalItems: 1, totalPages: 1 },
+              }),
+            ),
+      ),
+    );
+    await expect(syncIdosiSalesSummary(scope.period)).rejects.toMatchObject({ status: 401 });
+  });
 
   it('reads one exact monthly store scope with the authenticated session', async () => {
     const fetchMock = vi.fn((_input: string | URL | Request, _init?: RequestInit) =>
