@@ -14,7 +14,14 @@
   --navy: #102a43;
   --surface: #ffffff;
   --surface-muted: #f8fafc;
-  --border: #d9e2ec;
+  /* Viền sáng rõ hơn để mọi box tách bạch khỏi nền trang. */
+  --border: #c2cfdd;
+  /* Màu icon danh mục: tươi và tách biệt nhau để nhận diện nhanh từng nhóm. */
+  --icon-violet: #6d28d9;
+  --icon-emerald: #059669;
+  --icon-amber: #ea8a04;
+  --icon-sky: #0284c7;
+  --icon-pink: #db2777;
   --text: #0f172a;
   --text-secondary: #475569;
   --muted: #64748b;
@@ -216,23 +223,29 @@ p {
   font-weight: 700;
 }
 
+/* Icon danh mục dùng màu tươi và nét dày hơn để nổi bật trên nền trắng. */
 .sidebar__link svg {
   flex-shrink: 0;
-  color: var(--brand);
+  color: var(--icon-violet);
+  stroke-width: 2.25;
 }
 
 .sidebar__link:is([href='/warehouse-inbound'], [href='/receive'], [href='/sales']) svg {
-  color: var(--success);
+  color: var(--icon-emerald);
 }
 
 .sidebar__link:is([href='/allocations'], [href='/open-bag'], [href='/sorting'], [href='/costs'])
   svg {
-  color: var(--warning);
+  color: var(--icon-amber);
+}
+
+.sidebar__link:is([href='/users'], [href='/audit'], [href='/settings'], [href='/catalog']) svg {
+  color: var(--icon-pink);
 }
 
 .sidebar__link:is([href='/inventory'], [href='/transfers'], [href='/stores'], [href='/reports'])
   svg {
-  color: var(--info);
+  color: var(--icon-sky);
 }
 
 .sidebar__link:hover,
@@ -728,6 +741,15 @@ textarea:focus {
   min-width: 0;
   padding: 14px;
   overflow-wrap: anywhere;
+}
+
+/*
+ * Đoạn mô tả không có class nằm ngay trong panel: giữ cỡ chữ phụ thay vì
+ * thừa hưởng cỡ chữ gốc, nếu không khối chữ sẽ lấn át số liệu của panel.
+ */
+.panel > p:not([class]) {
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .flow-grid {
@@ -2874,9 +2896,33 @@ label:has(:required) > .field-label::after {
     gap: 12px;
   }
   .page-header h1 {
-    font-size: 21px;
+    font-size: 19px;
   }
   .page-header p {
+    font-size: 12px;
+  }
+  /* Thu gọn box trên mobile: bớt padding và khoảng cách để bớt chiếm màn. */
+  .page-header {
+    padding: 12px 14px;
+  }
+  .panel,
+  .filter-card,
+  .formula-card,
+  .policy-card,
+  .quota-card,
+  .permission-card,
+  .alerts-panel,
+  .waitlist-panel {
+    padding: 12px;
+  }
+  .filter-card {
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .section-heading {
+    margin: 16px 0 10px;
+  }
+  .panel > p:not([class]) {
     font-size: 12px;
   }
   /*
@@ -2915,12 +2961,22 @@ label:has(:required) > .field-label::after {
   .stat-card > strong {
     font-size: 20px;
   }
+  /*
+   * Bộ lọc xếp dọc và kéo hết bề ngang thẻ. Dùng align-self trên từng con
+   * để chắc chắn không bị align-items: end của rule gốc đẩy sang phải.
+   */
   .filter-card {
     align-items: stretch;
     flex-direction: column;
   }
+  .filter-card > * {
+    width: 100%;
+    align-self: stretch;
+  }
   .filter-card label {
     min-width: 0;
+    width: 100%;
+    align-self: stretch;
   }
   .segmented-control button {
     flex: 1;
