@@ -305,11 +305,14 @@ export async function receiveSupplierInboundInTransaction(
         metadata: {
           bagCount: item.bags.length,
           supplierName: normalized.supplierName,
+          receivedAt: input.receivedAt.toISOString(),
           totalWeightKg:
             item.totalWeightGrams === null ? null : gramsToKilogramsExact(item.totalWeightGrams),
         },
         actorUserId: input.receivedByUserId,
-        occurredAt: input.receivedAt,
+        // Stock becomes available when this command is recorded, not at a client-supplied
+        // document date. Backdating an after-balance would invalidate later snapshots.
+        occurredAt: now,
       });
       productBalances.push({
         productId: item.productId,

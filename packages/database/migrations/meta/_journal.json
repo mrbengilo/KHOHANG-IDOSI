@@ -64,6 +64,13 @@
       "when": 1789866863642,
       "tag": "0008_optional_supplier_weight",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789970000000,
+      "tag": "0009_supported_allocation_policy",
+      "breakpoints": true
     }
   ]
 }
