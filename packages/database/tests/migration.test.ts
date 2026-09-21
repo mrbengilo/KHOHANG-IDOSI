@@ -125,6 +125,23 @@ const requiredTables = [
 ] as const;
 
 describe('initial migration invariants', () => {
+  it('bounds legacy PN prefixes before the bigint cast and preserves nullable weight evidence', () => {
+    const weightMigration = readFileSync(
+      new URL('../migrations/0008_optional_supplier_weight.sql', import.meta.url),
+      'utf8',
+    );
+    expect(weightMigration).toContain("substring(receipt_number FROM '^PN([0-9]{1,18})-')::bigint");
+    expect(weightMigration).toContain("WHERE receipt_number ~ '^PN[0-9]{1,18}-'");
+    expect(weightMigration).toContain('receipt_bag_weights_weight_presence');
+    expect(weightMigration).not.toMatch(/UPDATE\s+"?receipt_bag_weights/i);
+    const previous = JSON.parse(
+      readFileSync(new URL('../migrations/meta/0007_snapshot.json', import.meta.url), 'utf8'),
+    ) as { id: string };
+    const current = JSON.parse(
+      readFileSync(new URL('../migrations/meta/0008_snapshot.json', import.meta.url), 'utf8'),
+    ) as { prevId: string };
+    expect(current.prevId).toBe(previous.id);
+  });
   it('adds nullable exact VAT without inventing historical amounts', () => {
     const vatMigration = readFileSync(
       new URL('../migrations/0007_receipt_vat.sql', import.meta.url),
@@ -152,7 +169,9 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(8);
+    expect(journal.entries).toHaveLength(10);
+    expect(journal.entries[8]).toMatchObject({ tag: '0008_optional_supplier_weight' });
+    expect(journal.entries[9]).toMatchObject({ tag: '0009_supported_allocation_policy' });
     expect(journal.entries[7]).toMatchObject({ tag: '0007_receipt_vat', breakpoints: true });
     expect(journal.entries[0]).toMatchObject({
       tag: '0000_initial',

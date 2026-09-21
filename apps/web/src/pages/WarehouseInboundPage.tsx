@@ -11,6 +11,7 @@ import { PageHeader } from '../components/PageHeader';
 import { ProductBagPicker } from '../components/ProductBagPicker';
 import {
   createWarehouseInbound,
+  confirmWarehouseInboundCosts,
   listCatalog,
   listWarehouseInbounds,
   updateWarehouseInboundVat,
@@ -20,11 +21,11 @@ import { formatVnd } from '../lib/format';
 interface DraftProduct {
   productId: string;
   quantity: number;
-  bags: { bagCode: string; weightKg: string }[];
+  bags: { bagCode: string; weightKg: null }[];
 }
 
 function newBag() {
-  return { bagCode: `B-${crypto.randomUUID()}`, weightKg: '' };
+  return { bagCode: `B-${crypto.randomUUID()}`, weightKg: null };
 }
 
 export function WarehouseInboundPage() {
@@ -45,7 +46,6 @@ function WarehouseInboundContent() {
     retry: false,
   });
   const [draft, setDraft] = useState<DraftProduct[]>([]);
-  const [referenceCode, setReferenceCode] = useState('');
   const [supplierName, setSupplierName] = useState('');
   const [vatAmount, setVatAmount] = useState('');
   const [entryTab, setEntryTab] = useState<'GOODS' | 'VAT'>('GOODS');
@@ -87,12 +87,15 @@ function WarehouseInboundContent() {
     }
     const parsed = CreateInboundReceiptRequestSchema.safeParse(
       operation.current?.input ?? {
-        referenceCode,
         supplierName,
         ...(vatAmount === '' ? {} : { vat: { amountVnd: Number(vatAmount), ratePercent: 8 } }),
         receivedAt: new Date().toISOString(),
         bags: draft.flatMap((item) =>
-          item.bags.map((bag) => ({ ...bag, productId: item.productId })),
+          item.bags.map((bag) => ({
+            ...bag,
+            weightKg: null,
+            productId: item.productId,
+          })),
         ),
       },
     );
@@ -101,7 +104,7 @@ function WarehouseInboundContent() {
       setNotice({
         error: true,
         message:
-          'Nhập mã phiếu, nhà cung cấp và khối lượng kg dương (tối đa 3 số thập phân) cho từng bao; một phiếu từ 1 đến 2000 bao.',
+          'Nhập nhà cung cấp và chọn từ 1 đến 2000 bao. HTKD nhập khối lượng sau khi cửa hàng gửi kết quả thực nhận.',
       });
       return;
     }
@@ -111,7 +114,6 @@ function WarehouseInboundContent() {
     try {
       const receipt = await createWarehouseInbound(operation.current.input, operation.current.key);
       setDraft([]);
-      setReferenceCode('');
       setSupplierName('');
       setVatAmount('');
       setEntryTab('GOODS');
@@ -148,15 +150,7 @@ function WarehouseInboundContent() {
           <div className="form-grid">
             <label>
               Mã phiếu nhập
-              <input
-                required
-                maxLength={100}
-                value={referenceCode}
-                onChange={(event) => {
-                  setReferenceCode(event.target.value);
-                  changed();
-                }}
-              />
+              <input readOnly value="Tự tạo khi lưu · PN00001-dd/MM/yyyy" />
             </label>
             <label>
               Nhà cung cấp
@@ -243,43 +237,6 @@ function WarehouseInboundContent() {
                 );
                 changed();
               }}
-              renderDetails={(productId) =>
-                draft
-                  .find((item) => item.productId === productId)
-                  ?.bags.map((bag, index) => (
-                    <label key={bag.bagCode}>
-                      Khối lượng bao {index + 1} (kg) —{' '}
-                      {products.find((product) => product.id === productId)?.name}
-                      <input
-                        required
-                        inputMode="decimal"
-                        placeholder="Ví dụ: 80,5"
-                        value={bag.weightKg}
-                        onChange={(event) => {
-                          setDraft((current) =>
-                            current.map((item) =>
-                              item.productId === productId
-                                ? {
-                                    ...item,
-                                    bags: item.bags.map((candidate, bagIndex) =>
-                                      bagIndex === index
-                                        ? {
-                                            ...candidate,
-                                            weightKg: event.target.value.replace(',', '.'),
-                                          }
-                                        : candidate,
-                                    ),
-                                  }
-                                : item,
-                            ),
-                          );
-                          changed();
-                        }}
-                      />
-                      <small>Mã bao: {bag.bagCode}</small>
-                    </label>
-                  ))
-              }
             />
           </div>
           <p aria-live="polite">
@@ -341,6 +298,17 @@ function WarehouseInboundContent() {
                     : 'Đã nhập, chờ xác nhận chi phí'}
               </span>
               {receipt.status !== 'CANCELLED' ? <InboundVatEditor receipt={receipt} /> : null}
+              {receipt.status === 'COST_PENDING' ? <InvoiceCostEditor receipt={receipt} /> : null}
+              {receipt.cost ? (
+                <p>
+                  Tiền hàng: {formatVnd(receipt.cost.goodsCostVnd)} · Vận chuyển:{' '}
+                  {formatVnd(receipt.cost.transportationFeeVnd)} · Bốc vác:{' '}
+                  {formatVnd(receipt.cost.handlingFeeVnd)} · Tổng chi phí:{' '}
+                  {receipt.cost.totalCostVnd === null
+                    ? 'Chờ nhập VAT'
+                    : formatVnd(receipt.cost.totalCostVnd)}
+                </p>
+              ) : null}
             </div>
           </article>
         ))}
@@ -365,6 +333,122 @@ function WarehouseInboundContent() {
         </div>
       </section>
     </>
+  );
+}
+
+function InvoiceCostEditor({ receipt }: { receipt: InboundReceipt }) {
+  const client = useQueryClient();
+  const [amount, setAmount] = useState('');
+  const [shipping, setShipping] = useState('0');
+  const [handling, setHandling] = useState('0');
+  const [version, setVersion] = useState(receipt.version);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const attempt = useRef<{ key: string; serialized: string } | null>(null);
+  const stale = version !== receipt.version;
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (busy || stale) return;
+    if (
+      ![amount, shipping, handling].every(
+        (value) => /^\d+$/.test(value) && Number.isSafeInteger(Number(value)),
+      )
+    ) {
+      setError('Nhập số tiền nguyên VND không âm trong giới hạn an toàn.');
+      return;
+    }
+    const input = {
+      invoiceGoodsCostVnd: Number(amount),
+      productCosts: [],
+      transportationFeeVnd: Number(shipping),
+      handlingFeeVnd: Number(handling),
+      expectedVersion: version,
+    };
+    const serialized = JSON.stringify(input);
+    if (attempt.current?.serialized !== serialized)
+      attempt.current = { key: crypto.randomUUID(), serialized };
+    setBusy(true);
+    setError('');
+    try {
+      await confirmWarehouseInboundCosts(receipt.id, input, attempt.current.key);
+      await Promise.all(
+        ['warehouse-inbounds', 'reports', 'dashboard'].map((key) =>
+          client.invalidateQueries({ queryKey: [key] }),
+        ),
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Không thể chốt chi phí.');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <details>
+      <summary>Chốt chi phí theo hóa đơn</summary>
+      <p>
+        Tiền hàng chưa gồm VAT, vận chuyển và bốc vác. Không cần khối lượng; không tự phân bổ tiền
+        hàng cho từng bao.
+      </p>
+      <form onSubmit={save} noValidate>
+        <fieldset className="form-grid" disabled={busy}>
+          <label>
+            Tổng tiền hàng theo hóa đơn (VND){' '}
+            <span className="form-error" aria-hidden="true">
+              *
+            </span>
+            <input
+              required
+              inputMode="numeric"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value)}
+            />
+          </label>
+          <label>
+            Phí vận chuyển (VND){' '}
+            <span className="form-error" aria-hidden="true">
+              *
+            </span>
+            <input
+              required
+              inputMode="numeric"
+              value={shipping}
+              onChange={(event) => setShipping(event.target.value)}
+            />
+          </label>
+          <label>
+            Phí bốc vác (VND){' '}
+            <span className="form-error" aria-hidden="true">
+              *
+            </span>
+            <input
+              required
+              inputMode="numeric"
+              value={handling}
+              onChange={(event) => setHandling(event.target.value)}
+            />
+          </label>
+          <Button type="submit" busy={busy} disabled={stale}>
+            Xác nhận chi phí hóa đơn
+          </Button>
+        </fieldset>
+      </form>
+      {stale ? (
+        <p role="alert">
+          Phiếu đã thay đổi.{' '}
+          <Button
+            tone="secondary"
+            onClick={() => {
+              setVersion(receipt.version);
+              attempt.current = null;
+              setError('');
+            }}
+          >
+            Dùng phiên bản phiếu mới
+          </Button>
+        </p>
+      ) : null}
+      {error ? <p role="alert">{error}</p> : null}
+    </details>
   );
 }
 

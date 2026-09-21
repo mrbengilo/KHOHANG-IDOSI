@@ -169,6 +169,7 @@ export type ReportMetricSource = z.infer<typeof ReportMetricSourceSchema>;
 
 export const ReportUnavailableReasonSchema = z.enum([
   'MISSING_INBOUND_WEIGHT',
+  'INVOICE_COST_NOT_ALLOCATED',
   'MISSING_SALE_REVENUE',
   'ZERO_INBOUND_WEIGHT',
   'VAT_NOT_CAPTURED',

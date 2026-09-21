@@ -89,6 +89,7 @@ import type {
   CancelStoreTransferRequest,
   WarehouseBalancesResponse,
 } from '@idosi/contracts';
+import { formatInboundReceiptNumber } from '@idosi/contracts';
 import {
   PRODUCT_CONVERSION_SEEDS,
   PRODUCT_SEEDS,
@@ -1147,12 +1148,14 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const now = this.now().toISOString();
     const id = randomUUID();
     const totalWeightGrams = input.bags.reduce(
-      (total, bag) => total + kilogramsToGramsExact(bag.weightKg),
+      (total, bag) => total + (bag.weightKg === null ? 0n : kilogramsToGramsExact(bag.weightKg)),
       0n,
     );
     const receipt: InboundReceipt = {
       id,
-      referenceCode: input.referenceCode,
+      referenceCode:
+        input.referenceCode ??
+        formatInboundReceiptNumber(String(this.inboundReceipts.size + 1), this.now()),
       supplierName: input.supplierName,
       vat: input.vat ?? null,
       status: 'COST_PENDING',
@@ -1161,10 +1164,13 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         receiptId: id,
         productId: bag.productId,
         bagCode: bag.bagCode,
-        weightKg: gramsToKilogramsExact(kilogramsToGramsExact(bag.weightKg)),
+        weightKg:
+          bag.weightKg === null ? null : gramsToKilogramsExact(kilogramsToGramsExact(bag.weightKg)),
         createdAt: now,
       })),
-      totalWeightKg: gramsToKilogramsExact(totalWeightGrams),
+      totalWeightKg: input.bags.some((bag) => bag.weightKg === null)
+        ? null
+        : gramsToKilogramsExact(totalWeightGrams),
       cost: null,
       version: 0,
       receivedByAccountId: actor.accountId,
@@ -1227,8 +1233,9 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const receiptProductIds = new Set(current.bags.map((bag) => bag.productId));
     const suppliedProductIds = new Set(input.productCosts.map((cost) => cost.productId));
     if (
-      receiptProductIds.size !== suppliedProductIds.size ||
-      [...receiptProductIds].some((productId) => !suppliedProductIds.has(productId))
+      input.invoiceGoodsCostVnd === undefined &&
+      (receiptProductIds.size !== suppliedProductIds.size ||
+        [...receiptProductIds].some((productId) => !suppliedProductIds.has(productId)))
     ) {
       throw new ApiError(
         'VALIDATION_ERROR',
@@ -1239,11 +1246,21 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const priceByProduct = new Map(
       input.productCosts.map((cost) => [cost.productId, BigInt(cost.priceVndPerKg)]),
     );
-    const goodsCostVnd = current.bags.reduce((total, bag) => {
-      const price = priceByProduct.get(bag.productId);
-      if (price === undefined) throw new Error('Validated supplier cost lost a product price.');
-      return total + calculateWeightedCostVnd(bag.weightKg, price);
-    }, 0n);
+    const goodsCostVnd =
+      input.invoiceGoodsCostVnd !== undefined
+        ? BigInt(input.invoiceGoodsCostVnd)
+        : current.bags.reduce((total, bag) => {
+            if (bag.weightKg === null)
+              throw new ApiError(
+                'VALIDATION_ERROR',
+                'Chưa đủ khối lượng từng bao để xác nhận chi phí theo kg.',
+                400,
+              );
+            const price = priceByProduct.get(bag.productId);
+            if (price === undefined)
+              throw new Error('Validated supplier cost lost a product price.');
+            return total + calculateWeightedCostVnd(bag.weightKg, price);
+          }, 0n);
     const totalCostVnd =
       goodsCostVnd +
       BigInt(input.transportationFeeVnd) +

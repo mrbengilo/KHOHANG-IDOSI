@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { formatInboundReceiptNumber } from '@idosi/contracts';
 
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
@@ -35,12 +36,12 @@ export interface SupplierInboundRequestContext {
 export interface SupplierInboundBagInput {
   readonly productId: string;
   readonly bagCode: string;
-  readonly weightKg: string;
+  readonly weightKg: string | null;
 }
 
 export interface ReceiveSupplierInboundInput extends SupplierInboundRequestContext {
   readonly vat?: { readonly amountVnd: bigint; readonly ratePercent: 8 };
-  readonly referenceCode: string;
+  readonly referenceCode: string | undefined;
   readonly supplierName: string;
   readonly receivedAt: Date;
   readonly bags: readonly SupplierInboundBagInput[];
@@ -53,7 +54,7 @@ export interface ReceiveSupplierInboundInput extends SupplierInboundRequestConte
 export interface ReceivedSupplierInbound {
   readonly receiptId: string;
   readonly version: number;
-  readonly totalWeightKg: string;
+  readonly totalWeightKg: string | null;
   readonly productBalances: readonly {
     readonly productId: string;
     readonly receivedQuantity: number;
@@ -68,6 +69,7 @@ export interface SupplierProductCostInput {
 }
 
 export interface ConfirmSupplierInboundCostsInput extends SupplierInboundRequestContext {
+  readonly invoiceGoodsCostVnd?: bigint;
   readonly receiptId: string;
   readonly expectedVersion: number;
   readonly productCosts: readonly SupplierProductCostInput[];
@@ -113,10 +115,10 @@ interface AggregatedInboundItem {
   readonly productId: string;
   readonly bags: readonly {
     readonly bagCode: string;
-    readonly weightKg: string;
-    readonly weightGrams: bigint;
+    readonly weightKg: string | null;
+    readonly weightGrams: bigint | null;
   }[];
-  readonly totalWeightGrams: bigint;
+  readonly totalWeightGrams: bigint | null;
 }
 
 export class SupplierInboundNotFoundError extends Error {
@@ -163,7 +165,7 @@ export async function receiveSupplierInbound(
   database: Database,
   input: ReceiveSupplierInboundInput,
 ): Promise<IdempotencyResult<ReceivedSupplierInbound>> {
-  const normalized = normalizeReceiveInput(input);
+  normalizeReceiveInput(input);
   return withIdempotency(
     database,
     {
@@ -172,10 +174,7 @@ export async function receiveSupplierInbound(
       requestHash: input.requestHash,
     },
     async (tx) => {
-      const received = await receiveSupplierInboundInTransaction(tx, {
-        ...input,
-        ...normalized,
-      });
+      const received = await receiveSupplierInboundInTransaction(tx, input);
       return {
         value: received,
         responseStatus: 201,
@@ -191,12 +190,31 @@ export async function receiveSupplierInboundInTransaction(
   tx: Transaction,
   input: Omit<ReceiveSupplierInboundInput, 'bags' | 'referenceCode' | 'supplierName'> & {
     readonly bags: readonly SupplierInboundBagInput[];
-    readonly referenceCode: string;
+    readonly referenceCode: string | undefined;
     readonly supplierName: string;
   },
 ): Promise<ReceivedSupplierInbound> {
   const normalized = normalizeReceiveInput(input);
   await assertWarehouseActor(tx, input.receivedByUserId, input.actorRole);
+  if (!normalized.referenceCode) {
+    // Sequence allocation happens only after the idempotency replay gate. Gaps are allowed.
+    // Legacy clients may have explicitly claimed a future PN reference.
+    for (;;) {
+      const result = await tx.execute<{ value: string }>(
+        sql`SELECT nextval('supplier_receipt_number_seq')::text AS value`,
+      );
+      const candidate = formatInboundReceiptNumber(result.rows[0]!.value, new Date());
+      const [existing] = await tx
+        .select({ id: receipts.id })
+        .from(receipts)
+        .where(eq(receipts.receiptNumber, candidate))
+        .limit(1);
+      if (!existing) {
+        normalized.referenceCode = candidate;
+        break;
+      }
+    }
+  }
   return withAdvisoryLock(tx, 'supplier-inbound-reference', normalized.referenceCode, async () => {
     for (const bagCode of normalized.bags.map((bag) => bag.bagCode).sort()) {
       await withAdvisoryLock(tx, 'supplier-inbound-bag', bagCode, async () => undefined);
@@ -265,7 +283,8 @@ export async function receiveSupplierInboundInTransaction(
           productId: item.productId,
           quantity: item.bags.length,
           bagCount: item.bags.length,
-          totalNetWeightKg: gramsToKilogramsExact(item.totalWeightGrams),
+          totalNetWeightKg:
+            item.totalWeightGrams === null ? null : gramsToKilogramsExact(item.totalWeightGrams),
         })),
       )
       .returning({ id: receiptItems.id, productId: receiptItems.productId });
@@ -299,10 +318,14 @@ export async function receiveSupplierInboundInTransaction(
         metadata: {
           bagCount: item.bags.length,
           supplierName: normalized.supplierName,
-          totalWeightKg: gramsToKilogramsExact(item.totalWeightGrams),
+          receivedAt: input.receivedAt.toISOString(),
+          totalWeightKg:
+            item.totalWeightGrams === null ? null : gramsToKilogramsExact(item.totalWeightGrams),
         },
         actorUserId: input.receivedByUserId,
-        occurredAt: input.receivedAt,
+        // Stock becomes available when this command is recorded, not at a client-supplied
+        // document date. Backdating an after-balance would invalidate later snapshots.
+        occurredAt: now,
       });
       productBalances.push({
         productId: item.productId,
@@ -312,9 +335,11 @@ export async function receiveSupplierInboundInTransaction(
       });
     }
 
-    const totalWeightKg = gramsToKilogramsExact(
-      items.reduce((total, item) => total + item.totalWeightGrams, 0n),
-    );
+    const totalWeightKg = items.some((item) => item.totalWeightGrams === null)
+      ? null
+      : gramsToKilogramsExact(
+          items.reduce((total, item) => total + (item.totalWeightGrams ?? 0n), 0n),
+        );
     await tx.insert(auditLogs).values({
       requestId: input.requestId ?? null,
       actorUserId: input.receivedByUserId,
@@ -403,8 +428,9 @@ export async function confirmSupplierInboundCostsInTransaction(
       input.productCosts.map((cost) => [cost.productId, cost.priceVndPerKg]),
     );
     if (
-      itemRows.length !== priceByProduct.size ||
-      itemRows.some((item) => !priceByProduct.has(item.productId))
+      input.invoiceGoodsCostVnd === undefined &&
+      (itemRows.length !== priceByProduct.size ||
+        itemRows.some((item) => !priceByProduct.has(item.productId)))
     ) {
       throw new SupplierInboundValidationError(
         'Cost confirmation must contain each receipt product exactly once.',
@@ -429,9 +455,9 @@ export async function confirmSupplierInboundCostsInTransaction(
     }
 
     const now = new Date();
-    let goodsCostVnd = 0n;
+    let goodsCostVnd = input.invoiceGoodsCostVnd ?? 0n;
     const goodsCosts: { receiptItemId: string; amountVnd: bigint; productId: string }[] = [];
-    for (const item of itemRows) {
+    for (const item of input.invoiceGoodsCostVnd === undefined ? itemRows : []) {
       const priceVndPerKg = priceByProduct.get(item.productId);
       if (priceVndPerKg === undefined) {
         throw new SupplierInboundValidationError('A receipt product is missing its price.');
@@ -442,6 +468,10 @@ export async function confirmSupplierInboundCostsInTransaction(
       }
       let itemCostVnd = 0n;
       for (const bag of itemBags) {
+        if (bag.netWeightKg === null)
+          throw new SupplierInboundValidationError(
+            'Chưa đủ khối lượng từng bao để xác nhận chi phí theo kg.',
+          );
         itemCostVnd += calculateWeightedCostVnd(bag.netWeightKg, priceVndPerKg);
       }
       assertVnd(itemCostVnd, 'product goods cost');
@@ -474,6 +504,16 @@ export async function confirmSupplierInboundCostsInTransaction(
       (receipt.vatAmountVnd ?? 0n);
     assertVnd(totalCostVnd, 'receipt total cost');
     await tx.insert(receiptCosts).values([
+      ...(input.invoiceGoodsCostVnd === undefined
+        ? []
+        : [
+            {
+              receiptId: receipt.id,
+              costType: 'goods' as const,
+              amountVnd: input.invoiceGoodsCostVnd,
+              description: 'Invoice goods total; not allocated to products or bags',
+            },
+          ]),
       ...goodsCosts.map((cost) => ({
         receiptId: receipt.id,
         receiptItemId: cost.receiptItemId,
@@ -543,6 +583,7 @@ export async function confirmSupplierInboundCostsInTransaction(
         status: 'confirmed',
         version: confirmed.version,
         goodsCostVnd: goodsCostVnd.toString(),
+        costingBasis: input.invoiceGoodsCostVnd === undefined ? 'WEIGHT' : 'INVOICE',
         transportationFeeVnd: input.transportationFeeVnd.toString(),
         handlingFeeVnd: input.handlingFeeVnd.toString(),
         vatAmountVnd: receipt.vatAmountVnd?.toString() ?? null,
@@ -830,23 +871,26 @@ export async function cancelSupplierInboundInTransaction(
 
 function normalizeReceiveInput(input: {
   readonly vat?: { readonly amountVnd: bigint; readonly ratePercent: 8 };
-  readonly referenceCode: string;
+  readonly referenceCode: string | undefined;
   readonly supplierName: string;
   readonly receivedAt: Date;
   readonly bags: readonly SupplierInboundBagInput[];
 }): {
-  readonly referenceCode: string;
+  referenceCode: string;
   readonly supplierName: string;
   readonly bags: readonly SupplierInboundBagInput[];
 } {
-  const referenceCode = input.referenceCode.trim();
+  const referenceCode = input.referenceCode?.trim() ?? '';
   if (input.vat) {
     assertVnd(input.vat.amountVnd, 'vatAmountVnd');
     if (input.vat.ratePercent !== 8)
       throw new SupplierInboundValidationError('VAT rate must be 8%.');
   }
   const supplierName = input.supplierName.trim();
-  if (referenceCode.length === 0 || referenceCode.length > 100) {
+  if (
+    (input.referenceCode !== undefined && referenceCode.length === 0) ||
+    referenceCode.length > 100
+  ) {
     throw new SupplierInboundValidationError(
       'Supplier receipt reference must contain 1 to 100 characters.',
     );
@@ -871,7 +915,7 @@ function normalizeReceiveInput(input: {
     if (bagCode.length === 0 || bagCode.length > 100) {
       throw new SupplierInboundValidationError('Bag codes must contain 1 to 100 characters.');
     }
-    if (kilogramsToGramsExact(bag.weightKg) <= 0n) {
+    if (bag.weightKg !== null && kilogramsToGramsExact(bag.weightKg) <= 0n) {
       throw new SupplierInboundValidationError('Supplier bag weight must be positive.');
     }
     return { productId: bag.productId, bagCode, weightKg: bag.weightKg };
@@ -892,13 +936,18 @@ function aggregateInboundBags(
 ): readonly AggregatedInboundItem[] {
   const grouped = new Map<
     string,
-    { bags: { bagCode: string; weightKg: string; weightGrams: bigint }[]; total: bigint }
+    {
+      bags: { bagCode: string; weightKg: string | null; weightGrams: bigint | null }[];
+      total: bigint;
+      complete: boolean;
+    }
   >();
   for (const bag of bags) {
-    const weightGrams = kilogramsToGramsExact(bag.weightKg);
-    const item = grouped.get(bag.productId) ?? { bags: [], total: 0n };
+    const weightGrams = bag.weightKg === null ? null : kilogramsToGramsExact(bag.weightKg);
+    const item = grouped.get(bag.productId) ?? { bags: [], total: 0n, complete: true };
     item.bags.push({ bagCode: bag.bagCode, weightKg: bag.weightKg, weightGrams });
-    item.total += weightGrams;
+    item.total += weightGrams ?? 0n;
+    if (weightGrams === null) item.complete = false;
     grouped.set(bag.productId, item);
   }
   return [...grouped.entries()]
@@ -909,7 +958,7 @@ function aggregateInboundBags(
           `Total bag weight for product ${productId} exceeds the supported range.`,
         );
       }
-      return { productId, bags: item.bags, totalWeightGrams: item.total };
+      return { productId, bags: item.bags, totalWeightGrams: item.complete ? item.total : null };
     });
 }
 
@@ -929,13 +978,21 @@ async function assertWarehouseActor(
 }
 
 function validateCostConfirmationInput(input: {
+  readonly invoiceGoodsCostVnd?: bigint;
   readonly expectedVersion: number;
   readonly productCosts: readonly SupplierProductCostInput[];
   readonly transportationFeeVnd: bigint;
   readonly handlingFeeVnd: bigint;
 }): void {
   validateExpectedVersion(input.expectedVersion);
-  if (input.productCosts.length === 0 || input.productCosts.length > MAX_PRODUCTS_PER_RECEIPT) {
+  if (input.invoiceGoodsCostVnd !== undefined) {
+    assertVnd(input.invoiceGoodsCostVnd, 'invoiceGoodsCostVnd');
+    if (input.productCosts.length !== 0)
+      throw new SupplierInboundValidationError('Invoice amount cannot be combined with kg prices.');
+  } else if (
+    input.productCosts.length === 0 ||
+    input.productCosts.length > MAX_PRODUCTS_PER_RECEIPT
+  ) {
     throw new SupplierInboundValidationError(
       `Cost confirmation must contain 1 to ${MAX_PRODUCTS_PER_RECEIPT} products.`,
     );

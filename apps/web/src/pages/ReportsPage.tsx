@@ -28,6 +28,7 @@ import type { Role } from '../lib/types';
 const unavailableReasonLabels: Record<ReportUnavailableReason, string> = {
   COGS_NOT_RECORDED_PER_SALE: 'Chưa ghi nhận giá vốn theo từng giao dịch bán',
   MISSING_INBOUND_WEIGHT: 'Phiếu nhập chưa có khối lượng xác nhận',
+  INVOICE_COST_NOT_ALLOCATED: 'Tiền hóa đơn chưa phân bổ theo mặt hàng',
   MISSING_SALE_REVENUE: 'Nguồn bán hàng chưa có doanh thu',
   VAT_NOT_CAPTURED: 'Chưa ghi nhận đầy đủ VAT trong phạm vi báo cáo',
   ZERO_INBOUND_WEIGHT: 'Kỳ này không có khối lượng nhập để tính tỷ lệ',

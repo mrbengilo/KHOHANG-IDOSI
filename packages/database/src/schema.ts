@@ -1279,9 +1279,9 @@ export const receiptBagWeights = pgTable(
       .references(() => receiptItems.id, { onDelete: 'restrict' }),
     bagNumber: integer('bag_number').notNull(),
     labelCode: text('label_code'),
-    grossWeightKg: numeric('gross_weight_kg', { precision: 14, scale: 3 }).notNull(),
+    grossWeightKg: numeric('gross_weight_kg', { precision: 14, scale: 3 }),
     tareWeightKg: numeric('tare_weight_kg', { precision: 14, scale: 3 }).notNull().default('0'),
-    netWeightKg: numeric('net_weight_kg', { precision: 14, scale: 3 }).notNull(),
+    netWeightKg: numeric('net_weight_kg', { precision: 14, scale: 3 }),
     pricePerKgVnd: bigint('price_per_kg_vnd', { mode: 'bigint' }),
     goodsCostVnd: bigint('goods_cost_vnd', { mode: 'bigint' })
       .notNull()
@@ -1296,6 +1296,10 @@ export const receiptBagWeights = pgTable(
       .where(sql`${table.labelCode} IS NOT NULL`),
     check('receipt_bag_weights_number_positive', sql`${table.bagNumber} > 0`),
     check('receipt_bag_weights_gross_positive', sql`${table.grossWeightKg} > 0`),
+    check(
+      'receipt_bag_weights_weight_presence',
+      sql`(${table.grossWeightKg} IS NULL) = (${table.netWeightKg} IS NULL)`,
+    ),
     check('receipt_bag_weights_tare_nonnegative', sql`${table.tareWeightKg} >= 0`),
     check('receipt_bag_weights_net_nonnegative', sql`${table.netWeightKg} >= 0`),
     check(
