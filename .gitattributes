@@ -1,0 +1,22 @@
+# Mọi file text dùng LF cả trong repo lẫn trong working tree.
+#
+# Trước đây checkout trên Windows đổi sang CRLF, nên `git archive` đóng gói
+# release cũng mang CRLF. Script shell trong infra/scripts khi chạy trên VPS
+# báo lỗi "/usr/bin/env: 'bash\r': No such file or directory", và prettier
+# --check báo sai lệch toàn bộ file. Ép LF để hai lỗi đó không tái diễn.
+* text=auto eol=lf
+
+*.sh text eol=lf
+*.mjs text eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.tar binary
+*.dump binary
