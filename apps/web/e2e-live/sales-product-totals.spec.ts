@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-test('sales totals group source products and month/store filters preserve scope', async ({
+test('sales workspace groups source products and month/store filters preserve scope', async ({
   page,
 }, testInfo) => {
   const errors: string[] = [];
@@ -31,7 +31,10 @@ test('sales totals group source products and month/store filters preserve scope'
     .slice(0, 2);
   expect(stores).toHaveLength(2);
   const region = page.getByRole('region', { name: 'Doanh thu & hàng đã bán · IDOSI', exact: true });
-  const storeFilter = region.getByLabel('Cửa hàng thống kê bán hàng');
+  const storeFilter = page.getByRole('combobox', {
+    name: 'Cửa hàng thống kê IDOSI',
+    exact: true,
+  });
   let interceptedRequests = 0;
   await page.route('**/integrations/idosi/statistics-summary?*', async (route) => {
     interceptedRequests += 1;
@@ -125,14 +128,14 @@ test('sales totals group source products and month/store filters preserve scope'
       },
     });
   });
-  await page.reload();
+  await page.goto('/sales');
   await expect.poll(() => interceptedRequests, { timeout: 30_000 }).toBeGreaterThan(0);
   await expect(storeFilter).toBeVisible({ timeout: 30_000 });
   const row = region.getByRole('row', { name: /Mặt hàng kiểm thử tổng hợp/ });
   await expect(row).toHaveCount(1);
   await expect(row).toContainText('12 cái');
   await expect(row).toContainText('4 kg');
-  await region.getByLabel('Tháng thống kê bán hàng').fill('2024-02');
+  await page.getByLabel('Kỳ thống kê IDOSI', { exact: true }).fill('2024-02');
   await expect(row).toContainText('6 cái');
   await expect(row).toContainText('2 kg');
   await storeFilter.selectOption(stores[0]!.id);
