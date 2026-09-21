@@ -1,12 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import {
   CreateInboundReceiptRequestSchema,
+  ConfirmReceiptCostsRequestSchema,
   FinalizeReceiptRequestSchema,
   formatInboundReceiptNumber,
 } from '../src/receipts.js';
 
 const productId = '40000000-0000-4000-8000-000000000001';
 describe('warehouse count first, store weight later', () => {
+  it('accepts invoice amount including zero but rejects mixed, missing and unsafe cost inputs', () => {
+    const base = { expectedVersion: 0, transportationFeeVnd: 0, handlingFeeVnd: 0 };
+    for (const invoiceGoodsCostVnd of [0, 1000000]) {
+      expect(
+        ConfirmReceiptCostsRequestSchema.parse({ ...base, invoiceGoodsCostVnd }).productCosts,
+      ).toEqual([]);
+    }
+    for (const input of [
+      base,
+      { ...base, invoiceGoodsCostVnd: -1 },
+      { ...base, invoiceGoodsCostVnd: Number.MAX_SAFE_INTEGER + 1 },
+      { ...base, invoiceGoodsCostVnd: 100, productCosts: [{ productId, priceVndPerKg: 100 }] },
+    ]) {
+      expect(ConfirmReceiptCostsRequestSchema.safeParse(input).success).toBe(false);
+    }
+  });
   it('accepts three unweighed bags and server-generated receipt number', () => {
     const parsed = CreateInboundReceiptRequestSchema.parse({
       supplierName: 'Supplier',

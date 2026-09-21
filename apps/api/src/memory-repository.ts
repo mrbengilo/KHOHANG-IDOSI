@@ -1233,8 +1233,9 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const receiptProductIds = new Set(current.bags.map((bag) => bag.productId));
     const suppliedProductIds = new Set(input.productCosts.map((cost) => cost.productId));
     if (
-      receiptProductIds.size !== suppliedProductIds.size ||
-      [...receiptProductIds].some((productId) => !suppliedProductIds.has(productId))
+      input.invoiceGoodsCostVnd === undefined &&
+      (receiptProductIds.size !== suppliedProductIds.size ||
+        [...receiptProductIds].some((productId) => !suppliedProductIds.has(productId)))
     ) {
       throw new ApiError(
         'VALIDATION_ERROR',
@@ -1245,17 +1246,21 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const priceByProduct = new Map(
       input.productCosts.map((cost) => [cost.productId, BigInt(cost.priceVndPerKg)]),
     );
-    const goodsCostVnd = current.bags.reduce((total, bag) => {
-      if (bag.weightKg === null)
-        throw new ApiError(
-          'VALIDATION_ERROR',
-          'Chưa đủ khối lượng từng bao để xác nhận chi phí theo kg.',
-          400,
-        );
-      const price = priceByProduct.get(bag.productId);
-      if (price === undefined) throw new Error('Validated supplier cost lost a product price.');
-      return total + calculateWeightedCostVnd(bag.weightKg, price);
-    }, 0n);
+    const goodsCostVnd =
+      input.invoiceGoodsCostVnd !== undefined
+        ? BigInt(input.invoiceGoodsCostVnd)
+        : current.bags.reduce((total, bag) => {
+            if (bag.weightKg === null)
+              throw new ApiError(
+                'VALIDATION_ERROR',
+                'Chưa đủ khối lượng từng bao để xác nhận chi phí theo kg.',
+                400,
+              );
+            const price = priceByProduct.get(bag.productId);
+            if (price === undefined)
+              throw new Error('Validated supplier cost lost a product price.');
+            return total + calculateWeightedCostVnd(bag.weightKg, price);
+          }, 0n);
     const totalCostVnd =
       goodsCostVnd +
       BigInt(input.transportationFeeVnd) +

@@ -142,6 +142,7 @@ import {
   recordIdosiStatisticsSuccess as recordDatabaseIdosiStatisticsSuccess,
   receiptBagWeights,
   receiptItems,
+  receiptCosts,
   receipts,
   receiveSupplierInbound as receiveDatabaseSupplierInbound,
   RequestLimitExceededError,
@@ -1161,6 +1162,9 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
           productId: cost.productId,
           priceVndPerKg: BigInt(cost.priceVndPerKg),
         })),
+        ...(input.invoiceGoodsCostVnd === undefined
+          ? {}
+          : { invoiceGoodsCostVnd: BigInt(input.invoiceGoodsCostVnd) }),
         transportationFeeVnd: BigInt(input.transportationFeeVnd),
         handlingFeeVnd: BigInt(input.handlingFeeVnd),
         confirmedByUserId: actor.accountId,
@@ -3185,14 +3189,29 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     if (isConfirmed && (receipt.confirmedByUserId === null || receipt.confirmedAt === null)) {
       throw new Error('Confirmed supplier receipt is missing reviewer evidence.');
     }
-    const productCosts = isConfirmed
-      ? itemRows.map((item) => {
-          if (item.pricePerKgVnd === null) {
-            throw new Error('Confirmed supplier receipt item is missing its price.');
-          }
-          return { productId: item.productId, priceVndPerKg: safeVnd(item.pricePerKgVnd) };
-        })
+    const invoiceCosts = isConfirmed
+      ? await db
+          .select({ amountVnd: receiptCosts.amountVnd })
+          .from(receiptCosts)
+          .where(
+            and(
+              eq(receiptCosts.receiptId, receipt.id),
+              eq(receiptCosts.costType, 'goods'),
+              isNull(receiptCosts.receiptItemId),
+            ),
+          )
       : [];
+    const invoicePriced =
+      invoiceCosts.length === 1 && invoiceCosts[0]!.amountVnd === receipt.totalGoodsCostVnd;
+    const productCosts =
+      isConfirmed && !invoicePriced
+        ? itemRows.map((item) => {
+            if (item.pricePerKgVnd === null) {
+              throw new Error('Confirmed supplier receipt item is missing its price.');
+            }
+            return { productId: item.productId, priceVndPerKg: safeVnd(item.pricePerKgVnd) };
+          })
+        : [];
 
     return {
       id: receipt.id,

@@ -52,7 +52,7 @@ export const InboundVatSchema = z
 
 export const ReceiptCostConfirmationSchema = z
   .object({
-    productCosts: z.array(ReceiptProductCostSchema).min(1),
+    productCosts: z.array(ReceiptProductCostSchema),
     transportationFeeVnd: MoneyVndSchema,
     handlingFeeVnd: MoneyVndSchema,
     vatAmountVnd: MoneyVndSchema.nullish(),
@@ -192,19 +192,27 @@ export function formatInboundReceiptNumber(sequence: string, now: Date): string 
 
 export const ConfirmReceiptCostsRequestSchema = z
   .object({
+    invoiceGoodsCostVnd: MoneyVndSchema.optional(),
     productCosts: z
       .array(ReceiptProductCostSchema)
-      .min(1)
       .max(500)
       .refine(
         (costs) => new Set(costs.map((cost) => cost.productId)).size === costs.length,
         'A product may appear only once in receipt costs',
-      ),
+      )
+      .default([]),
     transportationFeeVnd: MoneyVndSchema,
     handlingFeeVnd: MoneyVndSchema,
     expectedVersion: z.number().int().nonnegative(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (input) =>
+      input.invoiceGoodsCostVnd === undefined
+        ? input.productCosts.length > 0
+        : input.productCosts.length === 0,
+    'Choose either invoice goods amount or per-product kg prices',
+  );
 export type ConfirmReceiptCostsRequest = z.infer<typeof ConfirmReceiptCostsRequestSchema>;
 
 export const CancelInboundReceiptRequestSchema = z

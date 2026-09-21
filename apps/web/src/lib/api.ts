@@ -3,6 +3,8 @@ import {
   UpdateInboundVatRequestSchema,
   type UpdateInboundVatRequest,
   CreateInboundReceiptRequestSchema,
+  ConfirmReceiptCostsRequestSchema,
+  type ConfirmReceiptCostsRequest,
   InboundReceiptResponseSchema,
   ListInboundReceiptsResponseSchema,
   type CreateInboundReceiptRequest,
@@ -371,6 +373,20 @@ export async function createWarehouseInbound(
     body: JSON.stringify(CreateInboundReceiptRequestSchema.parse(input)),
   });
   return InboundReceiptResponseSchema.parse(payload).data;
+}
+
+export async function confirmWarehouseInboundCosts(
+  receiptId: string,
+  input: ConfirmReceiptCostsRequest,
+  key: string,
+) {
+  return InboundReceiptResponseSchema.parse(
+    await request(`/inbound-receipts/${receiptId}/confirm-costs`, {
+      method: 'POST',
+      headers: { 'idempotency-key': key },
+      body: JSON.stringify(ConfirmReceiptCostsRequestSchema.parse(input)),
+    }),
+  ).data;
 }
 
 export async function listWarehouseInbounds(page = 1) {

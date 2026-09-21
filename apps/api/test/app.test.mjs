@@ -2941,6 +2941,27 @@ describe('KHOHANG-IDOSI API', () => {
     );
     assert.equal(replay.headers['idempotency-replayed'], 'true');
     assert.deepEqual(replay.json().data, first.json().data);
+    const costPath = `/api/v1/inbound-receipts/${first.json().data.id}/confirm-costs`;
+    const costInput = {
+      expectedVersion: 0,
+      invoiceGoodsCostVnd: 0,
+      transportationFeeVnd: 10000,
+      handlingFeeVnd: 5000,
+    };
+    const priced = await mutateReceipt(cookie, 'POST', costPath, 'invoice-auto-bags', costInput);
+    assert.equal(priced.statusCode, 200, priced.body);
+    assert.equal(priced.json().data.status, 'COST_CONFIRMED');
+    assert.equal(priced.json().data.cost.goodsCostVnd, 0);
+    assert.equal(priced.json().data.cost.totalCostVnd, null);
+    assert.equal(priced.json().data.totalWeightKg, null);
+    const replayCost = await mutateReceipt(
+      cookie,
+      'POST',
+      costPath,
+      'invoice-auto-bags',
+      costInput,
+    );
+    assert.equal(replayCost.headers['idempotency-replayed'], 'true');
   });
 
   test('accepts unknown supplier weights without fabricating kg or kg-based costs', async () => {

@@ -145,6 +145,31 @@ describePostgres('supplier inbound PostgreSQL lifecycle', () => {
       .where(eq(receipts.id, result.value.receiptId));
     expect(receipt!.status).toBe('submitted');
     expect(receipt!.version).toBe(0);
+    const costInput = {
+      receiptId: result.value.receiptId,
+      expectedVersion: 0,
+      productCosts: [],
+      invoiceGoodsCostVnd: 1234567n,
+      transportationFeeVnd: 10000n,
+      handlingFeeVnd: 5000n,
+      confirmedByUserId: fixture.actorId,
+      actorRole: 'admin' as const,
+      idempotencyKey: `invoice-${suffix}`,
+      requestHash: `invoice-${suffix}`,
+    };
+    const priced = await confirmSupplierInboundCosts(db, costInput);
+    if (priced.replayed) throw new Error('Expected new confirmation');
+    expect(priced.value.goodsCostVnd).toBe(1234567n);
+    expect(priced.value.totalCostVnd).toBeNull();
+    expect((await confirmSupplierInboundCosts(db, costInput)).replayed).toBe(true);
+    const costs = await db
+      .select()
+      .from(receiptCosts)
+      .where(eq(receiptCosts.receiptId, result.value.receiptId));
+    expect(costs.filter((cost) => cost.costType === 'goods')).toEqual([
+      expect.objectContaining({ receiptItemId: null, amountVnd: 1234567n }),
+    ]);
+    expect((await balanceFor(fixture.productId)).onHandQuantity).toBe(before.onHandQuantity + 2);
   });
 
   it('makes a fresh-database receipt visible to the canonical snapshot projection exactly once', async () => {

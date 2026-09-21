@@ -36,4 +36,30 @@ test('warehouse accepts three bags without a weight field and generates its rece
   await expect(
     page.getByText(`Đã nhập phiếu ${data.referenceCode} vào kho tổng.`, { exact: true }),
   ).toBeVisible();
+  const row = page.locator('article').filter({ hasText: data.referenceCode });
+  await row.getByText('Chốt chi phí theo hóa đơn', { exact: true }).click();
+  await row.getByLabel('Tổng tiền hàng theo hóa đơn (VND)').fill('1234567');
+  await row.getByLabel('Phí vận chuyển (VND)').fill('10000');
+  await row.getByLabel('Phí bốc vác (VND)').fill('5000');
+  for (const width of [360, 390, 412, 768, 1366, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+      .toBe(true);
+  }
+  const costResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/inbound-receipts/${data.id}/confirm-costs`) &&
+      response.request().method() === 'POST',
+  );
+  await row.getByRole('button', { name: 'Xác nhận chi phí hóa đơn' }).click();
+  const confirmed = await costResponse;
+  expect(confirmed.status(), await confirmed.text()).toBe(200);
+  expect((await confirmed.json()).data.cost).toMatchObject({
+    productCosts: [],
+    goodsCostVnd: 1234567,
+    totalCostVnd: null,
+  });
+  await expect(row).toContainText('Đã xác nhận chi phí');
+  await expect(row).toContainText('Chờ nhập VAT');
 });

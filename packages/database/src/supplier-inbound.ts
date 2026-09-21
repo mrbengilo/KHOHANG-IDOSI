@@ -69,6 +69,7 @@ export interface SupplierProductCostInput {
 }
 
 export interface ConfirmSupplierInboundCostsInput extends SupplierInboundRequestContext {
+  readonly invoiceGoodsCostVnd?: bigint;
   readonly receiptId: string;
   readonly expectedVersion: number;
   readonly productCosts: readonly SupplierProductCostInput[];
@@ -427,8 +428,9 @@ export async function confirmSupplierInboundCostsInTransaction(
       input.productCosts.map((cost) => [cost.productId, cost.priceVndPerKg]),
     );
     if (
-      itemRows.length !== priceByProduct.size ||
-      itemRows.some((item) => !priceByProduct.has(item.productId))
+      input.invoiceGoodsCostVnd === undefined &&
+      (itemRows.length !== priceByProduct.size ||
+        itemRows.some((item) => !priceByProduct.has(item.productId)))
     ) {
       throw new SupplierInboundValidationError(
         'Cost confirmation must contain each receipt product exactly once.',
@@ -453,9 +455,9 @@ export async function confirmSupplierInboundCostsInTransaction(
     }
 
     const now = new Date();
-    let goodsCostVnd = 0n;
+    let goodsCostVnd = input.invoiceGoodsCostVnd ?? 0n;
     const goodsCosts: { receiptItemId: string; amountVnd: bigint; productId: string }[] = [];
-    for (const item of itemRows) {
+    for (const item of input.invoiceGoodsCostVnd === undefined ? itemRows : []) {
       const priceVndPerKg = priceByProduct.get(item.productId);
       if (priceVndPerKg === undefined) {
         throw new SupplierInboundValidationError('A receipt product is missing its price.');
@@ -502,6 +504,16 @@ export async function confirmSupplierInboundCostsInTransaction(
       (receipt.vatAmountVnd ?? 0n);
     assertVnd(totalCostVnd, 'receipt total cost');
     await tx.insert(receiptCosts).values([
+      ...(input.invoiceGoodsCostVnd === undefined
+        ? []
+        : [
+            {
+              receiptId: receipt.id,
+              costType: 'goods' as const,
+              amountVnd: input.invoiceGoodsCostVnd,
+              description: 'Invoice goods total; not allocated to products or bags',
+            },
+          ]),
       ...goodsCosts.map((cost) => ({
         receiptId: receipt.id,
         receiptItemId: cost.receiptItemId,
@@ -571,6 +583,7 @@ export async function confirmSupplierInboundCostsInTransaction(
         status: 'confirmed',
         version: confirmed.version,
         goodsCostVnd: goodsCostVnd.toString(),
+        costingBasis: input.invoiceGoodsCostVnd === undefined ? 'WEIGHT' : 'INVOICE',
         transportationFeeVnd: input.transportationFeeVnd.toString(),
         handlingFeeVnd: input.handlingFeeVnd.toString(),
         vatAmountVnd: receipt.vatAmountVnd?.toString() ?? null,
@@ -965,13 +978,21 @@ async function assertWarehouseActor(
 }
 
 function validateCostConfirmationInput(input: {
+  readonly invoiceGoodsCostVnd?: bigint;
   readonly expectedVersion: number;
   readonly productCosts: readonly SupplierProductCostInput[];
   readonly transportationFeeVnd: bigint;
   readonly handlingFeeVnd: bigint;
 }): void {
   validateExpectedVersion(input.expectedVersion);
-  if (input.productCosts.length === 0 || input.productCosts.length > MAX_PRODUCTS_PER_RECEIPT) {
+  if (input.invoiceGoodsCostVnd !== undefined) {
+    assertVnd(input.invoiceGoodsCostVnd, 'invoiceGoodsCostVnd');
+    if (input.productCosts.length !== 0)
+      throw new SupplierInboundValidationError('Invoice amount cannot be combined with kg prices.');
+  } else if (
+    input.productCosts.length === 0 ||
+    input.productCosts.length > MAX_PRODUCTS_PER_RECEIPT
+  ) {
     throw new SupplierInboundValidationError(
       `Cost confirmation must contain 1 to ${MAX_PRODUCTS_PER_RECEIPT} products.`,
     );

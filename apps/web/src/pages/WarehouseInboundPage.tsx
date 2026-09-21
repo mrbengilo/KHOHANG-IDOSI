@@ -11,6 +11,7 @@ import { PageHeader } from '../components/PageHeader';
 import { ProductBagPicker } from '../components/ProductBagPicker';
 import {
   createWarehouseInbound,
+  confirmWarehouseInboundCosts,
   listCatalog,
   listWarehouseInbounds,
   updateWarehouseInboundVat,
@@ -297,6 +298,17 @@ function WarehouseInboundContent() {
                     : 'Đã nhập, chờ xác nhận chi phí'}
               </span>
               {receipt.status !== 'CANCELLED' ? <InboundVatEditor receipt={receipt} /> : null}
+              {receipt.status === 'COST_PENDING' ? <InvoiceCostEditor receipt={receipt} /> : null}
+              {receipt.cost ? (
+                <p>
+                  Tiền hàng: {formatVnd(receipt.cost.goodsCostVnd)} · Vận chuyển:{' '}
+                  {formatVnd(receipt.cost.transportationFeeVnd)} · Bốc vác:{' '}
+                  {formatVnd(receipt.cost.handlingFeeVnd)} · Tổng chi phí:{' '}
+                  {receipt.cost.totalCostVnd === null
+                    ? 'Chờ nhập VAT'
+                    : formatVnd(receipt.cost.totalCostVnd)}
+                </p>
+              ) : null}
             </div>
           </article>
         ))}
@@ -321,6 +333,122 @@ function WarehouseInboundContent() {
         </div>
       </section>
     </>
+  );
+}
+
+function InvoiceCostEditor({ receipt }: { receipt: InboundReceipt }) {
+  const client = useQueryClient();
+  const [amount, setAmount] = useState('');
+  const [shipping, setShipping] = useState('0');
+  const [handling, setHandling] = useState('0');
+  const [version, setVersion] = useState(receipt.version);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const attempt = useRef<{ key: string; serialized: string } | null>(null);
+  const stale = version !== receipt.version;
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (busy || stale) return;
+    if (
+      ![amount, shipping, handling].every(
+        (value) => /^\d+$/.test(value) && Number.isSafeInteger(Number(value)),
+      )
+    ) {
+      setError('Nhập số tiền nguyên VND không âm trong giới hạn an toàn.');
+      return;
+    }
+    const input = {
+      invoiceGoodsCostVnd: Number(amount),
+      productCosts: [],
+      transportationFeeVnd: Number(shipping),
+      handlingFeeVnd: Number(handling),
+      expectedVersion: version,
+    };
+    const serialized = JSON.stringify(input);
+    if (attempt.current?.serialized !== serialized)
+      attempt.current = { key: crypto.randomUUID(), serialized };
+    setBusy(true);
+    setError('');
+    try {
+      await confirmWarehouseInboundCosts(receipt.id, input, attempt.current.key);
+      await Promise.all(
+        ['warehouse-inbounds', 'reports', 'dashboard'].map((key) =>
+          client.invalidateQueries({ queryKey: [key] }),
+        ),
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Không thể chốt chi phí.');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <details>
+      <summary>Chốt chi phí theo hóa đơn</summary>
+      <p>
+        Tiền hàng chưa gồm VAT, vận chuyển và bốc vác. Không cần khối lượng; không tự phân bổ tiền
+        hàng cho từng bao.
+      </p>
+      <form onSubmit={save} noValidate>
+        <fieldset className="form-grid" disabled={busy}>
+          <label>
+            Tổng tiền hàng theo hóa đơn (VND){' '}
+            <span className="form-error" aria-hidden="true">
+              *
+            </span>
+            <input
+              required
+              inputMode="numeric"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value)}
+            />
+          </label>
+          <label>
+            Phí vận chuyển (VND){' '}
+            <span className="form-error" aria-hidden="true">
+              *
+            </span>
+            <input
+              required
+              inputMode="numeric"
+              value={shipping}
+              onChange={(event) => setShipping(event.target.value)}
+            />
+          </label>
+          <label>
+            Phí bốc vác (VND){' '}
+            <span className="form-error" aria-hidden="true">
+              *
+            </span>
+            <input
+              required
+              inputMode="numeric"
+              value={handling}
+              onChange={(event) => setHandling(event.target.value)}
+            />
+          </label>
+          <Button type="submit" busy={busy} disabled={stale}>
+            Xác nhận chi phí hóa đơn
+          </Button>
+        </fieldset>
+      </form>
+      {stale ? (
+        <p role="alert">
+          Phiếu đã thay đổi.{' '}
+          <Button
+            tone="secondary"
+            onClick={() => {
+              setVersion(receipt.version);
+              attempt.current = null;
+              setError('');
+            }}
+          >
+            Dùng phiên bản phiếu mới
+          </Button>
+        </p>
+      ) : null}
+      {error ? <p role="alert">{error}</p> : null}
+    </details>
   );
 }
 
