@@ -14,9 +14,38 @@ export function summarizeIdosiSales(states: readonly IdosiStatisticsState[]) {
   const incompleteWeight = snapshots.some(
     (snapshot) => !snapshot.payload.products.weight.isComplete,
   );
+  // Group by the source identity, never by mutable product names or sale type.
+  const byProduct = new Map<
+    string,
+    {
+      productId: string;
+      productName: string;
+      productCode: string | null | undefined;
+      pieces: number;
+      knownKg: number;
+      isComplete: boolean;
+    }
+  >();
+  for (const item of products) {
+    const total = byProduct.get(item.productId) ?? {
+      productId: item.productId,
+      productName: item.productName,
+      productCode: item.productCode,
+      pieces: 0,
+      knownKg: 0,
+      isComplete: true,
+    };
+    total.pieces += item.unit === 'PIECE' ? item.quantity : 0;
+    total.knownKg += item.weight.knownKg;
+    total.isComplete = total.isComplete && item.weight.isComplete;
+    byProduct.set(item.productId, total);
+  }
   return {
     snapshots,
     products,
+    productTotals: [...byProduct.values()].sort((a, b) =>
+      a.productName.localeCompare(b.productName, 'vi'),
+    ),
     missingStores,
     incompleteWeight,
     revenueVnd: snapshots.reduce(

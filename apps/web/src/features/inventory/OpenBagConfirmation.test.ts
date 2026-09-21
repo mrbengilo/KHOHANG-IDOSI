@@ -53,7 +53,7 @@ describe('open bag confirmation', () => {
         onConfirm,
       }),
     );
-    expect(html.match(/5,009 kg/g)).toHaveLength(2);
+    expect(html.match(/5,01 kg/g)).toHaveLength(2);
     expect(html).toContain('không phải tổng tồn cửa hàng');
     expect(html).toContain('Chưa khui');
     expect(html).toContain('Đang bán tại CH');

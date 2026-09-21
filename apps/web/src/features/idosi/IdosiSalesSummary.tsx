@@ -12,9 +12,16 @@ import './idosi-statistics.css';
 export function IdosiSalesSummary({
   period,
   storeId,
+  filters,
 }: {
   readonly period: string;
   readonly storeId?: string;
+  readonly filters?: {
+    readonly stores: readonly { id: string; name: string }[];
+    readonly allowAll: boolean;
+    readonly onPeriodChange: (value: string) => void;
+    readonly onStoreChange: (value: string) => void;
+  };
 }) {
   const query = useQuery({
     queryKey: ['idosi-sales-summary', period, storeId ?? 'ALL'],
@@ -24,8 +31,8 @@ export function IdosiSalesSummary({
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const summary = summarizeIdosiSales(query.data ?? []);
-  const rows = summary.products.filter((item) =>
-    `${item.productName} ${item.productCode ?? ''} ${item.storeName}`
+  const rows = summary.productTotals.filter((item) =>
+    `${item.productName} ${item.productCode ?? ''}`
       .toLocaleLowerCase('vi-VN')
       .includes(search.toLocaleLowerCase('vi-VN')),
   );
@@ -117,8 +124,36 @@ export function IdosiSalesSummary({
           </details>
           <div className="section-heading section-heading--compact">
             <h3>Số lượng và khối lượng bán từng mặt hàng</h3>
+            {filters ? (
+              <>
+                <label>
+                  Tháng thống kê bán hàng
+                  <input
+                    type="month"
+                    min="2000-01"
+                    max="2100-12"
+                    value={period}
+                    onChange={(event) => filters.onPeriodChange(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Cửa hàng thống kê bán hàng
+                  <select
+                    value={storeId ?? 'ALL'}
+                    onChange={(event) => filters.onStoreChange(event.target.value)}
+                  >
+                    {filters.allowAll ? <option value="ALL">Toàn hệ thống</option> : null}
+                    {filters.stores.map((store) => (
+                      <option key={store.id} value={store.id}>
+                        {store.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            ) : null}
             <label>
-              Tìm mặt hàng / cửa hàng
+              Tìm mặt hàng
               <input
                 type="search"
                 value={search}
@@ -135,39 +170,23 @@ export function IdosiSalesSummary({
                 <table>
                   <thead>
                     <tr>
-                      <th>Cửa hàng</th>
                       <th>Mặt hàng</th>
-                      <th>Loại bán</th>
                       <th>Số lượng bán</th>
                       <th>Khối lượng bán</th>
                     </tr>
                   </thead>
                   <tbody>
                     {rows.slice((currentPage - 1) * 15, currentPage * 15).map((item) => (
-                      <tr
-                        key={`${item.storeId}:${item.productId}:${item.revenueType}:${item.unit}`}
-                      >
-                        <td data-label="Cửa hàng">{item.storeName}</td>
+                      <tr key={item.productId}>
                         <td data-label="Mặt hàng">
                           <strong>{item.productName}</strong>
                           <small>{item.productCode ?? item.productId}</small>
                         </td>
-                        <td data-label="Loại bán">
-                          {
-                            { NORMAL: 'Thường', SALE_KG: 'Theo kg', SALE_PIECE: 'Theo cái' }[
-                              item.revenueType
-                            ]
-                          }
-                        </td>
-                        <td data-label="Số lượng bán">
-                          {item.unit === 'KG'
-                            ? formatKg(item.quantity)
-                            : `${formatInteger(item.quantity)} cái`}
-                        </td>
+                        <td data-label="Số lượng bán">{formatInteger(item.pieces)} cái</td>
                         <td data-label="Khối lượng bán">
-                          {formatKg(item.weight.knownKg)}
-                          {!item.weight.isComplete ? (
-                            <small>Chỉ phần đã biết · thiếu hệ số</small>
+                          {formatKg(item.knownKg)}
+                          {!item.isComplete ? (
+                            <small>Chỉ phần đã biết · dữ liệu khối lượng chưa đầy đủ</small>
                           ) : null}
                         </td>
                       </tr>

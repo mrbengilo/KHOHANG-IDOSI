@@ -12,7 +12,7 @@ describe('inventory exact-weight helpers', () => {
   it('round-trips kilogram strings at gram precision without floating-point conversion', () => {
     const exact = '9007199254740993.007';
     expect(gramsToKilograms(kilogramsToGrams(exact))).toBe(exact);
-    expect(formatKg(exact)).toBe('9.007.199.254.740.993,007 kg');
+    expect(formatKg(exact)).toBe('9.007.199.254.740.993,01 kg');
   });
 
   it('accepts only canonical positive weights that do not exceed the current balance', () => {

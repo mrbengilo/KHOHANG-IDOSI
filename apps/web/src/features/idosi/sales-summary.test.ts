@@ -87,6 +87,24 @@ const state = IdosiStatisticsStateSchema.parse({
 });
 
 describe('sales snapshot summary', () => {
+  it('groups all stores and sale types by source product ID without mixing kg into pieces', () => {
+    const copy = structuredClone(state);
+    const second = {
+      ...copy,
+      snapshot: { ...copy.snapshot!, storeId: '20000000-0000-4000-8000-000000000002' },
+    };
+    second.snapshot!.payload.products.items[0]!.productName = 'Tên mới';
+    second.snapshot!.payload.products.items[0]!.weight.isComplete = false;
+    const result = summarizeIdosiSales([state, second]);
+    expect(result.productTotals).toHaveLength(1);
+    expect(result.productTotals[0]).toMatchObject({
+      productId: 'A',
+      pieces: 10,
+      knownKg: 13,
+      isComplete: false,
+    });
+    expect(state.snapshot!.payload.products.items[0]!.quantity).toBe(5);
+  });
   it('keeps money exact and never adds kilograms to piece counts or duplicates weight buckets', () => {
     expect(summarizeIdosiSales([state])).toMatchObject({
       revenueVnd: 300n,
