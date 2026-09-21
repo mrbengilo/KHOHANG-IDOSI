@@ -3140,6 +3140,58 @@ describe('KHOHANG-IDOSI API', () => {
     );
   });
 
+  test('warehouse inventory is admin-only and reconciles on-hand, reserved and dispatched bags', async () => {
+    const url = '/api/v1/warehouse-inventory?pageSize=100';
+    assert.equal((await app.inject({ method: 'GET', url })).statusCode, 401);
+    for (const username of ['htkd', 'ds_nvt']) {
+      const denied = await app.inject({
+        method: 'GET',
+        url,
+        headers: { cookie: cookieOf(await login(username)) },
+      });
+      assert.equal(denied.statusCode, 403);
+    }
+    const headers = { cookie: cookieOf(await login('admin')) };
+    const result = await app.inject({ method: 'GET', url, headers });
+    assert.equal(result.statusCode, 200);
+    const balances = (
+      await app.inject({ method: 'GET', url: '/api/v1/warehouse-balances', headers })
+    ).json().data;
+    const outbounds = (
+      await app.inject({ method: 'GET', url: '/api/v1/outbound-requests?pageSize=100', headers })
+    ).json().data;
+    for (const row of result.json().data) {
+      const balance = balances.find((entry) => entry.productId === row.productId);
+      assert.equal(row.availableBags, balance.available.quantity);
+      assert.equal(row.reservedBags, balance.reserved.quantity);
+      assert.equal(row.onHandBags, row.availableBags + row.reservedBags);
+      assert.equal(
+        row.dispatchedBags,
+        outbounds
+          .flatMap((entry) => entry.lines)
+          .filter((line) => line.productId === row.productId)
+          .reduce((sum, line) => sum + line.dispatchedUnits, 0),
+      );
+    }
+    const page = (
+      await app.inject({
+        method: 'GET',
+        url: '/api/v1/warehouse-inventory?pageSize=1&page=2',
+        headers,
+      })
+    ).json();
+    assert.equal(page.data.length, 1);
+    assert.equal(page.pagination.page, 2);
+    const empty = (
+      await app.inject({
+        method: 'GET',
+        url: '/api/v1/warehouse-inventory?search=nonexistent-product-xyz',
+        headers,
+      })
+    ).json();
+    assert.equal(empty.data.length, 0);
+  });
+
   test('cancels only pending supplier stock with optimistic locking and audit context', async () => {
     const adminCookie = cookieOf(await login('admin'));
     const productId = await firstProductId(adminCookie);

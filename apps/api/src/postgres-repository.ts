@@ -4,6 +4,8 @@ import {
   updateSupplierInboundVat as updateDatabaseInboundVat,
 } from '@idosi/database';
 import type {
+  WarehouseInventoryQuery,
+  WarehouseInventoryResponse,
   OrderingContext,
   UpdateInboundVatRequest,
   Account,
@@ -243,6 +245,45 @@ import { hashPassword, hashSessionToken } from './security.js';
 import { asiaHoChiMinhDateRange } from './time.js';
 
 export class PostgresWarehouseRepository implements WarehouseRepository {
+  public async listWarehouseInventory(
+    actor: AuthenticatedPrincipal,
+    query: WarehouseInventoryQuery,
+  ): Promise<WarehouseInventoryResponse> {
+    if (actor.role !== 'ADMIN') throw forbidden('Chỉ Admin được xem tồn kho tổng.');
+    const filter = and(
+      isNull(products.deletedAt),
+      query.search
+        ? or(ilike(products.name, `%${query.search}%`), ilike(products.sku, `%${query.search}%`))
+        : undefined,
+    );
+    const [total] = await db.select({ count: count() }).from(products).where(filter);
+    const rows = await db
+      .select({
+        productId: products.id,
+        productName: products.name,
+        sku: products.sku,
+        onHandBags: sql<number>`coalesce(${warehouseBalances.onHandQuantity}, 0)`.mapWith(Number),
+        reservedBags: sql<number>`coalesce(${warehouseBalances.reservedQuantity}, 0)`.mapWith(
+          Number,
+        ),
+        availableBags:
+          sql<number>`coalesce(${warehouseBalances.onHandQuantity}, 0) - coalesce(${warehouseBalances.reservedQuantity}, 0)`.mapWith(
+            Number,
+          ),
+        dispatchedBags:
+          sql<number>`(select coalesce(sum(${outboundRequestLines.dispatchedQuantity}), 0) from ${outboundRequestLines} where ${outboundRequestLines.productId} = ${products.id})`.mapWith(
+            Number,
+          ),
+      })
+      .from(products)
+      .leftJoin(warehouseBalances, eq(warehouseBalances.productId, products.id))
+      .where(filter)
+      .orderBy(asc(products.displayOrder), asc(products.sku))
+      .limit(query.pageSize)
+      .offset((query.page - 1) * query.pageSize);
+    return { data: rows, pagination: pagination(query.page, query.pageSize, total?.count ?? 0) };
+  }
+
   public async ready(): Promise<boolean> {
     try {
       await pool.query('select 1');

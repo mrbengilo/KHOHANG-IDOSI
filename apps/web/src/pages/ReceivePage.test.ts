@@ -11,7 +11,7 @@ import {
 describe('actual received bag totals', () => {
   it('totals three received bags exactly without trailing decimals', () => {
     expect(receiptWeightTotal(['30', '50', '60'])).toBe('140 kg');
-    expect(receiptWeightTotal(['2.33', '4.777'])).toBe('7,107 kg');
+    expect(receiptWeightTotal(['2.33', '4.777'])).toBe('7,11 kg');
     expect(receiptWeightTotal(['30', '', '60'])).toBe('Chưa nhập đủ');
     expect(receiptWeightTotal([])).toBe('0 kg');
   });

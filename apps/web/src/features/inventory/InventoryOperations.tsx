@@ -16,7 +16,7 @@ import {
   ShoppingBag,
   XCircle,
 } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import type { AppOutletContext } from '../../components/AppShell';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
@@ -38,6 +38,7 @@ import {
   reviewStoreOutbound,
 } from './inventoryApi';
 import './inventory-operations.css';
+import { WarehouseInventory } from './WarehouseInventory';
 
 const statusCopy: Record<
   StoreInventoryBagStatus,
@@ -157,6 +158,41 @@ function useInventorySources(role: AppOutletContext['role']) {
 }
 
 export function ProductionInventoryPage({ role }: AppOutletContext) {
+  const [scope, setScope] = useState<'WAREHOUSE' | 'STORE'>('WAREHOUSE');
+  if (role !== 'ADMIN') return <StoreInventoryPage role={role} storeKind={null} />;
+  const navigation = (
+    <div className="inventory-actions inventory-scope-tabs" aria-label="Phạm vi tồn kho">
+      <Button
+        tone={scope === 'WAREHOUSE' ? 'primary' : 'secondary'}
+        aria-pressed={scope === 'WAREHOUSE'}
+        onClick={() => setScope('WAREHOUSE')}
+      >
+        Kho tổng
+      </Button>
+      <Button
+        tone={scope === 'STORE' ? 'primary' : 'secondary'}
+        aria-pressed={scope === 'STORE'}
+        onClick={() => setScope('STORE')}
+      >
+        Kho cửa hàng
+      </Button>
+    </div>
+  );
+  return (
+    <>
+      {scope === 'WAREHOUSE' ? (
+        <WarehouseInventory navigation={navigation} />
+      ) : (
+        <StoreInventoryPage role={role} storeKind={null} navigation={navigation} />
+      )}
+    </>
+  );
+}
+
+function StoreInventoryPage({
+  role,
+  navigation,
+}: AppOutletContext & { readonly navigation?: ReactNode }) {
   const { catalogQuery, defaultStoreId, sessionQuery, stores, storesQuery } =
     useInventorySources(role);
   const [storeId, setStoreId] = useState('');
@@ -239,6 +275,8 @@ export function ProductionInventoryPage({ role }: AppOutletContext) {
         description="Số dư lấy trực tiếp từ sổ phát sinh bất biến; mọi thay đổi đều có phiên bản và người thao tác"
         title="Tồn kho & lịch sử"
       />
+
+      {navigation}
 
       {loadError ? (
         <section className="panel source-error" role="alert">

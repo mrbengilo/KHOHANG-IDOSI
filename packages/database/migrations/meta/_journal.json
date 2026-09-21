@@ -71,6 +71,13 @@
       "when": 1789970000000,
       "tag": "0009_supported_allocation_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790000000000,
+      "tag": "0010_current_mens_product_name",
+      "breakpoints": true
     }
   ]
 }

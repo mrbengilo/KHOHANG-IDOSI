@@ -65,7 +65,7 @@ const PRODUCT_SEED_DEFINITIONS = [
   { sku: 'DO_THE_THAO', slug: 'do-the-thao', name: 'Đồ thể thao', displayOrder: 9 },
   { sku: 'AO_KHOAC', slug: 'ao-khoac', name: 'Áo khoác', displayOrder: 10 },
   { sku: 'AO_NU', slug: 'ao-nu', name: 'Áo nữ', displayOrder: 11 },
-  { sku: 'DO_NAM', slug: 'do-nam', name: 'Đồ nam', displayOrder: 12 },
+  { sku: 'DO_NAM', slug: 'do-nam', name: 'Quần áo nam', displayOrder: 12 },
   { sku: 'NAM_SM', slug: 'nam-sm', name: 'Nam SM', displayOrder: 13 },
   { sku: 'NU_SM', slug: 'nu-sm', name: 'Nữ SM', displayOrder: 14 },
   { sku: 'AO_VEST', slug: 'ao-vest', name: 'Áo vest', displayOrder: 15 },

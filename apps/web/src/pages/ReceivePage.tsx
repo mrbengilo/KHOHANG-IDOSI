@@ -1273,7 +1273,7 @@ function MockReceivePage() {
   return (
     <>
       <PageHeader
-        description="Phiếu PB-GV-260912-032 • 5 bao Đồ nam • cửa hàng Gò Vấp"
+        description="Phiếu PB-GV-260912-032 • 5 bao Quần áo nam • cửa hàng Gò Vấp"
         title="Xác nhận nhận hàng"
       />
       <div className="stats-grid stats-grid--small">

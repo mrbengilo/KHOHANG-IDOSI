@@ -234,10 +234,20 @@
   gap: 4px;
   font-size: 12px;
 }
-.idosi-sales-summary input {
+.idosi-sales-summary input,
+.idosi-sales-summary select {
   min-height: 44px;
   width: 100%;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px;
+}
+
+.idosi-sales-summary .section-heading {
+  flex-wrap: wrap;
+}
+
+.idosi-sales-summary .section-heading label {
+  min-width: 0;
+  max-width: 100%;
 }

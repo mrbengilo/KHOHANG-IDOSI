@@ -185,7 +185,7 @@ function MockPriorityOffer({
   bags = 3,
   compact = false,
   expiresInSeconds = 18 * 60 + 42,
-  product = 'Đồ nam',
+  product = 'Quần áo nam',
 }: MockPriorityOfferProps) {
   const [remaining, setRemaining] = useState(expiresInSeconds);
   const [state, setState] = useState<'ACTIVE' | 'CONFIRMED' | 'DECLINED'>('ACTIVE');

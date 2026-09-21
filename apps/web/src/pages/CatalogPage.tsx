@@ -60,12 +60,6 @@ function roundDivide(numerator: bigint, denominator: bigint): bigint {
   return (numerator * 2n + denominator) / (denominator * 2n);
 }
 
-function formatThousandths(value: bigint): string {
-  const whole = value / 1_000n;
-  const fraction = String(value % 1_000n).padStart(3, '0');
-  return `${whole.toLocaleString('vi-VN')},${fraction}`;
-}
-
 export function formatConversionRatios(conversion: ProductConversion | null): {
   readonly itemsPerKilogram: string;
   readonly kilogramsPerItem: string;
@@ -79,12 +73,15 @@ export function formatConversionRatios(conversion: ProductConversion | null): {
   }
   const itemQuantity = BigInt(conversion.itemQuantity);
   const gramQuantity = BigInt(grams);
-  const itemsPerKilogram = roundDivide(itemQuantity * 1_000_000n, gramQuantity);
-  const kilogramsPerItem = roundDivide(gramQuantity, itemQuantity);
+  const itemsNumerator = itemQuantity * 1_000n;
+  const kilogramsPerItem = roundDivide(gramQuantity, itemQuantity * 10n);
   return {
-    itemsPerKilogram: `${formatThousandths(itemsPerKilogram)} cái`,
+    itemsPerKilogram:
+      itemsNumerator % gramQuantity === 0n
+        ? `${(itemsNumerator / gramQuantity).toLocaleString('vi-VN')} cái`
+        : `${conversion.itemQuantity} cái / ${formatKg(conversion.weightKilograms)}`,
     kilogramsPerItem: formatKg(
-      `${kilogramsPerItem / 1000n}.${String(kilogramsPerItem % 1000n).padStart(3, '0')}`,
+      `${kilogramsPerItem / 100n}.${String(kilogramsPerItem % 100n).padStart(2, '0')}`,
     ),
   };
 }
@@ -590,8 +587,8 @@ export function CatalogPage() {
       <div className="example-grid">
         <article>
           <span>Đầm</span>
-          <strong>6 cái ÷ 3 = 2,000 kg</strong>
-          <small>Hệ số 3 cái = 1,000 kg</small>
+          <strong>6 cái ÷ 3 = 2 kg</strong>
+          <small>Hệ số 3 cái = 1 kg</small>
         </article>
         <article>
           <span>Chăn, ga, bao gối, nệm gòn</span>
@@ -712,7 +709,7 @@ export function CatalogPage() {
                 <thead>
                   <tr>
                     <th>Mặt hàng</th>
-                    <th>1 kg = số cái</th>
+                    <th>Quy đổi số cái</th>
                     <th>1 cái = kg</th>
                     <th>Phiên bản / hiệu lực</th>
                     <th>Trạng thái</th>
@@ -729,7 +726,7 @@ export function CatalogPage() {
                           <strong>{entry.product.name}</strong>
                           <small>{entry.product.sku}</small>
                         </td>
-                        <td data-label="1 kg = số cái">{ratios.itemsPerKilogram}</td>
+                        <td data-label="Quy đổi số cái">{ratios.itemsPerKilogram}</td>
                         <td data-label="1 cái = kg">{ratios.kilogramsPerItem}</td>
                         <td data-label="Phiên bản / hiệu lực">
                           {entry.conversion ? (

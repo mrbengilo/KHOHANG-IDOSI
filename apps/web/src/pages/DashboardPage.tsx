@@ -136,9 +136,7 @@ export function formatExactGrams(value: string): string {
   const grams = BigInt(value);
   const kilograms = grams / 1_000n;
   const remainder = grams % 1_000n;
-  const whole = new Intl.NumberFormat('vi-VN').format(kilograms);
-  if (remainder === 0n) return `${whole} kg`;
-  return `${whole},${remainder.toString().padStart(3, '0').replace(/0+$/, '')} kg`;
+  return formatKg(`${kilograms}.${remainder.toString().padStart(3, '0')}`);
 }
 
 function formatAmount(amount: InventoryAmount): string {
@@ -460,6 +458,12 @@ export function DashboardPage() {
             <IdosiSalesSummary
               key={`${yearMonth}:${scopeKey}`}
               period={yearMonth}
+              filters={{
+                stores: bootstrap.stores.filter((store) => store.kind !== 'WHOLESALE'),
+                allowAll: sessionRole === 'ADMIN',
+                onPeriodChange: setYearMonth,
+                onStoreChange: setRequestedScope,
+              }}
               {...(scope?.kind === 'STORE' ? { storeId: scope.storeId } : {})}
             />
           ) : null}

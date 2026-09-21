@@ -27,6 +27,10 @@ const storeGroupVersionMigration = readFileSync(
   new URL('../migrations/0006_store_group_versions.sql', import.meta.url),
   'utf8',
 );
+const currentMensProductNameMigration = readFileSync(
+  new URL('../migrations/0010_current_mens_product_name.sql', import.meta.url),
+  'utf8',
+);
 const schemaSource = readFileSync(new URL('../src/schema.ts', import.meta.url), 'utf8');
 const seedDataSource = readFileSync(new URL('../src/seed-data.ts', import.meta.url), 'utf8');
 const storeOperationsSource = readFileSync(
@@ -169,9 +173,13 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(10);
+    expect(journal.entries).toHaveLength(11);
     expect(journal.entries[8]).toMatchObject({ tag: '0008_optional_supplier_weight' });
     expect(journal.entries[9]).toMatchObject({ tag: '0009_supported_allocation_policy' });
+    expect(journal.entries[10]).toMatchObject({
+      tag: '0010_current_mens_product_name',
+      breakpoints: true,
+    });
     expect(journal.entries[7]).toMatchObject({ tag: '0007_receipt_vat', breakpoints: true });
     expect(journal.entries[0]).toMatchObject({
       tag: '0000_initial',
@@ -448,6 +456,16 @@ describe('initial migration invariants', () => {
     for (const table of protectedTables) {
       expect(migration).toContain(`CREATE TRIGGER ${table}_no_hard_delete`);
     }
+  });
+
+  it('updates the retired menswear label without rewriting relational history', () => {
+    expect(currentMensProductNameMigration).toContain(`WHERE "sku" = 'DO_NAM'`);
+    expect(currentMensProductNameMigration).toContain(`SET "name" = 'Quần áo nam'`);
+    expect(currentMensProductNameMigration).toContain('PRODUCT_DISPLAY_NAME_UPDATED');
+    expect(currentMensProductNameMigration).not.toMatch(
+      /UPDATE\s+"?(?:order|receipt|outbound|warehouse)/iu,
+    );
+    expect(seedDataSource).toContain("name: 'Quần áo nam'");
   });
 });
 

@@ -178,7 +178,7 @@ describe('dashboard state and actions', () => {
 
   it('formats backend integers without losing precision', () => {
     expect(formatExactVnd('9007199254740993')).toContain('9.007.199.254.740.993');
-    expect(formatExactGrams('9007199254740993')).toBe('9.007.199.254.740,993 kg');
+    expect(formatExactGrams('9007199254740993')).toBe('9.007.199.254.740,99 kg');
   });
 });
 
