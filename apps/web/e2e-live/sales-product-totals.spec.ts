@@ -10,20 +10,28 @@ test('sales totals group source products and month/store filters preserve scope'
   await page
     .getByLabel('Mật khẩu')
     .fill(process.env.LIVE_E2E_ADMIN_PASSWORD ?? 'ci-bootstrap-password-not-for-production');
+  const loginResponsePromise = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.endsWith('/auth/login') &&
+      response.request().method() === 'POST',
+  );
   await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
+  expect((await loginResponsePromise).status()).toBe(200);
+  const storesResponse = await page
+    .context()
+    .request.get(
+      'http://127.0.0.1:3100/api/v1/stores?page=1&pageSize=100&kind=RETAIL&status=ACTIVE',
+    );
+  expect(storesResponse.status()).toBe(200);
+  const storesPayload = (await storesResponse.json()) as {
+    data: Array<{ id: string; kind: string; name: string; status: string }>;
+  };
+  const stores = storesPayload.data
+    .filter((store) => store.kind === 'RETAIL' && store.status === 'ACTIVE')
+    .slice(0, 2);
+  expect(stores).toHaveLength(2);
   const region = page.getByRole('region', { name: 'Doanh thu & hàng đã bán · IDOSI', exact: true });
   const storeFilter = region.getByLabel('Cửa hàng thống kê bán hàng');
-  await expect.poll(() => storeFilter.locator('option').count()).toBeGreaterThan(2);
-  const stores = await storeFilter.locator('option').evaluateAll((options) =>
-    options
-      .map((option) => ({
-        id: (option as HTMLOptionElement).value,
-        name: option.textContent ?? '',
-      }))
-      .filter((option) => option.id !== 'ALL')
-      .slice(0, 2),
-  );
-  expect(stores).toHaveLength(2);
   let interceptedRequests = 0;
   await page.route('**/integrations/idosi/statistics-summary?*', async (route) => {
     interceptedRequests += 1;
@@ -118,7 +126,8 @@ test('sales totals group source products and month/store filters preserve scope'
     });
   });
   await page.reload();
-  await expect.poll(() => interceptedRequests).toBeGreaterThan(0);
+  await expect.poll(() => interceptedRequests, { timeout: 30_000 }).toBeGreaterThan(0);
+  await expect(storeFilter).toBeVisible({ timeout: 30_000 });
   const row = region.getByRole('row', { name: /Mặt hàng kiểm thử tổng hợp/ });
   await expect(row).toHaveCount(1);
   await expect(row).toContainText('12 cái');
