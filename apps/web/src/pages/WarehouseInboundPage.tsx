@@ -410,6 +410,7 @@ function InvoiceCostEditor({ receipt }: { receipt: InboundReceipt }) {
             </span>
             <input
               required
+              aria-label="Tổng tiền hàng theo hóa đơn (VND)"
               inputMode="numeric"
               value={amount}
               onChange={(event) => setAmount(event.target.value)}
@@ -424,6 +425,7 @@ function InvoiceCostEditor({ receipt }: { receipt: InboundReceipt }) {
             </span>
             <input
               required
+              aria-label="Phí vận chuyển (VND)"
               inputMode="numeric"
               value={shipping}
               onChange={(event) => setShipping(event.target.value)}
@@ -438,6 +440,7 @@ function InvoiceCostEditor({ receipt }: { receipt: InboundReceipt }) {
             </span>
             <input
               required
+              aria-label="Phí bốc vác (VND)"
               inputMode="numeric"
               value={handling}
               onChange={(event) => setHandling(event.target.value)}
@@ -538,6 +541,7 @@ function InboundVatEditor({ receipt }: { receipt: InboundReceipt }) {
               </span>
             </span>
             <input
+              aria-label={`Số tiền VAT cho ${receipt.referenceCode}`}
               inputMode="numeric"
               value={amount}
               onChange={(event) => setAmount(event.target.value)}
@@ -552,6 +556,7 @@ function InboundVatEditor({ receipt }: { receipt: InboundReceipt }) {
               </span>
             </span>
             <input
+              aria-label={`Lý do cập nhật VAT cho ${receipt.referenceCode}`}
               value={reason}
               onChange={(event) => setReason(event.target.value)}
               minLength={3}
