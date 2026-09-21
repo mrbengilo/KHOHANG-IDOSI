@@ -1,4 +1,4 @@
-import { ArrowRight, Boxes, LockKeyhole, User } from 'lucide-react';
+import { ArrowRight, LockKeyhole, User } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
@@ -51,36 +51,7 @@ export function LoginPage() {
   }
 
   return (
-    <main className="login-page">
-      <section className="login-visual">
-        <div className="login-brand">
-          <img
-            className="app-logo"
-            src="/idosi-kho-app-1024.png"
-            alt="IDOSI Kho hàng"
-            width="112"
-            height="84"
-          />
-          <span>QUẢN TRỊ HỆ THỐNG</span>
-        </div>
-        <div>
-          <Boxes aria-hidden="true" size={42} />
-          <h1>
-            Kho hàng minh bạch.
-            <br />
-            Phân bổ công bằng.
-          </h1>
-          <p>
-            Theo dõi toàn bộ vòng đời của từng bao hàng — từ nhu cầu, phân bổ đến doanh thu và chứng
-            từ kết thúc.
-          </p>
-        </div>
-        <ul>
-          <li>Snapshot và phân bổ có thể kiểm toán</li>
-          <li>Tồn kho bất biến, đối soát theo sổ cái</li>
-          <li>Phân quyền Admin, HTKD và cửa hàng</li>
-        </ul>
-      </section>
+    <main className="login-page login-page--compact">
       <section className="login-panel">
         <form onSubmit={submit}>
           <img
@@ -92,7 +63,8 @@ export function LoginPage() {
           />
           <div>
             <span>Chào mừng trở lại</span>
-            <h2>Đăng nhập Kho hàng IDOSI</h2>
+            <h1>Đăng nhập Kho hàng IDOSI</h1>
+            <p className="login-slogan">QUẢN LÝ &amp; PHÂN BỔ HÀNG HÓA HỆ THỐNG IDOSI</p>
             <p>Sử dụng tài khoản được quản trị viên cấp.</p>
           </div>
           {error ? (
@@ -101,17 +73,35 @@ export function LoginPage() {
             </div>
           ) : null}
           <label>
-            Tên đăng nhập
+            <span>
+              Tên đăng nhập{' '}
+              <span className="required-mark" aria-hidden="true">
+                *
+              </span>
+            </span>
             <div className="input-with-icon">
               <User aria-hidden="true" size={18} />
-              <input autoComplete="username" name="login" placeholder="Tên đăng nhập" />
+              <input
+                required
+                aria-label="Tên đăng nhập"
+                autoComplete="username"
+                name="login"
+                placeholder="Tên đăng nhập"
+              />
             </div>
           </label>
           <label>
-            Mật khẩu
+            <span>
+              Mật khẩu{' '}
+              <span className="required-mark" aria-hidden="true">
+                *
+              </span>
+            </span>
             <div className="input-with-icon">
               <LockKeyhole aria-hidden="true" size={18} />
               <input
+                required
+                aria-label="Mật khẩu"
                 autoComplete="current-password"
                 name="password"
                 placeholder="Mật khẩu"

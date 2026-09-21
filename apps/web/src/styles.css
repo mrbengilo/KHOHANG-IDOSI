@@ -2398,6 +2398,25 @@ body.dialog-open {
   grid-template-columns: minmax(360px, 1.05fr) minmax(420px, 0.95fr);
   background: white;
 }
+.login-page.login-page--compact {
+  grid-template-columns: minmax(0, 1fr);
+}
+.login-page--compact .login-panel h1 {
+  font-size: 28px;
+  line-height: 1.3;
+  letter-spacing: -0.04em;
+  margin: 6px 0;
+}
+.login-page--compact .login-slogan {
+  color: var(--brand-dark);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+.required-mark {
+  color: var(--danger);
+  font-weight: 700;
+}
 .login-visual {
   display: flex;
   flex-direction: column;
