@@ -232,6 +232,18 @@ describe('dashboard API integration', () => {
     ).toBe(true);
   });
 
+  it('does not offer inactive stores rejected by the report scope endpoint', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string) =>
+        input.includes('/auth/session')
+          ? jsonResponse({ data: sessionFor('ADMIN') })
+          : jsonResponse(page([stores[0], { ...stores[1], status: 'INACTIVE' }])),
+      ),
+    );
+    expect((await loadDashboardBootstrap()).stores).toEqual([stores[0]]);
+  });
+
   it('surfaces a network failure instead of inventing a mock dashboard', async () => {
     vi.stubGlobal(
       'fetch',

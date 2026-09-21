@@ -7,6 +7,7 @@ import type {
   Store,
 } from '@idosi/contracts';
 import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { IdosiSalesSummary } from '../features/idosi/IdosiSalesSummary';
 import {
   AlertTriangle,
@@ -17,8 +18,12 @@ import {
   RefreshCcw,
   ShoppingBag,
 } from 'lucide-react';
-import { useState } from 'react';
-import { useNavigate, useOutletContext } from 'react-router-dom';
+import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
+import {
+  readReportNavigation,
+  reportDrilldownPath,
+  updateReportNavigation,
+} from '../lib/report-navigation';
 import type { AppOutletContext } from '../components/AppShell';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
@@ -278,8 +283,17 @@ function recentActivity(snapshot: DashboardSnapshot, stores: readonly Store[]): 
 export function DashboardPage() {
   const { role: shellRole, storeKind: shellStoreKind } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
-  const [yearMonth, setYearMonth] = useState(currentBusinessMonth);
-  const [requestedScope, setRequestedScope] = useState(shellRole === 'ADMIN' ? 'ALL' : '');
+  const [search, setSearch] = useSearchParams();
+  const [defaultPeriod] = useState(currentBusinessMonth);
+  const { period: yearMonth, scope: requestedScope } = readReportNavigation(
+    search,
+    defaultPeriod,
+    shellRole === 'ADMIN',
+  );
+  const setYearMonth = (value: string) =>
+    setSearch((previous) => updateReportNavigation(previous, 'period', value), { replace: true });
+  const setRequestedScope = (value: string) =>
+    setSearch((previous) => updateReportNavigation(previous, 'scope', value), { replace: true });
   const bootstrapQuery = useQuery({
     queryFn: loadDashboardBootstrap,
     queryKey: ['dashboard', 'bootstrap'],
@@ -333,6 +347,10 @@ export function DashboardPage() {
   };
 
   const primaryTarget = dashboardRouteForAction('PRIMARY', sessionRole, effectiveStoreKind);
+  const scopedPrimaryTarget =
+    primaryTarget === '/reports' && scopeKey
+      ? reportDrilldownPath(yearMonth, scopeKey)
+      : primaryTarget;
   const primaryLabel =
     sessionRole === 'STORE'
       ? effectiveStoreKind === 'WHOLESALE'
@@ -360,7 +378,7 @@ export function DashboardPage() {
               <RefreshCcw aria-hidden="true" size={16} /> Tải lại
             </Button>
             {bootstrap ? (
-              <Button onClick={() => navigate(primaryTarget)}>
+              <Button onClick={() => navigate(scopedPrimaryTarget)}>
                 {primaryLabel} <ArrowRight aria-hidden="true" size={16} />
               </Button>
             ) : null}

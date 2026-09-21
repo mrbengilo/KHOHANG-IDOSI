@@ -129,7 +129,7 @@ export async function loadDashboardBootstrap(): Promise<DashboardBootstrap> {
   ]);
   return {
     session: GetSessionResponseSchema.parse(sessionPayload).data,
-    stores,
+    stores: stores.filter((store) => store.status === 'ACTIVE'),
   };
 }
 

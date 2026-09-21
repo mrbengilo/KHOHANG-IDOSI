@@ -16,7 +16,7 @@ Yêu cầu người dùng chốt sau thiết kế được ưu tiên:
 - Đặt hàng 24/7; hai phiếu thường mỗi chu kỳ, reset sau hoàn tất phân bổ.
 - Phiếu ưu tiên không chiếm lượt, giữ hàng đến khi có đơn thường tiếp theo để giao chung.
 - Admin không hiện mục Đặt hàng, Nhận hàng, Khui kiện; có Nhập kho tổng.
-- Khối lượng nhập kho tổng không bắt buộc; chưa biết khác với 0 kg.
+- Nhập kho tổng không có trường khối lượng. Cửa hàng khai thực nhận theo bao; HTKD nhập kg từng bao sau đó. Chưa biết khác với 0 kg.
 - Checkbox, tên hàng và số bao trên một hàng, nút tăng/giảm đủ vùng bấm.
 - Kg tối đa ba chữ số thập phân, bỏ số 0 dư, định dạng Việt Nam.
 - Logo thật, đăng nhập một cột cùng slogan đã yêu cầu; viền sáng, icon màu,
@@ -60,6 +60,25 @@ Trang 1–8, 21, 41, 66–67, 82 và 108 là phần giới thiệu/phân nhóm, 
 6. Chỉ merge/deploy sau CI, kiểm tra migration, backup và nghiệm thu các nhóm liên quan.
 
 ## Bằng chứng hiện có
+
+### Bổ sung 21/09/2026
+
+- PR #33 đã merge và triển khai SHA `ce1cb8e7de527c125a7ae051b99b6b495ed800dc`.
+  Lịch sử nhập kho hiện tên mặt hàng, số bao và thời gian Việt Nam; dấu bắt buộc,
+  đăng nhập một cột/slogan, viền mục đang chọn và icon màu đã được kiểm thử.
+  Đã xem hai phiếu thật trên production ở 375/1440 px, không ghi phiếu kiểm thử vào kho thật.
+- Các kiểm thử UI của PR #33 và luồng API/PostgreSQL trên CI đã đạt; backup trước deploy
+  được đối chiếu checksum ngoài VPS và khôi phục vào database kiểm tra riêng.
+- Đã đọc trực tiếp Figma Admin `217:3`, các khối Sidebar `217:4`, bộ lọc `217:30`,
+  KPI `217:61`, vận hành `217:102`. Chưa coi toàn bộ dashboard là khớp mẫu.
+- Bổ sung giữ kỳ/cửa hàng khi Tổng quan → Báo cáo → reload/Back, bằng URL được kiểm tra
+  định dạng. URL không cấp quyền; API vẫn kiểm tra phạm vi. Chưa thêm bộ lọc phiên,
+  HTKD, mặt hàng, nguồn hay biểu đồ nếu chưa có projection nguồn tương ứng.
+- Kiểm tra nguồn IDOSI thực tế: 10/10 cửa hàng bán lẻ có snapshot tháng 09/2026.
+  Nguồn còn đánh dấu thiếu hệ số và đơn chưa phân loại; không dùng kg đã biết làm tổng
+  đầy đủ, không tự tạo hệ số hay sửa số liệu nguồn.
+
+Các mục bên dưới là bằng chứng lịch sử, không thay thế trạng thái nghiệm thu mới nhất.
 
 - Đã xem 47/115 mẫu: Admin desktop 9–20, HTKD desktop 22–40, cửa hàng
   desktop 42–51 và 61–65, mobile khui kiện 110. Còn 9 mẫu desktop 52–60 và 59 mẫu mobile.
