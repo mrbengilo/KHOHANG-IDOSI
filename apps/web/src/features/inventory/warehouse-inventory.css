@@ -1,0 +1,31 @@
+.warehouse-stock-panel {
+  width: 100%;
+  max-width: 1120px;
+}
+.warehouse-stock-panel table {
+  font-size: 14px;
+}
+.warehouse-stock-panel th {
+  font-size: 12px;
+  text-transform: none;
+}
+.warehouse-stock-panel td,
+.warehouse-stock-panel th {
+  padding: 9px 12px;
+}
+.warehouse-stock-panel td small {
+  font-size: 11px;
+}
+.warehouse-stock-panel td:not(:first-child) {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.warehouse-stock-panel .inventory-actions {
+  align-items: end;
+  margin-block: 12px;
+}
+@media (min-width: 769px) {
+  .warehouse-stock-panel th:first-child {
+    width: 28%;
+  }
+}

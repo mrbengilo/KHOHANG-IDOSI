@@ -147,7 +147,11 @@ function WarehouseInboundContent() {
         </div>
       ) : null}
       {catalog.isPending ? <p role="status">Đang tải mặt hàng…</p> : null}
-      <form className="panel" noValidate onSubmit={(event) => void submit(event)}>
+      <form
+        className="panel warehouse-inbound-form"
+        noValidate
+        onSubmit={(event) => void submit(event)}
+      >
         <fieldset disabled={busy} className="product-bag-picker">
           <div className="form-grid">
             <label>
@@ -268,6 +272,7 @@ function WarehouseInboundContent() {
             </p>
           ) : null}
           <Button
+            className="warehouse-inbound-form__submit"
             type="submit"
             busy={busy}
             disabled={catalog.isPending || catalog.isError || draft.length === 0 || total > 2000}

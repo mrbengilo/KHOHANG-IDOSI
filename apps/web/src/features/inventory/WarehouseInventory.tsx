@@ -5,6 +5,7 @@ import { PageHeader } from '../../components/PageHeader';
 import { listAccessibleStores, listCatalog } from '../../lib/api';
 import { formatInteger } from '../../lib/format';
 import { loadWarehouseInventory, loadWarehouseOutboundHistory } from './inventoryApi';
+import './warehouse-inventory.css';
 
 export function WarehouseInventory({ navigation }: { readonly navigation?: ReactNode }) {
   const [page, setPage] = useState(1);
@@ -58,7 +59,7 @@ export function WarehouseInventory({ navigation }: { readonly navigation?: React
         }
       />
       {navigation}
-      <section className="panel" aria-label="Tồn kho tổng theo mặt hàng">
+      <section className="panel warehouse-stock-panel" aria-label="Tồn kho tổng theo mặt hàng">
         <h2>Tồn kho hiện tại theo mặt hàng</h2>
         <p>
           Đang có tại kho = có thể xuất + đang giữ/chờ xuất. Đã xuất là số bao lũy kế trên phiếu
@@ -137,7 +138,7 @@ export function WarehouseInventory({ navigation }: { readonly navigation?: React
           </>
         )}
       </section>
-      <section className="panel" aria-label="Lịch sử phiếu xuất kho tổng">
+      <section className="panel warehouse-stock-panel" aria-label="Lịch sử phiếu xuất kho tổng">
         <h2>Phiếu chờ xuất & lịch sử xuất kho</h2>
         {catalog.isError || stores.isError ? (
           <p role="alert">Chưa tải được tên mặt hàng/cửa hàng; tạm hiển thị mã để đối soát.</p>
