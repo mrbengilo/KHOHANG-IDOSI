@@ -4,4 +4,6 @@ ALTER TABLE "receipt_bag_weights" ADD CONSTRAINT "receipt_bag_weights_weight_pre
 --> statement-breakpoint
 CREATE SEQUENCE supplier_receipt_number_seq AS bigint MINVALUE 1;
 --> statement-breakpoint
-SELECT setval('supplier_receipt_number_seq', COALESCE((SELECT max(substring(receipt_number FROM '^PN([0-9]+)-')::bigint) FROM receipts WHERE receipt_number ~ '^PN[0-9]+-'), 0) + 1, false);
+-- Legacy references were free text. Only bounded numeric prefixes participate;
+-- longer references remain unchanged and must not overflow the sequence seed.
+SELECT setval('supplier_receipt_number_seq', COALESCE((SELECT max(substring(receipt_number FROM '^PN([0-9]{1,18})-')::bigint) FROM receipts WHERE receipt_number ~ '^PN[0-9]{1,18}-'), 0) + 1, false);

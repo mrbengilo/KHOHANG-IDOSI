@@ -197,10 +197,22 @@ export async function receiveSupplierInboundInTransaction(
   await assertWarehouseActor(tx, input.receivedByUserId, input.actorRole);
   if (!normalized.referenceCode) {
     // Sequence allocation happens only after the idempotency replay gate. Gaps are allowed.
-    const result = await tx.execute<{ value: string }>(
-      sql`SELECT nextval('supplier_receipt_number_seq')::text AS value`,
-    );
-    normalized.referenceCode = formatInboundReceiptNumber(result.rows[0]!.value, new Date());
+    // Legacy clients may have explicitly claimed a future PN reference.
+    for (;;) {
+      const result = await tx.execute<{ value: string }>(
+        sql`SELECT nextval('supplier_receipt_number_seq')::text AS value`,
+      );
+      const candidate = formatInboundReceiptNumber(result.rows[0]!.value, new Date());
+      const [existing] = await tx
+        .select({ id: receipts.id })
+        .from(receipts)
+        .where(eq(receipts.receiptNumber, candidate))
+        .limit(1);
+      if (!existing) {
+        normalized.referenceCode = candidate;
+        break;
+      }
+    }
   }
   return withAdvisoryLock(tx, 'supplier-inbound-reference', normalized.referenceCode, async () => {
     for (const bagCode of normalized.bags.map((bag) => bag.bagCode).sort()) {

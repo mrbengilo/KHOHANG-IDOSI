@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
+import { formatInboundReceiptNumber } from '@idosi/contracts';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import {
@@ -29,6 +30,36 @@ const describePostgres = process.env.RUN_POSTGRES_TESTS === '1' ? describe : des
 
 describePostgres('supplier inbound PostgreSQL lifecycle', () => {
   afterAll(async () => closeDatabase());
+
+  it('skips generated numbers already claimed by a legacy client', async () => {
+    const fixture = await loadFixture();
+    const sequence = await db.execute<{ value: string }>(
+      sql`SELECT nextval('supplier_receipt_number_seq')::text AS value`,
+    );
+    const claimed = formatInboundReceiptNumber(
+      (BigInt(sequence.rows[0]!.value) + 1n).toString(),
+      new Date(),
+    );
+    const makeInput = (referenceCode: string | undefined) => {
+      const key = randomUUID();
+      return {
+        referenceCode,
+        supplierName: 'Legacy numbering',
+        receivedAt: new Date(),
+        bags: [{ productId: fixture.productId, bagCode: key, weightKg: null }],
+        receivedByUserId: fixture.actorId,
+        actorRole: 'admin' as const,
+        idempotencyKey: key,
+        requestHash: key,
+      };
+    };
+    await receiveSupplierInbound(db, makeInput(claimed));
+    const result = await receiveSupplierInbound(db, makeInput(undefined));
+    if (result.replayed) throw new Error('Expected new receipt');
+    const [row] = await db.select().from(receipts).where(eq(receipts.id, result.value.receiptId));
+    expect(row!.receiptNumber).not.toBe(claimed);
+    expect(row!.receiptNumber).toMatch(/^PN\d{5,}-\d{2}\/\d{2}\/\d{4}$/);
+  });
 
   it('generates distinct PN numbers concurrently and replays without a second receipt', async () => {
     const fixture = await loadFixture();
