@@ -752,7 +752,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
           ) : null}
           <div className="allocation-session-form__grid">
             <label>
-              Ngày nghiệp vụ
+              <span className="field-label">Ngày nghiệp vụ</span>
               <input
                 disabled={pendingAction === 'CREATE'}
                 onChange={(event) => updateDraft('businessDate', event.target.value)}
@@ -763,7 +763,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
               />
             </label>
             <label>
-              Mở nhận đơn
+              <span className="field-label">Mở nhận đơn</span>
               <input
                 disabled={pendingAction === 'CREATE'}
                 onChange={(event) => updateDraft('requestOpensTime', event.target.value)}
@@ -773,7 +773,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
               />
             </label>
             <label>
-              Đóng nhận đơn / snapshot
+              <span className="field-label">Đóng nhận đơn / snapshot</span>
               <input
                 disabled={pendingAction === 'CREATE'}
                 onChange={(event) => updateDraft('requestClosesTime', event.target.value)}
@@ -783,7 +783,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
               />
             </label>
             <label>
-              Bắt đầu phân bổ
+              <span className="field-label">Bắt đầu phân bổ</span>
               <input
                 disabled={pendingAction === 'CREATE'}
                 onChange={(event) => updateDraft('allocationStartsTime', event.target.value)}
@@ -793,7 +793,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
               />
             </label>
             <label className="allocation-session-form__wide">
-              Phiên bản chính sách
+              <span className="field-label">Phiên bản chính sách</span>
               <input
                 disabled={pendingAction === 'CREATE'}
                 maxLength={80}
@@ -1191,7 +1191,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
             <p>Thao tác được audit và không thể mở lại phiên đã hủy.</p>
           </div>
           <label>
-            Lý do hủy
+            <span className="field-label">Lý do hủy</span>
             <textarea
               disabled={pendingAction === `${cancelTarget.id}:CANCELLED`}
               maxLength={500}

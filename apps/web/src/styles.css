@@ -2417,6 +2417,11 @@ body.dialog-open {
   color: var(--danger);
   font-weight: 700;
 }
+label:has(:required) > .field-label::after {
+  content: ' *';
+  color: var(--danger);
+  font-weight: 700;
+}
 .login-visual {
   display: flex;
   flex-direction: column;

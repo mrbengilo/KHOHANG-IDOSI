@@ -89,6 +89,37 @@ test('catalog dialog traps focus, closes with Escape, and restores its trigger',
   await expect(dialog).toBeVisible();
   await expect(dialog.getByLabel('Mã SKU')).toBeFocused();
 
+  const requiredLabels = dialog.locator('label:has(:required) > .field-label');
+  expect(await requiredLabels.count()).toBeGreaterThan(0);
+  for (const label of await requiredLabels.all()) {
+    const marker = await label.evaluate((element) => {
+      const style = getComputedStyle(element, '::after');
+      return { content: style.content, color: style.color };
+    });
+    expect(marker.content).toContain('*');
+    expect(marker.color).not.toBe(
+      await label.evaluate((element) => getComputedStyle(element).color),
+    );
+  }
+  // Markers follow native validity, including fields that become optional.
+  const skuInput = dialog.getByLabel('Mã SKU');
+  await skuInput.evaluate((element: HTMLInputElement) => {
+    element.required = false;
+  });
+  await expect(
+    dialog.locator('label:has(input:not(:required)) > .field-label').first(),
+  ).toBeVisible();
+  expect(
+    await skuInput.evaluate(
+      (element) =>
+        getComputedStyle(element.closest('label')!.querySelector('.field-label')!, '::after')
+          .content,
+    ),
+  ).not.toContain('*');
+  await skuInput.evaluate((element: HTMLInputElement) => {
+    element.required = true;
+  });
+
   const controls = dialog.locator('button, input, select, textarea');
   await controls.evaluateAll((elements) => {
     elements.forEach((element) => {

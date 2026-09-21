@@ -665,7 +665,7 @@ function CreateReceiptForm({
                       <input disabled type="number" value={line.approvedUnits} />
                     </label>
                     <label>
-                      Thực nhận
+                      <span className="field-label">Thực nhận</span>
                       <input
                         required
                         disabled={disabled}
@@ -687,7 +687,7 @@ function CreateReceiptForm({
                 ))}
               </div>
               <label>
-                Ghi chú / bằng chứng chênh lệch
+                <span className="field-label">Ghi chú / bằng chứng chênh lệch</span>
                 <textarea
                   required={lines.some((line) => line.receivedUnits < line.approvedUnits)}
                   disabled={disabled}
@@ -894,7 +894,7 @@ function StoreReceiptForm({
         </table>
       </div>
       <label>
-        Ghi chú / bằng chứng
+        <span className="field-label">Ghi chú / bằng chứng</span>
         <textarea
           required={lines.some((line) => line.receivedUnits < line.approvedUnits)}
           disabled={!editable || mutationPending}
@@ -1048,7 +1048,7 @@ function ReviewerReceiptForm({
           </div>
           <div className="receipt-review-line__fields">
             <label>
-              Giá nhập / kg (VND)
+              <span className="field-label">Giá nhập / kg (VND)</span>
               <input
                 required={line.receivedUnits > 0}
                 disabled={mutationPending || line.receivedUnits === 0}
@@ -1096,7 +1096,7 @@ function ReviewerReceiptForm({
       ))}
       <div className="receipt-fees">
         <label>
-          Phí vận chuyển (VND)
+          <span className="field-label">Phí vận chuyển (VND)</span>
           <input
             required
             disabled={mutationPending}
@@ -1108,7 +1108,7 @@ function ReviewerReceiptForm({
           />
         </label>
         <label>
-          Phí bốc xếp (VND)
+          <span className="field-label">Phí bốc xếp (VND)</span>
           <input
             required
             disabled={mutationPending}

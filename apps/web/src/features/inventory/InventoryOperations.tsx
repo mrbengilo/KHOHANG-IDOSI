@@ -802,7 +802,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
               </div>
               <div className="outbound-form-grid">
                 <label>
-                  Mã bao
+                  <span className="field-label">Mã bao</span>
                   <select
                     required
                     onChange={(event) => setBagId(event.target.value)}
@@ -818,7 +818,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                   </select>
                 </label>
                 <label>
-                  Khối lượng (kg)
+                  <span className="field-label">Khối lượng (kg)</span>
                   <input
                     required
                     inputMode="decimal"
@@ -837,7 +837,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                 </label>
                 {mode === 'SALE' ? (
                   <label>
-                    Doanh thu (VND)
+                    <span className="field-label">Doanh thu (VND)</span>
                     <input
                       required
                       inputMode="numeric"
@@ -850,7 +850,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                   </label>
                 ) : (
                   <label>
-                    Lý do
+                    <span className="field-label">Lý do</span>
                     <select
                       required
                       onChange={(event) => setReason(event.target.value as OutboundReason)}

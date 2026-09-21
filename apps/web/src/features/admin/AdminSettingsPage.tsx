@@ -216,7 +216,7 @@ function SettingsEditor({
               <small>Cố định để snapshot và cutoff không lệch ngày.</small>
             </label>
             <label className="settings-field">
-              <span>Giờ snapshot</span>
+              <span className="field-label">Giờ snapshot</span>
               <input
                 disabled={saving}
                 onChange={(event) => update('snapshotTime', event.target.value)}
@@ -226,7 +226,7 @@ function SettingsEditor({
               />
             </label>
             <label className="settings-field">
-              <span>Giờ chốt</span>
+              <span className="field-label">Giờ chốt</span>
               <input
                 disabled={saving}
                 onChange={(event) => update('cutoffTime', event.target.value)}
@@ -236,7 +236,7 @@ function SettingsEditor({
               />
             </label>
             <label className="settings-field">
-              <span>Số yêu cầu tối đa/cửa hàng</span>
+              <span className="field-label">Số yêu cầu tối đa/cửa hàng</span>
               <input
                 disabled={saving}
                 inputMode="numeric"
@@ -250,7 +250,7 @@ function SettingsEditor({
               <small>Giới hạn an toàn từ 1 đến 10 yêu cầu.</small>
             </label>
             <label className="settings-field settings-field--wide">
-              <span>Phiên bản chính sách</span>
+              <span className="field-label">Phiên bản chính sách</span>
               <input
                 disabled={saving}
                 maxLength={64}
