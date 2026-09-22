@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 
+import { StoreInventoryBagSchema } from '@idosi/contracts';
+
 import { createApi } from '../dist/app.js';
 import { MEMORY_SEED_IDS, MemoryWarehouseRepository } from '../dist/memory-repository.js';
 
@@ -35,6 +37,14 @@ describe('partner inbound', () => {
 
     // Saving the slip is what puts the goods in stock: three units, three bags.
     assert.equal(await inventoryBagCount(app, cookie), before + 3);
+
+    // Partner stock has to reach the store screens as valid inventory: a bag that carries
+    // no provenance is rejected by the contract and takes the whole stock page down.
+    const bags = await listInventoryBags(app, cookie);
+    const partnerBags = bags.filter((bag) => bag.sourcePartnerInboundBagId);
+    assert.equal(partnerBags.length, 3);
+    for (const bag of bags) StoreInventoryBagSchema.parse(bag);
+    assert.deepEqual([...new Set(partnerBags.map((bag) => bag.status))], ['AVAILABLE']);
 
     const replay = await recordSlip(app, cookie, 'partner-key-1', payload);
     assert.equal(replay.statusCode, 201, replay.body);
@@ -103,6 +113,16 @@ function recordSlip(app, cookie, idempotencyKey, payload) {
     headers: { cookie, 'idempotency-key': idempotencyKey },
     payload,
   });
+}
+
+async function listInventoryBags(app, cookie) {
+  const response = await app.inject({
+    method: 'GET',
+    url: '/api/v1/store-inventory-bags?page=1&pageSize=100',
+    headers: { cookie },
+  });
+  assert.equal(response.statusCode, 200, response.body);
+  return response.json().data;
 }
 
 async function inventoryBagCount(app, cookie) {
