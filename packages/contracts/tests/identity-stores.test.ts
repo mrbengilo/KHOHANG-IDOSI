@@ -67,6 +67,40 @@ describe('identity and store-scope contracts', () => {
     ).toBe(false);
   });
 
+  it('keeps the wholesale desk free of a single store and scoped by assignment', () => {
+    expect(
+      CreateAccountRequestSchema.safeParse({
+        username: 'wholesale.desk',
+        displayName: 'Cửa hàng sỉ',
+        password: 'a-strong-password',
+        role: 'WHOLESALE',
+      }).success,
+    ).toBe(true);
+    expect(
+      CreateAccountRequestSchema.safeParse({
+        username: 'wholesale.desk',
+        displayName: 'Cửa hàng sỉ',
+        password: 'a-strong-password',
+        role: 'WHOLESALE',
+        storeId: STORE_ID,
+      }).success,
+    ).toBe(false);
+
+    const desk = {
+      accountId: ACCOUNT_ID,
+      username: 'wholesale.desk',
+      displayName: 'Cửa hàng sỉ',
+      role: 'WHOLESALE',
+      status: 'ACTIVE',
+      storeId: null,
+      assignedStoreIds: [STORE_ID, OTHER_STORE_ID],
+    };
+    expect(AuthenticatedPrincipalSchema.safeParse(desk).success).toBe(true);
+    expect(AuthenticatedPrincipalSchema.safeParse({ ...desk, storeId: STORE_ID }).success).toBe(
+      false,
+    );
+  });
+
   it('rejects empty account patches', () => {
     expect(UpdateAccountRequestSchema.safeParse({}).success).toBe(false);
     expect(UpdateAccountRequestSchema.safeParse({ status: 'LOCKED' }).success).toBe(false);

@@ -13,6 +13,7 @@ import {
   idosiStatisticsSyncAttempts,
   operationalSettingsVersions,
   stores,
+  type DatabaseUserRole,
   type JsonObject,
 } from './schema.js';
 import { withAdvisoryLock } from './transaction.js';
@@ -25,7 +26,7 @@ export interface IdosiStatisticsTarget {
 
 export interface IdosiStatisticsAuditActor {
   readonly userId: string | null;
-  readonly role: 'admin' | 'htkd' | 'store' | null;
+  readonly role: DatabaseUserRole | null;
   readonly storeId: string | null;
 }
 

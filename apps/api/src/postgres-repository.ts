@@ -19,6 +19,7 @@ import type {
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
+  CreateStorePartnerInboundRequest,
   CreateStoreGroupRequest,
   CreateStoreOutboundRequest,
   CreateStoreRequest,
@@ -37,6 +38,7 @@ import type {
   ListPriorityOffersQuery,
   ListProductsQuery,
   ListReceiptsQuery,
+  ListStorePartnerInboundsQuery,
   ListStoreInventoryBagLedgerQuery,
   ListStoreInventoryBagsQuery,
   ListStoreOutboundsQuery,
@@ -70,6 +72,7 @@ import type {
   StoreInventoryBag,
   StoreInventoryBagLedgerEntry,
   StoreOrderRequest,
+  StorePartnerInbound,
   StoreOutbound,
   StoreReceiptSource,
   SubmitStoreReceiptRequest,
@@ -102,6 +105,12 @@ import {
   createOrderSession as createDatabaseOrderSession,
   confirmSupplierInboundCosts as confirmDatabaseSupplierInboundCosts,
   createStoreOutbound as createDatabaseStoreOutbound,
+  createStorePartnerInbound as createDatabaseStorePartnerInbound,
+  type DatabaseUserRole,
+  getStorePartnerInbound as getDatabaseStorePartnerInbound,
+  listStorePartnerInbounds as listDatabaseStorePartnerInbounds,
+  StorePartnerInboundAuthorizationError,
+  type StorePartnerInboundRecord,
   dailyPriorityOffers,
   declareStoreReceipt as declareDatabaseStoreReceipt,
   db,
@@ -385,6 +394,30 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
           }
         : null,
     );
+  }
+
+  /**
+   * Receiving is the one store operation the wholesale desk shares with store accounts, so
+   * it cannot reuse the retail-only guard. A store account still receives only for its own
+   * active retail store; the desk receives only for an active wholesale store inside its
+   * scope. Every other role is refused.
+   */
+  private async authorizeStoreReceiptOperation(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+  ): Promise<void> {
+    if (actor.role === 'STORE') {
+      await this.authorizeRetailStoreOperation(actor);
+      if (actor.storeId !== storeId) throw forbidden();
+      return;
+    }
+    if (actor.role !== 'WHOLESALE' || !canAccessStore(actor, storeId)) throw forbidden();
+    const [store] = await db
+      .select({ kind: stores.kind, isActive: stores.isActive })
+      .from(stores)
+      .where(and(eq(stores.id, storeId), isNull(stores.deletedAt)))
+      .limit(1);
+    if (!store || store.kind !== 'wholesale' || !store.isActive) throw forbidden();
   }
 
   public async listAccounts(
@@ -2294,6 +2327,69 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     });
   }
 
+  public async listStorePartnerInbounds(
+    actor: AuthenticatedPrincipal,
+    query: ListStorePartnerInboundsQuery,
+  ): Promise<Page<StorePartnerInbound>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const storeIds = partnerInboundStoreScope(actor, query.storeId);
+    const result = await listDatabaseStorePartnerInbounds(db, {
+      page: query.page,
+      pageSize: query.pageSize,
+      ...(query.partner === undefined ? {} : { partner: query.partner }),
+      ...(storeIds === undefined ? {} : { storeIds }),
+    });
+    return {
+      data: result.data.map(partnerInboundDto),
+      pagination: pagination(query.page, query.pageSize, result.totalItems),
+    };
+  }
+
+  public async getStorePartnerInbound(
+    actor: AuthenticatedPrincipal,
+    partnerInboundId: string,
+  ): Promise<StorePartnerInbound> {
+    const record = await getDatabaseStorePartnerInbound(db, partnerInboundId);
+    if (!record) throw notFound('Không tìm thấy phiếu nhập hàng đối tác');
+    if (!canAccessStore(actor, record.storeId)) throw forbidden();
+    return partnerInboundDto(record);
+  }
+
+  public async createStorePartnerInbound(
+    actor: AuthenticatedPrincipal,
+    input: CreateStorePartnerInboundRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StorePartnerInbound>> {
+    await this.authorizeRetailStoreOperation(actor);
+    if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
+    try {
+      const result = await createDatabaseStorePartnerInbound(db, {
+        storeId: input.storeId,
+        partnerName: input.partnerName,
+        note: input.note,
+        receivedAt: new Date(input.receivedAt),
+        lines: input.lines.map((line) => ({
+          productId: line.productId,
+          quantity: line.quantity,
+          bagWeightsKg: line.bagWeightsKg,
+        })),
+        createdByUserId: actor.accountId,
+        requestId: context.requestId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+      });
+      const resourceId = result.replayed ? result.resourceId : result.value.partnerInboundId;
+      if (!resourceId) throw new Error('Idempotent partner inbound has no resource id');
+      const record = await getDatabaseStorePartnerInbound(db, resourceId);
+      if (!record) throw notFound('Không tìm thấy phiếu nhập hàng đối tác');
+      return { data: partnerInboundDto(record), replayed: result.replayed };
+    } catch (error: unknown) {
+      throwPartnerInboundError(error);
+    }
+  }
+
   public async listReceipts(
     actor: AuthenticatedPrincipal,
     query: ListReceiptsQuery,
@@ -2390,8 +2486,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<Receipt>> {
-    await this.authorizeRetailStoreOperation(actor);
-    if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
+    await this.authorizeStoreReceiptOperation(actor, input.storeId);
     try {
       const result = await declareDatabaseStoreReceipt(db, {
         outboundRequestId: input.outboundRequestId,
@@ -2423,9 +2518,8 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<Receipt>> {
-    await this.authorizeRetailStoreOperation(actor);
     const current = await this.getReceipt(actor, receiptId);
-    if (actor.role !== 'STORE' || actor.storeId !== current.storeId) throw forbidden();
+    await this.authorizeStoreReceiptOperation(actor, current.storeId);
     try {
       const result = await submitDatabaseStoreReceipt(db, {
         receiptId,
@@ -3103,6 +3197,9 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
   private async credentialsFromRow(
     account: typeof users.$inferSelect,
   ): Promise<AccountCredentials> {
+    // HTKD scope is an explicit assignment list. The wholesale desk instead covers every
+    // active wholesale store, so its scope is derived live: a wholesale store opened today
+    // is in reach immediately, without anyone re-issuing assignments.
     const assignedStoreIds =
       account.role === 'htkd'
         ? (
@@ -3111,7 +3208,20 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
               .from(htkdAssignments)
               .where(and(eq(htkdAssignments.userId, account.id), isNull(htkdAssignments.revokedAt)))
           ).map((assignment) => assignment.storeId)
-        : [];
+        : account.role === 'wholesale'
+          ? (
+              await db
+                .select({ id: stores.id })
+                .from(stores)
+                .where(
+                  and(
+                    eq(stores.kind, 'wholesale'),
+                    eq(stores.isActive, true),
+                    isNull(stores.deletedAt),
+                  ),
+                )
+            ).map((store) => store.id)
+          : [];
     return {
       id: account.id,
       username: account.email,
@@ -4472,6 +4582,46 @@ function assertFinalizationMatchesDeclaration(
   }
 }
 
+/**
+ * An admin sees every slip; a store account only its own. Any other principal is limited
+ * to the stores it is scoped to, which is empty for roles with no store reach at all.
+ */
+function partnerInboundStoreScope(
+  actor: AuthenticatedPrincipal,
+  requestedStoreId: string | undefined,
+): readonly string[] | undefined {
+  if (requestedStoreId !== undefined) return [requestedStoreId];
+  if (actor.role === 'ADMIN') return undefined;
+  if (actor.role === 'STORE') return actor.storeId === null ? [] : [actor.storeId];
+  return actor.assignedStoreIds;
+}
+
+function partnerInboundDto(record: StorePartnerInboundRecord): StorePartnerInbound {
+  return {
+    id: record.id,
+    referenceCode: record.referenceCode,
+    storeId: record.storeId,
+    partnerName: record.partnerName,
+    note: record.note,
+    lines: record.lines.map((line) => ({
+      productId: line.productId,
+      quantity: line.quantity,
+      bagWeightsKg: [...line.bagWeightsKg],
+    })),
+    totalQuantity: record.totalQuantity,
+    totalWeightKg: record.totalWeightKg,
+    createdByAccountId: record.createdByUserId,
+    receivedAt: record.receivedAt.toISOString(),
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+  };
+}
+
+function throwPartnerInboundError(error: unknown): never {
+  if (error instanceof StorePartnerInboundAuthorizationError) throw forbidden();
+  throwReceiptError(error);
+}
+
 function throwReceiptError(error: unknown): never {
   if (error instanceof StoreReceiptAuthorizationError) throw forbidden();
   if (error instanceof StoreOperationValidationError) {
@@ -4515,7 +4665,7 @@ function auditValue(
   return {
     requestId: context.requestId,
     actorUserId: actor.accountId,
-    actorRole: actor.role.toLocaleLowerCase('en-US') as 'admin' | 'htkd' | 'store',
+    actorRole: actor.role.toLocaleLowerCase('en-US') as DatabaseUserRole,
     actorStoreId: actor.storeId,
     action,
     entityType,
@@ -4566,8 +4716,8 @@ function operationalSettingsJson(settings: OperationalSettingsVersion): JsonObje
   };
 }
 
-function databaseAccountRole(role: Account['role']): 'admin' | 'htkd' | 'store' {
-  return role.toLocaleLowerCase('en-US') as 'admin' | 'htkd' | 'store';
+function databaseAccountRole(role: Account['role']): DatabaseUserRole {
+  return role.toLocaleLowerCase('en-US') as DatabaseUserRole;
 }
 
 function databaseAccountStatus(status: Account['status']): 'active' | 'locked' | 'disabled' {
@@ -4584,8 +4734,10 @@ function requireActiveHtkdTarget(account: typeof users.$inferSelect): void {
   }
 }
 
+/** Warehouse work belongs to ADMIN and HTKD. The wholesale desk is a store-side role:
+ *  it orders and receives for wholesale stores and never acts on the central warehouse. */
 function requireWarehouseActor(actor: AuthenticatedPrincipal): void {
-  if (actor.role === 'STORE') throw forbidden();
+  if (actor.role === 'STORE' || actor.role === 'WHOLESALE') throw forbidden();
 }
 
 function databaseWarehouseActorRole(actor: AuthenticatedPrincipal): 'admin' | 'htkd' {

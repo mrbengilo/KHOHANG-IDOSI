@@ -27,6 +27,7 @@ import {
   stores,
   users,
   waitTickets,
+  type DatabaseUserRole,
   type JsonObject,
 } from './schema.js';
 import { withAdvisoryLock, type Transaction } from './transaction.js';
@@ -45,7 +46,7 @@ export type PriorityOfferEffectiveAction = PriorityOfferResponseAction | 'cancel
 
 interface ActiveActor {
   readonly id: string;
-  readonly role: 'admin' | 'htkd' | 'store';
+  readonly role: DatabaseUserRole;
   readonly storeId: string | null;
 }
 
@@ -136,7 +137,7 @@ export interface WaitTicketAuditRecord {
   readonly id: string;
   readonly requestId: string | null;
   readonly actorUserId: string | null;
-  readonly actorRole: 'admin' | 'htkd' | 'store' | null;
+  readonly actorRole: DatabaseUserRole | null;
   readonly actorStoreId: string | null;
   readonly action: string;
   readonly entityType: string;

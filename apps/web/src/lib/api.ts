@@ -14,6 +14,8 @@ import {
   CreateOrderSessionRequestSchema,
   ListAllocationsResponseSchema,
   ListReceiptsResponseSchema,
+  ListStorePartnerInboundsResponseSchema,
+  StorePartnerInboundResponseSchema,
   ListPriorityOffersResponseSchema,
   GetSessionResponseSchema,
   ListProductConversionsResponseSchema,
@@ -57,6 +59,8 @@ import {
   type Session,
   type Store,
   type StoreOrderRequest,
+  type CreateStorePartnerInboundRequest,
+  type StorePartnerInbound,
   type SubmitStoreReceiptRequest,
   type TransitionOrderSessionRequest,
   type UpdateProductConversionRequest,
@@ -570,6 +574,26 @@ export async function listStoreReceipts(filters: ReceiptFilters = {}): Promise<R
 export async function getStoreReceipt(receiptId: string): Promise<Receipt> {
   const payload = await request(`/store-receipts/${encodeURIComponent(receiptId)}`);
   return ReceiptResponseSchema.parse(payload).data;
+}
+
+export async function listStorePartnerInbounds(storeId?: string): Promise<StorePartnerInbound[]> {
+  const query = new URLSearchParams();
+  if (storeId) query.set('storeId', storeId);
+  return listAllPages('/store-partner-inbounds', query, (payload) =>
+    ListStorePartnerInboundsResponseSchema.parse(payload),
+  );
+}
+
+export async function createStorePartnerInbound(
+  input: CreateStorePartnerInboundRequest,
+  idempotencyKey: string,
+): Promise<StorePartnerInbound> {
+  const payload = await request('/store-partner-inbounds', {
+    body: JSON.stringify(input),
+    headers: { 'idempotency-key': idempotencyKey },
+    method: 'POST',
+  });
+  return StorePartnerInboundResponseSchema.parse(payload).data;
 }
 
 async function mutateStoreReceipt(

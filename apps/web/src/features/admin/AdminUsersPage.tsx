@@ -51,6 +51,7 @@ const roleLabels: Record<AccountRole, string> = {
   ADMIN: 'Quản trị',
   HTKD: 'HTKD',
   STORE: 'Cửa hàng',
+  WHOLESALE: 'Cửa hàng sỉ',
 };
 
 const statusLabels: Record<AccountStatus, string> = {
@@ -478,6 +479,7 @@ function AdminUsersContent() {
               <option value="ADMIN">ADMIN</option>
               <option value="HTKD">HTKD</option>
               <option value="STORE">STORE</option>
+              <option value="WHOLESALE">Cửa hàng sỉ</option>
             </select>
           </label>
           <label className="admin-field">
@@ -1121,7 +1123,14 @@ function CreateAccountForm({
             <option value="ADMIN">ADMIN</option>
             <option value="HTKD">HTKD</option>
             <option value="STORE">STORE</option>
+            <option value="WHOLESALE">Cửa hàng sỉ</option>
           </select>
+          {draft.role === 'WHOLESALE' ? (
+            <small className="field-hint">
+              Tài khoản đặt hàng và nhận hàng cho tất cả cửa hàng sỉ — không gắn với một cửa hàng
+              nào.
+            </small>
+          ) : null}
         </label>
         {draft.role === 'STORE' ? (
           <label className="admin-field">

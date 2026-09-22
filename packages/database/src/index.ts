@@ -178,6 +178,24 @@ export type {
   SubmitStoreReceiptInput,
 } from './store-receipt-workflow.js';
 
+export {
+  createStorePartnerInbound,
+  createStorePartnerInboundInTransaction,
+  getStorePartnerInbound,
+  listStorePartnerInbounds,
+  StorePartnerInboundAuthorizationError,
+  StorePartnerInboundConflictError,
+} from './store-partner-inbound.js';
+export type {
+  CreatedStorePartnerInbound,
+  CreateStorePartnerInboundInput,
+  ListStorePartnerInboundsInput,
+  PartnerInboundLineInput,
+  StorePartnerInboundLineRecord,
+  StorePartnerInboundPage,
+  StorePartnerInboundRecord,
+} from './store-partner-inbound.js';
+
 export { assembleStoreReceiptSources, listStoreReceiptSources } from './receipt-sources.js';
 export type {
   StoreReceiptSourceLineRecord,

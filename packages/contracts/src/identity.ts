@@ -7,7 +7,11 @@ import {
   PaginationQuerySchema,
 } from './common.js';
 
-export const AccountRoleSchema = z.enum(['ADMIN', 'HTKD', 'STORE']);
+/**
+ * WHOLESALE is the "Cửa hàng sỉ" desk: one account that orders and receives for every
+ * wholesale store, so it carries no storeId and is scoped by assignedStoreIds instead.
+ */
+export const AccountRoleSchema = z.enum(['ADMIN', 'HTKD', 'STORE', 'WHOLESALE']);
 export type AccountRole = z.infer<typeof AccountRoleSchema>;
 
 export const AccountStatusSchema = z.enum(['ACTIVE', 'LOCKED', 'DISABLED']);
@@ -79,6 +83,16 @@ export const AuthenticatedPrincipalSchema = z
         code: z.ZodIssueCode.custom,
         path: ['storeId'],
         message: 'An HTKD principal cannot have a storeId',
+      });
+    }
+
+    // The wholesale desk covers every wholesale store at once, so a single storeId would
+    // silently narrow it. Its reach lives entirely in assignedStoreIds.
+    if (principal.role === 'WHOLESALE' && principal.storeId !== null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['storeId'],
+        message: 'A wholesale principal cannot have a storeId',
       });
     }
 

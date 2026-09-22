@@ -14,6 +14,7 @@ import type {
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
+  CreateStorePartnerInboundRequest,
   CreateStoreGroupRequest,
   CreateStoreRequest,
   CreateAccountRequest,
@@ -29,6 +30,7 @@ import type {
   ListInboundReceiptsQuery,
   ListProductsQuery,
   ListReceiptsQuery,
+  ListStorePartnerInboundsQuery,
   ListStoreInventoryBagLedgerQuery,
   ListStoreInventoryBagsQuery,
   ListStoreOutboundsQuery,
@@ -56,6 +58,7 @@ import type {
   StoreOrderRequest,
   StoreOutbound,
   StoreReceiptSource,
+  StorePartnerInbound,
   SubmitStoreReceiptRequest,
   TransitionOrderSessionRequest,
   UpdateProductRequest,
@@ -469,6 +472,22 @@ export interface WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<WarehouseOutboundRequest>>;
+
+  listStorePartnerInbounds(
+    actor: AuthenticatedPrincipal,
+    query: ListStorePartnerInboundsQuery,
+  ): Promise<Page<StorePartnerInbound>>;
+  getStorePartnerInbound(
+    actor: AuthenticatedPrincipal,
+    partnerInboundId: string,
+  ): Promise<StorePartnerInbound>;
+  createStorePartnerInbound(
+    actor: AuthenticatedPrincipal,
+    input: CreateStorePartnerInboundRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StorePartnerInbound>>;
 
   listReceipts(actor: AuthenticatedPrincipal, query: ListReceiptsQuery): Promise<Page<Receipt>>;
   listStoreReceiptSources(

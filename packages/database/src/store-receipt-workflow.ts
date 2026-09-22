@@ -547,7 +547,7 @@ async function assertStoreAccountMayDeclare(
   storeId: string,
 ): Promise<void> {
   const [store] = await tx
-    .select({ id: stores.id })
+    .select({ id: stores.id, kind: stores.kind })
     .from(stores)
     .where(and(eq(stores.id, storeId), eq(stores.isActive, true), isNull(stores.deletedAt)))
     .limit(1);
@@ -560,7 +560,16 @@ async function assertStoreAccountMayDeclare(
     .from(users)
     .where(and(eq(users.id, userId), isNull(users.deletedAt)))
     .limit(1);
-  if (!user || user.status !== 'active' || user.role !== 'store' || user.storeId !== storeId) {
+  if (!user || user.status !== 'active') {
+    throw new StoreReceiptAuthorizationError();
+  }
+  // A store account speaks only for the store it belongs to. The wholesale desk has no
+  // store of its own and speaks for every wholesale store, so its reach is bounded by the
+  // store's kind instead - it can never touch a retail store this way.
+  const mayDeclare =
+    (user.role === 'store' && user.storeId === storeId) ||
+    (user.role === 'wholesale' && store.kind === 'wholesale');
+  if (!mayDeclare) {
     throw new StoreReceiptAuthorizationError();
   }
 }

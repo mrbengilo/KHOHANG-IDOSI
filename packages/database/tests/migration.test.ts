@@ -159,6 +159,43 @@ describe('initial migration invariants', () => {
     ) as { prevId: string };
     expect(vatSnapshot.prevId).toBe(storeGroupVersionSnapshot.id);
   });
+  it('adds the wholesale role without using it in the same transaction', () => {
+    const roleMigration = readFileSync(
+      new URL('../migrations/0011_wholesale_account_role.sql', import.meta.url),
+      'utf8',
+    );
+    expect(roleMigration).toContain(`ALTER TYPE "public"."user_role" ADD VALUE`);
+    expect(roleMigration).toContain(`'wholesale'`);
+    // PostgreSQL refuses a new enum label inside the transaction that created it, so this
+    // migration must not read or write the value it adds.
+    expect(roleMigration).not.toMatch(/INSERT|UPDATE|SELECT/i);
+  });
+
+  it('keeps partner stock inside the single-provenance rule for store inventory', () => {
+    const partnerMigration = readFileSync(
+      new URL('../migrations/0012_store_partner_inbound.sql', import.meta.url),
+      'utf8',
+    );
+    for (const table of [
+      'store_partner_inbounds',
+      'store_partner_inbound_lines',
+      'store_partner_inbound_bags',
+    ]) {
+      expect(partnerMigration).toMatch(new RegExp(`CREATE TABLE "${table}"`));
+    }
+    expect(partnerMigration).toContain(
+      'ALTER TABLE "store_inventory_bags" ADD COLUMN "source_partner_inbound_bag_id" uuid',
+    );
+    // Exactly one of receipt, transfer or partner provenance, never none and never two.
+    expect(partnerMigration).toContain(
+      'DROP CONSTRAINT "store_inventory_bags_exactly_one_provenance"',
+    );
+    expect(partnerMigration).toMatch(
+      /\("source_store_receipt_bag_id" IS NOT NULL\)::integer \+ \("source_transfer_id" IS NOT NULL\)::integer \+ \("source_partner_inbound_bag_id" IS NOT NULL\)::integer\) = 1/,
+    );
+    expect(partnerMigration).not.toMatch(/DROP TABLE|DELETE FROM/i);
+  });
+
   it.each(requiredTables)('creates %s', (tableName) => {
     expect(migration).toMatch(new RegExp(`CREATE TABLE "?${tableName}"?\\s*\\(`));
   });
@@ -173,11 +210,21 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(11);
+    expect(journal.entries).toHaveLength(13);
     expect(journal.entries[8]).toMatchObject({ tag: '0008_optional_supplier_weight' });
     expect(journal.entries[9]).toMatchObject({ tag: '0009_supported_allocation_policy' });
     expect(journal.entries[10]).toMatchObject({
       tag: '0010_current_mens_product_name',
+      breakpoints: true,
+    });
+    // A migration file that is not in the journal never runs, so every new SQL file has
+    // to appear here as well; that is what this length check is guarding.
+    expect(journal.entries[11]).toMatchObject({
+      tag: '0011_wholesale_account_role',
+      breakpoints: true,
+    });
+    expect(journal.entries[12]).toMatchObject({
+      tag: '0012_store_partner_inbound',
       breakpoints: true,
     });
     expect(journal.entries[7]).toMatchObject({ tag: '0007_receipt_vat', breakpoints: true });

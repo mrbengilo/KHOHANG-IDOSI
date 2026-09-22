@@ -23,7 +23,9 @@ export type JsonPrimitive = boolean | number | string | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: JsonValue };
 export type JsonObject = { readonly [key: string]: JsonValue };
 
-export const userRoleEnum = pgEnum('user_role', ['admin', 'htkd', 'store']);
+export const userRoleEnum = pgEnum('user_role', ['admin', 'htkd', 'store', 'wholesale']);
+/** Derived from the enum so adding a role cannot leave a hand-written union behind. */
+export type DatabaseUserRole = (typeof userRoleEnum.enumValues)[number];
 export const userStatusEnum = pgEnum('user_status', ['active', 'locked', 'disabled']);
 export const storeKindEnum = pgEnum('store_kind', ['retail', 'wholesale']);
 export const productUnitEnum = pgEnum('product_unit', ['item', 'bag', 'kilogram']);
@@ -1524,6 +1526,10 @@ export const storeInventoryBags = pgTable(
     // The migration enforces the self-reference FK. Keeping this as a plain UUID avoids a
     // circular TypeScript initializer while retaining the database-level constraint.
     sourceInventoryBagId: uuid('source_inventory_bag_id'),
+    /** Set only for stock a store received directly from a partner. */
+    // The partner bag table is declared below this one, so the FK lives in the migration
+    // for the same reason as the self-reference above.
+    sourcePartnerInboundBagId: uuid('source_partner_inbound_bag_id'),
     outboundRequestLineId: uuid('outbound_request_line_id').references(
       () => outboundRequestLines.id,
       { onDelete: 'restrict' },
@@ -1563,9 +1569,12 @@ export const storeInventoryBags = pgTable(
       'store_inventory_bags_current_not_over_initial',
       sql`${table.currentWeightKg} <= ${table.initialWeightKg}`,
     ),
+    uniqueIndex('store_inventory_bags_partner_inbound_bag_uidx').on(
+      table.sourcePartnerInboundBagId,
+    ),
     check(
       'store_inventory_bags_exactly_one_provenance',
-      sql`((${table.sourceStoreReceiptBagId} IS NOT NULL)::integer + (${table.sourceTransferId} IS NOT NULL)::integer) = 1`,
+      sql`((${table.sourceStoreReceiptBagId} IS NOT NULL)::integer + (${table.sourceTransferId} IS NOT NULL)::integer + (${table.sourcePartnerInboundBagId} IS NOT NULL)::integer) = 1`,
     ),
     check(
       'store_inventory_bags_transfer_parent',
@@ -1656,6 +1665,87 @@ export const storeTransfers = pgTable(
 );
 
 /** Append-only store inventory journal. Weight snapshots make every mutation auditable. */
+/**
+ * Goods a store receives straight from a partner, outside warehouse allocation. The slip
+ * is final on save: nothing was dispatched by the warehouse, so there is no HTKD review
+ * step and no dispatched quantity to reconcile against.
+ */
+export const storePartnerInbounds = pgTable(
+  'store_partner_inbounds',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    referenceCode: text('reference_code').notNull().unique(),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    partnerName: text('partner_name').notNull(),
+    note: text('note'),
+    totalQuantity: integer('total_quantity').notNull(),
+    totalWeightKg: numeric('total_weight_kg', { precision: 14, scale: 3 }).notNull(),
+    createdByUserId: uuid('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('store_partner_inbounds_store_received_idx').on(table.storeId, table.receivedAt),
+    check(
+      'store_partner_inbounds_reference_not_blank',
+      sql`length(btrim(${table.referenceCode})) > 0`,
+    ),
+    check('store_partner_inbounds_partner_not_blank', sql`length(btrim(${table.partnerName})) > 0`),
+    check('store_partner_inbounds_quantity_positive', sql`${table.totalQuantity} > 0`),
+    check('store_partner_inbounds_weight_positive', sql`${table.totalWeightKg} > 0`),
+  ],
+);
+
+export const storePartnerInboundLines = pgTable(
+  'store_partner_inbound_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    storePartnerInboundId: uuid('store_partner_inbound_id')
+      .notNull()
+      .references(() => storePartnerInbounds.id, { onDelete: 'cascade' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    quantity: integer('quantity').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('store_partner_inbound_lines_slip_product_uidx').on(
+      table.storePartnerInboundId,
+      table.productId,
+    ),
+    check('store_partner_inbound_lines_quantity_positive', sql`${table.quantity} > 0`),
+  ],
+);
+
+export const storePartnerInboundBags = pgTable(
+  'store_partner_inbound_bags',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    storePartnerInboundLineId: uuid('store_partner_inbound_line_id')
+      .notNull()
+      .references(() => storePartnerInboundLines.id, { onDelete: 'cascade' }),
+    bagNumber: integer('bag_number').notNull(),
+    bagCode: text('bag_code').notNull().unique(),
+    weightKg: numeric('weight_kg', { precision: 14, scale: 3 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('store_partner_inbound_bags_line_number_uidx').on(
+      table.storePartnerInboundLineId,
+      table.bagNumber,
+    ),
+    check('store_partner_inbound_bags_number_positive', sql`${table.bagNumber} > 0`),
+    check('store_partner_inbound_bags_code_not_blank', sql`length(btrim(${table.bagCode})) > 0`),
+    check('store_partner_inbound_bags_weight_positive', sql`${table.weightKg} > 0`),
+  ],
+);
+
 export const storeInventoryLedgerEntries = pgTable(
   'store_inventory_ledger_entries',
   {
