@@ -6,7 +6,7 @@ import {
   createAdminStoreGroup,
   getAdminOperationalSettings,
   getAdminHtkdAssignments,
-  listActiveRetailStoresForAccounts,
+  listActiveStoreChoicesForAssignments,
   listAdminAccounts,
   listAdminStoreGroupDirectory,
   listAdminStoreGroups,
@@ -208,7 +208,7 @@ describe('admin API client', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(
-      listActiveRetailStoresForAccounts({ page: 2, pageSize: 24, search: 'BMT' }),
+      listActiveStoreChoicesForAssignments({ page: 2, pageSize: 24, search: 'BMT' }),
     ).resolves.toMatchObject({
       data: [expect.objectContaining({ code: 'DS_1' })],
       pagination: { page: 2, totalPages: 3 },
@@ -217,7 +217,7 @@ describe('admin API client', () => {
     const url = String(fetchMock.mock.calls[0]?.[0]);
     expect(url).toContain('page=2');
     expect(url).toContain('pageSize=24');
-    expect(url).toContain('kind=RETAIL');
+    expect(url).not.toContain('kind=');
     expect(url).toContain('status=ACTIVE');
     expect(url).toContain('search=BMT');
   });

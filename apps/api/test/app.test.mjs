@@ -2508,7 +2508,7 @@ describe('KHOHANG-IDOSI API', () => {
     );
   });
 
-  test('lists and atomically replaces audited HTKD retail-store assignments for ADMIN', async () => {
+  test('lists and atomically replaces audited HTKD store assignments for ADMIN', async () => {
     const adminCookie = cookieOf(await login('admin'));
     const storeCookie = cookieOf(await login('ds_nvt'));
     const htkdCookie = cookieOf(await login('htkd'));
@@ -2617,18 +2617,23 @@ describe('KHOHANG-IDOSI API', () => {
     });
     const wholesaleStoreId = wholesaleStores.json().data[0]?.id;
     assert.ok(wholesaleStoreId);
-    const wholesaleRejected = await app.inject({
+    // HTKD được phân quyền quản lý cả cửa hàng sỉ, không chỉ cửa hàng bán lẻ.
+    const wholesaleAccepted = await app.inject({
       method: 'PUT',
       url: path,
       headers: { cookie: adminCookie },
       payload: {
         expectedSessionVersion: 2,
-        reason: 'Không được gán cửa hàng sỉ',
+        reason: 'Giao HTKD phụ trách cửa hàng sỉ',
         storeIds: [wholesaleStoreId],
       },
     });
-    assert.equal(wholesaleRejected.statusCode, 400);
-    assert.equal(wholesaleRejected.json().error.code, 'VALIDATION_ERROR');
+    assert.equal(wholesaleAccepted.statusCode, 200);
+    assert.equal(wholesaleAccepted.json().data.sessionVersion, 3);
+    assert.deepEqual(
+      wholesaleAccepted.json().data.assignments.map((assignment) => assignment.storeId),
+      [wholesaleStoreId],
+    );
 
     repository.setStoreOperationEligibility(MEMORY_SEED_IDS.bdStore, { status: 'INACTIVE' });
     const inactiveStoreRejected = await app.inject({
@@ -2636,7 +2641,7 @@ describe('KHOHANG-IDOSI API', () => {
       url: path,
       headers: { cookie: adminCookie },
       payload: {
-        expectedSessionVersion: 2,
+        expectedSessionVersion: 3,
         reason: 'Không được gán cửa hàng ngừng hoạt động',
         storeIds: [MEMORY_SEED_IDS.bdStore],
       },
