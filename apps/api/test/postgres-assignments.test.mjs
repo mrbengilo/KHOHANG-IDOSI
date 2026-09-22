@@ -190,7 +190,9 @@ describePostgres('PostgreSQL HTKD assignments', () => {
       { ...context, requestId: `postgres-assignment-clear-${suffix}` },
     );
     assert.deepEqual(cleared.assignments, []);
-    assert.equal(cleared.sessionVersion, 3);
+    // htkd_assignments_revoke_sessions bumps token_version once per revoked row, so
+    // clearing three assignments moves the version from 2 to 5.
+    assert.equal(cleared.sessionVersion, 5);
     const [revokedClearSession] = await db
       .select({ revokeReason: sessions.revokeReason, revokedAt: sessions.revokedAt })
       .from(sessions)
