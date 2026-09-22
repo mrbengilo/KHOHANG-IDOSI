@@ -128,4 +128,92 @@ describe('sales snapshot summary', () => {
     expect(result.revenueVnd).toBe(300n);
     expect(summarizeIdosiSales([]).snapshots).toHaveLength(0);
   });
+
+  // IDOSI đổi tên và ngừng mặt hàng, rồi cấp lại mã cũ cho mặt hàng khác. Vì vậy
+  // productId trên dòng bán là định danh LÚC BÁN, không ổn định.
+  const line = (overrides: Record<string, unknown>) => ({
+    productId: 'A',
+    productName: 'Áo',
+    quantity: 1,
+    unit: 'PIECE',
+    revenueType: 'NORMAL',
+    orders: 1,
+    weight,
+    ...overrides,
+  });
+  const withItems = (items: readonly Record<string, unknown>[]) => {
+    const raw = JSON.parse(JSON.stringify(state)) as {
+      snapshot: { payload: { products: { items: readonly Record<string, unknown>[] } } };
+    };
+    raw.snapshot.payload.products.items = items;
+    return IdosiStatisticsStateSchema.parse(raw);
+  };
+
+  it('merges one product sold under two source IDs when IDOSI sends the canonical identity', () => {
+    const result = summarizeIdosiSales([
+      withItems([
+        line({
+          productId: 'order-product-004',
+          productCode: 'PRD-004',
+          canonicalProductId: 'order-product-003',
+          canonicalProductCode: 'PRD-003',
+          productName: 'Áo nữ',
+          quantity: 742,
+        }),
+        line({
+          productId: 'order-product-003',
+          productCode: 'PRD-003',
+          canonicalProductId: 'order-product-003',
+          canonicalProductCode: 'PRD-003',
+          productName: 'Áo nữ',
+          quantity: 26,
+          revenueType: 'SALE_PIECE',
+        }),
+      ]),
+    ]);
+    expect(result.productTotals).toHaveLength(1);
+    expect(result.productTotals[0]).toMatchObject({
+      productId: 'order-product-003',
+      productCode: 'PRD-003',
+      productName: 'Áo nữ',
+      pieces: 768,
+    });
+    expect(result.ambiguousProducts).toBe(0);
+  });
+
+  it('keeps two products apart when IDOSI reused one code for both', () => {
+    const result = summarizeIdosiSales([
+      withItems([
+        line({
+          productId: 'order-product-004',
+          productCode: 'PRD-004',
+          canonicalProductId: 'order-product-003',
+          productName: 'Áo nữ',
+          quantity: 742,
+        }),
+        line({
+          productId: 'order-product-030',
+          productCode: 'PRD-004',
+          canonicalProductId: 'order-product-030',
+          productName: 'Áo khoác',
+          quantity: 55,
+        }),
+      ]),
+    ]);
+    expect(result.productTotals.map((row) => [row.productId, row.pieces])).toEqual([
+      ['order-product-030', 55],
+      ['order-product-003', 742],
+    ]);
+  });
+
+  it('flags a source ID that appears under several names instead of silently summing it', () => {
+    const result = summarizeIdosiSales([
+      withItems([
+        line({ productId: 'A', productName: 'Áo nữ', quantity: 5 }),
+        line({ productId: 'A', productName: 'Áo khoác', quantity: 3 }),
+      ]),
+    ]);
+    expect(result.ambiguousProducts).toBe(1);
+    expect(result.productTotals).toHaveLength(1);
+  });
 });

@@ -125,6 +125,16 @@ export function IdosiSalesSummary({
               Khách sỉ không thuộc nguồn bán lẻ IDOSI.
             </span>
           </div>
+          {summary.ambiguousProducts > 0 ? (
+            <p className="idosi-sales-warning" role="alert">
+              <strong>
+                {formatInteger(summary.ambiguousProducts)} mã mặt hàng IDOSI xuất hiện dưới nhiều
+                tên khác nhau.
+              </strong>{' '}
+              Số liệu của những mặt hàng đó có thể bị tách hoặc gộp nhầm. Hãy đồng bộ lại sau khi
+              IDOSI gửi kèm định danh chuẩn cho các cửa hàng này.
+            </p>
+          ) : null}
           <div className="stats-grid stats-grid--small">
             <StatCard
               label={partial ? 'Doanh thu đã đồng bộ' : 'Doanh thu IDOSI'}
