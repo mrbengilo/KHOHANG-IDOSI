@@ -298,6 +298,20 @@ const allocationResultStatusCopy: Record<AllocationResultStatus, string> = {
   SKIPPED: 'Không xử lý',
 };
 
+/**
+ * Mã lý do do backend trả về là chuỗi tự do. Bảng này dịch các mã đã biết sang tiếng Việt;
+ * mã mặc định của vòng chia ưu tiên bị bỏ hẳn vì trùng nghĩa với nhãn trạng thái bên cạnh.
+ */
+const allocationReasonCopy: Record<string, string> = {
+  ALLOCATED_BY_PRIORITY_ROUND_ROBIN: '',
+  PARTIAL_SNAPSHOT_STOCK: 'Tồn đầu kỳ chỉ đủ một phần',
+  INSUFFICIENT_SNAPSHOT_STOCK: 'Tồn đầu kỳ không đủ',
+};
+
+function allocationReasonText(reasonCode: string): string {
+  return allocationReasonCopy[reasonCode] ?? reasonCode;
+}
+
 const allocationResultStatusTone: Record<
   AllocationResultStatus,
   'neutral' | 'success' | 'warning' | 'danger'
@@ -866,9 +880,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                   <th>Ngày nghiệp vụ</th>
                   <th>Nhận đơn</th>
                   <th>Phân bổ</th>
-                  <th>Chính sách</th>
                   <th>Trạng thái</th>
-                  <th>Phiên bản</th>
                   <th>Kết quả</th>
                   {role === 'ADMIN' ? <th>Thao tác</th> : null}
                 </tr>
@@ -891,15 +903,11 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                         <strong>{formatSessionTime(session.allocationStartsAt)}</strong>
                         <small>giờ Việt Nam</small>
                       </td>
-                      <td data-label="Chính sách">
-                        <strong>{session.policyVersion}</strong>
-                      </td>
                       <td data-label="Trạng thái">
                         <Badge tone={sessionStatusTone[session.status]}>
                           {sessionStatusCopy[session.status]}
                         </Badge>
                       </td>
-                      <td data-label="Phiên bản">v{session.version}</td>
                       <td data-label="Kết quả">
                         <button
                           aria-label={`Xem kết quả phiên ${session.businessDate}`}
@@ -1143,7 +1151,11 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                         <Badge tone={allocationResultStatusTone[result.status]}>
                           {allocationResultStatusCopy[result.status]}
                         </Badge>
-                        <small title={result.reasonCode}>{result.reasonCode}</small>
+                        {allocationReasonText(result.reasonCode) ? (
+                          <small title={result.reasonCode}>
+                            {allocationReasonText(result.reasonCode)}
+                          </small>
+                        ) : null}
                         <small>
                           {allocationTimestampFormatter.format(new Date(result.createdAt))}
                         </small>

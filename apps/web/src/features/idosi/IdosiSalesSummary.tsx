@@ -145,20 +145,16 @@ export function IdosiSalesSummary({
               detail={
                 summary.incompleteWeight
                   ? 'Còn đơn thiếu chi tiết hoặc hệ số; chưa tính đủ kg'
-                  : 'Gồm kg thực tế và kg quy đổi từ cái'
+                  : 'Tổng khối lượng bán tính được từ dữ liệu đơn'
               }
             />
             <StatCard
-              label="Thực tế / quy đổi"
-              value={
-                hasData
-                  ? `${formatKg(summary.actualKg)} / ${formatKg(summary.estimatedKg)}`
-                  : 'Chưa có dữ liệu'
-              }
+              label="Khối lượng quy đổi"
+              value={hasData ? formatKg(summary.estimatedKg) : 'Chưa có dữ liệu'}
               detail={
                 summary.unclassifiedOrders
                   ? `${formatInteger(summary.unclassifiedOrders)} đơn chưa phân loại mặt hàng`
-                  : 'Phân biệt kg cân thực tế và kg ước tính theo hệ số'
+                  : 'Khối lượng quy đổi từ số cái theo hệ số của mặt hàng'
               }
             />
           </div>

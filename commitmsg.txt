@@ -1,0 +1,15 @@
+giao dien: gon dashboard, mo nhap kho tong cho HTKD, chuan hoa o chon ngay
+
+- Dashboard: bo dai nguon "Bao cao giao dich noi bo"; icon dong viec cho doi mau theo muc do,
+  so lieu lon hon; nut "Xem viec cho" dung mau chinh va chi rong bang noi dung.
+- HTKD: mo route /warehouse-inbound vi backend da cho phep vai tro nay; an o sua VAT cua phieu
+  da luu vi PATCH vat van chi danh cho ADMIN.
+- Ban hang IDOSI: bo the "Thuc te / quy doi", chi con khoi luong quy doi.
+- O chon ngay/thang: click bat ky dau cung mo lich, icon lich mau thuong hieu; ap dung cho ca
+  month, week va datetime-local.
+- Phan bo: bo cot "Chinh sach" va "Phien ban"; dich ma ly do sang tieng Viet va an ma mac dinh
+  ALLOCATED_BY_PRIORITY_ROUND_ROBIN vi trung nghia voi nhan trang thai.
+- Nut dang link co vien sang, nen rieng va rong vua noi dung.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_018Pc19AMgHND1Sfgz5dawBx

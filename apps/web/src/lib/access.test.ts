@@ -20,7 +20,7 @@ describe('route access policy', () => {
     expect(canAccessRoute('/stores', 'ADMIN', null)).toBe(true);
     expect(canAccessRoute('/warehouse-inbound', 'ADMIN', null)).toBe(true);
     expect(canAccessRoute('/warehouse-inbound', 'STORE', 'RETAIL')).toBe(false);
-    expect(canAccessRoute('/warehouse-inbound', 'HTKD', null)).toBe(false);
+    expect(canAccessRoute('/warehouse-inbound', 'HTKD', null)).toBe(true);
     expect(canAccessRoute('/audit', 'HTKD', null)).toBe(false);
     expect(canAccessRoute('/catalog', 'HTKD', null)).toBe(true);
   });
