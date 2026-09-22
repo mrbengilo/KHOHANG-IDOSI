@@ -8,18 +8,18 @@ kho `khoidosi.io.vn`, và các thay đổi cần thực hiện **phía idosi** �
 
 Danh mục hiện hành của idosi (màn hình "Danh mục lựa chọn đơn hàng"):
 
-| Mã | Tên hiện tại | Cập nhật |
-| --- | --- | --- |
-| `PRD-003` | Áo Nữ | 18/09/26 14:16:18 |
-| `PRD-004` | Áo khoác | 12/09/26 22:38:50 |
+| Mã        | Tên hiện tại | Cập nhật          |
+| --------- | ------------ | ----------------- |
+| `PRD-003` | Áo Nữ        | 18/09/26 14:16:18 |
+| `PRD-004` | Áo khoác     | 12/09/26 22:38:50 |
 
 Bảng "Chi tiết mặt hàng theo loại bán" của cửa hàng DOSII NVT, tháng 09/2026:
 
-| Mặt hàng | Mã | Loại doanh thu | Số lượng |
-| --- | --- | --- | ---: |
-| Áo nữ | `PRD-004` | Bán thường | 742 |
-| Áo khoác | `PRD-004` | Bán thường | 55 |
-| Áo nữ | `PRD-003` | Sale theo cái | 26 |
+| Mặt hàng | Mã        | Loại doanh thu | Số lượng |
+| -------- | --------- | -------------- | -------: |
+| Áo nữ    | `PRD-004` | Bán thường     |      742 |
+| Áo khoác | `PRD-004` | Bán thường     |       55 |
+| Áo nữ    | `PRD-003` | Sale theo cái  |       26 |
 
 Hai mặt hàng khác tên dùng chung một mã `PRD-004`. Đây là điều không thể xảy ra nếu
 mã là định danh ổn định.
@@ -71,12 +71,12 @@ mặt hàng khác. Đây chính là điều cần chấm dứt.
 
 Mỗi dòng trong `products.items[]` và `products.weightByProduct[]` cần thêm:
 
-| Trường | Kiểu | Ý nghĩa |
-| --- | --- | --- |
-| `canonicalProductId` | string, bắt buộc | Id của mặt hàng trong **danh mục hiện hành** mà dòng này thuộc về. Luôn nhất quán với `productName`. |
-| `canonicalProductCode` | string, tuỳ chọn | Mã hiện hành tương ứng. |
-| `sourceProductId` | string, bắt buộc | Id **tại thời điểm đơn** (chính là `productId` hiện nay). Chỉ dùng để đối soát, không dùng để gộp. |
-| `sourceProductCode` | string, tuỳ chọn | Mã tại thời điểm đơn. |
+| Trường                 | Kiểu             | Ý nghĩa                                                                                              |
+| ---------------------- | ---------------- | ---------------------------------------------------------------------------------------------------- |
+| `canonicalProductId`   | string, bắt buộc | Id của mặt hàng trong **danh mục hiện hành** mà dòng này thuộc về. Luôn nhất quán với `productName`. |
+| `canonicalProductCode` | string, tuỳ chọn | Mã hiện hành tương ứng.                                                                              |
+| `sourceProductId`      | string, bắt buộc | Id **tại thời điểm đơn** (chính là `productId` hiện nay). Chỉ dùng để đối soát, không dùng để gộp.   |
+| `sourceProductCode`    | string, tuỳ chọn | Mã tại thời điểm đơn.                                                                                |
 
 Quy tắc: `canonicalProductId` và `productName` phải luôn trỏ về **cùng một bản ghi**
 trong danh mục hiện hành. Nếu hai dòng có cùng `productName` thì bắt buộc cùng
@@ -188,13 +188,13 @@ khả năng dashboard tổng đang bỏ sót dòng `SALE_PIECE`. Đề nghị ki
 
 ## 4. Thứ tự ưu tiên
 
-| Ưu tiên | Hạng mục | Lý do |
-| --- | --- | --- |
-| 1 | 3.1 — không dùng lại mã | Chặn nguyên nhân gốc, không phát sinh thêm dữ liệu sai |
-| 2 | 3.2 — `canonicalProductId` | Cho phép kho gộp đúng ngay, kể cả dữ liệu lịch sử |
-| 3 | 3.4 — `catalogVersion` | Phát hiện snapshot lỗi thời |
-| 4 | 3.3 — endpoint danh mục | Đối soát lại dữ liệu cũ, bỏ hard-code phía kho |
-| 5 | 3.5, 3.6 | Nhất quán báo cáo và đồng bộ lại |
+| Ưu tiên | Hạng mục                   | Lý do                                                  |
+| ------- | -------------------------- | ------------------------------------------------------ |
+| 1       | 3.1 — không dùng lại mã    | Chặn nguyên nhân gốc, không phát sinh thêm dữ liệu sai |
+| 2       | 3.2 — `canonicalProductId` | Cho phép kho gộp đúng ngay, kể cả dữ liệu lịch sử      |
+| 3       | 3.4 — `catalogVersion`     | Phát hiện snapshot lỗi thời                            |
+| 4       | 3.3 — endpoint danh mục    | Đối soát lại dữ liệu cũ, bỏ hard-code phía kho         |
+| 5       | 3.5, 3.6                   | Nhất quán báo cáo và đồng bộ lại                       |
 
 ## 5. Phần kho tự xử lý
 
