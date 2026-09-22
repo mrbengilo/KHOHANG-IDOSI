@@ -568,10 +568,10 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
 
     for (const storeId of input.storeIds) {
       const store = this.stores.get(storeId);
-      if (!store || store.status !== 'ACTIVE' || store.kind !== 'RETAIL') {
+      if (!store || store.status !== 'ACTIVE') {
         throw new ApiError(
           'VALIDATION_ERROR',
-          'HTKD chỉ được phân công cửa hàng bán lẻ đang hoạt động',
+          'HTKD chỉ được phân công cửa hàng đang hoạt động',
           400,
         );
       }
@@ -725,6 +725,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (!store) throw notFound('Không tìm thấy cửa hàng');
     if (!canAccessStore(actor, store.id)) throw forbidden('Không có quyền xem cửa hàng này');
     if (store.status !== 'ACTIVE') throw conflict('Cửa hàng đã ngừng hoạt động');
+    // Cửa hàng sỉ không tồn tại trên idosi.io.vn nên không có dữ liệu doanh thu để đồng bộ.
     if (store.kind !== 'RETAIL') {
       throw conflict('Đồng bộ doanh thu chỉ áp dụng cho cửa hàng bán lẻ');
     }

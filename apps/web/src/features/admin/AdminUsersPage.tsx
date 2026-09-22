@@ -32,7 +32,7 @@ import {
   adminErrorMessage,
   createAdminAccount,
   getAdminHtkdAssignments,
-  listActiveRetailStoresForAccounts,
+  listActiveStoreChoicesForAssignments,
   listActiveStoresForAccounts,
   listAdminAccounts,
   resetAdminAccountPassword,
@@ -673,8 +673,8 @@ function HtkdAssignmentsEditor({
         <div>
           <h2 id="htkd-assignments-title">Phân công cửa hàng HTKD</h2>
           <p>
-            {account.displayName} · {account.username}. Chỉ cửa hàng bán lẻ đang hoạt động được phép
-            chọn.
+            {account.displayName} · {account.username}. Chọn được mọi cửa hàng đang hoạt động, gồm
+            cả cửa hàng sỉ.
           </p>
         </div>
         <button
@@ -746,12 +746,12 @@ function HtkdAssignmentsForm({
   const [storeSearch, setStoreSearch] = useState('');
   const storesQuery = useQuery({
     queryFn: () =>
-      listActiveRetailStoresForAccounts({
+      listActiveStoreChoicesForAssignments({
         page: storePage,
         pageSize: storeChoicePageSize,
         ...(storeSearch ? { search: storeSearch } : {}),
       }),
-    queryKey: ['admin', 'active-retail-store-choices', storeSearch, storePage],
+    queryKey: ['admin', 'active-store-choices', storeSearch, storePage],
     retry: false,
     staleTime: 60_000,
   });
@@ -844,7 +844,7 @@ function HtkdAssignmentsForm({
 
       <div className="admin-store-choice-browser">
         <label className="admin-field">
-          <span>Tìm cửa hàng bán lẻ</span>
+          <span>Tìm cửa hàng</span>
           <input
             disabled={busy}
             maxLength={160}
@@ -889,7 +889,7 @@ function HtkdAssignmentsForm({
           giữ khi lưu.
         </p>
       ) : null}
-      {storesQuery.isPending ? <AdminLoading label="Đang tải cửa hàng bán lẻ…" /> : null}
+      {storesQuery.isPending ? <AdminLoading label="Đang tải cửa hàng…" /> : null}
       {storesQuery.isError ? (
         <div className="admin-state admin-state--error" role="alert">
           <strong>Không thể tải danh sách cửa hàng</strong>
@@ -911,9 +911,7 @@ function HtkdAssignmentsForm({
               : 'Bạn vẫn có thể lưu danh sách rỗng để thu hồi toàn bộ quyền hiện tại.'
           }
           title={
-            storeSearch
-              ? 'Không có cửa hàng khớp tìm kiếm'
-              : 'Không có cửa hàng bán lẻ đang hoạt động'
+            storeSearch ? 'Không có cửa hàng khớp tìm kiếm' : 'Không có cửa hàng đang hoạt động'
           }
         />
       ) : null}

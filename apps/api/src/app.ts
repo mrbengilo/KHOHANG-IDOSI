@@ -1499,7 +1499,7 @@ function openApiDocument(): Record<string, unknown> {
       '/api/v1/admin/accounts/{htkdAccountId}/assignments': {
         get: {
           security: cookieSecurity,
-          responses: { '200': { description: 'Active HTKD retail-store assignments' } },
+          responses: { '200': { description: 'Active HTKD store assignments' } },
         },
         put: {
           security: cookieSecurity,

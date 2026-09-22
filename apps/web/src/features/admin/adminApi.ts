@@ -275,14 +275,13 @@ export async function updateAdminStore(
   return StoreResponseSchema.parse(payload).data;
 }
 
-export async function listActiveRetailStoresForAccounts(query: {
+/** Phân quyền HTKD áp dụng cho mọi cửa hàng đang hoạt động, gồm cả cửa hàng sỉ. */
+export async function listActiveStoreChoicesForAssignments(query: {
   readonly page: number;
   readonly pageSize: number;
   readonly search?: string;
 }): Promise<AdminPage<Store>> {
-  const payload = await requestAdminApi(
-    `/stores?${queryString({ ...query, kind: 'RETAIL', status: 'ACTIVE' })}`,
-  );
+  const payload = await requestAdminApi(`/stores?${queryString({ ...query, status: 'ACTIVE' })}`);
   return ListStoresResponseSchema.parse(payload);
 }
 
