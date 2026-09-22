@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '../components/Button';
+import { PasswordInput } from '../components/PasswordInput';
 import { ApiClientError, login, mockModeEnabled } from '../lib/api';
 import { installAuthenticatedSession, useSession } from '../lib/auth';
 import { safeReturnPath } from '../lib/navigation';
@@ -113,13 +114,12 @@ export function LoginPage() {
             </span>
             <div className="input-with-icon">
               <LockKeyhole aria-hidden="true" size={18} />
-              <input
+              <PasswordInput
                 required
                 aria-label="Mật khẩu"
                 autoComplete="current-password"
                 name="password"
                 placeholder="Mật khẩu"
-                type="password"
               />
             </div>
           </label>
