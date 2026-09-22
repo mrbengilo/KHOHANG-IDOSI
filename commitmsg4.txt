@@ -1,0 +1,13 @@
+fix(ui): sua tran man hinh mobile o hang thao tac phieu cho, mau icon thanh dieu huong duoi
+
+- .waitlist-panel__actions ke thua flex:1 va flex-direction:column tu .history-list article > div
+  nen nut "Xem lich su" bi ep hep va chu xuong dong tung ky tu, tran ra ngoai the tren man hinh nho.
+  Ghi de flex:0 0 auto, flex-direction:row, min-width:0 de hang thao tac luon la hang ngang co
+  theo noi dung.
+- Nut dang link (.link-button) them white-space: nowrap va flex: 0 0 auto de khong bi bop chieu
+  rong khi nam trong container flex/grid khac.
+- Icon danh muc tren thanh dieu huong duoi (mobile) truoc do dung mau xam mac dinh; nay ap dung
+  cung bang mau (tim/xanh la/hoa hoe/hong/xanh duong) nhu sidebar desktop de nhan dien nhanh.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_018Pc19AMgHND1Sfgz5dawBx
