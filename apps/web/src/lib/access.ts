@@ -6,12 +6,12 @@ export interface RouteAccessPolicy {
 }
 
 export const routeAccessPolicies = {
-  '/': { roles: ['ADMIN', 'HTKD', 'STORE'] },
-  '/allocations': { roles: ['ADMIN', 'HTKD', 'STORE'] },
-  '/requests': { roles: ['ADMIN', 'HTKD', 'STORE'] },
+  '/': { roles: ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE_ACCOUNT'] },
+  '/allocations': { roles: ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE_ACCOUNT'] },
+  '/requests': { roles: ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE_ACCOUNT'] },
   '/warehouse-inbound': { roles: ['ADMIN', 'HTKD'] },
   '/receive': {
-    roles: ['ADMIN', 'HTKD', 'STORE'],
+    roles: ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE_ACCOUNT'],
     storeKinds: ['RETAIL'],
   },
   '/inventory': {
@@ -55,6 +55,8 @@ export function canShowNavigation(
 ): boolean {
   if (role === 'ADMIN' && ['/requests', '/receive', '/open-bag'].includes(normalizePath(pathname)))
     return false;
+  if (role === 'WHOLESALE_ACCOUNT' && ['/open-bag'].includes(normalizePath(pathname)))
+    return false;
   return canAccessRoute(pathname, role, storeKind);
 }
 
@@ -62,6 +64,7 @@ export function canAccessRoute(pathname: string, role: Role, storeKind: StoreKin
   const policy: RouteAccessPolicy | undefined =
     routeAccessPolicies[normalizePath(pathname) as keyof typeof routeAccessPolicies];
   if (!policy || !policy.roles.includes(role)) return false;
+  // WHOLESALE_ACCOUNT and non-STORE roles don't need storeKind check
   if (role !== 'STORE' || policy.storeKinds === undefined) return true;
   return storeKind !== null && policy.storeKinds.includes(storeKind);
 }

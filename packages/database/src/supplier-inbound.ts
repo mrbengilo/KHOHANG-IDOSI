@@ -46,7 +46,7 @@ export interface ReceiveSupplierInboundInput extends SupplierInboundRequestConte
   readonly receivedAt: Date;
   readonly bags: readonly SupplierInboundBagInput[];
   readonly receivedByUserId: string;
-  readonly actorRole: 'admin' | 'htkd';
+  readonly actorRole: 'admin' | 'htkd' | 'wholesale_account';
   readonly idempotencyKey: string;
   readonly requestHash: string;
 }
@@ -76,7 +76,7 @@ export interface ConfirmSupplierInboundCostsInput extends SupplierInboundRequest
   readonly transportationFeeVnd: bigint;
   readonly handlingFeeVnd: bigint;
   readonly confirmedByUserId: string;
-  readonly actorRole: 'admin' | 'htkd';
+  readonly actorRole: 'admin' | 'htkd' | 'wholesale_account';
   readonly idempotencyKey: string;
   readonly requestHash: string;
 }
@@ -95,7 +95,7 @@ export interface CancelSupplierInboundInput extends SupplierInboundRequestContex
   readonly expectedVersion: number;
   readonly reason: string;
   readonly cancelledByUserId: string;
-  readonly actorRole: 'admin' | 'htkd';
+  readonly actorRole: 'admin' | 'htkd' | 'wholesale_account';
   readonly idempotencyKey: string;
   readonly requestHash: string;
 }
@@ -965,7 +965,7 @@ function aggregateInboundBags(
 async function assertWarehouseActor(
   tx: Transaction,
   userId: string,
-  expectedRole: 'admin' | 'htkd',
+  expectedRole: 'admin' | 'htkd' | 'wholesale_account',
 ): Promise<void> {
   const [actor] = await tx
     .select({ role: users.role, status: users.status })

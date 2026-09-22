@@ -627,6 +627,7 @@ export interface WarehouseRepository {
 
 export function canAccessStore(principal: AuthenticatedPrincipal, storeId: string): boolean {
   if (principal.role === 'ADMIN') return true;
+  if (principal.role === 'WHOLESALE_ACCOUNT') return true; // Wholesale accounts can access all stores
   if (principal.role === 'STORE') return principal.storeId === storeId;
   return principal.assignedStoreIds.includes(storeId);
 }

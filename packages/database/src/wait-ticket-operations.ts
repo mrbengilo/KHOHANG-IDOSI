@@ -45,7 +45,7 @@ export type PriorityOfferEffectiveAction = PriorityOfferResponseAction | 'cancel
 
 interface ActiveActor {
   readonly id: string;
-  readonly role: 'admin' | 'htkd' | 'store';
+  readonly role: 'admin' | 'htkd' | 'store' | 'wholesale_account';
   readonly storeId: string | null;
 }
 
@@ -136,7 +136,7 @@ export interface WaitTicketAuditRecord {
   readonly id: string;
   readonly requestId: string | null;
   readonly actorUserId: string | null;
-  readonly actorRole: 'admin' | 'htkd' | 'store' | null;
+  readonly actorRole: 'admin' | 'htkd' | 'store' | 'wholesale_account' | null;
   readonly actorStoreId: string | null;
   readonly action: string;
   readonly entityType: string;

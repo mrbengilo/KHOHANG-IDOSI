@@ -25,7 +25,7 @@ export interface IdosiStatisticsTarget {
 
 export interface IdosiStatisticsAuditActor {
   readonly userId: string | null;
-  readonly role: 'admin' | 'htkd' | 'store' | null;
+  readonly role: 'admin' | 'htkd' | 'store' | 'wholesale_account' | null;
   readonly storeId: string | null;
 }
 

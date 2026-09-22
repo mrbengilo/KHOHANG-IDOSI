@@ -7,7 +7,7 @@ import {
   PaginationQuerySchema,
 } from './common.js';
 
-export const AccountRoleSchema = z.enum(['ADMIN', 'HTKD', 'STORE']);
+export const AccountRoleSchema = z.enum(['ADMIN', 'HTKD', 'STORE', 'WHOLESALE_ACCOUNT']);
 export type AccountRole = z.infer<typeof AccountRoleSchema>;
 
 export const AccountStatusSchema = z.enum(['ACTIVE', 'LOCKED', 'DISABLED']);
@@ -35,7 +35,7 @@ export const AccountSchema = z
       });
     }
 
-    if (account.role !== 'STORE' && account.storeId !== null) {
+    if (!['STORE'].includes(account.role) && account.storeId !== null) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['storeId'],
@@ -82,14 +82,22 @@ export const AuthenticatedPrincipalSchema = z
       });
     }
 
+    if (principal.role === 'WHOLESALE_ACCOUNT' && principal.storeId !== null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['storeId'],
+        message: 'A wholesale account cannot have a storeId',
+      });
+    }
+
     if (
-      principal.role === 'ADMIN' &&
-      (principal.storeId !== null || principal.assignedStoreIds.length > 0)
+      ['ADMIN', 'WHOLESALE_ACCOUNT'].includes(principal.role) &&
+      principal.assignedStoreIds.length > 0
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['assignedStoreIds'],
-        message: 'An admin principal is global and cannot have store assignments',
+        message: 'Admin and wholesale account principals cannot have store assignments',
       });
     }
   });
@@ -145,7 +153,7 @@ export const CreateAccountRequestSchema = CreateAccountShapeSchema.superRefine(
       });
     }
 
-    if (request.role !== 'STORE' && request.storeId !== null) {
+    if (!['STORE'].includes(request.role) && request.storeId !== null) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['storeId'],

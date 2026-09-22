@@ -51,6 +51,7 @@ const roleLabels: Record<AccountRole, string> = {
   ADMIN: 'Quản trị',
   HTKD: 'HTKD',
   STORE: 'Cửa hàng',
+  WHOLESALE_ACCOUNT: 'Cửa hàng sỉ',
 };
 
 const statusLabels: Record<AccountStatus, string> = {
@@ -478,6 +479,7 @@ function AdminUsersContent() {
               <option value="ADMIN">ADMIN</option>
               <option value="HTKD">HTKD</option>
               <option value="STORE">STORE</option>
+              <option value="WHOLESALE_ACCOUNT">Cửa hàng sỉ</option>
             </select>
           </label>
           <label className="admin-field">
@@ -554,7 +556,9 @@ function AdminUsersContent() {
                         ? storeLabel(account.storeId, storesById)
                         : account.role === 'ADMIN'
                           ? 'Toàn hệ thống'
-                          : 'Theo phân công HTKD'}
+                          : account.role === 'WHOLESALE_ACCOUNT'
+                            ? 'Cửa hàng sỉ'
+                            : 'Theo phân công HTKD'}
                       {account.role === 'HTKD' && account.status !== 'ACTIVE' ? (
                         <small>Kích hoạt tài khoản để sửa phân công.</small>
                       ) : null}
@@ -1121,6 +1125,7 @@ function CreateAccountForm({
             <option value="ADMIN">ADMIN</option>
             <option value="HTKD">HTKD</option>
             <option value="STORE">STORE</option>
+            <option value="WHOLESALE_ACCOUNT">Cửa hàng sỉ</option>
           </select>
         </label>
         {draft.role === 'STORE' ? (

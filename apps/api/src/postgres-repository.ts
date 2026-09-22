@@ -4566,8 +4566,8 @@ function operationalSettingsJson(settings: OperationalSettingsVersion): JsonObje
   };
 }
 
-function databaseAccountRole(role: Account['role']): 'admin' | 'htkd' | 'store' {
-  return role.toLocaleLowerCase('en-US') as 'admin' | 'htkd' | 'store';
+function databaseAccountRole(role: Account['role']): 'admin' | 'htkd' | 'store' | 'wholesale_account' {
+  return role.toLocaleLowerCase('en-US') as 'admin' | 'htkd' | 'store' | 'wholesale_account';
 }
 
 function databaseAccountStatus(status: Account['status']): 'active' | 'locked' | 'disabled' {
@@ -4586,11 +4586,14 @@ function requireActiveHtkdTarget(account: typeof users.$inferSelect): void {
 
 function requireWarehouseActor(actor: AuthenticatedPrincipal): void {
   if (actor.role === 'STORE') throw forbidden();
+  // WHOLESALE_ACCOUNT is allowed for warehouse operations
 }
 
-function databaseWarehouseActorRole(actor: AuthenticatedPrincipal): 'admin' | 'htkd' {
+function databaseWarehouseActorRole(actor: AuthenticatedPrincipal): 'admin' | 'htkd' | 'wholesale_account' {
   requireWarehouseActor(actor);
-  return actor.role === 'ADMIN' ? 'admin' : 'htkd';
+  if (actor.role === 'ADMIN') return 'admin';
+  if (actor.role === 'WHOLESALE_ACCOUNT') return 'wholesale_account';
+  return 'htkd';
 }
 
 function assertPostgresAccountVersion(actual: number, expected: number | undefined): void {

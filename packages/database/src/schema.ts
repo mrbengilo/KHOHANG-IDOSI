@@ -23,7 +23,7 @@ export type JsonPrimitive = boolean | number | string | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: JsonValue };
 export type JsonObject = { readonly [key: string]: JsonValue };
 
-export const userRoleEnum = pgEnum('user_role', ['admin', 'htkd', 'store']);
+export const userRoleEnum = pgEnum('user_role', ['admin', 'htkd', 'store', 'wholesale_account']);
 export const userStatusEnum = pgEnum('user_status', ['active', 'locked', 'disabled']);
 export const storeKindEnum = pgEnum('store_kind', ['retail', 'wholesale']);
 export const productUnitEnum = pgEnum('product_unit', ['item', 'bag', 'kilogram']);
@@ -172,6 +172,11 @@ export const idempotencyStatusEnum = pgEnum('idempotency_status', [
   'in_progress',
   'completed',
   'failed',
+]);
+export const partnerReceiptStatusEnum = pgEnum('partner_receipt_status', [
+  'draft',
+  'confirmed',
+  'cancelled',
 ]);
 
 export const storeGroups = pgTable(
@@ -1986,6 +1991,66 @@ export const idempotencyKeys = pgTable(
   ],
 );
 
+/** Partner receipts for stores - goods received from other partners/suppliers */
+export const partnerReceipts = pgTable(
+  'partner_receipts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    receiptNumber: text('receipt_number').notNull().unique(),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    partnerName: text('partner_name').notNull(),
+    status: partnerReceiptStatusEnum('status').notNull().default('draft'),
+    notes: text('notes'),
+    totalQuantity: integer('total_quantity').notNull().default(0),
+    version: integer('version').notNull().default(0),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    confirmedByUserId: uuid('confirmed_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (table) => [
+    index('partner_receipts_store_idx').on(table.storeId, table.status, table.createdAt),
+    check('partner_receipts_number_not_blank', sql`length(btrim(${table.receiptNumber})) > 0`),
+    check('partner_receipts_partner_name_not_blank', sql`length(btrim(${table.partnerName})) >= 2`),
+    check('partner_receipts_total_quantity_nonnegative', sql`${table.totalQuantity} >= 0`),
+    check('partner_receipts_version_nonnegative', sql`${table.version} >= 0`),
+    check(
+      'partner_receipts_confirmed_state',
+      sql`${table.status} <> 'confirmed' OR (${table.confirmedByUserId} IS NOT NULL AND ${table.confirmedAt} IS NOT NULL)`,
+    ),
+  ],
+);
+
+export const partnerReceiptLines = pgTable(
+  'partner_receipt_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    partnerReceiptId: uuid('partner_receipt_id')
+      .notNull()
+      .references(() => partnerReceipts.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    quantity: integer('quantity').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('partner_receipt_lines_receipt_product_uidx').on(
+      table.partnerReceiptId,
+      table.productId,
+    ),
+    check('partner_receipt_lines_quantity_positive', sql`${table.quantity} > 0`),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Store = typeof stores.$inferSelect;
@@ -2006,3 +2071,7 @@ export type StoreOutbound = typeof storeOutbounds.$inferSelect;
 export type NewStoreOutbound = typeof storeOutbounds.$inferInsert;
 export type StoreTransfer = typeof storeTransfers.$inferSelect;
 export type NewStoreTransfer = typeof storeTransfers.$inferInsert;
+export type PartnerReceipt = typeof partnerReceipts.$inferSelect;
+export type NewPartnerReceipt = typeof partnerReceipts.$inferInsert;
+export type PartnerReceiptLine = typeof partnerReceiptLines.$inferSelect;
+export type NewPartnerReceiptLine = typeof partnerReceiptLines.$inferInsert;
