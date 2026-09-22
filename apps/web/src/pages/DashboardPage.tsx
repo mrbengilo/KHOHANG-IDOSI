@@ -606,15 +606,6 @@ function DashboardContent({
 
   return (
     <>
-      <section className="dashboard-source-strip" aria-label="Nguồn và thời điểm dashboard">
-        <div>
-          <Database aria-hidden="true" size={17} />
-          <span>Báo cáo giao dịch nội bộ</span>
-        </div>
-        <Badge tone="success">{snapshot.report.dataOrigin}</Badge>
-        <small>Tổng hợp lúc {new Date(snapshot.report.generatedAt).toLocaleString('vi-VN')}</small>
-      </section>
-
       {isWholesale ? (
         <section className="permission-card dashboard-permission">
           <ShoppingBag aria-hidden="true" size={20} />
@@ -735,8 +726,8 @@ function DashboardContent({
                 ? 'Mở trang yêu cầu và danh sách chờ'
                 : 'Mở trang phân bổ và danh sách chờ'
             }
+            className="alerts-panel__cta"
             onClick={() => onNavigate(dashboardRouteForAction('WAITING', role, storeKind))}
-            tone="secondary"
           >
             Xem việc chờ <ArrowRight aria-hidden="true" size={16} />
           </Button>
@@ -864,8 +855,8 @@ function DashboardWorkRow({
   readonly value: string;
 }) {
   return (
-    <div className="alert-row">
-      <BellRing aria-hidden="true" size={17} />
+    <div className={`alert-row alert-row--${tone.toLowerCase()}`}>
+      <BellRing aria-hidden="true" size={20} />
       <div>
         <strong>{label}</strong>
         <span>{detail}</span>

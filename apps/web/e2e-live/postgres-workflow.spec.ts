@@ -246,9 +246,9 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   await expect(page.getByRole('heading', { name: 'Giám sát phân bổ hàng hóa' })).toBeVisible();
   const allocationResults = page.getByRole('region', { name: 'Kết quả phân bổ đã lưu' });
   await expect(allocationResults.getByRole('table')).toBeVisible();
-  await expect(
-    allocationResults.getByText('ALLOCATED_BY_PRIORITY_ROUND_ROBIN').first(),
-  ).toBeVisible();
+  // Mã lý do mặc định của vòng chia ưu tiên bị ẩn vì trùng nghĩa với nhãn trạng thái.
+  await expect(allocationResults.getByText('ALLOCATED_BY_PRIORITY_ROUND_ROBIN')).toHaveCount(0);
+  await expect(allocationResults.getByText('Đã cấp đủ').first()).toBeVisible();
 
   const createSessionButton = page.getByRole('button', { name: 'Tạo phiên mới' });
   expect(

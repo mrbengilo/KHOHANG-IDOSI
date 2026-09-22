@@ -3,12 +3,24 @@ import { ShieldAlert } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import { Button } from '../../components/Button';
+import type { Role } from '../../lib/types';
 import { adminErrorMessage, getAdminSession } from './adminApi';
 import './admin.css';
 
 export const adminSessionQueryKey = ['admin', 'session'] as const;
 
-export function AdminAccess({ children }: { readonly children: ReactNode }) {
+/**
+ * Cổng quyền phía giao diện. Backend vẫn là nơi quyết định: danh sách vai trò ở đây chỉ
+ * để không hiển thị màn hình mà tài khoản chắc chắn bị từ chối, không thay thế kiểm tra
+ * quyền phía máy chủ.
+ */
+export function AdminAccess({
+  children,
+  roles = ['ADMIN'],
+}: {
+  readonly children: ReactNode;
+  readonly roles?: readonly Role[];
+}) {
   const sessionQuery = useQuery({
     queryFn: getAdminSession,
     queryKey: adminSessionQueryKey,
@@ -42,12 +54,12 @@ export function AdminAccess({ children }: { readonly children: ReactNode }) {
     );
   }
 
-  if (sessionQuery.data.principal.role !== 'ADMIN') {
+  if (!roles.includes(sessionQuery.data.principal.role)) {
     return (
       <div className="admin-feature">
         <section className="admin-state admin-state--permission" role="alert">
           <ShieldAlert aria-hidden="true" size={28} />
-          <strong>Chỉ tài khoản ADMIN được truy cập</strong>
+          <strong>Chỉ tài khoản {roles.join(' hoặc ')} được truy cập</strong>
           <p>Backend đã từ chối mọi thao tác quản trị cho vai trò hiện tại.</p>
         </section>
       </div>

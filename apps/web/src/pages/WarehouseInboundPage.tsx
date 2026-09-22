@@ -5,7 +5,8 @@ import {
 } from '@idosi/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState, type FormEvent } from 'react';
-import { AdminAccess } from '../features/admin/AdminAccess';
+import { AdminAccess, adminSessionQueryKey } from '../features/admin/AdminAccess';
+import { getAdminSession } from '../features/admin/adminApi';
 import { Button } from '../components/Button';
 import { PageHeader } from '../components/PageHeader';
 import { ProductBagPicker } from '../components/ProductBagPicker';
@@ -32,7 +33,7 @@ function newBag() {
 
 export function WarehouseInboundPage() {
   return (
-    <AdminAccess>
+    <AdminAccess roles={['ADMIN', 'HTKD']}>
       <WarehouseInboundContent />
     </AdminAccess>
   );
@@ -41,6 +42,14 @@ export function WarehouseInboundPage() {
 function WarehouseInboundContent() {
   const client = useQueryClient();
   const catalog = useQuery({ queryKey: ['catalog'], queryFn: listCatalog, retry: false });
+  // Backend chỉ cho ADMIN sửa VAT của phiếu đã lưu, nên HTKD không thấy ô sửa đó.
+  const session = useQuery({
+    queryKey: adminSessionQueryKey,
+    queryFn: getAdminSession,
+    retry: false,
+    staleTime: 30_000,
+  });
+  const canEditVat = session.data?.principal.role === 'ADMIN';
   const [page, setPage] = useState(1);
   const history = useQuery({
     queryKey: ['warehouse-inbounds', page],
@@ -138,7 +147,7 @@ function WarehouseInboundContent() {
     <>
       <PageHeader
         title="Nhập kho tổng"
-        description="Admin tiếp nhận hàng từ nhà cung cấp vào kho tổng. Chọn mặt hàng và nhập số bao thực nhận."
+        description="Tiếp nhận hàng từ nhà cung cấp vào kho tổng. Chọn mặt hàng và nhập số bao thực nhận."
       />
       {catalog.isError ? (
         <div role="alert">
@@ -312,7 +321,9 @@ function WarehouseInboundContent() {
                     ? 'Đã hủy'
                     : 'Đã nhập, chờ xác nhận chi phí'}
               </span>
-              {receipt.status !== 'CANCELLED' ? <InboundVatEditor receipt={receipt} /> : null}
+              {canEditVat && receipt.status !== 'CANCELLED' ? (
+                <InboundVatEditor receipt={receipt} />
+              ) : null}
               {receipt.status === 'COST_PENDING' ? <InvoiceCostEditor receipt={receipt} /> : null}
               {receipt.cost ? (
                 <p>
