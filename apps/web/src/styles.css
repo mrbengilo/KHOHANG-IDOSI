@@ -2840,8 +2840,9 @@ label:has(:required) > .field-label::after {
   .mobile-bottom-nav a {
     min-height: 44px;
   }
+  /* Touch targets stay at least 44px tall on phones, text buttons included. */
   .link-button {
-    min-height: 40px;
+    min-height: 44px;
   }
   .sidebar {
     width: 230px;
@@ -3143,7 +3144,7 @@ label:has(:required) > .field-label::after {
     justify-content: flex-start;
   }
   .waitlist-panel__actions .link-button {
-    min-height: 40px;
+    min-height: 44px;
   }
   .waitlist-panel__error {
     align-items: stretch;
