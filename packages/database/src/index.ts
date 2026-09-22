@@ -303,3 +303,19 @@ export type {
   WaitTicketPriority,
   WaitTicketRecord,
 } from './wait-ticket-operations.js';
+
+export {
+  createDatabasePartnerReceipt,
+  getDatabasePartnerReceipt,
+  listDatabasePartnerReceipts,
+  PartnerReceiptDuplicateNumberError,
+  PartnerReceiptNotFoundError,
+  PartnerReceiptProductNotFoundError,
+  PartnerReceiptStoreNotFoundError,
+} from './partner-receipt-operations.js';
+export type {
+  CreatePartnerReceiptInput,
+  CreatedPartnerReceipt,
+  ListPartnerReceiptsInput,
+  PartnerReceiptsPage,
+} from './partner-receipt-operations.js';
