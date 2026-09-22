@@ -13,6 +13,7 @@ import {
   Menu,
   PackageCheck,
   PackageOpen,
+  PackagePlus,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
@@ -54,6 +55,7 @@ const navEntries: NavEntry[] = [
     icon: PackageCheck,
   },
   { to: '/costs', label: 'Phiếu nhập & giá vốn', icon: ClipboardCheck },
+  { to: '/partner-receipts', label: 'Nhập hàng đối tác', icon: PackagePlus },
   {
     to: '/inventory',
     label: 'Tồn kho / Lịch sử',

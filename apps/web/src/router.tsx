@@ -59,6 +59,11 @@ const SettingsPage = lazy(() =>
     default: module.AdminSettingsPage,
   })),
 );
+const PartnerReceiptsPage = lazy(() =>
+  import('./features/partner-receipts/PartnerReceiptsPage').then((module) => ({
+    default: module.PartnerReceiptsPage,
+  })),
+);
 const LoginPage = lazy(() =>
   import('./pages/LoginPage').then((module) => ({ default: module.LoginPage })),
 );
@@ -88,6 +93,7 @@ export const router = createBrowserRouter([
       { path: 'transfers', element: suspense(<TransfersPage />) },
       { path: 'catalog', element: suspense(<CatalogPage />) },
       { path: 'costs', element: suspense(<ReceivePage />) },
+      { path: 'partner-receipts', element: suspense(<PartnerReceiptsPage />) },
       { path: 'reports', element: suspense(<ReportsPage />) },
       { path: 'stores', element: suspense(<StoresPage />) },
       { path: 'users', element: suspense(<UsersPage />) },

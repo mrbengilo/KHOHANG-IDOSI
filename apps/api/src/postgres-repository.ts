@@ -91,6 +91,11 @@ import type {
   ReceiveStoreTransferRequest,
   CancelStoreTransferRequest,
   WarehouseBalancesResponse,
+  CreatePartnerReceiptRequest,
+  ListPartnerReceiptsQuery,
+  ListPartnerReceiptsResponse,
+  GetPartnerReceiptResponse,
+  PartnerReceipt,
 } from '@idosi/contracts';
 import { StoreGroupSchema, StoreSchema } from '@idosi/contracts';
 import {
