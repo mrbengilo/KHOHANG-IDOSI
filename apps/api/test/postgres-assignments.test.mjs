@@ -21,7 +21,7 @@ const describePostgres = process.env.RUN_POSTGRES_TESTS === '1' ? describe : des
 describePostgres('PostgreSQL HTKD assignments', () => {
   after(async () => closeDatabase());
 
-  test('serializes audited replacements, enforces retail scope and revokes sessions', async () => {
+  test('serializes audited replacements, covers wholesale stores and revokes sessions', async () => {
     const [admin] = await db
       .select()
       .from(users)
@@ -149,20 +149,22 @@ describePostgres('PostgreSQL HTKD assignments', () => {
         ),
       (error) => error?.code === 'VERSION_CONFLICT',
     );
-    await assert.rejects(
-      () =>
-        repository.replaceHtkdAssignments(
-          actor,
-          target.id,
-          {
-            expectedSessionVersion: 1,
-            reason: 'Cửa hàng sỉ phải bị từ chối',
-            storeIds: [wholesaleStore.id],
-          },
-          context,
-        ),
-      (error) => error?.code === 'VALIDATION_ERROR',
+    // 7779fe4 opened HTKD supervision to every active store, wholesale included; only the
+    // retail order/receive/transfer gates stay retail-only. This test still asserted the
+    // old refusal, which is why it only failed where PostgreSQL tests run (CI).
+    const withWholesale = await repository.replaceHtkdAssignments(
+      actor,
+      target.id,
+      {
+        expectedSessionVersion: 1,
+        reason: 'HTKD giám sát cả cửa hàng sỉ',
+        storeIds: [...retailStores.map((store) => store.id), wholesaleStore.id],
+      },
+      context,
     );
+    assert.equal(withWholesale.assignments.length, 3);
+    assert.equal(withWholesale.sessionVersion, 2);
+    assert.ok(withWholesale.assignments.some((row) => row.storeId === wholesaleStore.id));
 
     const [clearSession] = await db
       .insert(sessions)
@@ -173,7 +175,7 @@ describePostgres('PostgreSQL HTKD assignments', () => {
         tokenHash: `assignment-clear-${suffix}`,
         userAgent: 'postgres-assignment-clear-test',
         userId: target.id,
-        userTokenVersion: 1,
+        userTokenVersion: 2,
       })
       .returning();
     assert.ok(clearSession);
@@ -181,7 +183,7 @@ describePostgres('PostgreSQL HTKD assignments', () => {
       actor,
       target.id,
       {
-        expectedSessionVersion: 1,
+        expectedSessionVersion: 2,
         reason: 'Thu hồi toàn bộ địa bàn kiểm thử',
         storeIds: [],
       },
@@ -206,11 +208,11 @@ describePostgres('PostgreSQL HTKD assignments', () => {
       .where(
         and(eq(auditLogs.entityId, target.id), eq(auditLogs.action, 'HTKD_ASSIGNMENTS_REPLACED')),
       );
-    assert.equal(assignmentAudits.length, 2);
+    assert.equal(assignmentAudits.length, 3);
     const clearAudit = assignmentAudits.find(
       (audit) => audit.requestId === `postgres-assignment-clear-${suffix}`,
     );
-    assert.equal(clearAudit?.before?.assignments?.length, 2);
+    assert.equal(clearAudit?.before?.assignments?.length, 3);
     assert.equal(clearAudit?.after?.assignments?.length, 0);
     assert.equal(clearAudit?.metadata?.sessionsRevoked, 1);
 
