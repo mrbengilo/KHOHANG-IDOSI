@@ -193,6 +193,9 @@ import {
   withAdvisoryLock,
   withIdempotency,
   withSerializableTransaction,
+  createDatabasePartnerReceipt,
+  getDatabasePartnerReceipt,
+  listDatabasePartnerReceipts,
   type JsonObject,
   type AllocationResultDatabaseStatus,
   type AllocationResultRecord,
@@ -3088,6 +3091,69 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         })),
       generatedAt: new Date().toISOString(),
     };
+  }
+
+  public async listPartnerReceipts(
+    actor: AuthenticatedPrincipal,
+    query: ListPartnerReceiptsQuery,
+  ): Promise<ListPartnerReceiptsResponse> {
+    // Only STORE role can access partner receipts for their own store
+    if (actor.role !== 'STORE' || !actor.storeId) {
+      throw forbidden('Chỉ tài khoản cửa hàng mới có thể xem phiếu nhập đối tác');
+    }
+
+    const result = await listDatabasePartnerReceipts(db, {
+      storeId: actor.storeId,
+      status: query.status,
+      partnerName: query.partnerName,
+      page: query.page,
+      pageSize: query.pageSize,
+    });
+
+    return {
+      data: result.data,
+      pagination: result.pagination,
+    };
+  }
+
+  public async getPartnerReceipt(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+  ): Promise<GetPartnerReceiptResponse> {
+    const receipt = await getDatabasePartnerReceipt(db, receiptId);
+
+    // Verify access
+    if (actor.role !== 'STORE' || actor.storeId !== receipt.storeId) {
+      throw forbidden('Không có quyền xem phiếu nhập này');
+    }
+
+    return { data: receipt };
+  }
+
+  public async createPartnerReceipt(
+    actor: AuthenticatedPrincipal,
+    input: CreatePartnerReceiptRequest,
+    context: RequestContext,
+  ): Promise<PartnerReceipt> {
+    // Only STORE role can create partner receipts for their own store
+    if (actor.role !== 'STORE' || !actor.storeId) {
+      throw forbidden('Chỉ tài khoản cửa hàng mới có thể tạo phiếu nhập đối tác');
+    }
+
+    if (input.storeId !== actor.storeId) {
+      throw forbidden('Không thể tạo phiếu nhập cho cửa hàng khác');
+    }
+
+    const result = await createDatabasePartnerReceipt(db, {
+      storeId: input.storeId,
+      partnerName: input.partnerName,
+      notes: input.notes ?? null,
+      lines: input.lines,
+      createdByUserId: actor.accountId,
+    });
+
+    // Fetch and return the created receipt
+    return getDatabasePartnerReceipt(db, result.receiptId);
   }
 
   private async orderSessionById(sessionId: string): Promise<OrderSession> {

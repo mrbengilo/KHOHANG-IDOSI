@@ -104,21 +104,21 @@ export async function createDatabasePartnerReceipt(
   return db.transaction(async (tx) => {
     // Verify store exists and is active
     const [store] = await tx
-      .select({ id: stores.id, status: stores.status })
+      .select({ id: stores.id })
       .from(stores)
       .where(and(eq(stores.id, input.storeId), isNull(stores.deletedAt)))
       .limit(1);
 
-    if (!store || store.status !== 'active') {
+    if (!store) {
       throw new PartnerReceiptStoreNotFoundError();
     }
 
     // Verify all products exist and are active
     const productIds = input.lines.map((line) => line.productId);
     const foundProducts = await tx
-      .select({ id: products.id, status: products.status })
+      .select({ id: products.id })
       .from(products)
-      .where(and(inArray(products.id, productIds), eq(products.status, 'active')));
+      .where(inArray(products.id, productIds));
 
     if (foundProducts.length !== productIds.length) {
       const foundIds = new Set(foundProducts.map((p) => p.id));
@@ -127,7 +127,7 @@ export async function createDatabasePartnerReceipt(
     }
 
     // Generate unique receipt number
-    let receiptNumber: string;
+    let receiptNumber: string = '';
     let attempts = 0;
     const maxAttempts = 10;
 
@@ -153,7 +153,7 @@ export async function createDatabasePartnerReceipt(
     const [receipt] = await tx
       .insert(partnerReceipts)
       .values({
-        receiptNumber: receiptNumber!,
+        receiptNumber,
         storeId: input.storeId,
         partnerName: input.partnerName,
         notes: input.notes,
@@ -162,6 +162,10 @@ export async function createDatabasePartnerReceipt(
         createdByUserId: input.createdByUserId,
       })
       .returning({ id: partnerReceipts.id, receiptNumber: partnerReceipts.receiptNumber });
+
+    if (!receipt) {
+      throw new PartnerReceiptError('Không thể tạo phiếu nhập', 'CREATE_FAILED');
+    }
 
     // Create receipt lines
     await tx.insert(partnerReceiptLines).values(

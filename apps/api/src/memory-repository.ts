@@ -90,6 +90,9 @@ import type {
   ReceiveStoreTransferRequest,
   CancelStoreTransferRequest,
   WarehouseBalancesResponse,
+  ListPartnerReceiptsResponse,
+  GetPartnerReceiptResponse,
+  PartnerReceipt,
 } from '@idosi/contracts';
 import { formatInboundReceiptNumber } from '@idosi/contracts';
 import {
@@ -3263,6 +3266,18 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (!store) throw notFound('Không tìm thấy cửa hàng');
     if (!canAccessStore(actor, store.id)) throw forbidden('Không có quyền xem cửa hàng này');
     return emptyStatistics(storeCode, from, to, this.now());
+  }
+
+  public async listPartnerReceipts(): Promise<ListPartnerReceiptsResponse> {
+    throw new ApiError('NOT_IMPLEMENTED', 'Partner receipts not implemented in memory repository', 501);
+  }
+
+  public async getPartnerReceipt(): Promise<GetPartnerReceiptResponse> {
+    throw new ApiError('NOT_IMPLEMENTED', 'Partner receipts not implemented in memory repository', 501);
+  }
+
+  public async createPartnerReceipt(): Promise<PartnerReceipt> {
+    throw new ApiError('NOT_IMPLEMENTED', 'Partner receipts not implemented in memory repository', 501);
   }
 
   /** Test/admin helper that models token-version revocation when account state changes. */

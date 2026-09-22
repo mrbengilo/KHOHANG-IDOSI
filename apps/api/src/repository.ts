@@ -89,6 +89,11 @@ import type {
   UpdateOperationalSettingsRequest,
   UpdateStoreGroupRequest,
   UpdateStoreRequest,
+  CreatePartnerReceiptRequest,
+  ListPartnerReceiptsQuery,
+  ListPartnerReceiptsResponse,
+  GetPartnerReceiptResponse,
+  PartnerReceipt,
 } from '@idosi/contracts';
 
 import { forbidden } from './errors.js';
@@ -611,6 +616,20 @@ export interface WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<PriorityOffer>>;
+
+  listPartnerReceipts(
+    actor: AuthenticatedPrincipal,
+    query: ListPartnerReceiptsQuery,
+  ): Promise<ListPartnerReceiptsResponse>;
+  getPartnerReceipt(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+  ): Promise<GetPartnerReceiptResponse>;
+  createPartnerReceipt(
+    actor: AuthenticatedPrincipal,
+    input: CreatePartnerReceiptRequest,
+    context: RequestContext,
+  ): Promise<PartnerReceipt>;
 
   getMonthlyOperationalReport(
     actor: AuthenticatedPrincipal,

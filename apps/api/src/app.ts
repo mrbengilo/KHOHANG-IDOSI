@@ -85,6 +85,9 @@ import {
   UpdateOperationalSettingsRequestSchema,
   UpdateStoreGroupRequestSchema,
   UpdateStoreRequestSchema,
+  CreatePartnerReceiptRequestSchema,
+  ListPartnerReceiptsQuerySchema,
+  PartnerReceiptParamsSchema,
   type ApiErrorCode,
   type AuthenticatedPrincipal,
   IdosiGatewayError,
@@ -1199,6 +1202,32 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     );
     reply.header('idempotency-replayed', String(result.replayed));
     return reply.send({ data: result.data });
+  });
+
+  app.get('/api/v1/partner-receipts', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const query = ListPartnerReceiptsQuerySchema.parse(request.query);
+    return repository.listPartnerReceipts(session.principal, query);
+  });
+
+  app.get('/api/v1/partner-receipts/:receiptId', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const { receiptId } = PartnerReceiptParamsSchema.parse(request.params);
+    return repository.getPartnerReceipt(session.principal, receiptId);
+  });
+
+  app.post('/api/v1/partner-receipts', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const input = CreatePartnerReceiptRequestSchema.parse(request.body);
+    const result = await repository.createPartnerReceipt(
+      session.principal,
+      input,
+      requestContext(request),
+    );
+    return reply.status(201).send({ data: result });
   });
 
   app.get('/api/v1/wait-tickets', async (request) => {
