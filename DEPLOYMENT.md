@@ -3,12 +3,14 @@
 ## Tổng quan
 
 Deploy branch `feat/add-wholesale-account-role` với các thay đổi:
+
 - Thêm vai trò WHOLESALE_ACCOUNT
 - Thêm bảng partner_receipts và partner_receipt_lines
 - API endpoints cho partner receipts
 - UI form và danh sách partner receipts
 
 **Commits:**
+
 - `be98261` - feat(auth): add wholesale_account role and partner_receipts tables
 - `14b272f` - feat(partner-receipts): add contracts and database operations
 - `a59b1d5` - feat(api): add partner receipts API endpoints
@@ -44,6 +46,7 @@ export BACKUP_DIR=/opt/backups/khohang-idosi
 ```
 
 Script sẽ tự động:
+
 1. ✅ Backup database
 2. ✅ Pull code mới
 3. ✅ Build Docker images
@@ -401,6 +404,7 @@ Nếu có bất kỳ vấn đề nào → Rollback ngay
 ## Liên hệ
 
 Nếu gặp vấn đề trong quá trình deploy, vui lòng:
+
 1. Chụp screenshot logs lỗi
 2. Ghi lại các bước đã thực hiện
 3. Backup database trước khi thử rollback

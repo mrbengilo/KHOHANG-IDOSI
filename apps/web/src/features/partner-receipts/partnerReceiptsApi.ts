@@ -1,10 +1,16 @@
-import type {
-  CreatePartnerReceiptRequest,
-  ListPartnerReceiptsQuery,
-  ListPartnerReceiptsResponse,
-  GetPartnerReceiptResponse,
+import {
+  CreatePartnerReceiptRequestSchema,
+  CreatePartnerReceiptResponseSchema,
+  GetPartnerReceiptResponseSchema,
+  ListPartnerReceiptsResponseSchema,
+  PartnerReceiptParamsSchema,
+  type CreatePartnerReceiptRequest,
+  type CreatePartnerReceiptResponse,
+  type ListPartnerReceiptsQuery,
+  type ListPartnerReceiptsResponse,
+  type GetPartnerReceiptResponse,
 } from '@idosi/contracts';
-import { apiClient } from '../../lib/api';
+import { request } from '../../lib/api';
 
 export async function listPartnerReceipts(
   query: ListPartnerReceiptsQuery,
@@ -15,19 +21,23 @@ export async function listPartnerReceipts(
   if (query.storeId) params.set('storeId', query.storeId);
   if (query.status) params.set('status', query.status);
   if (query.partnerName) params.set('partnerName', query.partnerName);
-
-  const response = await apiClient.get(`/api/v1/partner-receipts?${params.toString()}`);
-  return response.json();
+  return ListPartnerReceiptsResponseSchema.parse(
+    await request(`/partner-receipts?${params.toString()}`),
+  );
 }
 
 export async function getPartnerReceipt(receiptId: string): Promise<GetPartnerReceiptResponse> {
-  const response = await apiClient.get(`/api/v1/partner-receipts/${receiptId}`);
-  return response.json();
+  const params = PartnerReceiptParamsSchema.parse({ receiptId });
+  return GetPartnerReceiptResponseSchema.parse(
+    await request(`/partner-receipts/${encodeURIComponent(params.receiptId)}`),
+  );
 }
 
 export async function createPartnerReceipt(
   input: CreatePartnerReceiptRequest,
-): Promise<GetPartnerReceiptResponse> {
-  const response = await apiClient.post('/api/v1/partner-receipts', { json: input });
-  return response.json();
+): Promise<CreatePartnerReceiptResponse> {
+  const body = CreatePartnerReceiptRequestSchema.parse(input);
+  return CreatePartnerReceiptResponseSchema.parse(
+    await request('/partner-receipts', { method: 'POST', body: JSON.stringify(body) }),
+  );
 }

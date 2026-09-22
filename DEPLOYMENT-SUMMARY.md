@@ -40,17 +40,20 @@
 ## 🎯 Features Delivered
 
 ### 1. WHOLESALE_ACCOUNT Role
+
 - Thêm role mới vào hệ thống
 - Chuẩn bị cho tài khoản đối tác sỉ
 - Migration tương thích ngược
 
 ### 2. Partner Receipts Management
+
 - **Tạo phiếu nhập:** Form với validation
 - **Danh sách phiếu:** Table với filter và pagination
 - **Chi tiết phiếu:** Xem đầy đủ thông tin
 - **Authorization:** Chỉ STORE role truy cập được
 
 ### 3. Database Schema
+
 ```sql
 -- partner_receipts table
 - id (UUID)
@@ -76,6 +79,7 @@
 ## 📋 CÁCH DEPLOY LÊN VPS
 
 ### Thông tin VPS:
+
 - **IP:** 160.191.88.246
 - **Domain:** khoidosi.io.vn
 
@@ -104,6 +108,7 @@ chmod +x deploy-vps.sh verify-deployment.sh
 ```
 
 Script tự động sẽ:
+
 - ✅ Backup database
 - ✅ Pull code mới
 - ✅ Build Docker images
@@ -126,11 +131,13 @@ cat DEPLOY-TO-PRODUCTION.sh
 ## 🧪 SMOKE TESTS (Sau khi deploy)
 
 ### Test 1: Login với STORE role
+
 1. Truy cập: https://khoidosi.io.vn
 2. Login với tài khoản cửa hàng
 3. ✅ Thấy menu "Nhập hàng đối tác"
 
 ### Test 2: Tạo phiếu nhập
+
 1. Click "Nhập hàng đối tác"
 2. Click "Tạo phiếu nhập"
 3. Điền form:
@@ -146,6 +153,7 @@ cat DEPLOY-TO-PRODUCTION.sh
    - Trạng thái: Nháp
 
 ### Test 3: Authorization
+
 1. Logout khỏi STORE account
 2. Login với Admin hoặc HTKD account
 3. ✅ KHÔNG thấy menu "Nhập hàng đối tác"
@@ -153,6 +161,7 @@ cat DEPLOY-TO-PRODUCTION.sh
 5. ✅ Hiển thị "Không có quyền truy cập"
 
 ### Test 4: List và filter
+
 1. Login lại với STORE account
 2. Vào "Nhập hàng đối tác"
 3. ✅ Danh sách hiển thị tất cả phiếu của cửa hàng
@@ -163,6 +172,7 @@ cat DEPLOY-TO-PRODUCTION.sh
 ## 🔍 VERIFICATION CHECKLIST
 
 ### Pre-deployment:
+
 - [x] Code reviewed và tested locally
 - [x] Typecheck passed
 - [x] Migrations tested
@@ -170,6 +180,7 @@ cat DEPLOY-TO-PRODUCTION.sh
 - [x] Branch: feat/add-wholesale-account-role
 
 ### During deployment:
+
 - [ ] SSH vào VPS thành công
 - [ ] Database backup created
 - [ ] Code pulled (commit: 0f0b921)
@@ -179,6 +190,7 @@ cat DEPLOY-TO-PRODUCTION.sh
 - [ ] All containers healthy
 
 ### Post-deployment:
+
 - [ ] Tables created: partner_receipts, partner_receipt_lines
 - [ ] Enum updated: wholesale_account
 - [ ] API /ready returns 200
@@ -195,11 +207,13 @@ cat DEPLOY-TO-PRODUCTION.sh
 ## 📊 DATABASE MIGRATIONS
 
 ### Migration 0011: Add wholesale_account role
+
 ```sql
 ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'wholesale_account';
 ```
 
 ### Migration 0012: Add partner_receipts tables
+
 ```sql
 CREATE TABLE partner_receipts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -235,6 +249,7 @@ CREATE INDEX idx_partner_receipt_lines_receipt ON partner_receipt_lines(receipt_
 Nếu gặp vấn đề sau deploy:
 
 ### Quick rollback (giữ migrations):
+
 ```bash
 cd /opt/khohang-idosi
 docker compose stop api worker web
@@ -245,6 +260,7 @@ docker compose ps
 ```
 
 ### Full rollback (restore database):
+
 ```bash
 cd /opt/khohang-idosi
 docker compose down
@@ -270,6 +286,7 @@ curl -k https://khoidosi.io.vn/ready
 ## 📞 SUPPORT & TROUBLESHOOTING
 
 ### Nếu migrations fail:
+
 ```bash
 # Check migration logs
 docker compose logs migrate
@@ -282,6 +299,7 @@ docker compose exec db psql -U idosi -d idosi -c "SELECT * FROM migrations ORDER
 ```
 
 ### Nếu containers không healthy:
+
 ```bash
 # Check logs
 docker compose logs api --tail=100
@@ -295,6 +313,7 @@ docker inspect khohang-idosi-api-1 | grep -A 5 "Healthcheck"
 ```
 
 ### Nếu UI không load:
+
 ```bash
 # Check web container
 docker compose logs web
@@ -311,17 +330,20 @@ docker compose exec web wget -O- http://localhost:3000
 ## 📝 FILES CREATED
 
 ### Deployment Scripts:
+
 - `deploy-vps.sh` - Automated deployment for VPS
 - `deploy.sh` - General deployment script
 - `verify-deployment.sh` - Post-deploy verification
 
 ### Documentation:
+
 - `DEPLOYMENT.md` - Chi tiết deployment guide
 - `DEPLOY-TO-PRODUCTION.sh` - Step-by-step commands
 - `quick-deploy-commands.sh` - Quick reference
 - `DEPLOYMENT-SUMMARY.md` - This file
 
 ### Code Files:
+
 - Contracts: `packages/contracts/src/partner-receipts.ts`
 - Database: `packages/database/src/partner-receipt-operations.ts`
 - Migrations: `packages/database/migrations/0011_*.sql`, `0012_*.sql`

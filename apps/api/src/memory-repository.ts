@@ -3269,15 +3269,27 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   }
 
   public async listPartnerReceipts(): Promise<ListPartnerReceiptsResponse> {
-    throw new ApiError('INTERNAL_ERROR', 'Partner receipts not implemented in memory repository', 501);
+    throw new ApiError(
+      'INTERNAL_ERROR',
+      'Partner receipts not implemented in memory repository',
+      501,
+    );
   }
 
   public async getPartnerReceipt(): Promise<GetPartnerReceiptResponse> {
-    throw new ApiError('INTERNAL_ERROR', 'Partner receipts not implemented in memory repository', 501);
+    throw new ApiError(
+      'INTERNAL_ERROR',
+      'Partner receipts not implemented in memory repository',
+      501,
+    );
   }
 
   public async createPartnerReceipt(): Promise<PartnerReceipt> {
-    throw new ApiError('INTERNAL_ERROR', 'Partner receipts not implemented in memory repository', 501);
+    throw new ApiError(
+      'INTERNAL_ERROR',
+      'Partner receipts not implemented in memory repository',
+      501,
+    );
   }
 
   /** Test/admin helper that models token-version revocation when account state changes. */

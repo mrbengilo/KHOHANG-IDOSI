@@ -1,21 +1,8 @@
 import { and, desc, eq, ilike, inArray, isNull, sql } from 'drizzle-orm';
-import type {
-  CreatePartnerReceiptRequest,
-  ListPartnerReceiptsQuery,
-  PartnerReceipt,
-  PartnerReceiptStatus,
-} from '@idosi/contracts';
+import type { PartnerReceipt, PartnerReceiptStatus } from '@idosi/contracts';
 
 import type { Database } from './client.js';
-import {
-  partnerReceiptLines,
-  partnerReceipts,
-  products,
-  stores,
-  users,
-  type JsonObject,
-} from './schema.js';
-import type { Transaction } from './transaction.js';
+import { partnerReceiptLines, partnerReceipts, products, stores, users } from './schema.js';
 
 export interface CreatePartnerReceiptInput {
   readonly storeId: string;
@@ -53,7 +40,10 @@ export interface PartnerReceiptsPage {
 }
 
 class PartnerReceiptError extends Error {
-  constructor(message: string, public readonly code: string) {
+  constructor(
+    message: string,
+    public readonly code: string,
+  ) {
     super(message);
     this.name = 'PartnerReceiptError';
   }
@@ -198,7 +188,9 @@ export async function listDatabasePartnerReceipts(
   }
 
   if (input.status) {
-    conditions.push(eq(partnerReceipts.status, input.status.toLowerCase() as any));
+    conditions.push(
+      eq(partnerReceipts.status, input.status.toLowerCase() as 'draft' | 'confirmed' | 'cancelled'),
+    );
   }
 
   if (input.partnerName) {
@@ -251,7 +243,10 @@ export async function listDatabasePartnerReceipts(
     .from(partnerReceipts)
     .leftJoin(stores, eq(partnerReceipts.storeId, stores.id))
     .leftJoin(users, eq(partnerReceipts.createdByUserId, users.id))
-    .leftJoin(sql`users AS confirmed_user`, sql`${partnerReceipts.confirmedByUserId} = confirmed_user.id`)
+    .leftJoin(
+      sql`users AS confirmed_user`,
+      sql`${partnerReceipts.confirmedByUserId} = confirmed_user.id`,
+    )
     .where(where)
     .orderBy(desc(partnerReceipts.createdAt))
     .limit(input.pageSize)
@@ -349,7 +344,10 @@ export async function getDatabasePartnerReceipt(
     .from(partnerReceipts)
     .leftJoin(stores, eq(partnerReceipts.storeId, stores.id))
     .leftJoin(users, eq(partnerReceipts.createdByUserId, users.id))
-    .leftJoin(sql`users AS confirmed_user`, sql`${partnerReceipts.confirmedByUserId} = confirmed_user.id`)
+    .leftJoin(
+      sql`users AS confirmed_user`,
+      sql`${partnerReceipts.confirmedByUserId} = confirmed_user.id`,
+    )
     .where(and(eq(partnerReceipts.id, receiptId), isNull(partnerReceipts.deletedAt)))
     .limit(1);
 

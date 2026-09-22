@@ -2,13 +2,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CreatePartnerReceiptRequest, PartnerReceipt } from '@idosi/contracts';
 import { PackagePlus, Plus, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
-import { useOutletContext } from 'react-router-dom';
-import type { AppOutletContext } from '../../components/AppShell';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/PageHeader';
 import { DashboardSkeleton } from '../../components/Skeleton';
-import { listCatalog, type CatalogProduct } from '../../lib/api';
+import { listCatalog } from '../../lib/api';
+import type { ProductConversion as CatalogProduct } from '../../lib/types';
 import { useSession } from '../../lib/auth';
 import { createPartnerReceipt, listPartnerReceipts } from './partnerReceiptsApi';
 
@@ -27,8 +26,8 @@ interface ReceiptLine {
 }
 
 export function PartnerReceiptsPage() {
-  const { session } = useOutletContext<AppOutletContext>();
-  const { principal } = useSession();
+  const sessionQuery = useSession();
+  const principal = sessionQuery.data?.principal;
   const queryClient = useQueryClient();
 
   const [showForm, setShowForm] = useState(false);
@@ -37,19 +36,18 @@ export function PartnerReceiptsPage() {
   const [lines, setLines] = useState<ReceiptLine[]>([{ productId: '', quantity: 1 }]);
 
   const receiptsQuery = useQuery({
-    queryKey: ['partner-receipts', principal.storeId],
-    queryFn: () =>
-      listPartnerReceipts({
-        storeId: principal.storeId!,
-        page: 1,
-        pageSize: 50,
-      }),
-    enabled: principal.role === 'STORE' && !!principal.storeId,
+    queryKey: ['partner-receipts', principal?.accountId, principal?.storeId],
+    queryFn: () => {
+      if (!principal?.storeId) throw new Error('Phiên đăng nhập không có cửa hàng');
+      return listPartnerReceipts({ storeId: principal.storeId, page: 1, pageSize: 50 });
+    },
+    enabled: principal?.role === 'STORE' && !!principal.storeId,
   });
 
   const productsQuery = useQuery({
     queryKey: ['catalog'],
     queryFn: () => listCatalog(),
+    enabled: principal?.role === 'STORE' && !!principal.storeId,
   });
 
   const createMutation = useMutation({
@@ -72,14 +70,16 @@ export function PartnerReceiptsPage() {
   };
 
   const handleLineChange = (index: number, field: keyof ReceiptLine, value: string | number) => {
-    const newLines = [...lines];
-    newLines[index] = { ...newLines[index], [field]: value };
-    setLines(newLines);
+    setLines((current) =>
+      current.map((line, currentIndex) =>
+        currentIndex === index ? { ...line, [field]: value } : line,
+      ),
+    );
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!principal.storeId) return;
+    if (!principal?.storeId) return;
 
     const validLines = lines.filter(
       (line): line is { productId: string; quantity: number } =>
@@ -95,7 +95,9 @@ export function PartnerReceiptsPage() {
     });
   };
 
-  if (principal.role !== 'STORE' || !principal.storeId) {
+  if (sessionQuery.isLoading) return <DashboardSkeleton />;
+
+  if (principal?.role !== 'STORE' || !principal.storeId) {
     return (
       <div className="container mx-auto px-4 py-8">
         <div className="text-center py-12">
@@ -109,6 +111,13 @@ export function PartnerReceiptsPage() {
 
   if (receiptsQuery.isLoading || productsQuery.isLoading) {
     return <DashboardSkeleton />;
+  }
+
+  if (receiptsQuery.isError || productsQuery.isError) {
+    const error = receiptsQuery.error ?? productsQuery.error;
+    return (
+      <div role="alert">{error instanceof Error ? error.message : 'Không tải được dữ liệu'}</div>
+    );
   }
 
   const receipts = receiptsQuery.data?.data ?? [];

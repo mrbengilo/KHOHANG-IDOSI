@@ -56,8 +56,7 @@ export function canShowNavigation(
 ): boolean {
   if (role === 'ADMIN' && ['/requests', '/receive', '/open-bag'].includes(normalizePath(pathname)))
     return false;
-  if (role === 'WHOLESALE_ACCOUNT' && ['/open-bag'].includes(normalizePath(pathname)))
-    return false;
+  if (role === 'WHOLESALE_ACCOUNT' && ['/open-bag'].includes(normalizePath(pathname))) return false;
   return canAccessRoute(pathname, role, storeKind);
 }
 

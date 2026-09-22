@@ -78,6 +78,20 @@
       "when": 1790000000000,
       "tag": "0010_current_mens_product_name",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790091197000,
+      "tag": "0011_add_wholesale_account_role",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790091197001,
+      "tag": "0012_add_partner_receipts",
+      "breakpoints": true
     }
   ]
 }

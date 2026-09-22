@@ -3109,14 +3109,14 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
 
     const result = await listDatabasePartnerReceipts(db, {
       storeId: actor.storeId,
-      status: query.status,
-      partnerName: query.partnerName,
+      ...(query.status === undefined ? {} : { status: query.status }),
+      ...(query.partnerName === undefined ? {} : { partnerName: query.partnerName }),
       page: query.page,
       pageSize: query.pageSize,
     });
 
     return {
-      data: result.data,
+      data: [...result.data],
       pagination: result.pagination,
     };
   }
@@ -3138,7 +3138,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
   public async createPartnerReceipt(
     actor: AuthenticatedPrincipal,
     input: CreatePartnerReceiptRequest,
-    context: RequestContext,
+    _context: RequestContext,
   ): Promise<PartnerReceipt> {
     // Only STORE role can create partner receipts for their own store
     if (actor.role !== 'STORE' || !actor.storeId) {
@@ -4637,7 +4637,9 @@ function operationalSettingsJson(settings: OperationalSettingsVersion): JsonObje
   };
 }
 
-function databaseAccountRole(role: Account['role']): 'admin' | 'htkd' | 'store' | 'wholesale_account' {
+function databaseAccountRole(
+  role: Account['role'],
+): 'admin' | 'htkd' | 'store' | 'wholesale_account' {
   return role.toLocaleLowerCase('en-US') as 'admin' | 'htkd' | 'store' | 'wholesale_account';
 }
 
@@ -4660,7 +4662,9 @@ function requireWarehouseActor(actor: AuthenticatedPrincipal): void {
   // WHOLESALE_ACCOUNT is allowed for warehouse operations
 }
 
-function databaseWarehouseActorRole(actor: AuthenticatedPrincipal): 'admin' | 'htkd' | 'wholesale_account' {
+function databaseWarehouseActorRole(
+  actor: AuthenticatedPrincipal,
+): 'admin' | 'htkd' | 'wholesale_account' {
   requireWarehouseActor(actor);
   if (actor.role === 'ADMIN') return 'admin';
   if (actor.role === 'WHOLESALE_ACCOUNT') return 'wholesale_account';

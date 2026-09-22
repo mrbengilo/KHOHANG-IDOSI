@@ -93,7 +93,7 @@ export class ApiClientError extends Error {
   }
 }
 
-async function request(path: string, init?: RequestInit): Promise<unknown> {
+export async function request(path: string, init?: RequestInit): Promise<unknown> {
   const headers = new Headers(init?.headers);
   if (!headers.has('Accept')) headers.set('Accept', 'application/json');
   if (init?.body !== undefined && !headers.has('Content-Type')) {
