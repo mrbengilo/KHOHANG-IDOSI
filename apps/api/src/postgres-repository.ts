@@ -4142,8 +4142,34 @@ function waitTicketDto(ticket: WaitTicketRecord): WaitTicket {
   };
 }
 
+/**
+ * Ánh xạ ngược của databasePriorityOfferStatus.
+ *
+ * Trước đây hàm này viết hoa thẳng giá trị enum của database rồi ép kiểu, nên
+ * trạng thái `offered` ra API thành `OFFERED` — không có trong hợp đồng
+ * (`PENDING`). Mọi client parse danh sách đề nghị ưu tiên đều hỏng ngay khi
+ * tồn tại một phiếu ưu tiên. Switch tường minh để TypeScript bắt lỗi nếu
+ * database thêm trạng thái mới.
+ */
+function contractPriorityOfferStatus(
+  status: PriorityOfferRecord['status'],
+): PriorityOffer['status'] {
+  switch (status) {
+    case 'offered':
+      return 'PENDING';
+    case 'accepted':
+      return 'ACCEPTED';
+    case 'declined':
+      return 'DECLINED';
+    case 'expired':
+      return 'EXPIRED';
+    case 'cancelled':
+      return 'CANCELLED';
+  }
+}
+
 function priorityOfferDto(offer: PriorityOfferRecord): PriorityOffer {
-  const status = offer.effectiveStatus.toUpperCase() as PriorityOffer['status'];
+  const status = contractPriorityOfferStatus(offer.effectiveStatus);
   return {
     id: offer.id,
     waitTicketId: offer.waitTicketId,

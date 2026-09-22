@@ -51,7 +51,21 @@ export function LoginPage() {
   }
 
   return (
-    <main className="login-page login-page--compact">
+    <main className="login-page">
+      <aside className="login-visual">
+        <div className="login-brand">
+          <strong>IDOSI</strong>
+          <span>KHO HÀNG</span>
+        </div>
+        <div>
+          <p className="login-visual__title">Quản lý &amp; phân bổ hàng hóa hệ thống IDOSI</p>
+          <p>
+            Theo dõi nhập – xuất – tồn theo từng mã bao, phân bổ công bằng theo vòng và đối soát giá
+            vốn trên cùng một nguồn số liệu.
+          </p>
+        </div>
+        <p className="login-visual__foot">Hệ thống vận hành nội bộ IDOSI</p>
+      </aside>
       <section className="login-panel">
         <form onSubmit={submit}>
           <img
