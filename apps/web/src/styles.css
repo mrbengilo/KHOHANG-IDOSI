@@ -1014,8 +1014,10 @@ td small {
   display: inline-flex;
   width: fit-content;
   max-width: 100%;
+  flex: 0 0 auto;
   align-items: center;
   gap: 5px;
+  white-space: nowrap;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
@@ -1636,8 +1638,18 @@ body.dialog-open {
 .waitlist-panel {
   margin-top: 20px;
 }
-.waitlist-panel__actions {
+/*
+ * Hàng thao tác của phiếu chờ phải là hàng ngang co theo nội dung. Nếu để nó thừa hưởng
+ * `flex: 1` và `flex-direction: column` của `.history-list article > div`, nút bị ép hẹp
+ * và chữ xuống dòng từng ký tự, tràn ra ngoài thẻ trên màn hình nhỏ.
+ */
+.waitlist-panel__actions,
+.history-list article > .waitlist-panel__actions {
   display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  align-items: center;
+  flex-direction: row;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 12px;
@@ -2954,6 +2966,30 @@ label:has(:required) > .field-label::after {
   .mobile-bottom-nav a.active {
     color: var(--brand);
     font-weight: 700;
+  }
+  /* Icon thanh dưới dùng cùng bảng màu với danh mục bên trái để nhận diện nhanh. */
+  .mobile-bottom-nav a svg {
+    flex-shrink: 0;
+    color: var(--icon-violet);
+    stroke-width: 2.25;
+  }
+  .mobile-bottom-nav a:is([href='/warehouse-inbound'], [href='/receive'], [href='/sales']) svg {
+    color: var(--icon-emerald);
+  }
+  .mobile-bottom-nav
+    a:is([href='/allocations'], [href='/open-bag'], [href='/sorting'], [href='/costs'])
+    svg {
+    color: var(--icon-amber);
+  }
+  .mobile-bottom-nav
+    a:is([href='/users'], [href='/audit'], [href='/settings'], [href='/catalog'])
+    svg {
+    color: var(--icon-pink);
+  }
+  .mobile-bottom-nav
+    a:is([href='/inventory'], [href='/transfers'], [href='/stores'], [href='/reports'])
+    svg {
+    color: var(--icon-sky);
   }
   .login-page {
     grid-template-columns: 1fr;
