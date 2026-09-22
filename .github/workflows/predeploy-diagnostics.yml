@@ -1,0 +1,181 @@
+name: Predeploy diagnostics
+
+on:
+  push:
+    branches:
+      - chore/predeploy-wholesale-20260922
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: predeploy-diagnostics-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Pending release / Node 24 / PostgreSQL 17
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:17.6-bookworm
+        env:
+          POSTGRES_DB: idosi_ci
+          POSTGRES_PASSWORD: idosi_ci_password
+          POSTGRES_USER: idosi_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U idosi_ci -d idosi_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      API_HOST: 127.0.0.1
+      API_PORT: 3000
+      CI: 'true'
+      DATABASE_URL: postgresql://idosi_ci:idosi_ci_password@127.0.0.1:5432/idosi_ci
+      NODE_ENV: test
+      RUN_POSTGRES_TESTS: '1'
+      TZ: Asia/Ho_Chi_Minh
+      VITE_API_BASE_URL: /api/v1
+      VITE_ENABLE_MOCK_FALLBACK: 'false'
+      WEB_ORIGIN: http://127.0.0.1:5173
+    steps:
+      - name: Check out the pending release
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Set up Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Report exact commit and toolchain
+        run: |
+          git log -1 --format='%H %s'
+          node --version
+          npm --version
+      - name: Install locked dependencies
+        id: install
+        run: npm ci --no-audit --no-fund
+      # Run independent checks even when an earlier check fails. Failures remain
+      # failures: this diagnostic workflow never approves or deploys a release.
+      - name: Check formatting
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run format:check
+      - name: Lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run lint
+      - name: Typecheck all workspaces
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run typecheck
+      - name: Build all production artifacts
+        id: build
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run build
+      - name: Apply migrations to an isolated database
+        id: migrate
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node infra/scripts/run-migrations.mjs
+      - name: Verify migration repeatability
+        if: ${{ !cancelled() && steps.migrate.outcome == 'success' }}
+        run: node infra/scripts/run-migrations.mjs
+      - name: Seed reference data twice
+        id: seed
+        if: ${{ !cancelled() && steps.migrate.outcome == 'success' }}
+        run: |
+          npm run seed:production -w @idosi/database
+          npm run seed:production -w @idosi/database
+      - name: Verify administrator bootstrap
+        id: bootstrap
+        if: ${{ !cancelled() && steps.seed.outcome == 'success' }}
+        env:
+          BOOTSTRAP_ADMIN_DISPLAY_NAME: CI Administrator
+          BOOTSTRAP_ADMIN_PASSWORD: ci-bootstrap-password-not-for-production
+          BOOTSTRAP_ADMIN_USERNAME: ci.admin
+        run: npm run bootstrap-admin:production -w @idosi/api
+      - name: Run all workspace tests
+        if: ${{ !cancelled() && steps.migrate.outcome == 'success' }}
+        run: npm run test
+      - name: Install browser for smoke tests
+        id: browser
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./node_modules/.bin/playwright install --with-deps chromium
+      - name: Run responsive browser tests
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
+        run: npm run e2e
+      - name: Run live API and database browser tests
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' && steps.bootstrap.outcome == 'success' }}
+        env:
+          LIVE_E2E_ADMIN_PASSWORD: ci-bootstrap-password-not-for-production
+          LIVE_E2E_ADMIN_USERNAME: ci.admin
+          LIVE_E2E_RUN_SUFFIX: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: npm run e2e:live
+      - name: Validate infrastructure scripts
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        env:
+          APP_DOMAIN: localhost
+          IMAGE_PREFIX: local/khohang-idosi
+          IMAGE_TAG: 0000000000000000000000000000000000000000
+          POSTGRES_PASSWORD: idosi_ci_password
+        run: |
+          bash -n infra/scripts/backup-db.sh
+          bash -n infra/scripts/restore-db.sh
+          bash -n infra/scripts/rollback.sh
+          bash infra/scripts/tests/deployment-scripts.test.sh
+          node --check infra/scripts/run-migrations.mjs
+          node --check infra/web-server.mjs
+          docker compose --file docker-compose.yml config --quiet
+          docker compose --file docker-compose.yml run --rm --no-deps caddy-storage-init
+          docker compose --file docker-compose.yml run --rm --no-deps caddy caddy version
+          docker compose --file docker-compose.yml run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      - name: Build production container targets
+        id: images
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        env:
+          APP_DOMAIN: localhost
+          IMAGE_PREFIX: local/khohang-idosi
+          IMAGE_TAG: 0000000000000000000000000000000000000000
+          POSTGRES_PASSWORD: idosi_ci_password
+        run: docker compose --file docker-compose.yml build api migrate worker web
+      - name: Verify isolated production stack
+        if: ${{ !cancelled() && steps.images.outcome == 'success' }}
+        env:
+          APP_DOMAIN: localhost
+          BOOTSTRAP_ADMIN_DISPLAY_NAME: CI Container Administrator
+          BOOTSTRAP_ADMIN_PASSWORD: ci-container-bootstrap-password
+          BOOTSTRAP_ADMIN_USERNAME: ci.container.admin
+          DATABASE_URL: postgresql://idosi:idosi_ci_password@db:5432/idosi
+          IMAGE_PREFIX: local/khohang-idosi
+          IMAGE_TAG: 0000000000000000000000000000000000000000
+          POSTGRES_PASSWORD: idosi_ci_password
+        run: |
+          set -euo pipefail
+          cleanup() {
+            local status=$?
+            if [ "$status" -ne 0 ]; then
+              docker compose --file docker-compose.yml ps --all || true
+              docker compose --file docker-compose.yml logs --no-color --tail 100 worker api migrate || true
+            fi
+            # This project and its volumes exist only on this disposable CI runner.
+            docker compose --file docker-compose.yml down --volumes --remove-orphans
+            exit "$status"
+          }
+          trap cleanup EXIT
+          docker compose --file docker-compose.yml up --detach --pull missing --wait db
+          docker compose --file docker-compose.yml run --rm --no-deps --pull never migrate
+          docker compose --file docker-compose.yml run --rm --no-deps --pull never migrate
+          docker compose --file docker-compose.yml --profile bootstrap run --rm --no-deps --pull never bootstrap-admin
+          docker compose --file docker-compose.yml up --detach --pull never --wait --wait-timeout 120 api worker web caddy
+          # Only localhost's disposable test CA is untrusted; no production request.
+          curl --fail --silent --show-error --insecure https://localhost/health
+          curl --fail --silent --show-error --insecure https://localhost/ready
+          curl --fail --silent --show-error --insecure https://localhost/ >/dev/null
+      - name: Report the formatting-only patch without committing
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: |
+          ./node_modules/.bin/prettier --write apps/api/src/memory-repository.ts apps/api/src/postgres-repository.ts apps/web/src/lib/access.ts packages/database/src/partner-receipt-operations.ts DEPLOYMENT.md DEPLOYMENT-SUMMARY.md .github/workflows/predeploy-diagnostics.yml
+          git diff --no-ext-diff --no-color
+          git restore --worktree -- apps/api/src/memory-repository.ts apps/api/src/postgres-repository.ts apps/web/src/lib/access.ts packages/database/src/partner-receipt-operations.ts DEPLOYMENT.md DEPLOYMENT-SUMMARY.md .github/workflows/predeploy-diagnostics.yml
