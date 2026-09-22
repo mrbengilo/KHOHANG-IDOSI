@@ -251,3 +251,17 @@
   min-width: 0;
   max-width: 100%;
 }
+
+/* Cảnh báo định danh mặt hàng mập mờ: số liệu vẫn hiện nhưng phải nói rõ là chưa chắc. */
+.idosi-sales-warning {
+  display: block;
+  border: 1px solid #fcd34d;
+  border-left-width: 4px;
+  border-radius: 9px;
+  background: #fffbeb;
+  color: #78350f;
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 10px 0 0;
+  padding: 10px 12px;
+}

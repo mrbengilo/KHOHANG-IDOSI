@@ -98,10 +98,22 @@ export const IdosiWeightSummarySchema = IdosiWeightBucketSchema.extend({
 }).passthrough();
 export type IdosiWeightSummary = z.infer<typeof IdosiWeightSummarySchema>;
 
+/**
+ * IDOSI renames and retires products, and a retired code can be handed to another
+ * product. `productId` is therefore the identity the order was SOLD with, not a
+ * stable one: aggregate on `canonicalProductId` (the entry IDOSI uses today) and
+ * keep `productId` for reconciliation only.
+ */
+const CanonicalProductIdentitySchema = {
+  canonicalProductId: z.string().trim().min(1).max(200).optional(),
+  canonicalProductCode: z.string().trim().max(200).optional(),
+} as const;
+
 const IdosiProductItemSchema = z
   .object({
     productId: z.string().trim().min(1).max(200),
     productCode: z.string().trim().max(200).optional(),
+    ...CanonicalProductIdentitySchema,
     productName: IdosiProductNameSchema,
     quantity: NonNegativeNumberSchema,
     unit: z.enum(['PIECE', 'KG']),
@@ -115,6 +127,7 @@ const IdosiProductWeightSchema = z
   .object({
     productId: z.string().trim().min(1).max(200),
     productCode: z.string().trim().max(200).optional(),
+    ...CanonicalProductIdentitySchema,
     productName: IdosiProductNameSchema,
     orders: NonNegativeIntegerSchema,
     totalQuantity: NonNegativeIntegerSchema,
