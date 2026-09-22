@@ -11,6 +11,7 @@ import type {
 } from '@idosi/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  ArrowLeft,
   CheckCircle2,
   KeyRound,
   LockKeyhole,
@@ -21,12 +22,13 @@ import {
   ShieldCheck,
   X,
 } from 'lucide-react';
-import { useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { EmptyState } from '../../components/EmptyState';
 import { PageHeader } from '../../components/PageHeader';
+import { PasswordInput } from '../../components/PasswordInput';
 import { AdminAccess } from './AdminAccess';
 import {
   adminErrorMessage,
@@ -211,6 +213,12 @@ function AdminUsersContent() {
     () => new Map((storesQuery.data ?? []).map((store) => [store.id, store] as const)),
     [storesQuery.data],
   );
+  const focusedTargetId = assignmentTarget?.id ?? resetTarget?.id ?? null;
+  useEffect(() => {
+    // Màn hình thao tác thay thế cả danh sách, nên phải đưa người dùng về đầu trang.
+    if (focusedTargetId && typeof window !== 'undefined') window.scrollTo({ top: 0 });
+  }, [focusedTargetId]);
+
   const refreshData = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: accountQueryKey }),
@@ -312,6 +320,81 @@ function AdminUsersContent() {
   const accounts = accountsQuery.data?.data ?? [];
   const pagination = accountsQuery.data?.pagination;
 
+  // Phân công cửa hàng và đặt lại mật khẩu là hai màn hình riêng. Trước đây chúng chỉ
+  // hiện thêm một panel bên dưới bảng, nên trên cả desktop lẫn mobile người dùng bấm
+  // nút xong không thấy gì thay đổi trong vùng đang nhìn.
+  if (assignmentTarget) {
+    return (
+      <div className="admin-focus-screen">
+        <button
+          className="admin-back-link"
+          disabled={assignmentBusy}
+          onClick={() => setAssignmentTarget(null)}
+          type="button"
+        >
+          <ArrowLeft aria-hidden="true" size={15} /> Quay lại danh sách tài khoản
+        </button>
+        <HtkdAssignmentsEditor
+          key={assignmentTarget.id}
+          account={assignmentTarget}
+          onBusyChange={setAssignmentBusy}
+          onCancel={() => {
+            if (!assignmentBusy) setAssignmentTarget(null);
+          }}
+          onSaved={(result) => {
+            setAssignmentTarget((current) =>
+              current?.id === result.htkdAccountId
+                ? { ...current, sessionVersion: result.sessionVersion }
+                : current,
+            );
+            setSuccessMessage(
+              result.assignments.length === 0
+                ? `Đã thu hồi toàn bộ cửa hàng của ${assignmentTarget.username}.`
+                : `Đã phân công ${result.assignments.length} cửa hàng cho ${assignmentTarget.username}.`,
+            );
+            void refreshData();
+          }}
+        />
+        <div aria-live="polite" className="admin-announcer">
+          {successMessage ? (
+            <p className="admin-feedback admin-feedback--success">{successMessage}</p>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  if (resetTarget) {
+    return (
+      <div className="admin-focus-screen">
+        <button
+          className="admin-back-link"
+          disabled={resetting}
+          onClick={() => {
+            setResetTarget(null);
+            setActionError('');
+          }}
+          type="button"
+        >
+          <ArrowLeft aria-hidden="true" size={15} /> Quay lại danh sách tài khoản
+        </button>
+        <PasswordResetPanel
+          key={resetTarget.id}
+          account={resetTarget}
+          busy={resetting}
+          error={actionError}
+          onCancel={() => {
+            if (!resetting) {
+              setResetTarget(null);
+              setActionError('');
+            }
+          }}
+          onSubmit={submitPasswordReset}
+        />
+      </div>
+    );
+  }
+
   return (
     <>
       <PageHeader
@@ -351,46 +434,6 @@ function AdminUsersContent() {
           onSubmit={submitCreate}
           stores={storesQuery.data ?? []}
           storesError={storesQuery.isError ? adminErrorMessage(storesQuery.error) : ''}
-        />
-      ) : null}
-
-      {assignmentTarget ? (
-        <HtkdAssignmentsEditor
-          key={assignmentTarget.id}
-          account={assignmentTarget}
-          onBusyChange={setAssignmentBusy}
-          onCancel={() => {
-            if (!assignmentBusy) setAssignmentTarget(null);
-          }}
-          onSaved={(result) => {
-            setAssignmentTarget((current) =>
-              current?.id === result.htkdAccountId
-                ? { ...current, sessionVersion: result.sessionVersion }
-                : current,
-            );
-            setSuccessMessage(
-              result.assignments.length === 0
-                ? `Đã thu hồi toàn bộ cửa hàng của ${assignmentTarget.username}.`
-                : `Đã phân công ${result.assignments.length} cửa hàng cho ${assignmentTarget.username}.`,
-            );
-            void refreshData();
-          }}
-        />
-      ) : null}
-
-      {resetTarget ? (
-        <PasswordResetPanel
-          key={resetTarget.id}
-          account={resetTarget}
-          busy={resetting}
-          error={actionError}
-          onCancel={() => {
-            if (!resetting) {
-              setResetTarget(null);
-              setActionError('');
-            }
-          }}
-          onSubmit={submitPasswordReset}
         />
       ) : null}
 
@@ -535,7 +578,6 @@ function AdminUsersContent() {
                         />
                         {account.role === 'HTKD' ? (
                           <button
-                            aria-expanded={assignmentTarget?.id === account.id}
                             className="admin-action"
                             disabled={
                               account.status !== 'ACTIVE' ||
@@ -1102,29 +1144,31 @@ function CreateAccountForm({
         ) : null}
         <label className="admin-field">
           <span className="field-label">Mật khẩu ban đầu</span>
-          <input
-            autoComplete="new-password"
-            disabled={busy}
-            maxLength={256}
-            minLength={12}
-            onChange={(event) => update('password', event.target.value)}
-            required
-            type="password"
-            value={draft.password}
-          />
+          <span className="password-field">
+            <PasswordInput
+              autoComplete="new-password"
+              disabled={busy}
+              maxLength={256}
+              minLength={12}
+              onChange={(event) => update('password', event.target.value)}
+              required
+              value={draft.password}
+            />
+          </span>
         </label>
         <label className="admin-field">
           <span className="field-label">Nhập lại mật khẩu</span>
-          <input
-            autoComplete="new-password"
-            disabled={busy}
-            maxLength={256}
-            minLength={12}
-            onChange={(event) => update('confirmPassword', event.target.value)}
-            required
-            type="password"
-            value={draft.confirmPassword}
-          />
+          <span className="password-field">
+            <PasswordInput
+              autoComplete="new-password"
+              disabled={busy}
+              maxLength={256}
+              minLength={12}
+              onChange={(event) => update('confirmPassword', event.target.value)}
+              required
+              value={draft.confirmPassword}
+            />
+          </span>
         </label>
         <div className="admin-form-actions">
           <Button busy={busy} className="admin-clickable" type="submit">
@@ -1243,29 +1287,31 @@ function PasswordResetPanel({
       <form className="admin-form-grid" onSubmit={submit}>
         <label className="admin-field">
           <span className="field-label">Mật khẩu mới</span>
-          <input
-            autoComplete="new-password"
-            disabled={busy}
-            maxLength={256}
-            minLength={12}
-            onChange={(event) => setPassword(event.target.value)}
-            required
-            type="password"
-            value={password}
-          />
+          <span className="password-field">
+            <PasswordInput
+              autoComplete="new-password"
+              disabled={busy}
+              maxLength={256}
+              minLength={12}
+              onChange={(event) => setPassword(event.target.value)}
+              required
+              value={password}
+            />
+          </span>
         </label>
         <label className="admin-field">
           <span className="field-label">Nhập lại mật khẩu mới</span>
-          <input
-            autoComplete="new-password"
-            disabled={busy}
-            maxLength={256}
-            minLength={12}
-            onChange={(event) => setConfirmation(event.target.value)}
-            required
-            type="password"
-            value={confirmation}
-          />
+          <span className="password-field">
+            <PasswordInput
+              autoComplete="new-password"
+              disabled={busy}
+              maxLength={256}
+              minLength={12}
+              onChange={(event) => setConfirmation(event.target.value)}
+              required
+              value={confirmation}
+            />
+          </span>
         </label>
         {validationError || error ? (
           <p className="admin-feedback admin-feedback--error" role="alert">
