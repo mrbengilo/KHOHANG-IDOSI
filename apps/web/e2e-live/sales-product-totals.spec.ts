@@ -8,7 +8,7 @@ test('sales workspace groups source products and month/store filters preserve sc
   await page.goto('/login');
   await page.getByLabel('Tên đăng nhập').fill(process.env.LIVE_E2E_ADMIN_USERNAME ?? 'ci.admin');
   await page
-    .getByLabel('Mật khẩu')
+    .getByLabel('Mật khẩu', { exact: true })
     .fill(process.env.LIVE_E2E_ADMIN_PASSWORD ?? 'ci-bootstrap-password-not-for-production');
   const loginResponsePromise = page.waitForResponse(
     (response) =>

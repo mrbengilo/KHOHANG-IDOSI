@@ -6,7 +6,7 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   await page.goto('/login');
   await page.getByLabel('Tên đăng nhập').fill(process.env.LIVE_E2E_ADMIN_USERNAME ?? 'ci.admin');
   await page
-    .getByLabel('Mật khẩu')
+    .getByLabel('Mật khẩu', { exact: true })
     .fill(process.env.LIVE_E2E_ADMIN_PASSWORD ?? 'ci-bootstrap-password-not-for-production');
   await page.getByRole('button', { name: 'Đăng nhập' }).click();
   await page.getByRole('link', { name: 'Nhập kho tổng' }).click();
