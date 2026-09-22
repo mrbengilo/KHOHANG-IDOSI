@@ -2515,24 +2515,25 @@ body.dialog-open {
   font-size: 11px;
 }
 
+/*
+ * Desktop: hai cột — nền màu thương hiệu kèm slogan bên trái, biểu mẫu bên phải.
+ * Dưới 900px gộp về một cột, dải màu thu lại thành phần giới thiệu phía trên.
+ */
 .login-page {
   display: grid;
   min-height: 100vh;
-  grid-template-columns: minmax(360px, 1.05fr) minmax(420px, 0.95fr);
+  grid-template-columns: minmax(380px, 1fr) minmax(460px, 0.9fr);
   background: white;
 }
-.login-page.login-page--compact {
-  grid-template-columns: minmax(0, 1fr);
-}
-.login-page--compact .login-panel h1 {
-  font-size: 28px;
+.login-panel h1 {
+  font-size: 32px;
   line-height: 1.3;
   letter-spacing: -0.04em;
   margin: 6px 0;
 }
-.login-page--compact .login-slogan {
+.login-slogan {
   color: var(--brand-dark);
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
   line-height: 1.6;
 }
@@ -2568,11 +2569,17 @@ label:has(:required) > .field-label::after {
   font-size: 9px;
   font-weight: 700;
 }
-.login-visual h1 {
-  font-size: clamp(32px, 4vw, 54px);
-  letter-spacing: -0.05em;
-  line-height: 1.08;
+.login-visual h1,
+.login-visual__title {
+  font-size: clamp(30px, 3.2vw, 46px);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1.15;
   margin: 20px 0 14px;
+}
+.login-visual__foot {
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 12px;
 }
 .login-visual p {
   max-width: 590px;
@@ -2593,9 +2600,17 @@ label:has(:required) > .field-label::after {
 }
 .login-panel form {
   display: flex;
-  width: min(100%, 420px);
+  width: min(100%, 460px);
   flex-direction: column;
-  gap: 18px;
+  gap: 20px;
+}
+.login-panel input {
+  min-height: 46px;
+  font-size: 15px;
+}
+.login-panel .button {
+  min-height: 50px;
+  font-size: 15px;
 }
 .login-panel form > div:first-child span {
   color: var(--brand);
@@ -3277,5 +3292,45 @@ label:has(:required) > .field-label::after {
     animation-duration: 0.01ms;
     animation-iteration-count: 1;
     transition-duration: 0.01ms;
+  }
+}
+
+/*
+ * Màn đăng nhập — đặt cuối file để không bị các rule phía trên ghi đè.
+ * Desktop giữ hai cột; dưới 900px gộp một cột và dải màu thu lại thành
+ * phần giới thiệu ngắn phía trên biểu mẫu.
+ */
+.login-panel .button {
+  min-height: 50px;
+  font-size: 15px;
+}
+
+@media (max-width: 900px) {
+  .login-page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .login-visual {
+    min-height: 0;
+    gap: 10px;
+    padding: 22px 20px;
+  }
+
+  .login-visual__title {
+    font-size: 22px;
+    margin: 6px 0 4px;
+  }
+
+  .login-visual p {
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .login-visual__foot {
+    display: none;
+  }
+
+  .login-panel h1 {
+    font-size: 26px;
   }
 }
