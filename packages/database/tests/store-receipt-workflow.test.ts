@@ -36,6 +36,30 @@ describe('store receipt declaration validation', () => {
     );
   });
 
+  it('records a different unexpected product only with a discrepancy note', () => {
+    const lines = [
+      { productId: 'product-a', approvedQuantity: 4, receivedQuantity: 1 },
+      { productId: 'product-b', approvedQuantity: 2, receivedQuantity: 2 },
+    ];
+    const extra = [{ productId: 'product-c', quantity: 3 }];
+    expect(() =>
+      validateStoreReceiptDeclaration(lines, dispatched, 'Thiếu đầm, dư áo', extra),
+    ).not.toThrow();
+    expect(() => validateStoreReceiptDeclaration(lines, dispatched, null, extra)).toThrow(
+      StoreOperationValidationError,
+    );
+    expect(() =>
+      validateStoreReceiptDeclaration(lines, dispatched, 'Có chênh lệch', [
+        { productId: 'product-a', quantity: 3 },
+      ]),
+    ).toThrow(StoreOperationValidationError);
+    expect(() =>
+      validateStoreReceiptDeclaration(lines, dispatched, 'Có chênh lệch', [
+        { productId: 'product-c', quantity: 0 },
+      ]),
+    ).toThrow(StoreOperationValidationError);
+  });
+
   it('rejects missing, duplicate, wrong, and excess lines', () => {
     const invalidDeclarations = [
       [{ productId: 'product-a', approvedQuantity: 4, receivedQuantity: 4 }],

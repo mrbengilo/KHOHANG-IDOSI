@@ -28,6 +28,25 @@ const IDS = {
 };
 
 describe('receipt, outbound and report contracts', () => {
+  it('keeps unexpected products separate from approved receipt lines', () => {
+    const request = {
+      storeId: IDS.store,
+      outboundRequestId: IDS.outbound,
+      lines: [{ productId: IDS.product, approvedUnits: 3, receivedUnits: 1 }],
+      unexpectedItems: [{ productId: IDS.bag, quantity: 3 }],
+      discrepancyNote: 'Thiếu hai bao, dư mặt hàng khác',
+    };
+    expect(DeclareStoreReceiptRequestSchema.safeParse(request).success).toBe(true);
+    expect(
+      DeclareStoreReceiptRequestSchema.safeParse({ ...request, discrepancyNote: null }).success,
+    ).toBe(false);
+    expect(
+      DeclareStoreReceiptRequestSchema.safeParse({
+        ...request,
+        unexpectedItems: [{ productId: IDS.product, quantity: 3 }],
+      }).success,
+    ).toBe(false);
+  });
   it('accepts directly entered whole VND VAT at 8% without recalculating the amount', () => {
     const input = {
       referenceCode: 'VAT-1',

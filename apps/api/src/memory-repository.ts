@@ -2544,7 +2544,12 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     ) {
       throw conflict('Phiếu xuất đã có phiếu nhận hàng');
     }
-    validateMemoryDeclaration(input.lines, outbound.lines, input.discrepancyNote);
+    validateMemoryDeclaration(
+      input.lines,
+      outbound.lines,
+      input.discrepancyNote,
+      input.unexpectedItems,
+    );
     const now = this.now().toISOString();
     const receipt: Receipt = {
       id: randomUUID(),
@@ -2561,6 +2566,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         receivedUnits: line.receivedUnits,
       })),
       discrepancyNote: input.discrepancyNote,
+      unexpectedItems: input.unexpectedItems ?? [],
       status: 'DRAFT',
       freightVnd: 0,
       handlingVnd: 0,
@@ -2600,11 +2606,17 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (replay) return { data: replay, replayed: true };
     const current = this.requireMutableReceipt(actor, receiptId, ['DRAFT', 'RETURNED'], true);
     if (current.version !== input.expectedVersion) throw versionConflict();
-    validateMemoryDeclaration(input.lines, current.lines, input.discrepancyNote);
+    validateMemoryDeclaration(
+      input.lines,
+      current.lines,
+      input.discrepancyNote,
+      input.unexpectedItems,
+    );
     const updated: Receipt = {
       ...current,
       declaredByAccountId: actor.accountId,
       discrepancyNote: input.discrepancyNote,
+      unexpectedItems: input.unexpectedItems ?? [],
       lines: input.lines.map((line) => ({
         approvedUnits: line.approvedUnits,
         bagWeightsKg: [],
@@ -3432,10 +3444,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         const at = new Date(row.occurredAt);
         return at >= range.start && at < range.endExclusive;
       })
-      .toSorted(
-        (left, right) =>
-          right.occurredAt.localeCompare(left.occurredAt) || right.id.localeCompare(left.id),
-      );
+      .toReversed()
+      .toSorted((left, right) => right.occurredAt.localeCompare(left.occurredAt));
     return {
       data: slicePage(rows, query.page, query.pageSize).map((row) => structuredClone(row)),
       pagination: pagination(query.page, query.pageSize, rows.length),
@@ -5252,6 +5262,7 @@ function validateMemoryDeclaration(
   lines: DeclareStoreReceiptRequest['lines'],
   dispatchedLines: readonly { readonly productId: string; readonly approvedUnits: number }[],
   discrepancyNote: string | null,
+  unexpectedItems: DeclareStoreReceiptRequest['unexpectedItems'] = [],
 ): void {
   const dispatched = new Map(
     dispatchedLines.map((line) => [line.productId, line.approvedUnits] as const),
@@ -5267,8 +5278,20 @@ function validateMemoryDeclaration(
     }
     hasShortage ||= line.receivedUnits < approvedUnits;
   }
-  if (hasShortage && discrepancyNote === null) {
-    throw new ApiError('VALIDATION_ERROR', 'Nhận thiếu phải có ghi chú chênh lệch', 400);
+  const unexpectedIds = new Set<string>();
+  for (const item of unexpectedItems ?? []) {
+    if (
+      dispatched.has(item.productId) ||
+      unexpectedIds.has(item.productId) ||
+      !Number.isSafeInteger(item.quantity) ||
+      item.quantity <= 0
+    ) {
+      throw new ApiError('VALIDATION_ERROR', 'Mặt hàng nhận dư không hợp lệ', 400);
+    }
+    unexpectedIds.add(item.productId);
+  }
+  if ((hasShortage || (unexpectedItems?.length ?? 0) > 0) && discrepancyNote === null) {
+    throw new ApiError('VALIDATION_ERROR', 'Chênh lệch nhận hàng phải có ghi chú', 400);
   }
 }
 

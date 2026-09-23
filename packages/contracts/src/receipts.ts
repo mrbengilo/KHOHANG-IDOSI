@@ -268,6 +268,21 @@ export const DeclaredReceiptLineSchema = z
   });
 export type DeclaredReceiptLine = z.infer<typeof DeclaredReceiptLineSchema>;
 
+export const UnexpectedReceiptItemSchema = z
+  .object({
+    productId: EntityIdSchema,
+    quantity: z.number().int().positive().safe(),
+  })
+  .strict();
+export type UnexpectedReceiptItem = z.infer<typeof UnexpectedReceiptItemSchema>;
+const UnexpectedReceiptItemsSchema = z
+  .array(UnexpectedReceiptItemSchema)
+  .max(500)
+  .refine(
+    (items) => new Set(items.map((item) => item.productId)).size === items.length,
+    'An unexpected product may appear only once',
+  );
+
 export const ReceiptLineSchema = z
   .object({
     productId: EntityIdSchema,
@@ -304,6 +319,7 @@ export const ReceiptSchema = z
     outboundRequestId: EntityIdSchema,
     declaredByAccountId: EntityIdSchema.nullable(),
     lines: z.array(ReceiptLineSchema).min(1).max(500),
+    unexpectedItems: UnexpectedReceiptItemsSchema.optional(),
     discrepancyNote: z.string().trim().min(3).max(1_000).nullable(),
     status: ReceiptStatusSchema,
     freightVnd: MoneyVndSchema,
@@ -367,16 +383,31 @@ export const DeclareStoreReceiptRequestSchema = z
     storeId: EntityIdSchema,
     outboundRequestId: EntityIdSchema,
     lines: DeclaredReceiptLinesSchema,
+    unexpectedItems: UnexpectedReceiptItemsSchema.optional(),
     discrepancyNote: z.string().trim().min(3).max(1_000).nullable().default(null),
   })
   .strict()
   .superRefine((request, context) => {
     const hasShortage = request.lines.some((line) => line.receivedUnits < line.approvedUnits);
-    if (hasShortage && request.discrepancyNote === null) {
+    if (
+      (hasShortage || (request.unexpectedItems?.length ?? 0) > 0) &&
+      request.discrepancyNote === null
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['discrepancyNote'],
         message: 'A shortage declaration requires a discrepancy note',
+      });
+    }
+    if (
+      request.unexpectedItems?.some((item) =>
+        request.lines.some((line) => line.productId === item.productId),
+      )
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['unexpectedItems'],
+        message: 'Unexpected goods must use a different product',
       });
     }
   });
@@ -385,19 +416,32 @@ export type DeclareStoreReceiptRequest = z.infer<typeof DeclareStoreReceiptReque
 export const SubmitStoreReceiptRequestSchema = z
   .object({
     lines: DeclaredReceiptLinesSchema,
+    unexpectedItems: UnexpectedReceiptItemsSchema.optional(),
     discrepancyNote: z.string().trim().min(3).max(1_000).nullable().default(null),
     expectedVersion: z.number().int().nonnegative(),
   })
   .strict()
   .superRefine((request, context) => {
     if (
-      request.lines.some((line) => line.receivedUnits < line.approvedUnits) &&
+      (request.lines.some((line) => line.receivedUnits < line.approvedUnits) ||
+        (request.unexpectedItems?.length ?? 0) > 0) &&
       request.discrepancyNote === null
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['discrepancyNote'],
         message: 'A shortage declaration requires a discrepancy note',
+      });
+    }
+    if (
+      request.unexpectedItems?.some((item) =>
+        request.lines.some((line) => line.productId === item.productId),
+      )
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['unexpectedItems'],
+        message: 'Unexpected goods must use a different product',
       });
     }
   });
