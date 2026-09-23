@@ -949,12 +949,12 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                                 <strong>
                                   {submitted.time} · {submitted.date}
                                 </strong>
-                                <small>Phiên {session.businessDate}</small>
+                                <small>Phiên {session.code ?? session.businessDate}</small>
                               </>
                             ) : (
                               <>
                                 <strong>Chưa có yêu cầu</strong>
-                                <small>Phiên {session.businessDate}</small>
+                                <small>Phiên {session.code ?? session.businessDate}</small>
                               </>
                             )}
                           </div>
@@ -1096,7 +1096,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
               <option value="">Tất cả phiên</option>
               {(sessionsQuery.data ?? []).map((session) => (
                 <option key={session.id} value={session.id}>
-                  {session.businessDate} · {sessionStatusCopy[session.status]}
+                  {session.code ?? session.businessDate} · {sessionStatusCopy[session.status]}
                 </option>
               ))}
             </select>

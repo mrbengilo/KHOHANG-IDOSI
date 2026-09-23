@@ -632,7 +632,6 @@ function CreateReceiptForm({
                     </span>
                     <span className="receipt-source-card__meta">
                       <span>Đã giao {formatDateTime(source.dispatchedAt)}</span>
-                      <span>Mã: {source.id}</span>
                     </span>
                     <span className="receipt-source-card__lines">
                       {source.lines.map((line) => (
@@ -770,7 +769,7 @@ function ReceiptDetail({
           </div>
           <div>
             <dt>Lệnh xuất</dt>
-            <dd>{receipt.outboundRequestId}</dd>
+            <dd>{receipt.outboundRequestNumber ?? '—'}</dd>
           </div>
         </dl>
       </details>

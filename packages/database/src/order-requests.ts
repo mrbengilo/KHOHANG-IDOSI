@@ -37,6 +37,7 @@ export interface SubmitOrderRequestInput extends CreateOrderRequestInput {
 
 export interface CreatedOrderRequest {
   readonly id: string;
+  readonly code: string;
   readonly requestNumber: number;
   readonly submittedAt: Date;
 }
@@ -188,6 +189,7 @@ export async function createOrderRequest(
           })
           .returning({
             id: orderRequests.id,
+            code: orderRequests.code,
             requestNumber: orderRequests.requestNumber,
             submittedAt: orderRequests.submittedAt,
           });
@@ -228,6 +230,7 @@ export async function submitOrderRequest(
       await input.onCreated?.(tx, created);
       const responseBody: JsonObject = {
         orderRequestId: created.id,
+        code: created.code,
         requestNumber: created.requestNumber,
       };
 

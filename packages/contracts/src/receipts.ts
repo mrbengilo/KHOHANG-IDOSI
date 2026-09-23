@@ -299,6 +299,7 @@ export const ReceiptSchema = z
   .object({
     id: EntityIdSchema,
     receiptNumber: z.string().trim().min(1).max(100),
+    outboundRequestNumber: z.string().trim().min(1).max(10).optional(),
     storeId: EntityIdSchema,
     outboundRequestId: EntityIdSchema,
     declaredByAccountId: EntityIdSchema.nullable(),
