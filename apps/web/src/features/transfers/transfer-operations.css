@@ -225,3 +225,12 @@
     transform: none;
   }
 }
+
+.transfer-card__bags {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}

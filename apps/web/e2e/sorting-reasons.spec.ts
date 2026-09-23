@@ -8,9 +8,7 @@ const stockId = '88888888-8888-4888-8888-888888888888';
 const timestamp = '2026-09-23T00:00:00.000Z';
 const pagination = { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 };
 
-test('sorting credits Sale bags and kilograms and offers Sale, Charity and Cancel', async ({
-  page,
-}) => {
+test('sorting credits Sale kilograms and transfers weighed bags per product', async ({ page }) => {
   let created: Record<string, unknown> | null = null;
   let stocks: Record<string, unknown>[] = [];
   let activeStoreId = storeId;
@@ -117,6 +115,7 @@ test('sorting credits Sale bags and kilograms and offers Sale, Charity and Cance
     }
     if (url.pathname.endsWith('/store-sorted-stocks'))
       return respond({ data: stocks.filter((stock) => stock.storeId === activeStoreId) });
+    if (url.pathname.endsWith('/store-charity-exports')) return respond({ data: [] });
     if (url.pathname.endsWith('/store-transfers/destinations'))
       return respond({
         data: [
@@ -139,9 +138,7 @@ test('sorting credits Sale bags and kilograms and offers Sale, Charity and Cance
       if (route.request().method() === 'GET') return respond({ data: transfer ? [transfer] : [] });
       transferRequest = route.request().postDataJSON() as Record<string, unknown>;
       stocks = stocks.map((stock) =>
-        stock.id === stockId
-          ? { ...stock, bagQuantity: 1, saleWeightKg: '0.625', version: 1 }
-          : stock,
+        stock.id === stockId ? { ...stock, saleWeightKg: '0.625', version: 1 } : stock,
       );
       transfer = {
         id: '99999999-9999-4999-8999-999999999999',
@@ -150,9 +147,10 @@ test('sorting credits Sale bags and kilograms and offers Sale, Charity and Cance
         sourceStoreId: storeId,
         destinationStoreId,
         productId,
-        bagQuantity: 1,
+        bagQuantity: 2,
         weightKg: '0.625',
-        enteredWeightKg: null,
+        enteredWeightKg: '0.625',
+        bagWeightsKg: ['0.500', '0.125'],
         status: 'IN_TRANSIT',
         version: 0,
         note: null,
@@ -171,7 +169,7 @@ test('sorting credits Sale bags and kilograms and offers Sale, Charity and Cance
         productId,
         inventoryLotId: '99999999-9999-4999-8999-999999999999',
         bagCode: 'PDC-00001',
-        bagQuantity: 1,
+        bagQuantity: 0,
         saleWeightKg: '0.625',
         charityWeightKg: '0.000',
         version: 0,
@@ -189,7 +187,7 @@ test('sorting credits Sale bags and kilograms and offers Sale, Charity and Cance
           inventoryLotId: bagId,
           bagCode: 'MB-00001',
           saleWeightKg: '1.250',
-          bagQuantity: 2,
+          bagQuantity: 0,
           charityWeightKg: '0.000',
           version: 0,
           updatedAt: timestamp,
@@ -208,19 +206,15 @@ test('sorting credits Sale bags and kilograms and offers Sale, Charity and Cance
   await expect(page.getByLabel('Hình thức sale')).toHaveCount(0);
   await expect(page.getByLabel('Số cái')).toHaveCount(0);
   await page.getByLabel('Khối lượng đã lọc (kg)').fill('1.250');
-  await expect(page.getByRole('button', { name: 'Lưu khối lượng đã lọc' })).toBeDisabled();
-  await page.getByLabel('Số lượng sau lọc (bao)').fill('2');
+  await expect(page.getByLabel('Số lượng sau lọc (bao)')).toHaveCount(0);
   await page.getByRole('button', { name: 'Lưu khối lượng đã lọc' }).click();
-  await expect
-    .poll(() => created)
-    .toMatchObject({ reason: 'SALE', weightKg: '1.250', bagQuantity: 2 });
+  await expect.poll(() => created).toMatchObject({ reason: 'SALE', weightKg: '1.250' });
   expect(Object.keys(created ?? {})).toEqual([
     'storeId',
     'inventoryLotId',
     'expectedInventoryVersion',
     'reason',
     'weightKg',
-    'bagQuantity',
   ]);
   for (const width of [360, 390, 412, 768, 1366, 1440]) {
     await page.setViewportSize({ width, height: 900 });
@@ -231,19 +225,28 @@ test('sorting credits Sale bags and kilograms and offers Sale, Charity and Cance
 
   await page.goto('/transfers');
   await expect(page.getByRole('heading', { name: 'Điều chuyển từ Sale sau lọc' })).toBeVisible();
-  await page.getByLabel('Số lượng (bao)').fill('1');
-  await expect(page.getByLabel('Khối lượng (kg), không bắt buộc')).toHaveValue('');
+  await expect(page.getByLabel('Mặt hàng Sale sau lọc')).toContainText('Đồ nam · 1,25 kg');
+  await page.getByLabel('Số lượng (bao)').fill('2');
+  await page.getByLabel('Bao 1 · Đồ nam (kg)').fill('0.5');
+  await page.getByLabel('Bao 2 · Đồ nam (kg)').fill('0.9');
+  await expect(
+    page.getByText('Tổng kg các bao vượt quá số kg đang có.', { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Điều chuyển', exact: true })).toBeDisabled();
+  await page.getByLabel('Bao 2 · Đồ nam (kg)').fill('0.125');
+  await expect(page.getByText('Tổng 0,625 kg / đang có 1,25 kg')).toBeVisible();
   await page.getByRole('button', { name: 'Điều chuyển', exact: true }).click();
   await expect
     .poll(() => transferRequest)
-    .toMatchObject({
-      sourceStockId: stockId,
+    .toEqual({
       sourceStoreId: storeId,
       destinationStoreId,
-      bagQuantity: 1,
-      weightKg: null,
+      productId,
+      bagWeightsKg: ['0.500', '0.125'],
+      note: null,
     });
-  await expect(page.getByText('1 bao · 0,625 kg · v1')).toBeVisible();
+  await expect(page.getByText('Bao 1 · Đồ nam · 0,5 kg')).toBeVisible();
+  await expect(page.getByText('Bao 2 · Đồ nam · 0,125 kg')).toBeVisible();
   for (const width of [360, 390, 768, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
@@ -254,6 +257,145 @@ test('sorting credits Sale bags and kilograms and offers Sale, Charity and Cance
   activeStoreId = destinationStoreId;
   await page.reload();
   await page.getByRole('button', { name: 'Xác nhận đã nhận' }).click();
-  await expect(page.getByText('1 bao · 0,625 kg · v0')).toBeVisible();
+  await expect(page.locator('.transfer-card').getByText('Đồ nam · 0,625 kg').first()).toBeVisible();
   await expect(page.locator('.transfer-card header span').getByText('Đã nhận')).toBeVisible();
+});
+
+test('charity goes back to Sale by kg or is exported bag by bag per product', async ({ page }) => {
+  let charityKg = '5.000';
+  let saleKg = '0.000';
+  let moveRequest: Record<string, unknown> | null = null;
+  let exportRequest: Record<string, unknown> | null = null;
+  const exports: Record<string, unknown>[] = [];
+  await page.route('**/api/v1/**', async (route) => {
+    const url = new URL(route.request().url());
+    const method = route.request().method();
+    const respond = (json: unknown, status = 200) =>
+      route.fulfill({ contentType: 'application/json', json, status });
+    if (url.pathname.endsWith('/auth/session'))
+      return respond({
+        data: {
+          id: '44444444-4444-4444-8444-444444444444',
+          principal: {
+            accountId: '55555555-5555-4555-8555-555555555555',
+            username: 'store.test',
+            displayName: 'Cửa hàng thử nghiệm',
+            role: 'STORE',
+            status: 'ACTIVE',
+            storeId,
+            assignedStoreIds: [],
+          },
+          createdAt: timestamp,
+          lastSeenAt: timestamp,
+          expiresAt: '2099-09-23T00:00:00.000Z',
+        },
+      });
+    if (url.pathname.endsWith('/stores'))
+      return respond({
+        data: [
+          {
+            id: storeId,
+            code: 'DS_TEST',
+            name: 'Cửa hàng thử nghiệm',
+            groupId: '66666666-6666-4666-8666-666666666666',
+            kind: 'RETAIL',
+            status: 'ACTIVE',
+            address: null,
+            version: 0,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+        ],
+        pagination: { ...pagination, totalItems: 1, totalPages: 1 },
+      });
+    if (url.pathname.endsWith('/products'))
+      return respond({
+        data: [
+          {
+            id: productId,
+            sku: 'DO_NAM',
+            name: 'Đồ nam',
+            measurement: 'WEIGHT',
+            unitLabel: 'kg',
+            status: 'ACTIVE',
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+        ],
+        pagination: { ...pagination, totalItems: 1, totalPages: 1 },
+      });
+    if (url.pathname.endsWith('/store-sorted-stocks'))
+      return respond({
+        data: [
+          {
+            id: stockId,
+            storeId,
+            productId,
+            inventoryLotId: bagId,
+            bagCode: 'MB-00001',
+            saleWeightKg: saleKg,
+            bagQuantity: 0,
+            charityWeightKg: charityKg,
+            version: 0,
+            updatedAt: timestamp,
+          },
+        ],
+      });
+    if (url.pathname.endsWith('/store-charity/move-to-sale')) {
+      moveRequest = route.request().postDataJSON() as Record<string, unknown>;
+      charityKg = '4.000';
+      saleKg = '1.000';
+      return respond({
+        data: { storeId, productId, charityWeightKg: charityKg, saleWeightKg: saleKg },
+      });
+    }
+    if (url.pathname.endsWith('/store-charity-exports')) {
+      if (method === 'GET') return respond({ data: exports });
+      exportRequest = route.request().postDataJSON() as Record<string, unknown>;
+      charityKg = '1.500';
+      const created = {
+        id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        exportNumber: 'PTT-000001',
+        storeId,
+        productId,
+        bagQuantity: 2,
+        weightKg: '2.500',
+        bagWeightsKg: ['2.000', '0.500'],
+        note: null,
+        createdAt: timestamp,
+      };
+      exports.push(created);
+      return respond({ data: created }, 201);
+    }
+    return respond({ data: [], pagination });
+  });
+
+  await page.goto('/sorting');
+  await expect(page.getByRole('heading', { name: 'Hàng Từ thiện' })).toBeVisible();
+  await expect(page.getByText('5 kg còn lại')).toBeVisible();
+  await page.getByLabel('Khối lượng (kg)').fill('1');
+  await page.getByRole('button', { name: 'Chuyển về Sale' }).click();
+  await expect.poll(() => moveRequest).toEqual({ storeId, productId, weightKg: '1.000' });
+  await expect(page.getByText('4 kg còn lại')).toBeVisible();
+
+  await page.getByLabel('Số lượng (bao)').fill('2');
+  await page.getByLabel('Bao 1 · Đồ nam (kg)').fill('3');
+  await page.getByLabel('Bao 2 · Đồ nam (kg)').fill('1.5');
+  await expect(page.getByRole('button', { name: 'Xuất từ thiện' })).toBeDisabled();
+  await page.getByLabel('Bao 1 · Đồ nam (kg)').fill('2');
+  await page.getByLabel('Bao 2 · Đồ nam (kg)').fill('0.5');
+  await page.getByRole('button', { name: 'Xuất từ thiện' }).click();
+  await page.getByRole('button', { name: 'Xác nhận xuất' }).click();
+  await expect
+    .poll(() => exportRequest)
+    .toEqual({ storeId, productId, bagWeightsKg: ['2.000', '0.500'], note: null });
+  await expect(page.getByText('1,5 kg còn lại')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'PTT-000001' })).toBeVisible();
+  await expect(page.getByText('Bao 1 · Đồ nam · 2 kg')).toBeVisible();
+  for (const width of [360, 390, 768, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      width,
+    );
+  }
 });

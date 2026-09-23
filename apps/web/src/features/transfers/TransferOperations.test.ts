@@ -2,7 +2,7 @@ import type { StoreTransfer } from '@idosi/contracts';
 import { describe, expect, it } from 'vitest';
 
 import { isTransferWeightAllowed, transferActionsForStore } from './TransferOperations';
-import { validSortedSaleTransfer } from './SortedSaleTransferWorkspace';
+import { saleBalancesByProduct } from './SortedSaleTransferWorkspace';
 
 const sourceStoreId = '10000000-0000-4000-8000-000000000001';
 const destinationStoreId = '10000000-0000-4000-8000-000000000002';
@@ -32,12 +32,38 @@ const draftTransfer = {
 } satisfies StoreTransfer;
 
 describe('transfer UI guards', () => {
-  it('requires available sorted Sale bags and leaves kilograms optional', () => {
-    expect(validSortedSaleTransfer('2', '', 3, '10.000')).toBe(true);
-    expect(validSortedSaleTransfer('4', '', 3, '10.000')).toBe(false);
-    expect(validSortedSaleTransfer('2', '10.000', 3, '10.000')).toBe(false);
-    expect(validSortedSaleTransfer('3', '10.000', 3, '10.000')).toBe(true);
-    expect(validSortedSaleTransfer('2', '0.000', 3, '10.000')).toBe(false);
+  it('sums Sale per product across sorted lots of the source store', () => {
+    const lot = {
+      storeId: sourceStoreId,
+      productId: draftTransfer.productId,
+      inventoryLotId: draftTransfer.sourceInventoryBagId,
+      bagCode: 'B-1',
+      bagQuantity: 0,
+      charityWeightKg: '0.000',
+      version: 0,
+      updatedAt: '2026-09-17T02:00:00.000Z',
+    };
+    expect(
+      saleBalancesByProduct(
+        [
+          { ...lot, id: '60000000-0000-4000-8000-000000000001', saleWeightKg: '40.000' },
+          { ...lot, id: '60000000-0000-4000-8000-000000000002', saleWeightKg: '60.250' },
+          {
+            ...lot,
+            id: '60000000-0000-4000-8000-000000000003',
+            storeId: destinationStoreId,
+            saleWeightKg: '5.000',
+          },
+          {
+            ...lot,
+            id: '60000000-0000-4000-8000-000000000004',
+            productId: '40000000-0000-4000-8000-000000000002',
+            saleWeightKg: '0.000',
+          },
+        ],
+        sourceStoreId,
+      ),
+    ).toEqual([{ productId: draftTransfer.productId, saleWeightKg: '100.250' }]);
   });
 
   it('uses exact gram precision and rejects non-canonical or excessive weights', () => {
