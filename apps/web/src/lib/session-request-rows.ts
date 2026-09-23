@@ -16,6 +16,9 @@ export interface SessionRequestRow {
   readonly request: StoreOrderRequest | null;
   /** The first row of its session carries the session-wide admin actions. */
   readonly firstOfSession: boolean;
+  /** Separates rows by the Vietnam date they were submitted, even across sessions. */
+  readonly firstOfDay: boolean;
+  readonly dayLabel: string;
   readonly store: { readonly code: string; readonly name: string } | null;
 }
 
@@ -38,7 +41,7 @@ export function sessionRequestRows(
     requestsBySession.set(request.sessionId, bucket);
   }
 
-  return sessions.flatMap((session): SessionRequestRow[] => {
+  const rows = sessions.flatMap((session): Omit<SessionRequestRow, 'firstOfDay' | 'dayLabel'>[] => {
     const sessionRequests = [...(requestsBySession.get(session.id) ?? [])].sort(
       (left, right) =>
         Date.parse(right.submittedAt) - Date.parse(left.submittedAt) ||
@@ -57,6 +60,16 @@ export function sessionRequestRows(
         store: store ? { code: store.code, name: store.name } : null,
       };
     });
+  });
+  return rows.map((row, index) => {
+    const dayLabel = row.request
+      ? formatRequestSubmittedAt(row.request.submittedAt).date
+      : row.session.businessDate.split('-').reverse().join('/');
+    const previous = rows[index - 1];
+    const previousDay = previous?.request
+      ? formatRequestSubmittedAt(previous.request.submittedAt).date
+      : previous?.session.businessDate.split('-').reverse().join('/');
+    return { ...row, dayLabel, firstOfDay: dayLabel !== previousDay };
   });
 }
 

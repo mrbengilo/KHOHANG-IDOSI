@@ -927,131 +927,136 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                 </tr>
               </thead>
               <tbody>
-                {sessionRows.map(({ firstOfSession, key, request, session, store }) => {
-                  const transitions = availableSessionTransitions(session.status);
-                  const openAllowedNow = canOpenSessionNow(session);
-                  const submitted = request ? formatRequestSubmittedAt(request.submittedAt) : null;
-                  return (
-                    <tr
-                      className={
-                        firstOfSession ? 'session-request-row--first' : 'session-request-row'
-                      }
-                      key={key}
-                    >
-                      <td data-label="Thời gian">
-                        {submitted ? (
-                          <>
-                            <strong>
-                              {submitted.time} · {submitted.date}
-                            </strong>
-                            <small>Phiên {session.businessDate}</small>
-                          </>
-                        ) : (
-                          <>
-                            <strong>Chưa có yêu cầu</strong>
-                            <small>Phiên {session.businessDate}</small>
-                          </>
-                        )}
-                      </td>
-                      <td data-label="Cửa hàng">
-                        {request ? (
-                          <>
-                            <strong>{store?.name ?? 'Cửa hàng ngoài phạm vi'}</strong>
-                            <small>
-                              {store ? `${store.code} · ` : ''}
-                              {orderRequestStatusCopy[request.status]}
-                            </small>
-                          </>
-                        ) : (
-                          <small>—</small>
-                        )}
-                      </td>
-                      <td data-label="Nhận đơn">
-                        <strong>{formatSessionTime(session.requestOpensAt)}</strong>
-                        <small>đến {formatSessionTime(session.requestClosesAt)}</small>
-                      </td>
-                      <td data-label="Phân bổ">
-                        <strong>{formatSessionTime(session.allocationStartsAt)}</strong>
-                        <small>giờ Việt Nam</small>
-                      </td>
-                      <td data-label="Trạng thái">
-                        <Badge tone={sessionStatusTone[session.status]}>
-                          {sessionStatusCopy[session.status]}
-                        </Badge>
-                      </td>
-                      <td data-label="Kết quả">
-                        <button
-                          aria-label={
-                            store
-                              ? `Xem kết quả phiên ${session.businessDate} của ${store.name}`
-                              : `Xem kết quả phiên ${session.businessDate}`
-                          }
-                          className="link-button"
-                          onClick={() => showSessionResults(session.id, request?.storeId ?? '')}
-                          type="button"
-                        >
-                          <Eye aria-hidden="true" size={15} /> Xem kết quả
-                        </button>
-                      </td>
-                      {role === 'ADMIN' && firstOfSession ? (
-                        <td data-label="Thao tác">
-                          <div className="allocation-session-actions">
-                            {transitions.includes('OPEN') ? (
-                              <button
-                                aria-busy={pendingAction === `${session.id}:OPEN`}
-                                className="link-button"
-                                disabled={!openAllowedNow || Boolean(pendingAction)}
-                                onClick={() => void transition(session, 'OPEN')}
-                                title={
-                                  openAllowedNow
-                                    ? undefined
-                                    : 'Chỉ mở được trong khung giờ nhận đơn đã cấu hình'
-                                }
-                                type="button"
-                              >
-                                <Play aria-hidden="true" size={15} />
-                                {pendingAction === `${session.id}:OPEN`
-                                  ? 'Đang mở…'
-                                  : sessionActionLabel('OPEN')}
-                              </button>
-                            ) : null}
-                            {transitions.includes('CLOSED') ? (
-                              <button
-                                aria-busy={pendingAction === `${session.id}:CLOSED`}
-                                className="link-button"
-                                disabled={Boolean(pendingAction)}
-                                onClick={() => void transition(session, 'CLOSED')}
-                                type="button"
-                              >
-                                <LockKeyhole aria-hidden="true" size={15} />
-                                {pendingAction === `${session.id}:CLOSED`
-                                  ? 'Đang đóng…'
-                                  : sessionActionLabel('CLOSED')}
-                              </button>
-                            ) : null}
-                            {transitions.includes('CANCELLED') ? (
-                              <button
-                                className="link-button link-button--danger"
-                                disabled={Boolean(pendingAction)}
-                                onClick={() => beginCancel(session)}
-                                type="button"
-                              >
-                                <Ban aria-hidden="true" size={15} />{' '}
-                                {sessionActionLabel('CANCELLED')}
-                              </button>
-                            ) : null}
-                            {transitions.length === 0 ? <span>Không còn thao tác</span> : null}
-                          </div>
+                {sessionRows.map(
+                  ({ dayLabel, firstOfDay, firstOfSession, key, request, session, store }) => {
+                    const transitions = availableSessionTransitions(session.status);
+                    const openAllowedNow = canOpenSessionNow(session);
+                    const submitted = request
+                      ? formatRequestSubmittedAt(request.submittedAt)
+                      : null;
+                    return (
+                      <tr
+                        className={firstOfDay ? 'session-request-row--day-start' : undefined}
+                        key={key}
+                      >
+                        <td data-label="Thời gian">
+                          {firstOfDay ? (
+                            <span className="session-request-day">Ngày {dayLabel}</span>
+                          ) : null}
+                          {submitted ? (
+                            <>
+                              <strong>
+                                {submitted.time} · {submitted.date}
+                              </strong>
+                              <small>Phiên {session.businessDate}</small>
+                            </>
+                          ) : (
+                            <>
+                              <strong>Chưa có yêu cầu</strong>
+                              <small>Phiên {session.businessDate}</small>
+                            </>
+                          )}
                         </td>
-                      ) : null}
-                      {role === 'ADMIN' && !firstOfSession ? (
-                        <td data-label="Thao tác">
-                          <small>Thao tác phiên ở dòng đầu của phiên này</small>
+                        <td data-label="Cửa hàng">
+                          {request ? (
+                            <>
+                              <strong>{store?.name ?? 'Cửa hàng ngoài phạm vi'}</strong>
+                              <small>
+                                {store ? `${store.code} · ` : ''}
+                                {orderRequestStatusCopy[request.status]}
+                              </small>
+                            </>
+                          ) : (
+                            <small>—</small>
+                          )}
                         </td>
-                      ) : null}
-                    </tr>
-                  );
-                })}
+                        <td data-label="Nhận đơn">
+                          <strong>{formatSessionTime(session.requestOpensAt)}</strong>
+                          <small>đến {formatSessionTime(session.requestClosesAt)}</small>
+                        </td>
+                        <td data-label="Phân bổ">
+                          <strong>{formatSessionTime(session.allocationStartsAt)}</strong>
+                          <small>giờ Việt Nam</small>
+                        </td>
+                        <td data-label="Trạng thái">
+                          <Badge tone={sessionStatusTone[session.status]}>
+                            {sessionStatusCopy[session.status]}
+                          </Badge>
+                        </td>
+                        <td data-label="Kết quả">
+                          <button
+                            aria-label={
+                              store
+                                ? `Xem kết quả phiên ${session.businessDate} của ${store.name}`
+                                : `Xem kết quả phiên ${session.businessDate}`
+                            }
+                            className="link-button"
+                            onClick={() => showSessionResults(session.id, request?.storeId ?? '')}
+                            type="button"
+                          >
+                            <Eye aria-hidden="true" size={15} /> Xem kết quả
+                          </button>
+                        </td>
+                        {role === 'ADMIN' && firstOfSession ? (
+                          <td data-label="Thao tác">
+                            <div className="allocation-session-actions">
+                              {transitions.includes('OPEN') ? (
+                                <button
+                                  aria-busy={pendingAction === `${session.id}:OPEN`}
+                                  className="link-button"
+                                  disabled={!openAllowedNow || Boolean(pendingAction)}
+                                  onClick={() => void transition(session, 'OPEN')}
+                                  title={
+                                    openAllowedNow
+                                      ? undefined
+                                      : 'Chỉ mở được trong khung giờ nhận đơn đã cấu hình'
+                                  }
+                                  type="button"
+                                >
+                                  <Play aria-hidden="true" size={15} />
+                                  {pendingAction === `${session.id}:OPEN`
+                                    ? 'Đang mở…'
+                                    : sessionActionLabel('OPEN')}
+                                </button>
+                              ) : null}
+                              {transitions.includes('CLOSED') ? (
+                                <button
+                                  aria-busy={pendingAction === `${session.id}:CLOSED`}
+                                  className="link-button"
+                                  disabled={Boolean(pendingAction)}
+                                  onClick={() => void transition(session, 'CLOSED')}
+                                  type="button"
+                                >
+                                  <LockKeyhole aria-hidden="true" size={15} />
+                                  {pendingAction === `${session.id}:CLOSED`
+                                    ? 'Đang đóng…'
+                                    : sessionActionLabel('CLOSED')}
+                                </button>
+                              ) : null}
+                              {transitions.includes('CANCELLED') ? (
+                                <button
+                                  className="link-button link-button--danger"
+                                  disabled={Boolean(pendingAction)}
+                                  onClick={() => beginCancel(session)}
+                                  type="button"
+                                >
+                                  <Ban aria-hidden="true" size={15} />{' '}
+                                  {sessionActionLabel('CANCELLED')}
+                                </button>
+                              ) : null}
+                              {transitions.length === 0 ? <span>Không còn thao tác</span> : null}
+                            </div>
+                          </td>
+                        ) : null}
+                        {role === 'ADMIN' && !firstOfSession ? (
+                          <td data-label="Thao tác">
+                            <small>Thao tác phiên ở dòng đầu của phiên này</small>
+                          </td>
+                        ) : null}
+                      </tr>
+                    );
+                  },
+                )}
               </tbody>
             </table>
           </div>
