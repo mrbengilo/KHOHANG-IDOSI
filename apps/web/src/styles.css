@@ -1320,6 +1320,11 @@ td small {
   color: var(--danger);
 }
 
+/* Mỗi yêu cầu là một dòng; vạch đậm hơn ở dòng đầu mỗi phiên để tách các phiên với nhau. */
+.allocation-session-console tbody tr.session-request-row--first:not(:first-child) td {
+  border-top: 2px solid #c7d2fe;
+}
+
 .allocation-session-actions {
   display: flex;
   min-width: 150px;
@@ -2951,6 +2956,7 @@ label:has(:required) > .field-label::after {
     left: 0;
     display: grid;
     grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
     border-top: 1px solid var(--border);
     background: rgba(255, 255, 255, 0.96);
     padding: 7px 8px max(7px, env(safe-area-inset-bottom));
@@ -2965,8 +2971,24 @@ label:has(:required) > .field-label::after {
     color: var(--muted);
     font-size: 9px;
     text-align: center;
+    /* Viền trong suốt sẵn để mục đang chọn sáng lên mà không làm xô lệch thanh. */
+    border: 1.5px solid transparent;
+    border-radius: 12px;
+    padding: 4px 2px;
+    transition:
+      background-color 160ms ease,
+      border-color 160ms ease,
+      box-shadow 160ms ease,
+      color 160ms ease;
   }
+  .mobile-bottom-nav a:active {
+    background: var(--brand-soft);
+  }
+  /* Mục đang mở: nền sáng, viền màu thương hiệu và quầng nhẹ để nhận ra ngay. */
   .mobile-bottom-nav a.active {
+    border-color: var(--brand);
+    background: var(--brand-soft);
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.14);
     color: var(--brand);
     font-weight: 700;
   }
