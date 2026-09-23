@@ -155,6 +155,20 @@
       "when": 1790163000001,
       "tag": "0021_receipt_unexpected_items",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790178282791,
+      "tag": "0022_auto_priority_receipt_shortage",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1790179716234,
+      "tag": "0023_priority_offer_stock_holds",
+      "breakpoints": true
     }
   ]
 }

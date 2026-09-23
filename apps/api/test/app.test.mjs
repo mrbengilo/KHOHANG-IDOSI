@@ -2580,15 +2580,11 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(deniedScope.json().error.code, 'FORBIDDEN');
   });
 
-  test('lets only the target store accept a full priority offer with idempotency', async () => {
+  test('lets assigned HTKD accept a full priority offer with idempotency', async () => {
     const storeCookie = cookieOf(await login('ds_nvt'));
     const htkdCookie = cookieOf(await login('htkd'));
     const url = `/api/v1/priority-offers/${MEMORY_SEED_IDS.priorityOffer}/respond`;
     const acceptance = { action: 'ACCEPT', accepted: { kind: 'UNIT', quantity: 3 } };
-
-    const htkdDenied = await mutateWait(htkdCookie, url, 'wait-offer-htkd-denied', acceptance);
-    assert.equal(htkdDenied.statusCode, 403);
-    assert.equal(htkdDenied.json().error.code, 'FORBIDDEN');
 
     const partialAcceptance = await mutateWait(storeCookie, url, 'wait-offer-partial', {
       action: 'ACCEPT',
@@ -2597,23 +2593,31 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(partialAcceptance.statusCode, 400);
     assert.equal(partialAcceptance.json().error.code, 'VALIDATION_ERROR');
 
-    const accepted = await mutateWait(storeCookie, url, 'wait-offer-accept-0001', acceptance);
+    const accepted = await mutateWait(htkdCookie, url, 'wait-offer-accept-0001', acceptance);
     assert.equal(accepted.statusCode, 200);
     assert.equal(accepted.headers['idempotency-replayed'], 'false');
     assert.equal(accepted.json().data.status, 'ACCEPTED');
     assert.deepEqual(accepted.json().data.accepted, acceptance.accepted);
 
-    const replay = await mutateWait(storeCookie, url, 'wait-offer-accept-0001', acceptance);
+    const replay = await mutateWait(htkdCookie, url, 'wait-offer-accept-0001', acceptance);
     assert.equal(replay.statusCode, 200);
     assert.equal(replay.headers['idempotency-replayed'], 'true');
     assert.deepEqual(replay.json().data, accepted.json().data);
 
-    const keyConflict = await mutateWait(storeCookie, url, 'wait-offer-accept-0001', {
+    const keyConflict = await mutateWait(htkdCookie, url, 'wait-offer-accept-0001', {
       action: 'DECLINE',
       reason: 'Không thể nhận hàng trong hôm nay',
     });
     assert.equal(keyConflict.statusCode, 409);
     assert.equal(keyConflict.json().error.code, 'IDEMPOTENCY_CONFLICT');
+
+    const lateStoreResponse = await mutateWait(
+      storeCookie,
+      url,
+      'wait-offer-store-late',
+      acceptance,
+    );
+    assert.equal(lateStoreResponse.statusCode, 409);
 
     const acceptedFilter = await app.inject({
       method: 'GET',
@@ -2635,7 +2639,7 @@ describe('KHOHANG-IDOSI API', () => {
       history
         .json()
         .data.audit.some(
-          (event) => event.action === 'PRIORITY_OFFER_ACCEPTED' && event.actorRole === 'STORE',
+          (event) => event.action === 'PRIORITY_OFFER_ACCEPTED' && event.actorRole === 'HTKD',
         ),
       true,
     );

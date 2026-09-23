@@ -1050,6 +1050,28 @@ td small {
   color: var(--danger);
 }
 
+.priority-offer-notices {
+  margin-bottom: 1.5rem;
+  padding: 1.25rem;
+  border: 3px solid #e7a61a;
+  border-radius: 18px;
+  background: #fff8dd;
+  box-shadow: 0 8px 28px rgb(119 78 0 / 16%);
+}
+
+.priority-offer-notices h2 {
+  margin: 0 0 0.35rem;
+  font-size: clamp(1.2rem, 2vw, 1.65rem);
+}
+
+.priority-offer-notices p {
+  margin: 0 0 1rem;
+}
+
+.priority-offer-notices > div + div {
+  margin-top: 1rem;
+}
+
 .priority-offer {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;

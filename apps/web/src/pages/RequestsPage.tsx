@@ -766,7 +766,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
         ))}
       </section>
 
-      {role === 'STORE' && effectiveStoreId ? (
+      {(role === 'STORE' || role === 'WHOLESALE') && effectiveStoreId ? (
         <WaitlistPanel
           productNameById={productNameById}
           role={role}

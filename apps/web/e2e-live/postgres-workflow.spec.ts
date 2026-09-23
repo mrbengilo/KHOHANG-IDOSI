@@ -347,8 +347,12 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   await expect(htkdRow).toBeVisible();
   await htkdRow.getByRole('button', { name: 'Phân công cửa hàng' }).click();
   await expect(page.getByRole('heading', { name: 'Phân công cửa hàng HTKD' })).toBeVisible();
-  await page.getByRole('checkbox', { name: /DS_BMT/u }).check();
-  await page.getByRole('checkbox', { name: /DS_CT/u }).check();
+  // Integration fixtures can push reference stores off the first page of choices.
+  for (const storeCode of ['DS_BMT', 'DS_CT']) {
+    await page.getByLabel('Tìm cửa hàng').fill(storeCode);
+    await page.getByRole('button', { name: 'Tìm', exact: true }).click();
+    await page.getByRole('checkbox', { name: new RegExp(storeCode, 'u') }).check();
+  }
   await page.getByLabel('Lý do thay đổi').fill('Kiểm thử phân công HTKD với PostgreSQL');
   const assignResponsePromise = page.waitForResponse(
     (response) =>

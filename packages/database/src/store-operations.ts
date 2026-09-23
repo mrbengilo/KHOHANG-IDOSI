@@ -5,6 +5,7 @@ import { withIdempotency, type IdempotencyResult } from './idempotency.js';
 import {
   allocationLines,
   auditLogs,
+  dailyPriorityOffers,
   htkdAssignments,
   outboundRequestLines,
   outboundRequests,
@@ -261,6 +262,7 @@ export async function finalizeStoreReceiptInTransaction(
         productId: storeReceiptLines.productId,
         approvedQuantity: storeReceiptLines.approvedQuantity,
         receivedQuantity: storeReceiptLines.receivedQuantity,
+        priorityQueuedQuantity: storeReceiptLines.priorityQueuedQuantity,
       })
       .from(storeReceiptLines)
       .where(eq(storeReceiptLines.storeReceiptId, receipt.id))
@@ -385,26 +387,17 @@ export async function finalizeStoreReceiptInTransaction(
           occurredAt: now,
         });
 
+        // Legacy pending receipts have no queued shortage; new receipts were queued
+        // when the store submitted them. Reconcile once, before settling reservations.
+        await reconcileReceiptShortageWait(tx, {
+          storeId: receipt.storeId,
+          productId: persistedLine.productId,
+          outboundRequestLineId: persistedLine.outboundRequestLineId,
+          approvedQuantity: persistedLine.approvedQuantity,
+          queuedQuantity: persistedLine.priorityQueuedQuantity,
+          receivedQuantity: persistedLine.receivedQuantity,
+        });
         await settleReservations(tx, activeReservations, persistedLine.receivedQuantity, now);
-        if (shortage > 0) {
-          // A shipment can combine several allocation cycles. Restore only each
-          // source's unreceived quantity, in the same order used to settle its reservation.
-          let receivedToAssign = persistedLine.receivedQuantity;
-          for (const reservation of activeReservations) {
-            const consumed = Math.min(receivedToAssign, reservation.quantity);
-            receivedToAssign -= consumed;
-            const sourceShortage = reservation.quantity - consumed;
-            if (sourceShortage > 0) {
-              await restoreShortageWait(
-                tx,
-                receipt.storeId,
-                persistedLine.productId,
-                sourceShortage,
-                [reservation.allocationLineId],
-              );
-            }
-          }
-        }
 
         let lineGoodsCostVnd = 0n;
         for (const [index, weightKg] of suppliedLine.bagWeightsKg.entries()) {
@@ -480,6 +473,7 @@ export async function finalizeStoreReceiptInTransaction(
           .set({
             pricePerKgVnd: suppliedLine.pricePerKgVnd,
             goodsCostVnd: lineGoodsCostVnd,
+            priorityQueuedQuantity: shortage,
             shortageReason: shortage > 0 ? receipt.discrepancyNote : null,
             updatedAt: now,
           })
@@ -748,6 +742,149 @@ async function settleReservations(
   }
 }
 
+/** Queue the store-confirmed shortage before HTKD finalizes inventory. */
+export async function reconcileReceiptShortageWait(
+  tx: Transaction,
+  input: {
+    readonly storeId: string;
+    readonly productId: string;
+    readonly outboundRequestLineId: string;
+    readonly approvedQuantity: number;
+    readonly queuedQuantity: number;
+    readonly receivedQuantity: number;
+  },
+): Promise<void> {
+  const targetShortage = input.approvedQuantity - input.receivedQuantity;
+  if (targetShortage === input.queuedQuantity) return;
+
+  const activeReservations = await tx
+    .select({ allocationLineId: reservations.allocationLineId, quantity: reservations.quantity })
+    .from(reservations)
+    .where(
+      and(
+        eq(reservations.outboundRequestLineId, input.outboundRequestLineId),
+        eq(reservations.status, 'active'),
+        isNull(reservations.deletedAt),
+      ),
+    )
+    .orderBy(reservations.createdAt, reservations.id)
+    .for('update');
+  if (activeReservations.reduce((sum, row) => sum + row.quantity, 0) !== input.approvedQuantity) {
+    throw new StoreOperationValidationError('Receipt reservations do not match approved quantity.');
+  }
+
+  let oldReceived = input.approvedQuantity - input.queuedQuantity;
+  let newReceived = input.receivedQuantity;
+  for (const reservation of activeReservations) {
+    const oldConsumed = Math.min(oldReceived, reservation.quantity);
+    const newConsumed = Math.min(newReceived, reservation.quantity);
+    oldReceived -= oldConsumed;
+    newReceived -= newConsumed;
+    const change = oldConsumed - newConsumed;
+    if (change > 0) {
+      await restoreShortageWait(tx, input.storeId, input.productId, change, [
+        reservation.allocationLineId,
+      ]);
+    } else if (change < 0) {
+      await undoShortageWait(
+        tx,
+        input.storeId,
+        input.productId,
+        -change,
+        reservation.allocationLineId,
+      );
+    }
+  }
+}
+
+async function undoShortageWait(
+  tx: Transaction,
+  storeId: string,
+  productId: string,
+  quantity: number,
+  allocationLineId: string | null,
+): Promise<void> {
+  const [allocation] = allocationLineId
+    ? await tx
+        .select({ waitTicketId: allocationLines.waitTicketId })
+        .from(allocationLines)
+        .where(eq(allocationLines.id, allocationLineId))
+        .limit(1)
+    : [];
+  const [ticket] = await tx
+    .select()
+    .from(waitTickets)
+    .where(
+      and(
+        eq(waitTickets.storeId, storeId),
+        eq(waitTickets.productId, productId),
+        eq(waitTickets.status, 'active'),
+        isNull(waitTickets.deletedAt),
+      ),
+    )
+    .for('update')
+    .limit(1);
+  if (
+    !ticket ||
+    ticket.remainingQuantity < quantity ||
+    (allocation?.waitTicketId && ticket.id !== allocation.waitTicketId)
+  ) {
+    throw new StoreOperationConflictError(
+      'Priority shortage has already been allocated or merged; its quantity cannot be reduced.',
+    );
+  }
+  const [liveOffer] = await tx
+    .select({ id: dailyPriorityOffers.id })
+    .from(dailyPriorityOffers)
+    .where(
+      and(
+        eq(dailyPriorityOffers.waitTicketId, ticket.id),
+        inArray(dailyPriorityOffers.status, ['offered', 'accepted']),
+        isNull(dailyPriorityOffers.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (liveOffer) {
+    throw new StoreOperationConflictError(
+      'Priority shortage has an active offer; its quantity cannot be reduced.',
+    );
+  }
+  const now = new Date();
+  if (allocation?.waitTicketId) {
+    await tx
+      .update(waitTickets)
+      .set({
+        remainingQuantity: ticket.remainingQuantity - quantity,
+        fulfilledQuantity: ticket.fulfilledQuantity + quantity,
+        status: ticket.remainingQuantity === quantity ? 'fulfilled' : 'active',
+        resolvedAt: ticket.remainingQuantity === quantity ? now : null,
+        updatedAt: now,
+      })
+      .where(eq(waitTickets.id, ticket.id));
+  } else if (ticket.originalQuantity === quantity) {
+    await tx
+      .update(waitTickets)
+      .set({
+        status: 'cancelled',
+        resolvedAt: now,
+        resolutionReason: 'Store corrected its confirmed receipt shortage',
+        updatedAt: now,
+      })
+      .where(eq(waitTickets.id, ticket.id));
+  } else {
+    await tx
+      .update(waitTickets)
+      .set({
+        originalQuantity: ticket.originalQuantity - quantity,
+        remainingQuantity: ticket.remainingQuantity - quantity,
+        status: ticket.remainingQuantity === quantity ? 'fulfilled' : 'active',
+        resolvedAt: ticket.remainingQuantity === quantity ? now : null,
+        updatedAt: now,
+      })
+      .where(eq(waitTickets.id, ticket.id));
+  }
+}
+
 async function restoreShortageWait(
   tx: Transaction,
   storeId: string,
@@ -850,6 +987,7 @@ async function restoreShortageWait(
         .set({
           originalQuantity: activeWait.originalQuantity + shortage,
           remainingQuantity: activeWait.remainingQuantity + shortage,
+          priorityLevel: 'P0B',
           updatedAt: new Date(),
         })
         .where(eq(waitTickets.id, activeWait.id));
@@ -942,7 +1080,7 @@ async function assertReviewerMayAccessStore(
   }
 }
 
-async function withStoreProductWaitLocks<T>(
+export async function withStoreProductWaitLocks<T>(
   tx: Transaction,
   storeId: string,
   productIds: readonly string[],
