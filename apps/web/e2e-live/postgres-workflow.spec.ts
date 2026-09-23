@@ -406,7 +406,8 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
     await accountForm.getByLabel('Tên đăng nhập').fill(storeUsername);
     await accountForm.getByLabel('Tên hiển thị').fill('Live PostgreSQL Store');
     await accountForm.getByLabel('Vai trò').selectOption('STORE');
-    await accountForm.getByLabel('Cửa hàng').selectOption({ label: 'DS_BMT · DS BMT' });
+    // Ô "Vai trò" có lựa chọn "Cửa hàng sỉ" nên phải neo nhãn ở đầu chuỗi.
+    await accountForm.getByLabel(/^Cửa hàng/).selectOption({ label: 'DS_BMT · DS BMT' });
     await accountForm.getByLabel('Mật khẩu ban đầu').fill(storePassword);
     await accountForm.getByLabel('Nhập lại mật khẩu').fill(storePassword);
     const accountResponsePromise = page.waitForResponse(
