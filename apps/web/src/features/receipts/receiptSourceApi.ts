@@ -6,6 +6,7 @@ import {
 
 import { ApiClientError } from '../../lib/api';
 import { reportUnauthorizedResponse } from '../../lib/session-expiry';
+import { addTabSessionHeader } from '../../lib/tab-session';
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
 const apiBaseUrl = (configuredBaseUrl || '/api/v1').replace(/\/$/, '');
@@ -18,11 +19,14 @@ async function loadReceiptSourcePage(filters: ReceiptSourceFilters, page: number
   const query = new URLSearchParams({ page: String(page), pageSize: '100' });
   if (filters.storeId) query.set('storeId', filters.storeId);
 
+  const headers = new Headers({ Accept: 'application/json' });
+  addTabSessionHeader(headers);
+
   let response: Response;
   try {
     response = await fetch(`${apiBaseUrl}/store-receipt-sources?${query.toString()}`, {
       credentials: 'include',
-      headers: { Accept: 'application/json' },
+      headers,
     });
   } catch {
     throw new ApiClientError(
