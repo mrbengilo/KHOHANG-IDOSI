@@ -44,12 +44,12 @@ describe('route access policy', () => {
     expect(canAccessRoute('/warehouse-inbound', 'WHOLESALE', null)).toBe(false);
   });
 
-  it('keeps partner inbound on the retail floor only', () => {
+  it('keeps partner inbound on retail store accounts and their assigned HTKD', () => {
     expect(canAccessRoute('/partner-inbound', 'STORE', 'RETAIL')).toBe(true);
     expect(canAccessRoute('/partner-inbound', 'STORE', 'WHOLESALE')).toBe(false);
+    expect(canAccessRoute('/partner-inbound', 'HTKD', null)).toBe(true);
     expect(canAccessRoute('/partner-inbound', 'WHOLESALE', null)).toBe(false);
     expect(canAccessRoute('/partner-inbound', 'ADMIN', null)).toBe(false);
-    expect(canAccessRoute('/partner-inbound', 'HTKD', null)).toBe(false);
   });
 
   it('fails closed for unknown routes', () => {

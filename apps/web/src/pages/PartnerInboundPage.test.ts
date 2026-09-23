@@ -1,5 +1,10 @@
+import type { Store } from '@idosi/contracts';
 import { describe, expect, it } from 'vitest';
-import { partnerBagWeightsValid, partnerInboundRequest } from './PartnerInboundPage';
+import {
+  partnerBagWeightsValid,
+  partnerInboundRequest,
+  partnerInboundStoreOptions,
+} from './PartnerInboundPage';
 
 const STORE = '50000000-0000-4000-8000-000000000001';
 const PRODUCT = '50000000-0000-4000-8000-000000000002';
@@ -64,5 +69,21 @@ describe('partner inbound draft validation', () => {
         RECEIVED_AT,
       ).success,
     ).toBe(false);
+  });
+});
+
+describe('partner inbound stores for HTKD', () => {
+  const store = (code: string, kind: Store['kind'], status: Store['status']): Store =>
+    ({ id: `id-${code}`, code, name: code, kind, status }) as Store;
+
+  it('offers only active retail stores, in code order', () => {
+    const options = partnerInboundStoreOptions([
+      store('DS_NVT', 'RETAIL', 'ACTIVE'),
+      store('LX', 'WHOLESALE', 'ACTIVE'),
+      store('DS_BD', 'RETAIL', 'INACTIVE'),
+      store('DS_BMT', 'RETAIL', 'ACTIVE'),
+    ]);
+    // Wholesale stores hold no floor stock and inactive stores take no new goods.
+    expect(options.map((option) => option.code)).toEqual(['DS_BMT', 'DS_NVT']);
   });
 });

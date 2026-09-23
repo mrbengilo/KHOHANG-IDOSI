@@ -447,6 +447,23 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (!store || store.kind !== 'WHOLESALE' || store.status !== 'ACTIVE') throw forbidden();
   }
 
+  /**
+   * Partner goods become retail floor stock: a store account records them for its own
+   * active retail store, HTKD for an active retail store it is assigned to.
+   */
+  private async authorizePartnerInboundOperation(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+  ): Promise<void> {
+    if (actor.role === 'STORE') {
+      await this.authorizeRetailStoreOperation(actor);
+      if (actor.storeId !== storeId) throw forbidden();
+      return;
+    }
+    if (actor.role !== 'HTKD' || !canAccessStore(actor, storeId)) throw forbidden();
+    assertActiveRetailStore(this.stores.get(storeId) ?? null);
+  }
+
   public async listAccounts(
     actor: AuthenticatedPrincipal,
     query: ListAccountsQuery,
@@ -2288,8 +2305,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<StorePartnerInbound>> {
-    await this.authorizeRetailStoreOperation(actor);
-    if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
+    await this.authorizePartnerInboundOperation(actor, input.storeId);
     const scopedKey = `${actor.accountId}:partner-inbound:${idempotencyKey}`;
     const previous = this.partnerInboundIdempotency.get(scopedKey);
     if (previous) {

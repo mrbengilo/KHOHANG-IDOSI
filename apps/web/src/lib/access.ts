@@ -19,10 +19,11 @@ export const routeAccessPolicies = {
     roles: ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE'],
     storeKinds: ['RETAIL'],
   },
-  // Partner goods land in the retail floor's own stock, so only its own account records
-  // them; admins and HTKD read store stock through the reports, not by writing to it.
+  // Partner goods land in a retail floor's own stock: a store account records them for its
+  // own store and HTKD for a retail store it is assigned to. Admins read store stock through
+  // the reports, and the wholesale desk holds no floor stock.
   '/partner-inbound': {
-    roles: ['STORE'],
+    roles: ['STORE', 'HTKD'],
     storeKinds: ['RETAIL'],
   },
   '/inventory': {

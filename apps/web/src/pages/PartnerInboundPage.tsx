@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CreateStorePartnerInboundRequestSchema } from '@idosi/contracts';
+import { CreateStorePartnerInboundRequestSchema, type Store } from '@idosi/contracts';
 import { useRef, useState, type FormEvent } from 'react';
 import { Button } from '../components/Button';
+import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
 import { ProductBagPicker } from '../components/ProductBagPicker';
 import { StatCard } from '../components/StatCard';
 import {
   createStorePartnerInbound,
+  listAccessibleStores,
   listCatalog,
   listStorePartnerInbounds,
   mockModeEnabled,
@@ -23,6 +25,16 @@ interface DraftLine {
 }
 
 const partnerInboundQueryKey = ['store-partner-inbounds'] as const;
+
+/**
+ * Stores HTKD may record partner goods for: the server already limits the list to the
+ * account's assignment, and partner stock only lands on an active retail floor.
+ */
+export function partnerInboundStoreOptions(stores: readonly Store[]): Store[] {
+  return stores
+    .filter((store) => store.kind === 'RETAIL' && store.status === 'ACTIVE')
+    .sort((left, right) => left.code.localeCompare(right.code, 'vi'));
+}
 
 /** Positive kilograms with at most three decimals, matching the contract's weight format. */
 export function partnerBagWeightsValid(lines: readonly DraftLine[]): boolean {
@@ -69,10 +81,30 @@ export function PartnerInboundPage() {
 function PartnerInboundContent() {
   const queryClient = useQueryClient();
   const sessionQuery = useSession();
-  const storeId = sessionQuery.data?.principal.storeId ?? '';
+  const principal = sessionQuery.data?.principal;
+  // HTKD works across its assigned stores, so it picks the receiving store; a store account
+  // always records for its own store.
+  const picksStore = principal?.role === 'HTKD';
+  const storesQuery = useQuery({
+    queryKey: ['stores', 'accessible'],
+    queryFn: listAccessibleStores,
+    enabled: picksStore,
+    retry: false,
+  });
+  const storeOptions = partnerInboundStoreOptions(storesQuery.data ?? []);
+  const [pickedStoreId, setPickedStoreId] = useState('');
+  const storeId = picksStore
+    ? storeOptions.some((store) => store.id === pickedStoreId)
+      ? pickedStoreId
+      : (storeOptions[0]?.id ?? '')
+    : (principal?.storeId ?? '');
+  const storeLabel = (id: string) => {
+    const store = storeOptions.find((candidate) => candidate.id === id);
+    return store ? `${store.code} · ${store.name}` : '';
+  };
   const catalog = useQuery({ queryKey: ['catalog'], queryFn: listCatalog, retry: false });
   const history = useQuery({
-    queryKey: partnerInboundQueryKey,
+    queryKey: [...partnerInboundQueryKey, storeId],
     queryFn: () => listStorePartnerInbounds(storeId || undefined),
     enabled: storeId !== '',
     retry: false,
@@ -114,9 +146,12 @@ function PartnerInboundContent() {
       setPartnerName('');
       setNote('');
       operation.current = null;
+      const target = picksStore ? storeLabel(slip.storeId) : '';
       setNotice({
         error: false,
-        message: `Đã lưu phiếu ${slip.referenceCode} và cộng vào tồn kho cửa hàng.`,
+        message: target
+          ? `Đã lưu phiếu ${slip.referenceCode} và cộng vào tồn kho cửa hàng ${target}.`
+          : `Đã lưu phiếu ${slip.referenceCode} và cộng vào tồn kho cửa hàng.`,
       });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: partnerInboundQueryKey }),
@@ -162,19 +197,86 @@ function PartnerInboundContent() {
     save.mutate();
   };
 
+  const header = (
+    <PageHeader
+      title="Nhập hàng đối tác khác"
+      description={
+        picksStore
+          ? 'Ghi nhận hàng cửa hàng được phân quyền nhận thẳng từ đối tác, ngoài luồng phân bổ của kho tổng. Lưu xong là cộng ngay vào tồn kho của cửa hàng đã chọn.'
+          : 'Ghi nhận hàng cửa hàng nhận thẳng từ đối tác, ngoài luồng phân bổ của kho tổng. Lưu xong là cộng ngay vào tồn kho cửa hàng.'
+      }
+    />
+  );
+
+  if (picksStore && storesQuery.isPending) {
+    return (
+      <>
+        {header}
+        <p className="panel" role="status">
+          Đang tải cửa hàng được phân quyền…
+        </p>
+      </>
+    );
+  }
+  if (picksStore && storesQuery.isError) {
+    return (
+      <>
+        {header}
+        <div className="panel" role="alert">
+          <p>Không tải được danh sách cửa hàng được phân quyền.</p>
+          <Button tone="secondary" onClick={() => void storesQuery.refetch()}>
+            Thử lại
+          </Button>
+        </div>
+      </>
+    );
+  }
+  if (picksStore && storeOptions.length === 0) {
+    return (
+      <>
+        {header}
+        <EmptyState
+          title="Chưa có cửa hàng bán lẻ được phân quyền"
+          detail="Admin cần phân công ít nhất một cửa hàng bán lẻ đang hoạt động cho tài khoản HTKD này."
+        />
+      </>
+    );
+  }
   if (sessionQuery.data && storeId === '') {
     return <UnavailableFeature title="Nhập hàng đối tác khác" />;
   }
 
   return (
     <>
-      <PageHeader
-        title="Nhập hàng đối tác khác"
-        description="Ghi nhận hàng cửa hàng nhận thẳng từ đối tác, ngoài luồng phân bổ của kho tổng. Lưu xong là cộng ngay vào tồn kho cửa hàng."
-      />
+      {header}
       <form className="panel" noValidate onSubmit={submit}>
         <fieldset className="product-bag-picker" disabled={save.isPending}>
           <div className="form-grid">
+            {picksStore ? (
+              <label>
+                <span>
+                  Cửa hàng nhận hàng{' '}
+                  <span style={{ color: 'var(--danger)' }} aria-hidden="true">
+                    *
+                  </span>
+                </span>
+                <select
+                  required
+                  aria-label="Cửa hàng nhận hàng"
+                  value={storeId}
+                  onChange={(event) => {
+                    setPickedStoreId(event.target.value);
+                    changed();
+                  }}
+                >
+                  {storeOptions.map((store) => (
+                    <option key={store.id} value={store.id}>
+                      {store.code} · {store.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <label>
               Mã phiếu nhập
               <input readOnly value="Tự tạo khi lưu · PNDT00001-dd/MM/yyyy" />
