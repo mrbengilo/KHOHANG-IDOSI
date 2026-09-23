@@ -41,6 +41,7 @@ import { getAdminOperationalSettings } from '../features/admin/adminApi';
 import {
   ApiClientError,
   createOrderSession,
+  listAccessibleOrderRequests,
   listAllocationResults,
   listAccessibleStores,
   listCatalog,
@@ -49,6 +50,11 @@ import {
   transitionOrderSession,
 } from '../lib/api';
 import { businessDate } from '../lib/business-time';
+import {
+  formatRequestSubmittedAt,
+  orderRequestStatusCopy,
+  sessionRequestRows,
+} from '../lib/session-request-rows';
 import { allocationRequests as seed } from '../lib/data';
 import type { AllocationRequest } from '../lib/types';
 
@@ -502,6 +508,22 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
     queryKey: ['order-sessions', 'all'],
     retry: false,
   });
+  // Each request becomes a row of the session table, so the reader sees when it was sent
+  // and which store sent it. The server limits the list to the account's store scope.
+  const orderRequestsQuery = useQuery({
+    queryFn: listAccessibleOrderRequests,
+    queryKey: ['order-requests', 'accessible'],
+    retry: false,
+  });
+  const sessionRows = useMemo(
+    () =>
+      sessionRequestRows(
+        sessionsQuery.data ?? [],
+        orderRequestsQuery.data ?? [],
+        storesQuery.data ?? [],
+      ),
+    [sessionsQuery.data, orderRequestsQuery.data, storesQuery.data],
+  );
   const settingsQuery = useQuery({
     enabled: role === 'ADMIN',
     queryFn: () => getAdminOperationalSettings(1),
@@ -560,7 +582,8 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
     allocationQuery.isFetching ||
     catalogQuery.isFetching ||
     storesQuery.isFetching ||
-    sessionsQuery.isFetching;
+    sessionsQuery.isFetching ||
+    orderRequestsQuery.isFetching;
 
   const refresh = async () => {
     setNotice(null);
@@ -569,18 +592,19 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
       allocationQuery.refetch(),
       storesQuery.refetch(),
       sessionsQuery.refetch(),
+      orderRequestsQuery.refetch(),
       ...(role === 'ADMIN' ? [settingsQuery.refetch()] : []),
     ]);
   };
 
-  const showSessionResults = (sessionId: string) => {
+  const showSessionResults = (sessionId: string, storeId = '') => {
     setAllocationPage(1);
     setAllocationSessionId(sessionId);
     setAllocationStatus('');
-    setAllocationStoreId('');
+    setAllocationStoreId(storeId);
     void queryClient.invalidateQueries({
       exact: true,
-      queryKey: ['allocation-results', 1, sessionId, '', ''],
+      queryKey: ['allocation-results', 1, sessionId, '', storeId],
     });
     window.requestAnimationFrame(() => {
       allocationResultsHeadingRef.current?.focus();
@@ -872,12 +896,21 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
             title="Chưa có phiên vận hành"
           />
         ) : null}
+        {orderRequestsQuery.isError ? (
+          <div className="allocation-session-state allocation-session-state--error" role="alert">
+            <span>Không thể tải yêu cầu đặt hàng; bảng chỉ hiện thông tin phiên.</span>
+            <Button onClick={() => void orderRequestsQuery.refetch()} tone="secondary">
+              <RotateCcw aria-hidden="true" size={16} /> Thử lại
+            </Button>
+          </div>
+        ) : null}
         {sessionsQuery.data && sessionsQuery.data.length > 0 ? (
           <div className="responsive-table">
             <table>
               <thead>
                 <tr>
-                  <th>Ngày nghiệp vụ</th>
+                  <th>Thời gian</th>
+                  <th>Cửa hàng</th>
                   <th>Nhận đơn</th>
                   <th>Phân bổ</th>
                   <th>Trạng thái</th>
@@ -886,14 +919,44 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                 </tr>
               </thead>
               <tbody>
-                {sessionsQuery.data.map((session) => {
+                {sessionRows.map(({ firstOfSession, key, request, session, store }) => {
                   const transitions = availableSessionTransitions(session.status);
                   const openAllowedNow = canOpenSessionNow(session);
+                  const submitted = request ? formatRequestSubmittedAt(request.submittedAt) : null;
                   return (
-                    <tr key={session.id}>
-                      <td data-label="Ngày nghiệp vụ">
-                        <strong>{session.businessDate}</strong>
-                        <small>{session.id.slice(0, 8)}</small>
+                    <tr
+                      className={
+                        firstOfSession ? 'session-request-row--first' : 'session-request-row'
+                      }
+                      key={key}
+                    >
+                      <td data-label="Thời gian">
+                        {submitted ? (
+                          <>
+                            <strong>
+                              {submitted.time} · {submitted.date}
+                            </strong>
+                            <small>Phiên {session.businessDate}</small>
+                          </>
+                        ) : (
+                          <>
+                            <strong>Chưa có yêu cầu</strong>
+                            <small>Phiên {session.businessDate}</small>
+                          </>
+                        )}
+                      </td>
+                      <td data-label="Cửa hàng">
+                        {request ? (
+                          <>
+                            <strong>{store?.name ?? 'Cửa hàng ngoài phạm vi'}</strong>
+                            <small>
+                              {store ? `${store.code} · ` : ''}
+                              {orderRequestStatusCopy[request.status]}
+                            </small>
+                          </>
+                        ) : (
+                          <small>—</small>
+                        )}
                       </td>
                       <td data-label="Nhận đơn">
                         <strong>{formatSessionTime(session.requestOpensAt)}</strong>
@@ -910,15 +973,19 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                       </td>
                       <td data-label="Kết quả">
                         <button
-                          aria-label={`Xem kết quả phiên ${session.businessDate}`}
+                          aria-label={
+                            store
+                              ? `Xem kết quả phiên ${session.businessDate} của ${store.name}`
+                              : `Xem kết quả phiên ${session.businessDate}`
+                          }
                           className="link-button"
-                          onClick={() => showSessionResults(session.id)}
+                          onClick={() => showSessionResults(session.id, request?.storeId ?? '')}
                           type="button"
                         >
                           <Eye aria-hidden="true" size={15} /> Xem kết quả
                         </button>
                       </td>
-                      {role === 'ADMIN' ? (
+                      {role === 'ADMIN' && firstOfSession ? (
                         <td data-label="Thao tác">
                           <div className="allocation-session-actions">
                             {transitions.includes('OPEN') ? (
@@ -967,6 +1034,11 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                             ) : null}
                             {transitions.length === 0 ? <span>Không còn thao tác</span> : null}
                           </div>
+                        </td>
+                      ) : null}
+                      {role === 'ADMIN' && !firstOfSession ? (
+                        <td data-label="Thao tác">
+                          <small>Thao tác phiên ở dòng đầu của phiên này</small>
                         </td>
                       ) : null}
                     </tr>

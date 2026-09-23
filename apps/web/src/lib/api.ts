@@ -454,6 +454,13 @@ export async function listStoreOrderRequests(
   return ListStoreOrderRequestsResponseSchema.parse(payload).data;
 }
 
+/** Every order request the account may see, across sessions; the server applies the scope. */
+export async function listAccessibleOrderRequests(): Promise<StoreOrderRequest[]> {
+  return listAllPages('/order-requests', new URLSearchParams(), (payload) =>
+    ListStoreOrderRequestsResponseSchema.parse(payload),
+  );
+}
+
 export async function submitStoreOrderRequest(
   input: CreateStoreOrderRequest,
   idempotencyKey: string,
