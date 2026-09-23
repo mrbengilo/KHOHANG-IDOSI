@@ -134,6 +134,13 @@
       "when": 1790155616974,
       "tag": "0018_sorted_stock_idosi_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790159516000,
+      "tag": "0019_sorted_sale_transfers",
+      "breakpoints": true
     }
   ]
 }

@@ -327,6 +327,16 @@ export {
   WaitTicketNotFoundError,
   WaitTicketValidationError,
 } from './wait-ticket-operations.js';
+export {
+  createSortedSaleTransfer,
+  getSortedSaleTransfer,
+  listSortedSaleTransfers,
+  receiveSortedSaleTransfer,
+} from './sorted-sale-transfers.js';
+export type {
+  CreateSortedSaleTransferInput,
+  ReceiveSortedSaleTransferInput,
+} from './sorted-sale-transfers.js';
 export type {
   CancelledWaitTicket,
   CancelWaitTicketInput,

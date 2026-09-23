@@ -90,6 +90,9 @@ import type {
   ExportCharityRequest,
   ReviewStoreOutboundRequest,
   StoreTransfer,
+  SortedSaleTransfer,
+  CreateSortedSaleTransferRequest,
+  ReceiveSortedSaleTransferRequest,
   ListStoreTransfersQuery,
   CreateStoreTransferRequest,
   DispatchStoreTransferRequest,
@@ -602,6 +605,23 @@ export interface WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<StoreSortingResult>>;
+
+  listSortedSaleTransfers(actor: AuthenticatedPrincipal): Promise<readonly SortedSaleTransfer[]>;
+  createSortedSaleTransfer(
+    actor: AuthenticatedPrincipal,
+    input: CreateSortedSaleTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<SortedSaleTransfer>>;
+  receiveSortedSaleTransfer(
+    actor: AuthenticatedPrincipal,
+    transferId: string,
+    input: ReceiveSortedSaleTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<SortedSaleTransfer>>;
 
   listStoreTransfers(
     actor: AuthenticatedPrincipal,

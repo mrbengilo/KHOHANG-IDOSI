@@ -14,6 +14,7 @@ export * from './receipts.js';
 export * from './reports.js';
 export * from './store-inventory.js';
 export * from './store-sorting.js';
+export * from './sorted-sale-transfer.js';
 export * from './store-transfers.js';
 export * from './stores.js';
 export * from './waitlist.js';

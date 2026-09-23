@@ -1248,6 +1248,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
   const [bagId, setBagId] = useState('');
   const [reason, setReason] = useState<'CHARITY' | 'SALE' | 'CANCEL'>('CHARITY');
   const [weightKg, setWeightKg] = useState('');
+  const [saleBagQuantity, setSaleBagQuantity] = useState('');
   const [notice, setNotice] = useState('');
   const [operationError, setOperationError] = useState('');
   const operationKeys = useRef(new Map<string, string>());
@@ -1286,7 +1287,10 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
     (sum, stock) => sum + kilogramsToGrams(stock.charityWeightKg),
     0n,
   );
-  const saleByProduct = new Map<string, { storeId: string; productId: string; grams: bigint }>();
+  const saleByProduct = new Map<
+    string,
+    { storeId: string; productId: string; grams: bigint; bags: number }
+  >();
   for (const stock of stocks) {
     const key = `${stock.storeId}:${stock.productId}`;
     const current = saleByProduct.get(key);
@@ -1294,6 +1298,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
       storeId: stock.storeId,
       productId: stock.productId,
       grams: (current?.grams ?? 0n) + kilogramsToGrams(stock.saleWeightKg),
+      bags: (current?.bags ?? 0) + stock.bagQuantity,
     });
   }
   const charityStocks = stocks.filter((stock) => kilogramsToGrams(stock.charityWeightKg) > 0n);
@@ -1307,7 +1312,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
   const sortingMutation = useMutation({
     mutationFn: async () => {
       if (!selectedBag || !effectiveStoreId) throw new Error('Chưa chọn Mã bao hợp lệ.');
-      const signature = `${selectedBag.id}:${selectedBag.version}:${reason}:${weightKg}`;
+      const signature = `${selectedBag.id}:${selectedBag.version}:${reason}:${weightKg}:${saleBagQuantity}`;
       const key = operationKeys.current.get(signature) ?? uuid();
       operationKeys.current.set(signature, key);
       const result = await createStoreSorting(
@@ -1317,6 +1322,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
           expectedInventoryVersion: selectedBag.version,
           reason,
           weightKg,
+          bagQuantity: reason === 'SALE' ? Number(saleBagQuantity) : null,
         },
         key,
       );
@@ -1332,6 +1338,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
           : `Đã cộng ${weightKg} kg vào mục ${reason === 'SALE' ? 'Sale' : 'Từ thiện'}.`,
       );
       setWeightKg('');
+      setSaleBagQuantity('');
       await refreshStock();
     },
   });
@@ -1340,19 +1347,28 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
       stock,
       action,
       kilograms,
+      bags,
     }: {
       stock: StoreSortedStock;
       action: 'SALE' | 'CHARITY';
       kilograms: string;
+      bags: number;
     }) => {
-      const signature = `${stock.id}:${stock.version}:${action}:${kilograms}`;
+      const signature = `${stock.id}:${stock.version}:${action}:${kilograms}:${bags}`;
       const key = operationKeys.current.get(signature) ?? uuid();
       operationKeys.current.set(signature, key);
-      const request = { expectedVersion: stock.version, weightKg: kilograms };
       const result =
         action === 'SALE'
-          ? await moveCharityToSale(stock.id, request, key)
-          : await exportCharity(stock.id, request, key);
+          ? await moveCharityToSale(
+              stock.id,
+              { expectedVersion: stock.version, weightKg: kilograms, bagQuantity: bags },
+              key,
+            )
+          : await exportCharity(
+              stock.id,
+              { expectedVersion: stock.version, weightKg: kilograms },
+              key,
+            );
       operationKeys.current.delete(signature);
       return result;
     },
@@ -1463,7 +1479,10 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
               <div className="section-heading section-heading--compact">
                 <div>
                   <h2>Lưu khối lượng đã lọc</h2>
-                  <p>Sale chỉ lưu kg. Số bán theo ký/cái được lấy từ IDOSI sau đó.</p>
+                  <p>
+                    Nhập số bao và kg cho hàng đưa vào Sale; số bán theo ký/cái được đối soát từ
+                    IDOSI.
+                  </p>
                 </div>
                 <Scale aria-hidden="true" />
               </div>
@@ -1508,11 +1527,29 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
                       : 'Chưa có Mã bao khả dụng'}
                   </small>
                 </label>
+                {reason === 'SALE' ? (
+                  <label>
+                    <span className="field-label">Số lượng sau lọc (bao)</span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      inputMode="numeric"
+                      value={saleBagQuantity}
+                      onChange={(event) => setSaleBagQuantity(event.target.value)}
+                      placeholder="Ví dụ: 2"
+                    />
+                  </label>
+                ) : null}
               </div>
               <Button
                 busy={sortingMutation.isPending}
                 disabled={
-                  !selectedBag || !isOutboundWeightAllowed(weightKg, selectedBag.remainingWeightKg)
+                  !selectedBag ||
+                  !isOutboundWeightAllowed(weightKg, selectedBag.remainingWeightKg) ||
+                  (reason === 'SALE' &&
+                    (!/^[1-9]\d*$/.test(saleBagQuantity) ||
+                      !Number.isSafeInteger(Number(saleBagQuantity))))
                 }
                 onClick={() => sortingMutation.mutate()}
               >
@@ -1541,6 +1578,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
                         <th>Cửa hàng</th>
                         <th>Mặt hàng</th>
                         <th>Sale còn</th>
+                        <th>Số bao</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1553,6 +1591,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
                           <td data-label="Sale còn">
                             <strong>{formatKg(gramsToKilograms(item.grams))}</strong>
                           </td>
+                          <td data-label="Số bao">{item.bags}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1585,8 +1624,8 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
                       storeName={storeName(stores, stock.storeId)}
                       editable={role === 'STORE'}
                       busy={charityMutation.isPending}
-                      onAction={(action, kilograms) =>
-                        charityMutation.mutate({ stock, action, kilograms })
+                      onAction={(action, kilograms, bags) =>
+                        charityMutation.mutate({ stock, action, kilograms, bags })
                       }
                     />
                   ))}
@@ -1613,12 +1652,16 @@ function CharityStockCard({
   readonly storeName: string;
   readonly editable: boolean;
   readonly busy: boolean;
-  readonly onAction: (action: 'SALE' | 'CHARITY', kilograms: string) => void;
+  readonly onAction: (action: 'SALE' | 'CHARITY', kilograms: string, bags: number) => void;
 }) {
   const [saleKg, setSaleKg] = useState('');
+  const [saleBags, setSaleBags] = useState('');
   const [charityKg, setCharityKg] = useState(stock.charityWeightKg);
   const [confirmExport, setConfirmExport] = useState(false);
-  const saleAllowed = isOutboundWeightAllowed(saleKg, stock.charityWeightKg);
+  const saleAllowed =
+    isOutboundWeightAllowed(saleKg, stock.charityWeightKg) &&
+    /^[1-9]\d*$/.test(saleBags) &&
+    Number.isSafeInteger(Number(saleBags));
   const exportAllowed = charityKg === stock.charityWeightKg;
   return (
     <article className="sorted-charity-card">
@@ -1642,10 +1685,21 @@ function CharityStockCard({
               onChange={(event) => setSaleKg(event.target.value)}
             />
           </label>
+          <label>
+            Số lượng đưa vào Sale (bao)
+            <input
+              type="number"
+              min="1"
+              step="1"
+              inputMode="numeric"
+              value={saleBags}
+              onChange={(event) => setSaleBags(event.target.value)}
+            />
+          </label>
           <Button
             tone="secondary"
             disabled={!saleAllowed || busy}
-            onClick={() => onAction('SALE', saleKg)}
+            onClick={() => onAction('SALE', saleKg, Number(saleBags))}
           >
             Cộng vào Sale
           </Button>
@@ -1676,7 +1730,7 @@ function CharityStockCard({
               <p>Xác nhận xuất {formatKg(charityKg)} từ thiện? Số dư Mã bao sẽ về 0 kg.</p>
               <Button
                 disabled={busy || !exportAllowed}
-                onClick={() => onAction('CHARITY', charityKg)}
+                onClick={() => onAction('CHARITY', charityKg, 0)}
               >
                 Xác nhận xuất
               </Button>

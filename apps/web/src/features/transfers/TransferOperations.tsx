@@ -1,16 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { formatKg } from '../../lib/format';
 import type { Store, StoreTransfer, StoreTransferStatus } from '@idosi/contracts';
-import {
-  ArrowRight,
-  CheckCircle2,
-  CircleCheck,
-  RefreshCw,
-  Send,
-  ShieldCheck,
-  Truck,
-  XCircle,
-} from 'lucide-react';
+import { ArrowRight, CheckCircle2, CircleCheck, RefreshCw, Truck, XCircle } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import type { AppOutletContext } from '../../components/AppShell';
@@ -22,16 +13,14 @@ import { DashboardSkeleton } from '../../components/Skeleton';
 import { ApiClientError, listAccessibleStores, listCatalog } from '../../lib/api';
 import { useSession } from '../../lib/auth';
 import { formatVnd } from '../../lib/format';
-import { listInventoryBags } from '../inventory/inventoryApi';
 import {
   cancelStoreTransfer,
-  createStoreTransfer,
-  dispatchStoreTransfer,
   listStoreTransferDestinations,
   listStoreTransfers,
   receiveStoreTransfer,
 } from './transferApi';
 import './transfer-operations.css';
+import { SortedSaleTransferWorkspace } from './SortedSaleTransferWorkspace';
 
 const kilogramsPattern = /^(?:0|[1-9]\d*)(?:\.\d{1,3})?$/;
 
@@ -45,7 +34,7 @@ const transferStatusCopy: Record<
   CANCELLED: { label: 'Đã hủy', tone: 'danger' },
 };
 
-type TransferAction = 'DISPATCH' | 'RECEIVE' | 'CANCEL';
+type TransferAction = 'RECEIVE' | 'CANCEL';
 
 interface Notice {
   readonly tone: 'success' | 'error';
@@ -55,7 +44,6 @@ interface Notice {
 interface ActionInput {
   readonly action: TransferAction;
   readonly transfer: StoreTransfer;
-  readonly sourceBagVersion?: number;
   readonly reason?: string;
 }
 
@@ -75,7 +63,7 @@ export function transferActionsForStore(
   principalStoreId: string,
 ): readonly TransferAction[] {
   if (transfer.status === 'DRAFT' && transfer.sourceStoreId === principalStoreId) {
-    return ['DISPATCH', 'CANCEL'];
+    return ['CANCEL'];
   }
   if (transfer.status === 'IN_TRANSIT' && transfer.destinationStoreId === principalStoreId) {
     return ['RECEIVE'];
@@ -135,7 +123,6 @@ interface TransferCardProps {
   readonly cancelReason: string;
   readonly principalStoreId: string;
   readonly productName: string;
-  readonly sourceBagVersion: number | undefined;
   readonly sourceName: string;
   readonly destinationName: string;
   readonly transfer: StoreTransfer;
@@ -151,7 +138,6 @@ function TransferCard({
   onCancelReasonChange,
   principalStoreId,
   productName,
-  sourceBagVersion,
   sourceName,
   transfer,
 }: TransferCardProps) {
@@ -202,19 +188,6 @@ function TransferCard({
       ) : null}
       {actions.length > 0 ? (
         <div className="transfer-card__actions">
-          {actions.includes('DISPATCH') ? (
-            <Button
-              busy={busyAction === 'DISPATCH'}
-              disabled={sourceBagVersion === undefined || busyAction !== null}
-              onClick={() => {
-                if (sourceBagVersion !== undefined) {
-                  onAction({ action: 'DISPATCH', sourceBagVersion, transfer });
-                }
-              }}
-            >
-              <Send aria-hidden="true" size={16} /> Xuất khỏi cửa hàng nguồn
-            </Button>
-          ) : null}
           {actions.includes('RECEIVE') ? (
             <Button
               busy={busyAction === 'RECEIVE'}
@@ -270,39 +243,16 @@ export function ProductionTransfersPage({ role }: AppOutletContext) {
     retry: false,
   });
   const principalStoreId = sessionQuery.data?.principal.storeId ?? '';
-  const bagsQuery = useQuery({
-    enabled: role === 'STORE' && Boolean(principalStoreId),
-    queryFn: () => listInventoryBags({ storeId: principalStoreId }),
-    queryKey: ['store-inventory-bags', principalStoreId, 'transfer'],
-    retry: false,
-  });
   const [status, setStatus] = useState<StoreTransferStatus | 'ALL'>('ALL');
   const transfersQuery = useQuery({
     queryFn: () => listStoreTransfers(status === 'ALL' ? {} : { status }),
     queryKey: ['store-transfers', status],
     retry: false,
   });
-  const [selectedBagId, setSelectedBagId] = useState('');
-  const [destinationStoreId, setDestinationStoreId] = useState('');
-  const [weightKg, setWeightKg] = useState('');
-  const [note, setNote] = useState('');
   const [cancelReasons, setCancelReasons] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<Notice | null>(null);
 
-  const bags = bagsQuery.data ?? [];
-  const eligibleBags = bags.filter(
-    (bag) =>
-      (bag.status === 'AVAILABLE' || bag.status === 'OPEN') &&
-      exactGrams(bag.remainingWeightKg) > 0n,
-  );
-  const effectiveBagId = eligibleBags.some((bag) => bag.id === selectedBagId)
-    ? selectedBagId
-    : (eligibleBags[0]?.id ?? '');
-  const selectedBag = eligibleBags.find((bag) => bag.id === effectiveBagId);
   const destinations = destinationsQuery.data ?? [];
-  const effectiveDestinationId = destinations.some((store) => store.id === destinationStoreId)
-    ? destinationStoreId
-    : (destinations[0]?.id ?? '');
   const allVisibleStores = useMemo(() => {
     const byId = new Map<string, Store>();
     for (const store of [...(storesQuery.data ?? []), ...destinations]) byId.set(store.id, store);
@@ -312,13 +262,6 @@ export function ProductionTransfersPage({ role }: AppOutletContext) {
     () => new Map((catalogQuery.data ?? []).map((product) => [product.id, product.name])),
     [catalogQuery.data],
   );
-  const bagVersions = useMemo(() => new Map(bags.map((bag) => [bag.id, bag.version])), [bags]);
-  const canCreate =
-    role === 'STORE' &&
-    Boolean(principalStoreId) &&
-    Boolean(selectedBag) &&
-    Boolean(effectiveDestinationId) &&
-    isTransferWeightAllowed(weightKg, selectedBag?.remainingWeightKg ?? '0');
 
   const refresh = async () => {
     await Promise.all([
@@ -326,7 +269,7 @@ export function ProductionTransfersPage({ role }: AppOutletContext) {
       transfersQuery.refetch(),
       storesQuery.refetch(),
       catalogQuery.refetch(),
-      ...(role === 'STORE' ? [destinationsQuery.refetch(), bagsQuery.refetch()] : []),
+      ...(role === 'STORE' ? [destinationsQuery.refetch()] : []),
     ]);
   };
 
@@ -337,44 +280,8 @@ export function ProductionTransfersPage({ role }: AppOutletContext) {
     ]);
   };
 
-  const createMutation = useMutation({
-    mutationFn: async () => {
-      if (!selectedBag || !principalStoreId || !effectiveDestinationId) {
-        throw new ApiClientError('Thiếu dữ liệu nguồn hoặc cửa hàng đích.', 400);
-      }
-      return createStoreTransfer(
-        {
-          sourceStoreId: principalStoreId,
-          destinationStoreId: effectiveDestinationId,
-          sourceInventoryBagId: selectedBag.id,
-          weightKg,
-          expectedSourceBagVersion: selectedBag.version,
-          note: note.trim() || null,
-        },
-        crypto.randomUUID(),
-      );
-    },
-    onError: (error) => setNotice({ tone: 'error', text: errorMessage(error) }),
-    onSuccess: async (transfer) => {
-      setNotice({ tone: 'success', text: `Đã tạo phiếu ${transfer.transferNumber}.` });
-      setWeightKg('');
-      setNote('');
-      await invalidateTransferData();
-    },
-  });
-
   const actionMutation = useMutation({
-    mutationFn: async ({ action, reason, sourceBagVersion, transfer }: ActionInput) => {
-      if (action === 'DISPATCH') {
-        if (sourceBagVersion === undefined) {
-          throw new ApiClientError('Không tìm thấy phiên bản hiện tại của bao nguồn.', 409);
-        }
-        return dispatchStoreTransfer(
-          transfer.id,
-          { expectedVersion: transfer.version, expectedSourceBagVersion: sourceBagVersion },
-          crypto.randomUUID(),
-        );
-      }
+    mutationFn: async ({ action, reason, transfer }: ActionInput) => {
       if (action === 'RECEIVE') {
         return receiveStoreTransfer(
           transfer.id,
@@ -393,11 +300,9 @@ export function ProductionTransfersPage({ role }: AppOutletContext) {
       setNotice({
         tone: 'success',
         text:
-          transfer.status === 'IN_TRANSIT'
-            ? `Đã xuất phiếu ${transfer.transferNumber}.`
-            : transfer.status === 'RECEIVED'
-              ? `Đã xác nhận nhận phiếu ${transfer.transferNumber}.`
-              : `Đã hủy phiếu ${transfer.transferNumber}.`,
+          transfer.status === 'RECEIVED'
+            ? `Đã xác nhận nhận phiếu ${transfer.transferNumber}.`
+            : `Đã hủy phiếu ${transfer.transferNumber}.`,
       });
       setCancelReasons((current) => {
         const next = { ...current };
@@ -413,13 +318,13 @@ export function ProductionTransfersPage({ role }: AppOutletContext) {
     storesQuery.error ??
     catalogQuery.error ??
     transfersQuery.error ??
-    (role === 'STORE' ? (destinationsQuery.error ?? bagsQuery.error) : null);
+    (role === 'STORE' ? destinationsQuery.error : null);
   const initialPending =
     sessionQuery.isPending ||
     storesQuery.isPending ||
     catalogQuery.isPending ||
     transfersQuery.isPending ||
-    (role === 'STORE' && (destinationsQuery.isPending || bagsQuery.isPending));
+    (role === 'STORE' && destinationsQuery.isPending);
 
   return (
     <>
@@ -429,7 +334,7 @@ export function ProductionTransfersPage({ role }: AppOutletContext) {
             <RefreshCw aria-hidden="true" size={16} /> Làm mới
           </Button>
         }
-        description="Nguồn chỉ trừ khi xuất; đích chỉ cộng sau khi tài khoản cửa hàng đích xác nhận"
+        description="Điều chuyển từ tồn Sale sau lọc; trừ nguồn khi điều chuyển, cộng đích khi xác nhận nhận"
         title="Điều chuyển cửa hàng"
       />
       {notice ? (
@@ -452,99 +357,17 @@ export function ProductionTransfersPage({ role }: AppOutletContext) {
         <DashboardSkeleton />
       ) : (
         <>
-          {role === 'STORE' ? (
-            <section className="panel transfer-create">
-              <div className="section-heading section-heading--compact">
-                <div>
-                  <h2>Tạo phiếu chuyển</h2>
-                  <p>Phiếu nháp chưa trừ tồn. Giá vốn được cố định tại thời điểm xuất.</p>
-                </div>
-                <ShieldCheck aria-hidden="true" size={24} />
-              </div>
-              <div className="transfer-create__grid">
-                <label>
-                  Bao nguồn
-                  <select
-                    disabled={eligibleBags.length === 0}
-                    onChange={(event) => setSelectedBagId(event.target.value)}
-                    value={effectiveBagId}
-                  >
-                    {eligibleBags.length === 0 ? (
-                      <option value="">Không có bao khả dụng</option>
-                    ) : null}
-                    {eligibleBags.map((bag) => (
-                      <option key={bag.id} value={bag.id}>
-                        {bag.bagCode} · {productNames.get(bag.productId) ?? bag.productId} ·{' '}
-                        {formatKg(bag.remainingWeightKg)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Cửa hàng đích
-                  <select
-                    disabled={destinations.length === 0}
-                    onChange={(event) => setDestinationStoreId(event.target.value)}
-                    value={effectiveDestinationId}
-                  >
-                    {destinations.length === 0 ? (
-                      <option value="">Không có cửa hàng đích</option>
-                    ) : null}
-                    {destinations.map((store) => (
-                      <option key={store.id} value={store.id}>
-                        {store.code} · {store.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Số kg chuyển
-                  <input
-                    inputMode="decimal"
-                    onChange={(event) => setWeightKg(event.target.value)}
-                    placeholder="Ví dụ: 5.250"
-                    value={weightKg}
-                  />
-                  <small>
-                    {selectedBag
-                      ? `Tối đa ${formatKg(selectedBag.remainingWeightKg)}`
-                      : 'Chọn bao nguồn trước'}
-                  </small>
-                </label>
-                <label className="transfer-create__note">
-                  Ghi chú
-                  <input
-                    maxLength={500}
-                    onChange={(event) => setNote(event.target.value)}
-                    placeholder="Mục đích điều chuyển (không bắt buộc)"
-                    value={note}
-                  />
-                </label>
-              </div>
-              <Button
-                busy={createMutation.isPending}
-                disabled={!canCreate || actionMutation.isPending}
-                onClick={() => {
-                  setNotice(null);
-                  createMutation.mutate();
-                }}
-              >
-                <Send aria-hidden="true" size={16} /> Tạo phiếu nháp
-              </Button>
-            </section>
-          ) : (
-            <section className="panel transfer-oversight">
-              <ShieldCheck aria-hidden="true" size={24} />
-              <div>
-                <strong>Chế độ giám sát</strong>
-                <p>Admin và HTKD xem theo phạm vi; chỉ hai cửa hàng liên quan được thao tác.</p>
-              </div>
-            </section>
-          )}
+          <SortedSaleTransferWorkspace
+            role={role}
+            principalStoreId={principalStoreId}
+            destinations={destinations}
+            stores={allVisibleStores}
+            productNames={productNames}
+          />
           <section className="panel transfer-list">
             <div className="section-heading section-heading--compact">
               <div>
-                <h2>Lịch sử điều chuyển</h2>
+                <h2>Phiếu điều chuyển trước đây</h2>
                 <p>{transfersQuery.data?.length ?? 0} phiếu trong phạm vi hiện tại.</p>
               </div>
               <label className="transfer-filter">
@@ -588,7 +411,6 @@ export function ProductionTransfersPage({ role }: AppOutletContext) {
                       }
                       principalStoreId={principalStoreId}
                       productName={productNames.get(transfer.productId) ?? transfer.productId}
-                      sourceBagVersion={bagVersions.get(transfer.sourceInventoryBagId)}
                       sourceName={storeLabel(allVisibleStores, transfer.sourceStoreId)}
                       transfer={transfer}
                     />
