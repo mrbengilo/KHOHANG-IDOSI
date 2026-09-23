@@ -15,6 +15,7 @@ import {
 } from 'drizzle-orm';
 
 import type { Database } from './client.js';
+import { applyWarehouseMovement } from './warehouse.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
 import {
   auditLogs,
@@ -38,6 +39,24 @@ const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
 const DEFAULT_HISTORY_LIMIT = 100;
 const MAX_HISTORY_LIMIT = 200;
+
+async function releasePriorityOfferStock(
+  tx: Transaction,
+  offer: typeof dailyPriorityOffers.$inferSelect,
+  occurredAt: Date,
+): Promise<void> {
+  await applyWarehouseMovement(tx, {
+    productId: offer.productId,
+    eventType: 'reservation_release',
+    onHandDelta: 0,
+    reservedDelta: -offer.stockHeldQuantity,
+    sourceType: 'priority_offer',
+    sourceId: offer.id,
+    eventSequence: 2,
+    reason: `Priority offer ${offer.id} released`,
+    occurredAt,
+  });
+}
 
 export type WaitTicketDatabaseStatus = typeof waitTickets.$inferSelect.status;
 export type WaitTicketPriority = typeof waitTickets.$inferSelect.priorityLevel;
@@ -715,11 +734,17 @@ export async function cancelWaitTicketInTransaction(
         const cancelledOffers = pendingOffers.filter((offer) => offer.status === 'offered');
         const cancelledOfferIds = cancelledOffers.map((offer) => offer.id);
         if (cancelledOfferIds.length > 0) {
+          for (const offer of cancelledOffers) {
+            if (offer.stockHeldQuantity > 0) {
+              await releasePriorityOfferStock(tx, offer, now);
+            }
+          }
           await tx
             .update(dailyPriorityOffers)
             .set({
               status: 'cancelled',
               acceptedQuantity: 0,
+              stockHeldQuantity: 0,
               respondedAt: now,
               updatedAt: now,
             })
@@ -854,7 +879,12 @@ export async function respondPriorityOfferInTransaction(
     } else if (input.action !== 'expire') {
       throw new WaitTicketAuthorizationError();
     }
-    if (input.action !== 'expire' && actor?.role !== 'store') {
+    if (
+      input.action !== 'expire' &&
+      actor?.role !== 'store' &&
+      actor?.role !== 'htkd' &&
+      actor?.role !== 'wholesale'
+    ) {
       throw new WaitTicketAuthorizationError();
     }
 
@@ -912,11 +942,16 @@ export async function respondPriorityOfferInTransaction(
           waitTicketRemainingQuantity: ticket.remainingQuantity,
         });
 
+        if (transition.status !== 'accepted' && offer.stockHeldQuantity > 0) {
+          await releasePriorityOfferStock(tx, offer, respondedAt);
+        }
+
         const [updated] = await tx
           .update(dailyPriorityOffers)
           .set({
             status: transition.status,
             acceptedQuantity: transition.acceptedQuantity,
+            stockHeldQuantity: transition.status === 'accepted' ? offer.stockHeldQuantity : 0,
             respondedAt,
             updatedAt: respondedAt,
           })
@@ -1053,6 +1088,14 @@ async function resolveAccessibleStoreIds(
       .where(and(eq(stores.id, actor.storeId), eq(stores.isActive, true), isNull(stores.deletedAt)))
       .limit(1);
     accessibleStoreIds = activeStore ? [activeStore.id] : [];
+  } else if (actor.role === 'wholesale') {
+    const wholesaleStores = await database
+      .select({ id: stores.id })
+      .from(stores)
+      .where(
+        and(eq(stores.kind, 'wholesale'), eq(stores.isActive, true), isNull(stores.deletedAt)),
+      );
+    accessibleStoreIds = wholesaleStores.map((store) => store.id);
   } else {
     const assignments = await database
       .select({ storeId: htkdAssignments.storeId })
@@ -1096,7 +1139,7 @@ async function assertActorMayAccessStore(
   storeId: string,
 ): Promise<ActiveActor> {
   const [store] = await tx
-    .select({ id: stores.id })
+    .select({ id: stores.id, kind: stores.kind })
     .from(stores)
     .where(and(eq(stores.id, storeId), eq(stores.isActive, true), isNull(stores.deletedAt)))
     .for('share')
@@ -1114,7 +1157,11 @@ async function assertActorMayAccessStore(
   if (!actor || actor.status !== 'active') {
     throw new WaitTicketAuthorizationError();
   }
-  if (actor.role === 'admin' || (actor.role === 'store' && actor.storeId === storeId)) {
+  if (
+    actor.role === 'admin' ||
+    (actor.role === 'store' && actor.storeId === storeId) ||
+    (actor.role === 'wholesale' && store.kind === 'wholesale')
+  ) {
     return actor;
   }
   if (actor.role !== 'htkd') {

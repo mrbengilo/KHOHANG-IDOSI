@@ -1426,7 +1426,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.post('/api/v1/wait-tickets/:waitTicketId/cancel', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['STORE']);
+    requireRole(session.principal, ['STORE', 'WHOLESALE']);
     const headers = IdempotencyHeadersSchema.parse(request.headers);
     const { waitTicketId } = WaitTicketParamsSchema.parse(request.params);
     const input = CancelWaitTicketRequestSchema.parse(request.body);
@@ -1450,7 +1450,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.post('/api/v1/priority-offers/:offerId/respond', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['STORE']);
+    requireRole(session.principal, ['STORE', 'HTKD', 'WHOLESALE']);
     const headers = IdempotencyHeadersSchema.parse(request.headers);
     const { offerId } = PriorityOfferParamsSchema.parse(request.params);
     const input = RespondPriorityOfferRequestSchema.parse(request.body);

@@ -60,6 +60,26 @@ describe('domain-backed worker planning', () => {
     });
 
     expect(offers.reduce((total, offer) => total + offer.offeredQuantity, 0)).toBe(1);
+
+    const physicallyHeldOffers = planPriorityOffers({
+      businessDate: '2026-09-10',
+      createdAt: '2026-09-10T01:00:00.000Z',
+      expiresAt: '2026-09-10T02:00:00.000Z',
+      snapshots: [
+        {
+          id: 'snapshot-after-hold',
+          version: '2',
+          productId: 'product-1',
+          availableQuantity: 2,
+          capturedAt: '2026-09-10T01:00:00.000Z',
+        },
+      ],
+      waitTickets: [first, second],
+      existingOffers: [priorConfirmed],
+      alreadyReservedOfferIds: new Set([priorConfirmed.id]),
+      offerId: (ticketId) => `offer-after-hold-${ticketId}`,
+    });
+    expect(physicallyHeldOffers.reduce((total, offer) => total + offer.offeredQuantity, 0)).toBe(2);
   });
 
   it('does not re-offer a ticket already offered on the same business date', () => {

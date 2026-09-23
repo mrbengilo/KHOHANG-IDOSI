@@ -356,7 +356,11 @@ export async function submitStoreReceiptInTransaction(
       );
     }
 
-    await assertStoreAccountMayDeclare(tx, input.submittedByUserId, receipt.storeId);
+    const declaringRole = await assertStoreAccountMayDeclare(
+      tx,
+      input.submittedByUserId,
+      receipt.storeId,
+    );
     const persistedLines = await tx
       .select({
         id: storeReceiptLines.id,
@@ -420,7 +424,7 @@ export async function submitStoreReceiptInTransaction(
             await tx.insert(auditLogs).values({
               requestId: input.requestId ?? null,
               actorUserId: input.submittedByUserId,
-              actorRole: 'store',
+              actorRole: declaringRole,
               actorStoreId: receipt.storeId,
               action: 'STORE_RECEIPT_SHORTAGE_PRIORITIZED',
               entityType: 'wait_ticket',
@@ -621,7 +625,7 @@ async function assertStoreAccountMayDeclare(
   tx: Transaction,
   userId: string,
   storeId: string,
-): Promise<void> {
+): Promise<'store' | 'wholesale'> {
   const [store] = await tx
     .select({ id: stores.id, kind: stores.kind })
     .from(stores)
@@ -648,6 +652,7 @@ async function assertStoreAccountMayDeclare(
   if (!mayDeclare) {
     throw new StoreReceiptAuthorizationError();
   }
+  return user.role as 'store' | 'wholesale';
 }
 
 async function assertReviewerMayAccessStore(

@@ -21,6 +21,7 @@ import {
   outboundRequests,
   reservations,
   stores,
+  warehouseBalances,
   waitTickets,
   withAdvisoryLock,
   withSerializableTransaction,
@@ -63,6 +64,25 @@ type SnapshotRow = typeof inventorySnapshots.$inferSelect;
 type SnapshotItemRow = typeof inventorySnapshotItems.$inferSelect;
 type WaitTicketRow = typeof waitTickets.$inferSelect;
 type OfferRow = typeof dailyPriorityOffers.$inferSelect;
+
+async function releasePriorityOfferHold(
+  tx: Transaction,
+  offer: OfferRow,
+  quantity: number,
+  occurredAt: Date,
+): Promise<void> {
+  await applyWarehouseMovement(tx, {
+    productId: offer.productId,
+    eventType: 'reservation_release',
+    onHandDelta: 0,
+    reservedDelta: -quantity,
+    sourceType: 'priority_offer',
+    sourceId: offer.id,
+    eventSequence: 2,
+    reason: `Priority offer ${offer.id} released`,
+    occurredAt,
+  });
+}
 type AllocationPlan = ReturnType<typeof planProductAllocation>;
 type AllocationPolicyStep = AllocationPlan['steps'][number];
 
@@ -242,6 +262,13 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
           isNull(dailyPriorityOffers.deletedAt),
         ),
       );
+    const currentBalances = await tx.select().from(warehouseBalances);
+    const currentAvailable = new Map(
+      currentBalances.map((balance) => [
+        balance.productId,
+        balance.onHandQuantity - balance.reservedQuantity,
+      ]),
+    );
     const domainTickets = await toDomainWaitTickets(tx, ticketRows);
     const domainOffers = offerRows.map((row) => toDomainOffer(row, allocatedOfferIds.has(row.id)));
     const offers =
@@ -254,11 +281,18 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
               id: `${persistedSnapshotId}:${item.productId}`,
               version: String(item.version),
               productId: item.productId,
-              availableQuantity: item.onHand - item.reserved,
+              availableQuantity: Math.min(
+                item.onHand - item.reserved,
+                currentAvailable.get(item.productId) ?? 0,
+              ),
               capturedAt: session.snapshotDueAt.toISOString(),
             })),
             waitTickets: domainTickets,
             existingOffers: domainOffers,
+            alreadyReservedOfferIds: new Set([
+              ...allocatedOfferIds,
+              ...offerRows.filter((offer) => offer.stockHeldQuantity > 0).map((offer) => offer.id),
+            ]),
             offerId: (ticketId) =>
               deterministicUuid(`priority-offer:${session.businessDate}:${ticketId}:1`),
           })
@@ -275,6 +309,7 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
           priorityLevel: 'P0A' as const,
           roundNumber: 1,
           offeredQuantity: offer.offeredQuantity,
+          stockHeldQuantity: offer.offeredQuantity,
           acceptedQuantity: 0,
           status: 'offered' as const,
           responseDeadlineAt: new Date(offer.expiresAt),
@@ -282,6 +317,19 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
           updatedAt: processedAt,
         })),
       );
+      for (const offer of offers) {
+        await applyWarehouseMovement(tx, {
+          productId: offer.productId,
+          eventType: 'reservation',
+          onHandDelta: 0,
+          reservedDelta: offer.offeredQuantity,
+          sourceType: 'priority_offer',
+          sourceId: offer.id,
+          eventSequence: 1,
+          reason: `08:00 priority offer for ${session.businessDate}`,
+          occurredAt: processedAt,
+        });
+      }
     }
 
     await tx
@@ -350,9 +398,25 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
       throw new Error(`Opening snapshot is missing for allocation session ${session.id}.`);
     }
 
+    const expiringOffers = await tx
+      .select()
+      .from(dailyPriorityOffers)
+      .where(
+        and(
+          eq(dailyPriorityOffers.status, 'offered'),
+          lte(dailyPriorityOffers.responseDeadlineAt, session.finalDueAt),
+          isNull(dailyPriorityOffers.deletedAt),
+        ),
+      )
+      .for('update');
+    for (const offer of expiringOffers) {
+      if (offer.stockHeldQuantity > 0) {
+        await releasePriorityOfferHold(tx, offer, offer.stockHeldQuantity, processedAt);
+      }
+    }
     await tx
       .update(dailyPriorityOffers)
-      .set({ status: 'expired', acceptedQuantity: 0, updatedAt: processedAt })
+      .set({ status: 'expired', acceptedQuantity: 0, stockHeldQuantity: 0, updatedAt: processedAt })
       .where(
         and(
           eq(dailyPriorityOffers.status, 'offered'),
@@ -441,6 +505,33 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
         startCursor: cursorByProduct[item.productId] ?? null,
       }),
     }));
+    const allocatedByOfferId = new Map<string, number>();
+    const acceptedOfferByTicketId = new Map(
+      acceptedRows.map((offer) => [offer.waitTicketId, offer]),
+    );
+    for (const { result } of plannedAllocations) {
+      for (const remainder of result.remainders) {
+        if (remainder.source !== 'CONFIRMED_WAIT' || !remainder.sourceWaitTicketId) continue;
+        const offer = acceptedOfferByTicketId.get(remainder.sourceWaitTicketId);
+        if (offer) allocatedByOfferId.set(offer.id, remainder.allocatedQuantity);
+      }
+    }
+    const retainedHoldByProduct = new Map<string, number>();
+    for (const offer of acceptedRows) {
+      const retained = Math.min(offer.stockHeldQuantity, allocatedByOfferId.get(offer.id) ?? 0);
+      const unused = offer.stockHeldQuantity - retained;
+      if (unused > 0) await releasePriorityOfferHold(tx, offer, unused, processedAt);
+      retainedHoldByProduct.set(
+        offer.productId,
+        (retainedHoldByProduct.get(offer.productId) ?? 0) + retained,
+      );
+      if (offer.stockHeldQuantity > 0) {
+        await tx
+          .update(dailyPriorityOffers)
+          .set({ stockHeldQuantity: 0, updatedAt: processedAt })
+          .where(eq(dailyPriorityOffers.id, offer.id));
+      }
+    }
     const mergedResolutionByDemandId = new Map<string, MergedDemandResolution>();
     for (const { result } of plannedAllocations) {
       for (const remainder of result.remainders) {
@@ -618,12 +709,14 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
         if (remainder.remainingQuantity > 0) waitRemainders.push(remainder);
       }
 
-      if (result.allocatedQuantity > 0) {
+      const additionalReservation =
+        result.allocatedQuantity - (retainedHoldByProduct.get(item.productId) ?? 0);
+      if (additionalReservation > 0) {
         await applyWarehouseMovement(tx, {
           productId: item.productId,
           eventType: 'reservation',
           onHandDelta: 0,
-          reservedDelta: result.allocatedQuantity,
+          reservedDelta: additionalReservation,
           sourceType: 'allocation_run',
           sourceId: persistedRunId,
           eventSequence: 1,

@@ -3373,7 +3373,8 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<WaitTicket>> {
-    await this.authorizeRetailStoreOperation(actor);
+    if (actor.role === 'STORE') await this.authorizeRetailStoreOperation(actor);
+    if (actor.role !== 'STORE' && actor.role !== 'WHOLESALE') throw forbidden();
     return withWaitErrors(async () => {
       const result = await cancelDatabaseWaitTicket(db, {
         waitTicketId,
@@ -3424,8 +3425,10 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<PriorityOffer>> {
-    await this.authorizeRetailStoreOperation(actor);
-    if (actor.role !== 'STORE') throw forbidden();
+    if (actor.role === 'STORE') await this.authorizeRetailStoreOperation(actor);
+    if (actor.role !== 'STORE' && actor.role !== 'HTKD' && actor.role !== 'WHOLESALE') {
+      throw forbidden();
+    }
     const response = databasePriorityOfferResponse(input);
     return withWaitErrors(async () => {
       const result = await respondDatabasePriorityOffer(db, {

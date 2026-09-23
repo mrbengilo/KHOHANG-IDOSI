@@ -4126,7 +4126,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<WaitTicket>> {
-    await this.authorizeRetailStoreOperation(actor);
+    if (actor.role === 'STORE') await this.authorizeRetailStoreOperation(actor);
+    if (actor.role !== 'STORE' && actor.role !== 'WHOLESALE') throw forbidden();
     const current = this.waitTickets.get(waitTicketId);
     if (!current) throw notFound('Không tìm thấy phiếu chờ');
     if (!canAccessStore(actor, current.storeId)) throw forbidden();
@@ -4205,10 +4206,15 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<PriorityOffer>> {
-    await this.authorizeRetailStoreOperation(actor);
+    if (actor.role === 'STORE') await this.authorizeRetailStoreOperation(actor);
     const current = this.priorityOffers.get(offerId);
     if (!current) throw notFound('Không tìm thấy đề nghị ưu tiên');
-    if (actor.role !== 'STORE' || actor.storeId !== current.storeId) throw forbidden();
+    if (
+      (actor.role !== 'STORE' && actor.role !== 'HTKD' && actor.role !== 'WHOLESALE') ||
+      !canAccessStore(actor, current.storeId)
+    ) {
+      throw forbidden();
+    }
     const scopedKey = `${actor.accountId}:priority-offer:respond:${offerId}:${idempotencyKey}`;
     const replay = this.replayWaitMutation(scopedKey, requestHash, 'PRIORITY_OFFER');
     if (replay) {

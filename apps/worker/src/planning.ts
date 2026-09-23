@@ -25,6 +25,7 @@ export interface PlanPriorityOffersInput {
   readonly snapshots: readonly ProductSnapshotPlan[];
   readonly waitTickets: readonly WaitTicket[];
   readonly existingOffers: readonly DailyPriorityOffer[];
+  readonly alreadyReservedOfferIds?: ReadonlySet<string>;
   offerId(ticketId: string): string;
 }
 
@@ -34,6 +35,7 @@ export interface PlanPriorityOffersInput {
  */
 export function planPriorityOffers(input: PlanPriorityOffersInput): readonly DailyPriorityOffer[] {
   const committedByProduct = new Map<string, number>();
+  const committedByTicket = new Map<string, number>();
   for (const offer of input.existingOffers) {
     const committed =
       offer.status === 'CONFIRMED'
@@ -41,6 +43,11 @@ export function planPriorityOffers(input: PlanPriorityOffersInput): readonly Dai
         : offer.status === 'PENDING' && offer.expiresAt > input.createdAt
           ? offer.offeredQuantity
           : 0;
+    committedByTicket.set(
+      offer.waitTicketId,
+      (committedByTicket.get(offer.waitTicketId) ?? 0) + committed,
+    );
+    if (input.alreadyReservedOfferIds?.has(offer.id)) continue;
     committedByProduct.set(
       offer.productId,
       (committedByProduct.get(offer.productId) ?? 0) + committed,
@@ -59,7 +66,11 @@ export function planPriorityOffers(input: PlanPriorityOffersInput): readonly Dai
   const existingOfferIds = new Set(input.existingOffers.map((offer) => offer.id));
 
   for (const ticket of input.waitTickets) {
-    if (ticket.status !== 'ACTIVE' || ticket.openQuantity <= ticket.reservedQuantity) continue;
+    if (
+      ticket.status !== 'ACTIVE' ||
+      ticket.openQuantity <= ticket.reservedQuantity + (committedByTicket.get(ticket.id) ?? 0)
+    )
+      continue;
     if (existingOfferIds.has(input.offerId(ticket.id))) continue;
     const group = ticketsByProduct.get(ticket.productId) ?? [];
     group.push(ticket);
@@ -84,7 +95,8 @@ export function planPriorityOffers(input: PlanPriorityOffersInput): readonly Dai
       for (const ticket of tickets) {
         if (available === 0) break;
         const alreadyOffered = quantities.get(ticket.id) ?? 0;
-        const eligible = ticket.openQuantity - ticket.reservedQuantity;
+        const eligible =
+          ticket.openQuantity - ticket.reservedQuantity - (committedByTicket.get(ticket.id) ?? 0);
         if (alreadyOffered >= eligible) continue;
         quantities.set(ticket.id, alreadyOffered + 1);
         available -= 1;

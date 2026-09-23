@@ -768,6 +768,7 @@ export const dailyPriorityOffers = pgTable(
     priorityLevel: priorityLevelEnum('priority_level').notNull(),
     roundNumber: integer('round_number').notNull().default(1),
     offeredQuantity: integer('offered_quantity').notNull(),
+    stockHeldQuantity: integer('stock_held_quantity').notNull().default(0),
     acceptedQuantity: integer('accepted_quantity').notNull().default(0),
     status: priorityOfferStatusEnum('status').notNull().default('offered'),
     responseDeadlineAt: timestamp('response_deadline_at', { withTimezone: true }).notNull(),
@@ -795,6 +796,11 @@ export const dailyPriorityOffers = pgTable(
     index('daily_priority_offers_wait_history_idx').on(table.waitTicketId, table.createdAt),
     check('daily_priority_offers_round_positive', sql`${table.roundNumber} > 0`),
     check('daily_priority_offers_quantity_positive', sql`${table.offeredQuantity} > 0`),
+    check('daily_priority_offers_stock_held_nonnegative', sql`${table.stockHeldQuantity} >= 0`),
+    check(
+      'daily_priority_offers_stock_held_not_over_offered',
+      sql`${table.stockHeldQuantity} <= ${table.offeredQuantity}`,
+    ),
     check('daily_priority_offers_accepted_nonnegative', sql`${table.acceptedQuantity} >= 0`),
     check(
       'daily_priority_offers_accepted_not_over_offered',

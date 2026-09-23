@@ -1,0 +1,3 @@
+ALTER TABLE "daily_priority_offers" ADD COLUMN "stock_held_quantity" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "daily_priority_offers" ADD CONSTRAINT "daily_priority_offers_stock_held_nonnegative" CHECK ("daily_priority_offers"."stock_held_quantity" >= 0);--> statement-breakpoint
+ALTER TABLE "daily_priority_offers" ADD CONSTRAINT "daily_priority_offers_stock_held_not_over_offered" CHECK ("daily_priority_offers"."stock_held_quantity" <= "daily_priority_offers"."offered_quantity");
