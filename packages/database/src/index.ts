@@ -116,6 +116,15 @@ export type {
 } from './outbound-requests.js';
 
 export {
+  dispatchStrandedAllocationOutbounds,
+  listStrandedAllocationOutbounds,
+} from './stranded-outbounds.js';
+export type {
+  StrandedOutboundBackfillResult,
+  StrandedOutboundRecord,
+} from './stranded-outbounds.js';
+
+export {
   cancelSupplierInbound,
   updateSupplierInboundVat,
   cancelSupplierInboundInTransaction,
