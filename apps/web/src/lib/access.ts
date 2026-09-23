@@ -5,13 +5,24 @@ export interface RouteAccessPolicy {
   readonly storeKinds?: readonly StoreKind[];
 }
 
+/**
+ * WHOLESALE is the "Cửa hàng sỉ" desk. It orders and receives for the wholesale stores and
+ * follows its slips and allocation results, so it gets those four routes and nothing else:
+ * opening bags, retail sales, sorting and store transfers are retail-floor work.
+ */
 export const routeAccessPolicies = {
-  '/': { roles: ['ADMIN', 'HTKD', 'STORE'] },
-  '/allocations': { roles: ['ADMIN', 'HTKD', 'STORE'] },
-  '/requests': { roles: ['ADMIN', 'HTKD', 'STORE'] },
+  '/': { roles: ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE'] },
+  '/allocations': { roles: ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE'] },
+  '/requests': { roles: ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE'] },
   '/warehouse-inbound': { roles: ['ADMIN', 'HTKD'] },
   '/receive': {
-    roles: ['ADMIN', 'HTKD', 'STORE'],
+    roles: ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE'],
+    storeKinds: ['RETAIL'],
+  },
+  // Partner goods land in the retail floor's own stock, so only its own account records
+  // them; admins and HTKD read store stock through the reports, not by writing to it.
+  '/partner-inbound': {
+    roles: ['STORE'],
     storeKinds: ['RETAIL'],
   },
   '/inventory': {

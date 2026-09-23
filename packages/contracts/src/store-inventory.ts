@@ -32,6 +32,11 @@ export const StoreInventoryBagSchema = z
     outboundOrderId: EntityIdSchema.nullable(),
     sourceTransferId: EntityIdSchema.nullable().default(null),
     sourceInventoryBagId: EntityIdSchema.nullable().default(null),
+    /**
+     * Set only for stock a store received directly from a partner. Optional rather than
+     * defaulted so snapshots written before partner inbound existed still parse unchanged.
+     */
+    sourcePartnerInboundBagId: EntityIdSchema.nullable().optional(),
     bagCode: z.string().trim().min(1).max(100),
     originalWeightKg: PositiveKilogramsDecimalSchema,
     receivedWeightKg: KilogramsDecimalSchema,
@@ -43,11 +48,19 @@ export const StoreInventoryBagSchema = z
   })
   .strict()
   .superRefine((bag, context) => {
-    if ((bag.sourceReceiptBagId === null) === (bag.sourceTransferId === null)) {
+    // Stock arrives from the warehouse, from another store, or from a partner. Exactly one
+    // of those has to be recorded, or the bag cannot be traced back to what it came from.
+    const provenanceSources = [
+      bag.sourceReceiptBagId,
+      bag.sourceTransferId,
+      bag.sourcePartnerInboundBagId ?? null,
+    ].filter((source) => source !== null).length;
+    if (provenanceSources !== 1) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['sourceTransferId'],
-        message: 'Inventory bag must have exactly one receipt or transfer provenance source',
+        message:
+          'Inventory bag must have exactly one receipt, transfer or partner provenance source',
       });
     }
     if (bag.sourceTransferId !== null && bag.sourceInventoryBagId === null) {

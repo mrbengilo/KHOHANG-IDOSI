@@ -16,6 +16,7 @@ import {
   CreateProductRequestSchema,
   CreateProductConversionRequestSchema,
   CreateStoreOrderRequestSchema,
+  CreateStorePartnerInboundRequestSchema,
   CreateStoreGroupRequestSchema,
   CreateStoreOutboundRequestSchema,
   CreateStoreRequestSchema,
@@ -39,6 +40,8 @@ import {
   ListProductsQuerySchema,
   ListProductConversionsQuerySchema,
   ListReceiptsQuerySchema,
+  ListStorePartnerInboundsQuerySchema,
+  StorePartnerInboundParamsSchema,
   ListStoreInventoryBagLedgerQuerySchema,
   ListStoreInventoryBagsQuerySchema,
   ListStoreOutboundsQuerySchema,
@@ -957,7 +960,9 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.post('/api/v1/store-receipts', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['STORE']);
+    // The wholesale desk receives for the wholesale stores it covers; the repository
+    // checks the store itself, so the role gate only has to let it past.
+    requireRole(session.principal, ['STORE', 'WHOLESALE']);
     const headers = IdempotencyHeadersSchema.parse(request.headers);
     const input = DeclareStoreReceiptRequestSchema.parse(request.body);
     const result = await repository.declareStoreReceipt(
@@ -981,7 +986,9 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.post('/api/v1/store-receipts/:receiptId/submit', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['STORE']);
+    // The wholesale desk receives for the wholesale stores it covers; the repository
+    // checks the store itself, so the role gate only has to let it past.
+    requireRole(session.principal, ['STORE', 'WHOLESALE']);
     const headers = IdempotencyHeadersSchema.parse(request.headers);
     const { receiptId } = ReceiptParamsSchema.parse(request.params);
     const input = SubmitStoreReceiptRequestSchema.parse(request.body);
@@ -1077,6 +1084,45 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     );
     reply.header('idempotency-replayed', String(result.replayed));
     return reply.send({ data: result.data });
+  });
+
+  app.get('/api/v1/store-partner-inbounds', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = ListStorePartnerInboundsQuerySchema.parse(request.query);
+    return repository.listStorePartnerInbounds(session.principal, query);
+  });
+
+  app.get('/api/v1/store-partner-inbounds/:partnerInboundId', async (request) => {
+    const session = await authenticate(request, repository);
+    const { partnerInboundId } = StorePartnerInboundParamsSchema.parse(request.params);
+    return { data: await repository.getStorePartnerInbound(session.principal, partnerInboundId) };
+  });
+
+  app.post('/api/v1/store-partner-inbounds', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    // Partner goods land in the retail floor's own stock, so only a store account records
+    // them; the repository checks the store itself.
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = CreateStorePartnerInboundRequestSchema.parse(request.body);
+    const result = await repository.createStorePartnerInbound(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({
+        action: 'CREATE_STORE_PARTNER_INBOUND',
+        storeId: input.storeId,
+        partnerName: input.partnerName,
+        note: input.note,
+        receivedAt: input.receivedAt,
+        lines: [...input.lines].sort((left, right) =>
+          left.productId.localeCompare(right.productId),
+        ),
+      }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
   });
 
   app.get('/api/v1/store-outbounds', async (request) => {
@@ -1616,6 +1662,28 @@ function openApiDocument(): Record<string, unknown> {
             '200': { description: 'Versioned store-group update (ADMIN only)' },
             '409': { description: 'Optimistic version, idempotency, or active-store conflict' },
           },
+        },
+      },
+      '/api/v1/store-partner-inbounds': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Scoped partner inbound slips' } },
+        },
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '201': { description: 'Recorded or replayed partner inbound (STORE only)' },
+            '403': { description: 'The account may not record stock for this store' },
+          },
+        },
+      },
+      '/api/v1/store-partner-inbounds/{partnerInboundId}': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'One partner inbound slip in scope' } },
         },
       },
       '/api/v1/order-requests': {

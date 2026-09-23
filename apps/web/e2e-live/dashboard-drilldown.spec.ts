@@ -7,7 +7,7 @@ test('default reporting periods stay stable across the Vietnam month boundary', 
   await page.goto('/login');
   await page.getByLabel('Tên đăng nhập').fill(process.env.LIVE_E2E_ADMIN_USERNAME ?? 'ci.admin');
   await page
-    .getByLabel('Mật khẩu')
+    .getByLabel('Mật khẩu', { exact: true })
     .fill(process.env.LIVE_E2E_ADMIN_PASSWORD ?? 'ci-bootstrap-password-not-for-production');
   await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
   await expect(page.getByLabel('Kỳ báo cáo dashboard')).toHaveValue('2026-08');
@@ -34,7 +34,7 @@ test('dashboard report drill-down preserves month and store across reload and Ba
   await page.goto('/login');
   await page.getByLabel('Tên đăng nhập').fill(process.env.LIVE_E2E_ADMIN_USERNAME ?? 'ci.admin');
   await page
-    .getByLabel('Mật khẩu')
+    .getByLabel('Mật khẩu', { exact: true })
     .fill(process.env.LIVE_E2E_ADMIN_PASSWORD ?? 'ci-bootstrap-password-not-for-production');
   await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
   const scope = page.getByLabel('Phạm vi cửa hàng dashboard');

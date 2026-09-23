@@ -8,7 +8,7 @@ test('admin warehouse inventory reconciles with PostgreSQL balances and remains 
   await page.goto('/login');
   await page.getByLabel('Tên đăng nhập').fill(process.env.LIVE_E2E_ADMIN_USERNAME ?? 'ci.admin');
   await page
-    .getByLabel('Mật khẩu')
+    .getByLabel('Mật khẩu', { exact: true })
     .fill(process.env.LIVE_E2E_ADMIN_PASSWORD ?? 'ci-bootstrap-password-not-for-production');
   await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
   const inventoryResponse = page.waitForResponse((response) =>

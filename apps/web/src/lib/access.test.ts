@@ -32,6 +32,26 @@ describe('route access policy', () => {
     expect(canAccessRoute('/receive', 'STORE', 'RETAIL')).toBe(true);
   });
 
+  it('gives the wholesale desk ordering and receiving but no retail-floor screens', () => {
+    for (const route of ['/', '/allocations', '/requests', '/receive']) {
+      expect(canAccessRoute(route, 'WHOLESALE', null)).toBe(true);
+      expect(canShowNavigation(route, 'WHOLESALE', null)).toBe(true);
+    }
+    for (const route of ['/inventory', '/open-bag', '/sales', '/sorting', '/transfers']) {
+      expect(canAccessRoute(route, 'WHOLESALE', null)).toBe(false);
+    }
+    expect(canAccessRoute('/users', 'WHOLESALE', null)).toBe(false);
+    expect(canAccessRoute('/warehouse-inbound', 'WHOLESALE', null)).toBe(false);
+  });
+
+  it('keeps partner inbound on the retail floor only', () => {
+    expect(canAccessRoute('/partner-inbound', 'STORE', 'RETAIL')).toBe(true);
+    expect(canAccessRoute('/partner-inbound', 'STORE', 'WHOLESALE')).toBe(false);
+    expect(canAccessRoute('/partner-inbound', 'WHOLESALE', null)).toBe(false);
+    expect(canAccessRoute('/partner-inbound', 'ADMIN', null)).toBe(false);
+    expect(canAccessRoute('/partner-inbound', 'HTKD', null)).toBe(false);
+  });
+
   it('fails closed for unknown routes', () => {
     expect(canAccessRoute('/unregistered', 'ADMIN', null)).toBe(false);
   });

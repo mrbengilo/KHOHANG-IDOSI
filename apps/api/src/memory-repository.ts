@@ -17,6 +17,7 @@ import type {
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
+  CreateStorePartnerInboundRequest,
   CreateStoreGroupRequest,
   CreateStoreOutboundRequest,
   CreateStoreRequest,
@@ -35,6 +36,7 @@ import type {
   ListProductsQuery,
   ListPriorityOffersQuery,
   ListReceiptsQuery,
+  ListStorePartnerInboundsQuery,
   ListStoreInventoryBagLedgerQuery,
   ListStoreInventoryBagsQuery,
   ListStoreOutboundsQuery,
@@ -69,6 +71,7 @@ import type {
   StoreInventoryBag,
   StoreInventoryBagLedgerEntry,
   StoreOrderRequest,
+  StorePartnerInbound,
   StoreOutbound,
   StoreReceiptSource,
   SubmitStoreReceiptRequest,
@@ -91,7 +94,7 @@ import type {
   CancelStoreTransferRequest,
   WarehouseBalancesResponse,
 } from '@idosi/contracts';
-import { formatInboundReceiptNumber } from '@idosi/contracts';
+import { formatInboundReceiptNumber, formatPartnerInboundNumber } from '@idosi/contracts';
 import {
   PRODUCT_CONVERSION_SEEDS,
   PRODUCT_SEEDS,
@@ -325,6 +328,11 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     string,
     WarehouseOutboundMutationIdempotencyRecord
   >();
+  private readonly partnerInbounds = new Map<string, StorePartnerInbound>();
+  private readonly partnerInboundIdempotency = new Map<
+    string,
+    { readonly requestHash: string; readonly response: StorePartnerInbound }
+  >();
   private readonly inventoryBags = new Map<string, StoreInventoryBag>();
   private readonly inventoryBagCosts = new Map<string, bigint>();
   private readonly inventoryLedger = new Map<string, StoreInventoryBagLedgerEntry>();
@@ -416,6 +424,25 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const store =
       actor.role === 'STORE' && actor.storeId !== null ? this.stores.get(actor.storeId) : undefined;
     assertActiveRetailStore(store ?? null);
+  }
+
+  /**
+   * Receiving is shared between store accounts and the wholesale desk, so it cannot reuse
+   * the retail-only guard: a store account receives for its own active retail store, the
+   * desk for an active wholesale store in its scope.
+   */
+  private async authorizeStoreReceiptOperation(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+  ): Promise<void> {
+    if (actor.role === 'STORE') {
+      await this.authorizeRetailStoreOperation(actor);
+      if (actor.storeId !== storeId) throw forbidden();
+      return;
+    }
+    if (actor.role !== 'WHOLESALE' || !canAccessStore(actor, storeId)) throw forbidden();
+    const store = this.stores.get(storeId);
+    if (!store || store.kind !== 'WHOLESALE' || store.status !== 'ACTIVE') throw forbidden();
   }
 
   public async listAccounts(
@@ -2210,6 +2237,142 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     };
   }
 
+  public async listStorePartnerInbounds(
+    actor: AuthenticatedPrincipal,
+    query: ListStorePartnerInboundsQuery,
+  ): Promise<Page<StorePartnerInbound>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const partner = query.partner?.trim().toLocaleLowerCase('vi-VN');
+    const matches = [...this.partnerInbounds.values()]
+      .filter((slip) => canAccessStore(actor, slip.storeId))
+      .filter((slip) => query.storeId === undefined || slip.storeId === query.storeId)
+      .filter(
+        (slip) =>
+          partner === undefined || slip.partnerName.toLocaleLowerCase('vi-VN').includes(partner),
+      )
+      .sort((left, right) => right.receivedAt.localeCompare(left.receivedAt));
+    return {
+      data: slicePage(matches, query.page, query.pageSize).map((slip) => structuredClone(slip)),
+      pagination: pagination(query.page, query.pageSize, matches.length),
+    };
+  }
+
+  public async getStorePartnerInbound(
+    actor: AuthenticatedPrincipal,
+    partnerInboundId: string,
+  ): Promise<StorePartnerInbound> {
+    const slip = this.partnerInbounds.get(partnerInboundId);
+    if (!slip) throw notFound('Không tìm thấy phiếu nhập hàng đối tác');
+    if (!canAccessStore(actor, slip.storeId)) throw forbidden();
+    return structuredClone(slip);
+  }
+
+  public async createStorePartnerInbound(
+    actor: AuthenticatedPrincipal,
+    input: CreateStorePartnerInboundRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StorePartnerInbound>> {
+    await this.authorizeRetailStoreOperation(actor);
+    if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
+    const scopedKey = `${actor.accountId}:partner-inbound:${idempotencyKey}`;
+    const previous = this.partnerInboundIdempotency.get(scopedKey);
+    if (previous) {
+      if (previous.requestHash !== requestHash) {
+        throw new ApiError(
+          'IDEMPOTENCY_CONFLICT',
+          'Khóa idempotency đã được dùng cho nội dung khác',
+          409,
+        );
+      }
+      return { data: structuredClone(previous.response), replayed: true };
+    }
+    for (const line of input.lines) {
+      if (!this.products.has(line.productId)) throw notFound('Không tìm thấy mặt hàng');
+    }
+
+    const now = this.now().toISOString();
+    const slipId = randomUUID();
+    let totalGrams = 0n;
+    for (const line of input.lines) {
+      for (const weightKg of line.bagWeightsKg) totalGrams += kilogramsToGramsExact(weightKg);
+    }
+    const slip: StorePartnerInbound = {
+      id: slipId,
+      referenceCode: formatPartnerInboundNumber(String(this.partnerInbounds.size + 1), this.now()),
+      storeId: input.storeId,
+      partnerName: input.partnerName,
+      note: input.note,
+      lines: input.lines.map((line) => ({
+        productId: line.productId,
+        quantity: line.quantity,
+        bagWeightsKg: [...line.bagWeightsKg],
+      })),
+      totalQuantity: input.lines.reduce((sum, line) => sum + line.quantity, 0),
+      totalWeightKg: gramsToKilogramsExact(totalGrams),
+      createdByAccountId: actor.accountId,
+      receivedAt: input.receivedAt,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.partnerInbounds.set(slip.id, slip);
+
+    // Partner goods become ordinary store stock so the floor can open and sell them like
+    // warehouse stock. Cost stays zero: nothing here came through a warehouse invoice.
+    for (const line of slip.lines) {
+      for (const [index, weightKg] of line.bagWeightsKg.entries()) {
+        const bagId = randomUUID();
+        // The memory store has no partner bag table; a distinct id still records that this
+        // stock came from a partner rather than from a receipt or a transfer.
+        const partnerBagId = randomUUID();
+        const bag: StoreInventoryBag = {
+          id: bagId,
+          storeId: slip.storeId,
+          productId: line.productId,
+          sourceReceiptBagId: null,
+          outboundOrderId: null,
+          sourceTransferId: null,
+          sourceInventoryBagId: null,
+          sourcePartnerInboundBagId: partnerBagId,
+          bagCode: `PIB-${slip.referenceCode}-${index + 1}-${bagId.slice(0, 8).toUpperCase()}`,
+          originalWeightKg: weightKg,
+          receivedWeightKg: weightKg,
+          remainingWeightKg: weightKg,
+          status: 'AVAILABLE',
+          version: 0,
+          receivedAt: slip.receivedAt,
+          updatedAt: now,
+        };
+        this.inventoryBags.set(bag.id, bag);
+        this.inventoryBagCosts.set(bag.id, 0n);
+        const ledger: StoreInventoryBagLedgerEntry = {
+          id: randomUUID(),
+          bagId: bag.id,
+          operation: 'RECEIVE',
+          beforeWeightKg: '0.000',
+          afterWeightKg: weightKg,
+          reason: `Nhập hàng đối tác ${slip.partnerName}`,
+          actorAccountId: actor.accountId,
+          createdAt: now,
+        };
+        this.inventoryLedger.set(ledger.id, ledger);
+      }
+    }
+
+    this.partnerInboundIdempotency.set(scopedKey, { requestHash, response: slip });
+    this.appendAudit(
+      actor,
+      context,
+      'STORE_PARTNER_INBOUND_RECORDED',
+      'store_partner_inbound',
+      slip.id,
+      null,
+      slip,
+    );
+    return { data: structuredClone(slip), replayed: false };
+  }
+
   public async listReceipts(
     actor: AuthenticatedPrincipal,
     query: ListReceiptsQuery,
@@ -2245,8 +2408,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<Receipt>> {
-    await this.authorizeRetailStoreOperation(actor);
-    if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
+    await this.authorizeStoreReceiptOperation(actor, input.storeId);
     const scopedKey = `${actor.accountId}:receipt:declare:${input.outboundRequestId}:${idempotencyKey}`;
     const replay = this.replayReceipt(scopedKey, requestHash);
     if (replay) return { data: replay, replayed: true };
@@ -2309,7 +2471,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<Receipt>> {
-    await this.authorizeRetailStoreOperation(actor);
+    const submitting = this.receipts.get(receiptId);
+    if (submitting) await this.authorizeStoreReceiptOperation(actor, submitting.storeId);
     const scopedKey = `${actor.accountId}:receipt:submit:${receiptId}:${idempotencyKey}`;
     const replay = this.replayReceipt(scopedKey, requestHash);
     if (replay) return { data: replay, replayed: true };
@@ -3523,6 +3686,20 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     return { assignments, htkdAccountId, sessionVersion: account.sessionVersion };
   }
 
+  /**
+   * HTKD scope is an explicit assignment list. The wholesale desk covers every active
+   * wholesale store instead, derived live so a store opened today is in reach at once.
+   */
+  private principalStoreScope(account: {
+    readonly role: AuthenticatedPrincipal['role'];
+    readonly assignedStoreIds: readonly string[];
+  }): string[] {
+    if (account.role !== 'WHOLESALE') return [...account.assignedStoreIds];
+    return [...this.stores.values()]
+      .filter((store) => store.kind === 'WHOLESALE' && store.status === 'ACTIVE')
+      .map((store) => store.id);
+  }
+
   private requireMutableReceipt(
     actor: AuthenticatedPrincipal,
     receiptId: string,
@@ -3532,10 +3709,12 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const receipt = this.receipts.get(receiptId);
     if (!receipt) throw notFound('Không tìm thấy phiếu nhận hàng');
     if (!canAccessStore(actor, receipt.storeId)) throw forbidden();
-    if (storeOnly && (actor.role !== 'STORE' || actor.storeId !== receipt.storeId)) {
-      throw forbidden();
-    }
-    if (!storeOnly && actor.role === 'STORE') throw forbidden();
+    // Store-side steps belong to the store that received the goods, or to the wholesale
+    // desk acting for it; reviewer-side steps belong to neither.
+    const storeSide =
+      (actor.role === 'STORE' && actor.storeId === receipt.storeId) || actor.role === 'WHOLESALE';
+    if (storeOnly && !storeSide) throw forbidden();
+    if (!storeOnly && storeSide) throw forbidden();
     if (!statuses.includes(receipt.status)) {
       throw new ApiError('INVALID_STATE_TRANSITION', 'Trạng thái phiếu không hợp lệ', 409);
     }
@@ -3991,7 +4170,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         role: account.role,
         status: 'ACTIVE',
         storeId: account.storeId,
-        assignedStoreIds: [...account.assignedStoreIds],
+        assignedStoreIds: this.principalStoreScope(account),
       },
       createdAt: stored.createdAt.toISOString(),
       lastSeenAt: stored.lastSeenAt.toISOString(),

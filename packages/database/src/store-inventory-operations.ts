@@ -52,6 +52,7 @@ export interface StoreInventoryBagRecord {
   readonly sourceStoreReceiptBagId: string | null;
   readonly sourceTransferId: string | null;
   readonly sourceInventoryBagId: string | null;
+  readonly sourcePartnerInboundBagId: string | null;
   readonly outboundRequestId: string | null;
   readonly status: InventoryBagStatus;
   readonly initialWeightKg: string;
@@ -164,6 +165,7 @@ export async function listStoreInventoryBags(
       sourceStoreReceiptBagId: bag.sourceStoreReceiptBagId,
       sourceTransferId: bag.sourceTransferId,
       sourceInventoryBagId: bag.sourceInventoryBagId,
+      sourcePartnerInboundBagId: bag.sourcePartnerInboundBagId,
       outboundRequestId,
       status: bag.status,
       initialWeightKg: bag.initialWeightKg,

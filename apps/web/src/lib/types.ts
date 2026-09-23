@@ -1,4 +1,4 @@
-export type Role = 'ADMIN' | 'HTKD' | 'STORE';
+export type Role = 'ADMIN' | 'HTKD' | 'STORE' | 'WHOLESALE';
 export type StoreKind = 'RETAIL' | 'WHOLESALE';
 export type DemoMode = 'ADMIN' | 'HTKD' | 'STORE_RETAIL' | 'STORE_WHOLESALE';
 

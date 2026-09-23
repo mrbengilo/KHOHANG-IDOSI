@@ -49,7 +49,7 @@ test('HTKD sees assigned stores, selects bags inline and persists two ordinary r
   await page.request.post(`${api}/auth/logout`);
   await page.goto('/login');
   await page.getByLabel('Tên đăng nhập').fill(username);
-  await page.getByLabel('Mật khẩu').fill(password);
+  await page.getByLabel('Mật khẩu', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Đăng nhập' }).click();
   await page.getByRole('link', { name: 'Đặt hàng', exact: true }).click();
   const selector = page.getByRole('combobox', { name: 'Cửa hàng', exact: true });

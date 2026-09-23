@@ -266,7 +266,7 @@ export async function assertUserMayAccessStore(
   storeId: string,
 ): Promise<void> {
   const [store] = await tx
-    .select({ id: stores.id })
+    .select({ id: stores.id, kind: stores.kind })
     .from(stores)
     .where(and(eq(stores.id, storeId), eq(stores.isActive, true), isNull(stores.deletedAt)))
     .limit(1);
@@ -286,6 +286,12 @@ export async function assertUserMayAccessStore(
   }
 
   if (user.role === 'admin' || (user.role === 'store' && user.storeId === storeId)) {
+    return;
+  }
+
+  // The wholesale desk has no store of its own; it orders for every wholesale store, and
+  // the store's kind is what keeps it out of retail stores.
+  if (user.role === 'wholesale' && store.kind === 'wholesale') {
     return;
   }
 

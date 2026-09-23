@@ -23,6 +23,11 @@ const RequestsPage = lazy(() =>
 const ReceivePage = lazy(() =>
   import('./pages/ReceivePage').then((module) => ({ default: module.ReceivePage })),
 );
+const PartnerInboundPage = lazy(() =>
+  import('./pages/PartnerInboundPage').then((module) => ({
+    default: module.PartnerInboundPage,
+  })),
+);
 const InventoryPage = lazy(() =>
   import('./pages/OperationsPages').then((module) => ({ default: module.InventoryPage })),
 );
@@ -81,6 +86,7 @@ export const router = createBrowserRouter([
       { path: 'requests', element: suspense(<RequestsPage />) },
       { path: 'warehouse-inbound', element: suspense(<WarehouseInboundPage />) },
       { path: 'receive', element: suspense(<ReceivePage />) },
+      { path: 'partner-inbound', element: suspense(<PartnerInboundPage />) },
       { path: 'inventory', element: suspense(<InventoryPage />) },
       { path: 'open-bag', element: suspense(<OpenBagPage />) },
       { path: 'sales', element: suspense(<SalesPage />) },

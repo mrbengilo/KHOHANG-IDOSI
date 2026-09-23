@@ -10,7 +10,7 @@ async function login(page: Page, username: string, password: string) {
   await page.goto('/login');
   await expect(page.getByRole('heading', { name: 'Đăng nhập Kho hàng IDOSI' })).toBeVisible();
   await page.getByLabel('Tên đăng nhập').fill(username);
-  await page.getByLabel('Mật khẩu').fill(password);
+  await page.getByLabel('Mật khẩu', { exact: true }).fill(password);
   const responsePromise = page.waitForResponse(
     (response) =>
       response.url() === `${apiOrigin}/api/v1/auth/login` && response.request().method() === 'POST',
