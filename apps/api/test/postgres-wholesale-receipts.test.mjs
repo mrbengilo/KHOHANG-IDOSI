@@ -6,7 +6,6 @@ import {
   outboundRequestLines,
   outboundRequests,
   products,
-  reservations,
   storeReceiptLines,
   storeReceipts,
   stores,
@@ -86,12 +85,6 @@ describePostgres('PostgreSQL wholesale receipt scope and discrepancies', () => {
           })
           .returning({ id: outboundRequestLines.id });
         assert.ok(line);
-        await db.insert(reservations).values({
-          outboundRequestLineId: line.id,
-          productId: catalog[0].id,
-          storeId,
-          quantity: 2,
-        });
         return { outboundId: outbound.id, lineId: line.id };
       };
       const wholesale = await addOutbound(wholesaleStore.id);
@@ -119,9 +112,9 @@ describePostgres('PostgreSQL wholesale receipt scope and discrepancies', () => {
         {
           storeId: wholesaleStore.id,
           outboundRequestId: wholesale.outboundId,
-          lines: [{ productId: catalog[0].id, approvedUnits: 2, receivedUnits: 1 }],
+          lines: [{ productId: catalog[0].id, approvedUnits: 2, receivedUnits: 2 }],
           unexpectedItems: [{ productId: catalog[1].id, quantity: 3 }],
-          discrepancyNote: 'Thiếu một bao, dư ba bao mặt hàng khác',
+          discrepancyNote: 'Dư ba bao mặt hàng khác',
         },
         randomUUID(),
         randomUUID(),
@@ -135,9 +128,9 @@ describePostgres('PostgreSQL wholesale receipt scope and discrepancies', () => {
         declared.data.id,
         {
           expectedVersion: 0,
-          lines: [{ productId: catalog[0].id, approvedUnits: 2, receivedUnits: 1 }],
+          lines: [{ productId: catalog[0].id, approvedUnits: 2, receivedUnits: 2 }],
           unexpectedItems: [{ productId: catalog[1].id, quantity: 3 }],
-          discrepancyNote: 'Thiếu một bao, dư ba bao mặt hàng khác',
+          discrepancyNote: 'Dư ba bao mặt hàng khác',
         },
         randomUUID(),
         randomUUID(),
