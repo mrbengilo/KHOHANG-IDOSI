@@ -129,6 +129,7 @@ export interface CreateStoreOutboundInput {
   readonly weightKg: string;
   readonly reason: StoreOutboundReason;
   readonly revenueVnd: bigint | null;
+  readonly pieceCount?: number | null;
   readonly createdByUserId: string;
   readonly idempotencyKey: string;
   readonly requestHash: string;
@@ -377,8 +378,28 @@ export async function createStoreOutbound(
   const weightGrams = kilogramsToGramsExact(input.weightKg);
   if (weightGrams <= 0n)
     throw new StoreOperationValidationError('Outbound weight must be positive.');
+  if (!['charity', 'sale_kg', 'sale_piece', 'cancel'].includes(input.reason)) {
+    throw new StoreOperationValidationError('Outbound reason is no longer available.');
+  }
   if (input.revenueVnd !== null && input.revenueVnd < 0n) {
     throw new StoreOperationValidationError('Outbound revenue cannot be negative.');
+  }
+  if (
+    ((input.reason === 'sale_kg' || input.reason === 'sale_piece') && input.revenueVnd === null) ||
+    ((input.reason === 'charity' || input.reason === 'cancel') && input.revenueVnd !== null)
+  ) {
+    throw new StoreOperationValidationError('Outbound revenue must match the reason.');
+  }
+  if ((input.reason === 'sale_piece') !== (input.pieceCount != null)) {
+    throw new StoreOperationValidationError('Piece count must match the outbound reason.');
+  }
+  if (
+    input.pieceCount != null &&
+    (!Number.isSafeInteger(input.pieceCount) ||
+      input.pieceCount <= 0 ||
+      input.pieceCount > 2_147_483_647)
+  ) {
+    throw new StoreOperationValidationError('Piece count must be a positive integer.');
   }
   return withIdempotency(
     database,
@@ -418,6 +439,7 @@ export async function createStoreOutbound(
             weightKg: input.weightKg,
             reason: input.reason,
             revenueVnd: input.revenueVnd,
+            pieceCount: input.pieceCount ?? null,
             createdByUserId: input.createdByUserId,
             status: 'pending',
             createdAt: now,
@@ -446,6 +468,7 @@ export async function createStoreOutbound(
             weightKg: input.weightKg,
             reason: input.reason,
             revenueVnd: input.revenueVnd?.toString() ?? null,
+            pieceCount: input.pieceCount ?? null,
           },
         });
         return idempotentMutationResult(

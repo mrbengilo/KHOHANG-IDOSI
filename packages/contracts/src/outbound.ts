@@ -421,13 +421,18 @@ export type OutboundReceiptTotals = z.infer<typeof OutboundReceiptTotalsSchema>;
 
 export const OutboundReasonSchema = z.enum([
   'DISCOUNT_SALE',
+  'SALE_KG',
+  'SALE_PIECE',
   'CHARITY',
+  'CANCEL',
   'TORN',
   'DEFECTIVE',
   'DIRTY',
   'OTHER',
 ]);
 export type OutboundReason = z.infer<typeof OutboundReasonSchema>;
+export const NewOutboundReasonSchema = z.enum(['CHARITY', 'SALE_KG', 'SALE_PIECE', 'CANCEL']);
+export type NewOutboundReason = z.infer<typeof NewOutboundReasonSchema>;
 
 export const StoreOutboundStatusSchema = z.enum(['PENDING', 'APPROVED', 'REJECTED']);
 export type StoreOutboundStatus = z.infer<typeof StoreOutboundStatusSchema>;
@@ -441,6 +446,7 @@ export const StoreOutboundSchema = z
     weightKg: PositiveKilogramsDecimalSchema,
     reason: OutboundReasonSchema,
     revenueVnd: MoneyVndSchema.nullable(),
+    pieceCount: z.number().int().positive().max(2_147_483_647).nullable().optional(),
     status: StoreOutboundStatusSchema,
     createdByAccountId: EntityIdSchema,
     reviewedByAccountId: EntityIdSchema.nullable(),
@@ -451,6 +457,13 @@ export const StoreOutboundSchema = z
   })
   .strict()
   .superRefine((outbound, context) => {
+    if ((outbound.reason === 'SALE_PIECE') !== (outbound.pieceCount != null)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['pieceCount'],
+        message: 'Sale theo cái phải ghi số cái',
+      });
+    }
     if (outbound.status !== 'PENDING' && outbound.reviewedByAccountId === null) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -467,10 +480,40 @@ export const CreateStoreOutboundRequestSchema = z
     inventoryLotId: EntityIdSchema,
     expectedInventoryVersion: z.number().int().nonnegative(),
     weightKg: PositiveKilogramsDecimalSchema,
-    reason: OutboundReasonSchema,
+    reason: NewOutboundReasonSchema,
     revenueVnd: MoneyVndSchema.nullable().default(null),
+    pieceCount: z.number().int().positive().max(2_147_483_647).nullable().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((outbound, context) => {
+    if ((outbound.reason === 'SALE_PIECE') !== (outbound.pieceCount != null)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['pieceCount'],
+        message: 'Sale theo cái phải có số cái; lý do khác không được ghi số cái',
+      });
+    }
+    if (
+      (outbound.reason === 'SALE_KG' || outbound.reason === 'SALE_PIECE') &&
+      outbound.revenueVnd === null
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['revenueVnd'],
+        message: 'Phiếu sale phải ghi doanh thu',
+      });
+    }
+    if (
+      (outbound.reason === 'CHARITY' || outbound.reason === 'CANCEL') &&
+      outbound.revenueVnd !== null
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['revenueVnd'],
+        message: 'Từ thiện và hủy không ghi doanh thu',
+      });
+    }
+  });
 export type CreateStoreOutboundRequest = z.infer<typeof CreateStoreOutboundRequestSchema>;
 
 export const ReviewStoreOutboundRequestSchema = z

@@ -138,7 +138,10 @@ export const storeOutboundStatusEnum = pgEnum('store_outbound_status', [
 ]);
 export const storeOutboundReasonEnum = pgEnum('store_outbound_reason', [
   'discount_sale',
+  'sale_kg',
+  'sale_piece',
   'charity',
+  'cancel',
   'torn',
   'defective',
   'dirty',
@@ -1811,7 +1814,7 @@ export const storeInventoryLedgerEntries = pgTable(
   ],
 );
 
-/** Store-side removal for discounted sale, charity, damaged or dirty goods. */
+/** Store-side removal for sale, charity, cancellation and historical reasons. */
 export const storeOutbounds = pgTable(
   'store_outbounds',
   {
@@ -1826,6 +1829,7 @@ export const storeOutbounds = pgTable(
     weightKg: numeric('weight_kg', { precision: 14, scale: 3 }).notNull(),
     reason: storeOutboundReasonEnum('reason').notNull(),
     revenueVnd: bigint('revenue_vnd', { mode: 'bigint' }),
+    pieceCount: integer('piece_count'),
     status: storeOutboundStatusEnum('status').notNull().default('pending'),
     createdByUserId: uuid('created_by_user_id')
       .notNull()
@@ -1855,6 +1859,10 @@ export const storeOutbounds = pgTable(
     check(
       'store_outbounds_revenue_nonnegative',
       sql`${table.revenueVnd} IS NULL OR ${table.revenueVnd} >= 0`,
+    ),
+    check(
+      'store_outbounds_piece_count_matches_reason',
+      sql`(${table.reason} = 'sale_piece' AND ${table.pieceCount} IS NOT NULL AND ${table.pieceCount} > 0) OR (${table.reason} <> 'sale_piece' AND ${table.pieceCount} IS NULL)`,
     ),
     check('store_outbounds_version_nonnegative', sql`${table.version} >= 0`),
     check(

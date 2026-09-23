@@ -2807,6 +2807,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       weightKg: input.weightKg,
       reason: input.reason,
       revenueVnd: input.revenueVnd,
+      pieceCount: input.pieceCount ?? null,
       status: 'PENDING',
       createdByAccountId: actor.accountId,
       reviewedByAccountId: null,

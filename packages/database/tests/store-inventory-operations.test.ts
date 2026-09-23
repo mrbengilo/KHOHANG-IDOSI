@@ -61,7 +61,7 @@ describe('store inventory operations', () => {
         inventoryBagId: IDS.bag,
         expectedInventoryVersion: 0,
         weightKg: '0',
-        reason: 'discount_sale',
+        reason: 'sale_kg',
         revenueVnd: 0n,
         createdByUserId: IDS.actor,
         idempotencyKey: 'outbound-1',

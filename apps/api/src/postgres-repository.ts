@@ -2814,6 +2814,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         weightKg: input.weightKg,
         reason: databaseOutboundReason(input.reason),
         revenueVnd: input.revenueVnd === null ? null : BigInt(input.revenueVnd),
+        pieceCount: input.pieceCount ?? null,
         createdByUserId: actor.accountId,
         idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
         requestHash,
@@ -3192,6 +3193,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         sku: products.sku,
         name: products.name,
         revenueVnd: storeOutbounds.revenueVnd,
+        reason: storeOutbounds.reason,
         weightKg: storeOutbounds.weightKg,
       })
       .from(storeOutbounds)
@@ -3201,7 +3203,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         and(
           eq(storeOutbounds.storeId, store.id),
           eq(storeOutbounds.status, 'approved'),
-          eq(storeOutbounds.reason, 'discount_sale'),
+          inArray(storeOutbounds.reason, ['discount_sale', 'sale_kg', 'sale_piece']),
           gte(storeOutbounds.createdAt, start),
           lt(storeOutbounds.createdAt, endExclusive),
           isNull(storeOutbounds.deletedAt),
@@ -3211,6 +3213,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       string,
       { productId: string; sku: string; name: string; revenueVnd: bigint; weightGrams: bigint }
     >();
+    let salePieceRevenue = 0n;
     for (const row of rows) {
       const current = grouped.get(row.productId) ?? {
         productId: row.productId,
@@ -3220,6 +3223,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         weightGrams: 0n,
       };
       current.revenueVnd += row.revenueVnd ?? 0n;
+      if (row.reason === 'sale_piece') salePieceRevenue += row.revenueVnd ?? 0n;
       current.weightGrams += kilogramsToGrams(row.weightKg);
       grouped.set(row.productId, current);
     }
@@ -3229,7 +3233,11 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       storeCode,
       period: { from, to },
       totals: {
-        revenueByType: { NORMAL: 0, SALE_KG: safeVnd(revenue), SALE_PIECE: 0 },
+        revenueByType: {
+          NORMAL: 0,
+          SALE_KG: safeVnd(revenue - salePieceRevenue),
+          SALE_PIECE: safeVnd(salePieceRevenue),
+        },
         revenue: safeVnd(revenue),
         weight: {
           actualKg: gramsToKilograms(grams),
@@ -3757,6 +3765,7 @@ function storeOutboundDto(row: typeof storeOutbounds.$inferSelect): StoreOutboun
     weightKg: row.weightKg,
     reason: row.reason.toUpperCase() as StoreOutbound['reason'],
     revenueVnd: row.revenueVnd === null ? null : safeVnd(row.revenueVnd),
+    pieceCount: row.pieceCount,
     status: row.status.toUpperCase() as StoreOutbound['status'],
     createdByAccountId: row.createdByUserId,
     reviewedByAccountId: row.reviewedByUserId,

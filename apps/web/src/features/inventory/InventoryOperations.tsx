@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   OutboundReason,
+  NewOutboundReason,
   Store,
   StoreInventoryBag,
   StoreInventoryBagStatus,
@@ -60,18 +61,30 @@ const outboundStatusCopy = {
 } as const;
 
 const reasonCopy: Record<OutboundReason, string> = {
-  DISCOUNT_SALE: 'Bán giảm giá',
+  DISCOUNT_SALE: 'Sale theo ký (cũ)',
+  SALE_KG: 'Sale theo ký',
+  SALE_PIECE: 'Sale theo cái',
   CHARITY: 'Từ thiện',
+  CANCEL: 'Hủy',
   TORN: 'Rách',
   DEFECTIVE: 'Lỗi',
   DIRTY: 'Bẩn',
   OTHER: 'Khác',
 };
 
-const sortingReasons = ['CHARITY', 'TORN', 'DEFECTIVE', 'DIRTY', 'OTHER'] as const;
+const sortingReasons = [
+  'CHARITY',
+  'SALE_KG',
+  'SALE_PIECE',
+  'CANCEL',
+  'TORN',
+  'DEFECTIVE',
+  'DIRTY',
+  'OTHER',
+] as const;
 
 export function outboundReasonsForMode(mode: 'SALE' | 'SORTING'): readonly OutboundReason[] {
-  return mode === 'SALE' ? ['DISCOUNT_SALE'] : sortingReasons;
+  return mode === 'SALE' ? ['DISCOUNT_SALE', 'SALE_KG', 'SALE_PIECE'] : sortingReasons;
 }
 
 const ledgerOperationCopy = {
@@ -702,9 +715,9 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
   const [bagId, setBagId] = useState('');
   const [weightKg, setWeightKg] = useState('');
   const [revenueVnd, setRevenueVnd] = useState('');
-  const [reason, setReason] = useState<OutboundReason>(
-    mode === 'SALE' ? 'DISCOUNT_SALE' : 'CHARITY',
-  );
+  const [pieceCount, setPieceCount] = useState('');
+  const [reason, setReason] = useState<NewOutboundReason>(mode === 'SALE' ? 'SALE_KG' : 'CHARITY');
+  const isSale = mode === 'SALE' || reason === 'SALE_KG' || reason === 'SALE_PIECE';
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState('');
   const [operationError, setOperationError] = useState('');
@@ -750,20 +763,26 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
   const createMutation = useMutation({
     mutationFn: async () => {
       if (!selectedBag || !effectiveStoreId) throw new Error('Chưa chọn Mã bao hợp lệ.');
-      const signature = [selectedBag.id, selectedBag.version, weightKg, reason, revenueVnd].join(
-        ':',
-      );
+      const signature = [
+        selectedBag.id,
+        selectedBag.version,
+        weightKg,
+        reason,
+        revenueVnd,
+        pieceCount,
+      ].join(':');
       const key = operationKeys.current.get(signature) ?? uuid();
       operationKeys.current.set(signature, key);
-      const revenue = mode === 'SALE' ? Number(revenueVnd) : null;
+      const revenue = isSale ? Number(revenueVnd) : null;
       const result = await createStoreOutbound(
         {
           storeId: effectiveStoreId,
           inventoryLotId: selectedBag.id,
           expectedInventoryVersion: selectedBag.version,
           weightKg,
-          reason: mode === 'SALE' ? 'DISCOUNT_SALE' : reason,
+          reason: mode === 'SALE' ? 'SALE_KG' : reason,
           revenueVnd: revenue,
+          pieceCount: reason === 'SALE_PIECE' ? Number(pieceCount) : null,
         },
         key,
       );
@@ -776,6 +795,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
       setNotice('Đã tạo phiếu và gửi HTKD/Admin duyệt. Tồn chỉ giảm sau khi phiếu được duyệt.');
       setWeightKg('');
       setRevenueVnd('');
+      setPieceCount('');
       await queryClient.invalidateQueries({ queryKey: ['store-outbounds'] });
     },
   });
@@ -819,8 +839,13 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
   const formInvalid =
     !selectedBag ||
     !isOutboundWeightAllowed(weightKg, selectedBag.remainingWeightKg) ||
-    (mode === 'SALE' &&
-      (!/^\d+$/.test(revenueVnd) || !Number.isSafeInteger(parsedRevenue) || parsedRevenue < 0));
+    (isSale &&
+      (!/^\d+$/.test(revenueVnd) || !Number.isSafeInteger(parsedRevenue) || parsedRevenue < 0)) ||
+    (mode === 'SORTING' &&
+      reason === 'SALE_PIECE' &&
+      (!/^[1-9]\d*$/.test(pieceCount) ||
+        !Number.isSafeInteger(Number(pieceCount)) ||
+        Number(pieceCount) > 2_147_483_647));
   const loadError =
     storesQuery.error ?? catalogQuery.error ?? bagsQuery.error ?? outboundsQuery.error;
   const pending = displayedOutbounds.filter((outbound) => outbound.status === 'PENDING').length;
@@ -841,7 +866,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
         description={
           mode === 'SALE'
             ? 'Ghi doanh thu theo Mã bao; chỉ trừ kho khi người có quyền duyệt phiếu'
-            : 'Lập chứng từ cho hàng từ thiện, rách, lỗi, bẩn hoặc xử lý khác; không reset tồn'
+            : 'Lập chứng từ từ thiện, sale theo ký/cái hoặc hủy; không reset tồn'
         }
         title={mode === 'SALE' ? 'Bán & đồng bộ' : 'Lọc & xử lý'}
       />
@@ -942,7 +967,29 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                       : 'Chưa có Mã bao khả dụng'}
                   </small>
                 </label>
-                {mode === 'SALE' ? (
+                {mode === 'SORTING' ? (
+                  <label>
+                    <span className="field-label">Lý do</span>
+                    <select
+                      required
+                      onChange={(event) => {
+                        setReason(
+                          event.target.value === 'SALE'
+                            ? 'SALE_KG'
+                            : (event.target.value as NewOutboundReason),
+                        );
+                        setPieceCount('');
+                        setRevenueVnd('');
+                      }}
+                      value={reason === 'SALE_KG' || reason === 'SALE_PIECE' ? 'SALE' : reason}
+                    >
+                      <option value="CHARITY">Từ thiện</option>
+                      <option value="SALE">Sale</option>
+                      <option value="CANCEL">Hủy</option>
+                    </select>
+                  </label>
+                ) : null}
+                {isSale ? (
                   <label>
                     <span className="field-label">Doanh thu (VND)</span>
                     <input
@@ -955,22 +1002,37 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                       value={revenueVnd}
                     />
                   </label>
-                ) : (
+                ) : null}
+                {mode === 'SORTING' && isSale ? (
                   <label>
-                    <span className="field-label">Lý do</span>
+                    <span className="field-label">Hình thức sale</span>
                     <select
-                      required
-                      onChange={(event) => setReason(event.target.value as OutboundReason)}
+                      onChange={(event) => {
+                        setReason(event.target.value as 'SALE_KG' | 'SALE_PIECE');
+                        setPieceCount('');
+                      }}
                       value={reason}
                     >
-                      {sortingReasons.map((value) => (
-                        <option key={value} value={value}>
-                          {reasonCopy[value]}
-                        </option>
-                      ))}
+                      <option value="SALE_KG">Sale theo ký</option>
+                      <option value="SALE_PIECE">Sale theo cái</option>
                     </select>
                   </label>
-                )}
+                ) : null}
+                {mode === 'SORTING' && reason === 'SALE_PIECE' ? (
+                  <label>
+                    <span className="field-label">Số cái</span>
+                    <input
+                      required
+                      inputMode="numeric"
+                      min="1"
+                      max="2147483647"
+                      onChange={(event) => setPieceCount(event.target.value)}
+                      step="1"
+                      type="number"
+                      value={pieceCount}
+                    />
+                  </label>
+                ) : null}
               </div>
               <Button
                 busy={createMutation.isPending}
@@ -1026,7 +1088,8 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                       <th>Mã bao</th>
                       <th>Lý do</th>
                       <th>Khối lượng</th>
-                      {mode === 'SALE' ? <th>Doanh thu</th> : null}
+                      <th>Số cái</th>
+                      <th>Doanh thu</th>
                       <th>Trạng thái</th>
                       <th>Thao tác</th>
                     </tr>
@@ -1049,13 +1112,10 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                           </td>
                           <td data-label="Lý do">{reasonCopy[outbound.reason]}</td>
                           <td data-label="Khối lượng">{formatKg(outbound.weightKg)}</td>
-                          {mode === 'SALE' ? (
-                            <td data-label="Doanh thu">
-                              {outbound.revenueVnd === null
-                                ? 'Chưa ghi nhận'
-                                : formatVnd(outbound.revenueVnd)}
-                            </td>
-                          ) : null}
+                          <td data-label="Số cái">{outbound.pieceCount ?? '—'}</td>
+                          <td data-label="Doanh thu">
+                            {outbound.revenueVnd === null ? '—' : formatVnd(outbound.revenueVnd)}
+                          </td>
                           <td data-label="Trạng thái">
                             <Badge tone={outboundStatusCopy[outbound.status].tone}>
                               {outboundStatusCopy[outbound.status].label}
