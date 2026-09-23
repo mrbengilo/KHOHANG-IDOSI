@@ -1802,9 +1802,11 @@ body.dialog-open {
   .history-list article.request-history-card > .request-history-card__summary {
     grid-template-columns: minmax(0, 1fr) auto;
   }
+  /* Nút "Hủy yêu cầu" trên điện thoại vẫn giữ vùng chạm tối thiểu 44px. */
   .request-history-card__summary > .link-button {
     grid-column: 1 / -1;
     width: fit-content;
+    min-height: 44px;
   }
   .request-cancel-form__actions {
     flex-direction: column-reverse;

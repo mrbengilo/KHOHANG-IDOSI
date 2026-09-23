@@ -64,7 +64,16 @@ test('dashboard report drill-down preserves month and store across reload and Ba
       .toBe(true);
     const heading = await page.locator('.page-header h1').boundingBox();
     const actions = await page.locator('.page-header__actions').boundingBox();
-    expect(heading!.x + heading!.width).toBeLessThanOrEqual(actions!.x);
+    // Dưới 620px header xếp dọc (tiêu đề trên, nút dưới); rộng hơn thì nằm ngang.
+    // Điều bất biến là tiêu đề và cụm nút không được chồng lên nhau.
+    const stacked = await page
+      .locator('.page-header')
+      .evaluate((element) => getComputedStyle(element).flexDirection === 'column');
+    if (stacked) {
+      expect(heading!.y + heading!.height).toBeLessThanOrEqual(actions!.y);
+    } else {
+      expect(heading!.x + heading!.width).toBeLessThanOrEqual(actions!.x);
+    }
     await page.screenshot({
       animations: 'disabled',
       path: testInfo.outputPath(`report-drilldown-${width}.png`),
