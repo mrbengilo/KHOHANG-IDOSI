@@ -18,6 +18,7 @@ import {
   type WaitTicket,
 } from '@idosi/contracts';
 import { reportUnauthorizedResponse } from '../../lib/session-expiry';
+import { addTabSessionHeader } from '../../lib/tab-session';
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
 const apiBaseUrl = (configuredBaseUrl || '/api/v1').replace(/\/$/, '');
@@ -37,12 +38,14 @@ export class DashboardApiError extends Error {
 }
 
 async function request(path: string): Promise<unknown> {
+  const headers = new Headers({ Accept: 'application/json' });
+  addTabSessionHeader(headers);
   let response: Response;
   try {
     response = await fetch(`${apiBaseUrl}${path}`, {
       cache: 'no-store',
       credentials: 'include',
-      headers: { Accept: 'application/json' },
+      headers,
     });
   } catch {
     throw new DashboardApiError(

@@ -39,6 +39,7 @@ import {
   type UpdateStoreRequest,
 } from '@idosi/contracts';
 import { reportUnauthorizedResponse } from '../../lib/session-expiry';
+import { addTabSessionHeader } from '../../lib/tab-session';
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
 const adminApiBaseUrl = (configuredBaseUrl || '/api/v1').replace(/\/$/u, '');
@@ -68,6 +69,7 @@ async function requestAdminApi(path: string, init?: RequestInit): Promise<unknow
   if (init?.body !== undefined && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
+  addTabSessionHeader(headers);
 
   let response: Response;
   try {
