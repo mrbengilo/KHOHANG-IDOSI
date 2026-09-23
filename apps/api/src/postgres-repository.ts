@@ -4914,12 +4914,13 @@ function requestJson(request: StoreOrderRequest): JsonObject {
 }
 
 function isUniqueViolation(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (error as { readonly code?: unknown }).code === '23505'
-  );
+  let current = error;
+  for (let depth = 0; depth < 5; depth += 1) {
+    if (typeof current !== 'object' || current === null) return false;
+    if ('code' in current && current.code === '23505') return true;
+    current = 'cause' in current ? current.cause : null;
+  }
+  return false;
 }
 
 function kilogramsToGrams(value: string): bigint {
