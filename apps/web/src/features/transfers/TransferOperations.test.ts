@@ -2,6 +2,7 @@ import type { StoreTransfer } from '@idosi/contracts';
 import { describe, expect, it } from 'vitest';
 
 import { isTransferWeightAllowed, transferActionsForStore } from './TransferOperations';
+import { validSortedSaleTransfer } from './SortedSaleTransferWorkspace';
 
 const sourceStoreId = '10000000-0000-4000-8000-000000000001';
 const destinationStoreId = '10000000-0000-4000-8000-000000000002';
@@ -31,6 +32,14 @@ const draftTransfer = {
 } satisfies StoreTransfer;
 
 describe('transfer UI guards', () => {
+  it('requires available sorted Sale bags and leaves kilograms optional', () => {
+    expect(validSortedSaleTransfer('2', '', 3, '10.000')).toBe(true);
+    expect(validSortedSaleTransfer('4', '', 3, '10.000')).toBe(false);
+    expect(validSortedSaleTransfer('2', '10.000', 3, '10.000')).toBe(false);
+    expect(validSortedSaleTransfer('3', '10.000', 3, '10.000')).toBe(true);
+    expect(validSortedSaleTransfer('2', '0.000', 3, '10.000')).toBe(false);
+  });
+
   it('uses exact gram precision and rejects non-canonical or excessive weights', () => {
     expect(isTransferWeightAllowed('9007199254740993.007', '9007199254740993.007')).toBe(true);
     expect(isTransferWeightAllowed('5.251', '5.250')).toBe(false);
@@ -40,7 +49,7 @@ describe('transfer UI guards', () => {
   });
 
   it('only gives the source draft controls and the destination receipt control', () => {
-    expect(transferActionsForStore(draftTransfer, sourceStoreId)).toEqual(['DISPATCH', 'CANCEL']);
+    expect(transferActionsForStore(draftTransfer, sourceStoreId)).toEqual(['CANCEL']);
     expect(transferActionsForStore(draftTransfer, destinationStoreId)).toEqual([]);
     expect(
       transferActionsForStore(

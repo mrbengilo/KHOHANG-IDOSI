@@ -6,6 +6,7 @@ import {
   auditLogs,
   storeInventoryBags,
   storeInventoryLedgerEntries,
+  sortedSaleTransfers,
   storeSortedStocks,
   storeSortingEvents,
   stores,
@@ -30,6 +31,7 @@ export interface SortedStockRecord {
   readonly inventoryLotId: string;
   readonly bagCode: string;
   readonly saleWeightKg: string;
+  readonly bagQuantity: number;
   readonly charityWeightKg: string;
   readonly version: number;
   readonly updatedAt: Date;
@@ -41,6 +43,7 @@ export interface CreateStoreSortingInput {
   readonly expectedInventoryVersion: number;
   readonly reason: SortingReason;
   readonly weightKg: string;
+  readonly bagQuantity: number | null;
   readonly actorUserId: string;
   readonly idempotencyKey: string;
   readonly requestHash: string;
@@ -52,6 +55,7 @@ export interface SortedStockMutationInput {
   readonly storeId: string;
   readonly expectedVersion: number;
   readonly weightKg: string;
+  readonly bagQuantity: number | null;
   readonly actorUserId: string;
   readonly idempotencyKey: string;
   readonly requestHash: string;
@@ -69,12 +73,19 @@ export async function listStoreSortedStocks(
   storeId?: string,
 ): Promise<SortedStockRecord[]> {
   const rows = await database
-    .select({ stock: storeSortedStocks, bagCode: storeInventoryBags.displayCode })
+    .select({
+      stock: storeSortedStocks,
+      bagCode: storeInventoryBags.displayCode,
+      transferNumber: sortedSaleTransfers.transferNumber,
+    })
     .from(storeSortedStocks)
-    .innerJoin(storeInventoryBags, eq(storeSortedStocks.storeInventoryBagId, storeInventoryBags.id))
+    .leftJoin(storeInventoryBags, eq(storeSortedStocks.storeInventoryBagId, storeInventoryBags.id))
+    .leftJoin(sortedSaleTransfers, eq(storeSortedStocks.sourceTransferId, sortedSaleTransfers.id))
     .where(storeId ? eq(storeSortedStocks.storeId, storeId) : undefined)
     .orderBy(asc(storeSortedStocks.createdAt), asc(storeSortedStocks.id));
-  return rows.map(({ stock, bagCode }) => sortedStockRecord(stock, bagCode));
+  return rows.map(({ stock, bagCode, transferNumber }) =>
+    sortedStockRecord(stock, bagCode ?? transferNumber ?? ''),
+  );
 }
 
 export async function getStoreSortedStock(
@@ -82,12 +93,17 @@ export async function getStoreSortedStock(
   stockId: string,
 ): Promise<SortedStockRecord | null> {
   const [row] = await database
-    .select({ stock: storeSortedStocks, bagCode: storeInventoryBags.displayCode })
+    .select({
+      stock: storeSortedStocks,
+      bagCode: storeInventoryBags.displayCode,
+      transferNumber: sortedSaleTransfers.transferNumber,
+    })
     .from(storeSortedStocks)
-    .innerJoin(storeInventoryBags, eq(storeSortedStocks.storeInventoryBagId, storeInventoryBags.id))
+    .leftJoin(storeInventoryBags, eq(storeSortedStocks.storeInventoryBagId, storeInventoryBags.id))
+    .leftJoin(sortedSaleTransfers, eq(storeSortedStocks.sourceTransferId, sortedSaleTransfers.id))
     .where(eq(storeSortedStocks.id, stockId))
     .limit(1);
-  return row ? sortedStockRecord(row.stock, row.bagCode) : null;
+  return row ? sortedStockRecord(row.stock, row.bagCode ?? row.transferNumber ?? '') : null;
 }
 
 export async function createStoreSorting(
@@ -97,6 +113,11 @@ export async function createStoreSorting(
   const weightGrams = kilogramsToGramsExact(input.weightKg);
   if (weightGrams <= 0n)
     throw new StoreOperationValidationError('Sorting weight must be positive.');
+  if (
+    input.reason === 'SALE' &&
+    (!Number.isSafeInteger(input.bagQuantity) || (input.bagQuantity ?? 0) <= 0)
+  )
+    throw new StoreOperationValidationError('Sorting into Sale requires a positive bag quantity.');
   return withIdempotency(
     database,
     {
@@ -179,6 +200,10 @@ export async function createStoreSorting(
                     (input.reason === 'SALE' ? weightGrams : 0n),
                 ),
                 saleWeightKg: gramsToKilogramsExact(saleGrams),
+                bagQuantity:
+                  existing.bagQuantity + (input.reason === 'SALE' ? input.bagQuantity! : 0),
+                creditedBagQuantity:
+                  existing.creditedBagQuantity + (input.reason === 'SALE' ? input.bagQuantity! : 0),
                 charityWeightKg: gramsToKilogramsExact(charityGrams),
                 version: existing.version + 1,
                 updatedAt: now,
@@ -197,6 +222,8 @@ export async function createStoreSorting(
                   input.reason === 'SALE' ? weightGrams : 0n,
                 ),
                 saleWeightKg: gramsToKilogramsExact(saleGrams),
+                bagQuantity: input.reason === 'SALE' ? input.bagQuantity! : 0,
+                creditedBagQuantity: input.reason === 'SALE' ? input.bagQuantity! : 0,
                 charityWeightKg: gramsToKilogramsExact(charityGrams),
                 createdAt: now,
                 updatedAt: now,
@@ -251,6 +278,7 @@ export async function createStoreSorting(
           after: {
             reason: input.reason,
             weightKg: input.weightKg,
+            bagQuantity: input.bagQuantity,
             bagId: bag.id,
             stockId: stock?.id ?? null,
           },
@@ -292,6 +320,11 @@ async function mutateCharity(
 ): Promise<IdempotencyResult<StoreSortingMutationResult>> {
   const weightGrams = kilogramsToGramsExact(input.weightKg);
   if (weightGrams <= 0n) throw new StoreOperationValidationError('Weight must be positive.');
+  if (
+    action === 'charity_to_sale' &&
+    (!Number.isSafeInteger(input.bagQuantity) || (input.bagQuantity ?? 0) <= 0)
+  )
+    throw new StoreOperationValidationError('Moving charity into Sale requires a bag quantity.');
   return withIdempotency(
     database,
     {
@@ -310,6 +343,10 @@ async function mutateCharity(
           .limit(1);
         if (!stock || stock.storeId !== input.storeId)
           throw new StoreOperationValidationError('Sorted stock does not belong to this store.');
+        if (!stock.storeInventoryBagId)
+          throw new StoreOperationValidationError(
+            'Transferred Sale stock cannot be used for charity.',
+          );
         if (stock.version !== input.expectedVersion)
           throw new StoreOperationConflictError('Sorted stock changed before confirmation.');
         const charityGrams = kilogramsToGramsExact(stock.charityWeightKg);
@@ -347,6 +384,10 @@ async function mutateCharity(
               kilogramsToGramsExact(stock.saleWeightKg) +
                 (action === 'charity_to_sale' ? weightGrams : 0n),
             ),
+            bagQuantity:
+              stock.bagQuantity + (action === 'charity_to_sale' ? input.bagQuantity! : 0),
+            creditedBagQuantity:
+              stock.creditedBagQuantity + (action === 'charity_to_sale' ? input.bagQuantity! : 0),
             version: stock.version + 1,
             updatedAt: now,
           })
@@ -381,7 +422,12 @@ async function mutateCharity(
             action === 'charity_to_sale' ? 'STORE_CHARITY_MOVED_TO_SALE' : 'STORE_CHARITY_EXPORTED',
           entityType: 'store_sorting_event',
           entityId: event.id,
-          after: { stockId: stock.id, weightKg: input.weightKg, version: updated.version },
+          after: {
+            stockId: stock.id,
+            weightKg: input.weightKg,
+            bagQuantity: input.bagQuantity,
+            version: updated.version,
+          },
         });
         const [bag] = await tx
           .select({ version: storeInventoryBags.version })
@@ -441,9 +487,10 @@ function sortedStockRecord(stock: SortedStockRow, bagCode: string): SortedStockR
     id: stock.id,
     storeId: stock.storeId,
     productId: stock.productId,
-    inventoryLotId: stock.storeInventoryBagId,
+    inventoryLotId: stock.storeInventoryBagId ?? stock.sourceTransferId!,
     bagCode,
     saleWeightKg: stock.saleWeightKg,
+    bagQuantity: stock.bagQuantity,
     charityWeightKg: stock.charityWeightKg,
     version: stock.version,
     updatedAt: stock.updatedAt,

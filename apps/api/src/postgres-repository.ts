@@ -95,6 +95,9 @@ import type {
   WaitTicketHistory,
   WarehouseOutboundRequest,
   StoreTransfer,
+  SortedSaleTransfer,
+  CreateSortedSaleTransferRequest,
+  ReceiveSortedSaleTransferRequest,
   ListStoreTransfersQuery,
   CreateStoreTransferRequest,
   DispatchStoreTransferRequest,
@@ -113,6 +116,11 @@ import {
   confirmSupplierInboundCosts as confirmDatabaseSupplierInboundCosts,
   createStoreOutbound as createDatabaseStoreOutbound,
   createStoreSorting as createDatabaseStoreSorting,
+  createSortedSaleTransfer as createDatabaseSortedSaleTransfer,
+  receiveSortedSaleTransfer as receiveDatabaseSortedSaleTransfer,
+  listSortedSaleTransfers as listDatabaseSortedSaleTransfers,
+  getSortedSaleTransfer as getDatabaseSortedSaleTransfer,
+  type sortedSaleTransfers,
   exportCharity as exportDatabaseCharity,
   getStoreSortedStock as getDatabaseStoreSortedStock,
   listStoreSortedStocks as listDatabaseStoreSortedStocks,
@@ -2895,6 +2903,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         expectedInventoryVersion: input.expectedInventoryVersion,
         reason: input.reason,
         weightKg: input.weightKg,
+        bagQuantity: input.bagQuantity,
         actorUserId: actor.accountId,
         idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
         requestHash,
@@ -2940,7 +2949,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
   private async mutateCharity(
     actor: AuthenticatedPrincipal,
     stockId: string,
-    input: MoveCharityToSaleRequest,
+    input: MoveCharityToSaleRequest | ExportCharityRequest,
     idempotencyKey: string,
     requestHash: string,
     context: RequestContext,
@@ -2956,6 +2965,8 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         storeId: current.storeId,
         expectedVersion: input.expectedVersion,
         weightKg: input.weightKg,
+        bagQuantity:
+          destination === 'SALE' ? (input as MoveCharityToSaleRequest).bagQuantity : null,
         actorUserId: actor.accountId,
         idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
         requestHash,
@@ -2969,6 +2980,76 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         data: StoreSortingResultSchema.parse(result.replayed ? result.responseBody : result.value),
         replayed: result.replayed,
       };
+    });
+  }
+
+  public async listSortedSaleTransfers(
+    actor: AuthenticatedPrincipal,
+  ): Promise<readonly SortedSaleTransfer[]> {
+    const ids =
+      actor.role === 'STORE'
+        ? actor.storeId
+          ? [actor.storeId]
+          : []
+        : actor.role === 'HTKD'
+          ? [...new Set(actor.assignedStoreIds)]
+          : (await db.select({ id: stores.id }).from(stores).where(eq(stores.kind, 'retail'))).map(
+              (store) => store.id,
+            );
+    return (await listDatabaseSortedSaleTransfers(db, ids)).map(sortedSaleTransferDto);
+  }
+
+  public async createSortedSaleTransfer(
+    actor: AuthenticatedPrincipal,
+    input: CreateSortedSaleTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<SortedSaleTransfer>> {
+    await this.authorizeRetailStoreOperation(actor);
+    if (actor.role !== 'STORE' || actor.storeId !== input.sourceStoreId) throw forbidden();
+    return withStoreTransferErrors(async () => {
+      const result = await createDatabaseSortedSaleTransfer(db, {
+        ...input,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const id = result.replayed ? result.resourceId : result.value.transferId;
+      if (!id) throw new Error('Sorted Sale transfer has no id.');
+      const row = await getDatabaseSortedSaleTransfer(db, id);
+      if (!row) throw notFound('Không tìm thấy phiếu điều chuyển Sale');
+      return { data: sortedSaleTransferDto(row), replayed: result.replayed };
+    });
+  }
+
+  public async receiveSortedSaleTransfer(
+    actor: AuthenticatedPrincipal,
+    transferId: string,
+    input: ReceiveSortedSaleTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<SortedSaleTransfer>> {
+    await this.authorizeRetailStoreOperation(actor);
+    const current = await getDatabaseSortedSaleTransfer(db, transferId);
+    if (!current) throw notFound('Không tìm thấy phiếu điều chuyển Sale');
+    if (actor.storeId !== current.destinationStoreId) throw forbidden();
+    return withStoreTransferErrors(async () => {
+      const result = await receiveDatabaseSortedSaleTransfer(db, {
+        transferId,
+        ...input,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const id = result.replayed ? result.resourceId : result.value.transferId;
+      if (!id) throw new Error('Received Sale transfer has no id.');
+      const row = await getDatabaseSortedSaleTransfer(db, id);
+      if (!row) throw notFound('Không tìm thấy phiếu điều chuyển Sale');
+      return { data: sortedSaleTransferDto(row), replayed: result.replayed };
     });
   }
 
@@ -3909,6 +3990,25 @@ function storeOutboundPage(
   page: Awaited<ReturnType<typeof listDatabaseStoreOutbounds>>,
 ): Page<StoreOutbound> {
   return { data: page.data.map(storeOutboundDto), pagination: page.pagination };
+}
+
+function sortedSaleTransferDto(row: typeof sortedSaleTransfers.$inferSelect): SortedSaleTransfer {
+  return {
+    id: row.id,
+    transferNumber: row.transferNumber,
+    sourceStockId: row.sourceStockId,
+    sourceStoreId: row.sourceStoreId,
+    destinationStoreId: row.destinationStoreId,
+    productId: row.productId,
+    bagQuantity: row.bagQuantity,
+    weightKg: row.weightKg,
+    enteredWeightKg: row.enteredWeightKg,
+    status: row.status === 'received' ? 'RECEIVED' : 'IN_TRANSIT',
+    version: row.version,
+    note: row.note,
+    createdAt: row.createdAt.toISOString(),
+    receivedAt: row.receivedAt?.toISOString() ?? null,
+  };
 }
 
 function storeTransferDto(row: typeof storeTransfers.$inferSelect): StoreTransfer {

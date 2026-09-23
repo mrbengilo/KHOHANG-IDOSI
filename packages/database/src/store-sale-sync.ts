@@ -228,7 +228,10 @@ export async function settleProductSaleProgress(
     for (const lot of [...lots].reverse()) {
       if (toRestore === 0n) break;
       const balance = balances.get(lot.id)!;
-      const room = kilogramsToGramsExact(lot.saleCreditedWeightKg) - balance;
+      const room =
+        kilogramsToGramsExact(lot.saleCreditedWeightKg) -
+        kilogramsToGramsExact(lot.transferredOutWeightKg) -
+        balance;
       const amount = room < toRestore ? room : toRestore;
       if (amount <= 0n) continue;
       await updateLotAndRecord(
@@ -297,6 +300,8 @@ async function updateLotAndRecord(
     .update(storeSortedStocks)
     .set({
       saleWeightKg: gramsToKilogramsExact(balanceGrams),
+      bagQuantity:
+        balanceGrams === 0n ? 0 : lot.creditedBagQuantity - lot.transferredOutBagQuantity,
       version: sql`${storeSortedStocks.version} + 1`,
       updatedAt: now,
     })

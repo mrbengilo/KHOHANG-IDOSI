@@ -1890,9 +1890,17 @@ export const storeSortedStocks = pgTable(
     productId: uuid('product_id')
       .notNull()
       .references(() => products.id, { onDelete: 'restrict' }),
-    storeInventoryBagId: uuid('store_inventory_bag_id')
+    storeInventoryBagId: uuid('store_inventory_bag_id').references(() => storeInventoryBags.id, {
+      onDelete: 'restrict',
+    }),
+    // A received transfer creates a Sale lot without creating fresh inventory.
+    sourceTransferId: uuid('source_transfer_id'),
+    bagQuantity: integer('bag_quantity').notNull().default(0),
+    creditedBagQuantity: integer('credited_bag_quantity').notNull().default(0),
+    transferredOutBagQuantity: integer('transferred_out_bag_quantity').notNull().default(0),
+    transferredOutWeightKg: numeric('transferred_out_weight_kg', { precision: 14, scale: 3 })
       .notNull()
-      .references(() => storeInventoryBags.id, { onDelete: 'restrict' }),
+      .default('0.000'),
     saleCreditedWeightKg: numeric('sale_credited_weight_kg', { precision: 14, scale: 3 })
       .notNull()
       .default('0.000'),
@@ -1906,14 +1914,96 @@ export const storeSortedStocks = pgTable(
   },
   (table) => [
     uniqueIndex('store_sorted_stocks_bag_uidx').on(table.storeInventoryBagId),
+    uniqueIndex('store_sorted_stocks_source_transfer_uidx').on(table.sourceTransferId),
     index('store_sorted_stocks_store_product_idx').on(table.storeId, table.productId),
     check('store_sorted_stocks_sale_nonnegative', sql`${table.saleWeightKg} >= 0`),
+    check(
+      'store_sorted_stocks_exactly_one_source',
+      sql`((${table.storeInventoryBagId} IS NOT NULL)::integer + (${table.sourceTransferId} IS NOT NULL)::integer) = 1`,
+    ),
+    check(
+      'store_sorted_stocks_bags_nonnegative',
+      sql`${table.bagQuantity} >= 0 AND ${table.creditedBagQuantity} >= 0 AND ${table.transferredOutBagQuantity} >= 0`,
+    ),
+    check(
+      'store_sorted_stocks_bags_within_credited',
+      sql`${table.bagQuantity} + ${table.transferredOutBagQuantity} <= ${table.creditedBagQuantity}`,
+    ),
+    check(
+      'store_sorted_stocks_new_sale_bags_with_weight',
+      sql`${table.creditedBagQuantity} = 0 OR ((${table.bagQuantity} = 0) = (${table.saleWeightKg} = 0))`,
+    ),
+    check(
+      'store_sorted_stocks_weight_after_transfer',
+      sql`${table.transferredOutWeightKg} >= 0 AND ${table.saleWeightKg} + ${table.transferredOutWeightKg} <= ${table.saleCreditedWeightKg}`,
+    ),
     check(
       'store_sorted_stocks_sale_within_credited',
       sql`${table.saleWeightKg} <= ${table.saleCreditedWeightKg}`,
     ),
     check('store_sorted_stocks_charity_nonnegative', sql`${table.charityWeightKg} >= 0`),
     check('store_sorted_stocks_version_nonnegative', sql`${table.version} >= 0`),
+  ],
+);
+
+/** Sale transfers deduct the source immediately and credit the destination on receipt. */
+export const sortedSaleTransfers = pgTable(
+  'sorted_sale_transfers',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    transferNumber: text('transfer_number').notNull().unique(),
+    sourceStockId: uuid('source_stock_id')
+      .notNull()
+      .references(() => storeSortedStocks.id, { onDelete: 'restrict' }),
+    destinationStockId: uuid('destination_stock_id').references(() => storeSortedStocks.id, {
+      onDelete: 'restrict',
+    }),
+    sourceStoreId: uuid('source_store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    destinationStoreId: uuid('destination_store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    bagQuantity: integer('bag_quantity').notNull(),
+    weightKg: numeric('weight_kg', { precision: 14, scale: 3 }).notNull(),
+    enteredWeightKg: numeric('entered_weight_kg', { precision: 14, scale: 3 }),
+    status: text('status').notNull().default('in_transit'),
+    note: text('note'),
+    version: integer('version').notNull().default(0),
+    createdByUserId: uuid('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    receivedByUserId: uuid('received_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    receivedAt: timestamp('received_at', { withTimezone: true }),
+  },
+  (table) => [
+    index('sorted_sale_transfers_source_created_idx').on(table.sourceStoreId, table.createdAt),
+    index('sorted_sale_transfers_destination_status_idx').on(
+      table.destinationStoreId,
+      table.status,
+    ),
+    check(
+      'sorted_sale_transfers_distinct_stores',
+      sql`${table.sourceStoreId} <> ${table.destinationStoreId}`,
+    ),
+    check('sorted_sale_transfers_bags_positive', sql`${table.bagQuantity} > 0`),
+    check('sorted_sale_transfers_weight_positive', sql`${table.weightKg} > 0`),
+    check(
+      'sorted_sale_transfers_entered_weight_positive',
+      sql`${table.enteredWeightKg} IS NULL OR ${table.enteredWeightKg} > 0`,
+    ),
+    check('sorted_sale_transfers_status', sql`${table.status} IN ('in_transit', 'received')`),
+    check('sorted_sale_transfers_version_nonnegative', sql`${table.version} >= 0`),
+    check(
+      'sorted_sale_transfers_receipt',
+      sql`${table.status} <> 'received' OR (${table.destinationStockId} IS NOT NULL AND ${table.receivedByUserId} IS NOT NULL AND ${table.receivedAt} IS NOT NULL)`,
+    ),
   ],
 );
 
@@ -1925,9 +2015,9 @@ export const storeSortingEvents = pgTable(
     storeSortedStockId: uuid('store_sorted_stock_id').references(() => storeSortedStocks.id, {
       onDelete: 'restrict',
     }),
-    storeInventoryBagId: uuid('store_inventory_bag_id')
-      .notNull()
-      .references(() => storeInventoryBags.id, { onDelete: 'restrict' }),
+    storeInventoryBagId: uuid('store_inventory_bag_id').references(() => storeInventoryBags.id, {
+      onDelete: 'restrict',
+    }),
     storeId: uuid('store_id')
       .notNull()
       .references(() => stores.id, { onDelete: 'restrict' }),
@@ -1948,7 +2038,7 @@ export const storeSortingEvents = pgTable(
     check('store_sorting_events_weight_positive', sql`${table.weightKg} > 0`),
     check(
       'store_sorting_events_action',
-      sql`${table.action} IN ('sort_sale', 'sort_charity', 'sort_cancel', 'charity_to_sale', 'charity_export', 'idosi_sale_kg', 'idosi_sale_piece', 'idosi_sale_correction')`,
+      sql`${table.action} IN ('sort_sale', 'sort_charity', 'sort_cancel', 'charity_to_sale', 'charity_export', 'idosi_sale_kg', 'idosi_sale_piece', 'idosi_sale_correction', 'sale_transfer_out', 'sale_transfer_in')`,
     ),
     check(
       'store_sorting_events_piece_positive',

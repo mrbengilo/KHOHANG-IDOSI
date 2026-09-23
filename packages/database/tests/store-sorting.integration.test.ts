@@ -8,12 +8,15 @@ import {
   closeDatabase,
   createStorePartnerInbound,
   createStoreSorting,
+  createSortedSaleTransfer,
   db,
   exportCharity,
   listStoreSortedStocks,
+  listSortedSaleTransfers,
   moveCharityToSale,
   products,
   recordIdosiStatisticsSuccess,
+  receiveSortedSaleTransfer,
   storeGroups,
   storeInventoryBags,
   storeSaleSyncProgress,
@@ -139,7 +142,7 @@ describePostgres('sorted sale and charity stock with IDOSI reconciliation', () =
         role: 'store',
         status: 'active',
         storeId: store!.id,
-        passwordHash: admin!.passwordHash,
+        passwordHash: admin?.passwordHash ?? 'test-hash-placeholder-long-enough',
       })
       .returning();
     const [male, dress] = await Promise.all([
@@ -212,6 +215,7 @@ describePostgres('sorted sale and charity stock with IDOSI reconciliation', () =
         expectedInventoryVersion: bag.version,
         reason,
         weightKg,
+        bagQuantity: reason === 'SALE' ? 1 : null,
         actorUserId: actor!.id,
         idempotencyKey: randomUUID(),
         requestHash: randomUUID(),
@@ -243,6 +247,7 @@ describePostgres('sorted sale and charity stock with IDOSI reconciliation', () =
       storeId: store!.id,
       expectedVersion: charity.version,
       weightKg: '2.000',
+      bagQuantity: 1,
       actorUserId: actor!.id,
       idempotencyKey: randomUUID(),
       requestHash: randomUUID(),
@@ -257,6 +262,7 @@ describePostgres('sorted sale and charity stock with IDOSI reconciliation', () =
       storeId: store!.id,
       expectedVersion: moved.version,
       weightKg: '3.000',
+      bagQuantity: null,
       actorUserId: actor!.id,
       idempotencyKey: randomUUID(),
       requestHash: randomUUID(),
@@ -291,5 +297,132 @@ describePostgres('sorted sale and charity stock with IDOSI reconciliation', () =
     expect(
       afterHistorySync.find((stock) => stock.inventoryLotId === maleBag.id)?.saleWeightKg,
     ).toBe('24.000');
+  });
+
+  it('transfers sorted bags once and caps later IDOSI corrections at the source', async () => {
+    const token = randomUUID().replaceAll('-', '');
+    const [group] = await db
+      .insert(storeGroups)
+      .values({ code: `T${token}`, name: 'Transfer integration' })
+      .returning();
+    const [source, destination] = await db
+      .insert(stores)
+      .values([
+        { groupId: group!.id, code: `TS${token}`, name: 'Source Sale' },
+        { groupId: group!.id, code: `TD${token}`, name: 'Destination Sale' },
+      ])
+      .returning();
+    const [admin] = await db
+      .select({ passwordHash: users.passwordHash })
+      .from(users)
+      .where(eq(users.role, 'admin'))
+      .limit(1);
+    const [sourceUser, destinationUser] = await db
+      .insert(users)
+      .values([
+        {
+          email: `source.${token}@example.invalid`,
+          displayName: 'Source',
+          role: 'store',
+          status: 'active',
+          storeId: source!.id,
+          passwordHash: admin?.passwordHash ?? 'test-hash-placeholder-long-enough',
+        },
+        {
+          email: `destination.${token}@example.invalid`,
+          displayName: 'Destination',
+          role: 'store',
+          status: 'active',
+          storeId: destination!.id,
+          passwordHash: admin?.passwordHash ?? 'test-hash-placeholder-long-enough',
+        },
+      ])
+      .returning();
+    const [product] = await db.select().from(products).where(eq(products.sku, 'DO_NAM')).limit(1);
+    const now = new Date();
+    const period = new Date(now.getTime() + 7 * 3600000).toISOString().slice(0, 7);
+    const snapshot = async (store: typeof source, pieces: number, offsetSeconds: number) => {
+      const at = new Date(now.getTime() + offsetSeconds * 1000);
+      await recordIdosiStatisticsSuccess(db, {
+        target: { storeId: store!.id, storeCode: store!.code, storeName: store!.name },
+        scope: { storeId: store!.id, period, date: null, shiftId: null, paymentMethod: null },
+        payload: payload(period, at, pieces, 0),
+        source: 'MANUAL',
+        startedAt: at,
+        completedAt: at,
+        context: {
+          actor: { userId: null, role: null, storeId: null },
+          requestId: randomUUID(),
+          ipAddress: null,
+          userAgent: null,
+        },
+      });
+    };
+    await snapshot(source, 0, 0);
+    await snapshot(destination, 0, 0);
+    await createStorePartnerInbound(db, {
+      storeId: source!.id,
+      partnerName: 'Transfer source',
+      note: null,
+      receivedAt: now,
+      lines: [{ productId: product!.id, quantity: 1, bagWeightsKg: ['9.000'] }],
+      createdByUserId: sourceUser!.id,
+      requestId: randomUUID(),
+      idempotencyKey: randomUUID(),
+      requestHash: randomUUID(),
+    });
+    const [bag] = await db
+      .select()
+      .from(storeInventoryBags)
+      .where(eq(storeInventoryBags.storeId, source!.id));
+    await createStoreSorting(db, {
+      storeId: source!.id,
+      inventoryBagId: bag!.id,
+      expectedInventoryVersion: bag!.version,
+      reason: 'SALE',
+      weightKg: '9.000',
+      bagQuantity: 3,
+      actorUserId: sourceUser!.id,
+      idempotencyKey: randomUUID(),
+      requestHash: randomUUID(),
+    });
+    const [stock] = await listStoreSortedStocks(db, source!.id);
+    expect([stock?.bagQuantity, stock?.saleWeightKg]).toEqual([3, '9.000']);
+    const command = () =>
+      createSortedSaleTransfer(db, {
+        sourceStockId: stock!.id,
+        sourceStoreId: source!.id,
+        destinationStoreId: destination!.id,
+        expectedStockVersion: stock!.version,
+        bagQuantity: 2,
+        weightKg: null,
+        note: null,
+        actorUserId: sourceUser!.id,
+        idempotencyKey: randomUUID(),
+        requestHash: randomUUID(),
+      });
+    const attempts = await Promise.allSettled([command(), command()]);
+    expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(1);
+    expect(attempts.filter((attempt) => attempt.status === 'rejected')).toHaveLength(1);
+    const [transfer] = await listSortedSaleTransfers(db, [source!.id]);
+    expect([transfer?.status, transfer?.weightKg]).toEqual(['in_transit', '6.000']);
+    expect(await listStoreSortedStocks(db, destination!.id)).toHaveLength(0);
+    const [sourceAfter] = await listStoreSortedStocks(db, source!.id);
+    expect([sourceAfter?.bagQuantity, sourceAfter?.saleWeightKg]).toEqual([1, '3.000']);
+    await receiveSortedSaleTransfer(db, {
+      transferId: transfer!.id,
+      expectedVersion: 0,
+      actorUserId: destinationUser!.id,
+      idempotencyKey: randomUUID(),
+      requestHash: randomUUID(),
+    });
+    const [received] = await listStoreSortedStocks(db, destination!.id);
+    expect([received?.bagQuantity, received?.saleWeightKg]).toEqual([2, '6.000']);
+    await snapshot(source, 9, 1);
+    const [sold] = await listStoreSortedStocks(db, source!.id);
+    expect([sold?.bagQuantity, sold?.saleWeightKg]).toEqual([0, '0.000']);
+    await snapshot(source, 0, 2);
+    const [corrected] = await listStoreSortedStocks(db, source!.id);
+    expect([corrected?.bagQuantity, corrected?.saleWeightKg]).toEqual([1, '3.000']);
   });
 });

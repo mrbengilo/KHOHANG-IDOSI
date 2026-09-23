@@ -87,11 +87,12 @@ import {
   UpdateAccountRequestSchema,
   TransitionOrderSessionRequestSchema,
   ListStoreTransfersQuerySchema,
-  CreateStoreTransferRequestSchema,
-  DispatchStoreTransferRequestSchema,
   ReceiveStoreTransferRequestSchema,
   CancelStoreTransferRequestSchema,
   StoreTransferParamsSchema,
+  CreateSortedSaleTransferRequestSchema,
+  ReceiveSortedSaleTransferRequestSchema,
+  SortedSaleTransferParamsSchema,
   UpdateOperationalSettingsRequestSchema,
   UpdateStoreGroupRequestSchema,
   UpdateStoreRequestSchema,
@@ -1251,6 +1252,45 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return reply.send({ data: result.data });
   });
 
+  app.get('/api/v1/sorted-sale-transfers', async (request) => {
+    const session = await authenticate(request, repository);
+    return { data: await repository.listSortedSaleTransfers(session.principal) };
+  });
+
+  app.post('/api/v1/sorted-sale-transfers', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = CreateSortedSaleTransferRequestSchema.parse(request.body);
+    const result = await repository.createSortedSaleTransfer(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CREATE_SORTED_SALE_TRANSFER', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
+  });
+
+  app.post('/api/v1/sorted-sale-transfers/:transferId/receive', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { transferId } = SortedSaleTransferParamsSchema.parse(request.params);
+    const input = ReceiveSortedSaleTransferRequestSchema.parse(request.body);
+    const result = await repository.receiveSortedSaleTransfer(
+      session.principal,
+      transferId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'RECEIVE_SORTED_SALE_TRANSFER', transferId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
   app.get('/api/v1/store-transfers', async (request) => {
     const session = await authenticate(request, repository);
     const query = ListStoreTransfersQuerySchema.parse(request.query);
@@ -1263,38 +1303,26 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return { data: await repository.listStoreTransferDestinations(session.principal) };
   });
 
-  app.post('/api/v1/store-transfers', async (request, reply) => {
+  app.post('/api/v1/store-transfers', async (request) => {
     const session = await authenticate(request, repository);
     requireRole(session.principal, ['STORE']);
-    const headers = IdempotencyHeadersSchema.parse(request.headers);
-    const input = CreateStoreTransferRequestSchema.parse(request.body);
-    const result = await repository.createStoreTransfer(
-      session.principal,
-      input,
-      headers['idempotency-key'],
-      hashCanonicalRequest({ action: 'CREATE_STORE_TRANSFER', ...input }),
-      requestContext(request),
+    await repository.listStoreTransferDestinations(session.principal);
+    throw new ApiError(
+      'INVALID_STATE_TRANSITION',
+      'Chỉ hàng Sale sau lọc mới được điều chuyển',
+      409,
     );
-    reply.header('idempotency-replayed', String(result.replayed));
-    return reply.status(201).send({ data: result.data });
   });
 
-  app.post('/api/v1/store-transfers/:transferId/dispatch', async (request, reply) => {
+  app.post('/api/v1/store-transfers/:transferId/dispatch', async (request) => {
     const session = await authenticate(request, repository);
     requireRole(session.principal, ['STORE']);
-    const headers = IdempotencyHeadersSchema.parse(request.headers);
-    const { transferId } = StoreTransferParamsSchema.parse(request.params);
-    const input = DispatchStoreTransferRequestSchema.parse(request.body);
-    const result = await repository.dispatchStoreTransfer(
-      session.principal,
-      transferId,
-      input,
-      headers['idempotency-key'],
-      hashCanonicalRequest({ action: 'DISPATCH_STORE_TRANSFER', transferId, ...input }),
-      requestContext(request),
+    await repository.listStoreTransferDestinations(session.principal);
+    throw new ApiError(
+      'INVALID_STATE_TRANSITION',
+      'Chỉ hàng Sale sau lọc mới được điều chuyển',
+      409,
     );
-    reply.header('idempotency-replayed', String(result.replayed));
-    return reply.send({ data: result.data });
   });
 
   app.post('/api/v1/store-transfers/:transferId/receive', async (request, reply) => {
@@ -2150,6 +2178,32 @@ function openApiDocument(): Record<string, unknown> {
           responses: { '200': { description: 'Exported the remaining Charity balance' } },
         },
       },
+      '/api/v1/sorted-sale-transfers': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Sorted Sale transfers in caller scope' } },
+        },
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '201': { description: 'Dispatched transfer and deducted source Sale stock' },
+          },
+        },
+      },
+      '/api/v1/sorted-sale-transfers/{transferId}/receive': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Received transfer and credited destination Sale stock' },
+          },
+        },
+      },
       '/api/v1/store-transfers': {
         get: {
           security: cookieSecurity,
@@ -2160,7 +2214,7 @@ function openApiDocument(): Record<string, unknown> {
           parameters: [
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
-          responses: { '201': { description: 'Created or replayed draft store transfer' } },
+          responses: { '409': { description: 'Legacy fresh-stock transfer creation is disabled' } },
         },
       },
       '/api/v1/store-transfers/destinations': {
@@ -2175,7 +2229,7 @@ function openApiDocument(): Record<string, unknown> {
           parameters: [
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
-          responses: { '200': { description: 'Dispatched transfer and deducted source stock' } },
+          responses: { '409': { description: 'Legacy fresh-stock transfer dispatch is disabled' } },
         },
       },
       '/api/v1/store-transfers/{transferId}/receive': {

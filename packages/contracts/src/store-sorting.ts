@@ -5,6 +5,7 @@ import {
   IsoDateTimeSchema,
   KilogramsDecimalSchema,
   PositiveKilogramsDecimalSchema,
+  PositiveUnitQuantitySchema,
 } from './common.js';
 
 export const StoreSortingReasonSchema = z.enum(['SALE', 'CHARITY', 'CANCEL']);
@@ -18,6 +19,7 @@ export const StoreSortedStockSchema = z
     inventoryLotId: EntityIdSchema,
     bagCode: z.string().min(1),
     saleWeightKg: KilogramsDecimalSchema,
+    bagQuantity: z.number().int().nonnegative().safe(),
     charityWeightKg: KilogramsDecimalSchema,
     version: z.number().int().nonnegative(),
     updatedAt: IsoDateTimeSchema,
@@ -40,8 +42,13 @@ export const CreateStoreSortingRequestSchema = z
     expectedInventoryVersion: z.number().int().nonnegative(),
     reason: StoreSortingReasonSchema,
     weightKg: PositiveKilogramsDecimalSchema,
+    bagQuantity: PositiveUnitQuantitySchema.nullable(),
   })
-  .strict();
+  .strict()
+  .refine((value) => value.reason !== 'SALE' || value.bagQuantity !== null, {
+    path: ['bagQuantity'],
+    message: 'Sorting into Sale requires a bag quantity',
+  });
 export type CreateStoreSortingRequest = z.infer<typeof CreateStoreSortingRequestSchema>;
 
 export const StoreSortingResultSchema = z
@@ -58,10 +65,13 @@ export const MoveCharityToSaleRequestSchema = z
   .object({
     expectedVersion: z.number().int().nonnegative(),
     weightKg: PositiveKilogramsDecimalSchema,
+    bagQuantity: PositiveUnitQuantitySchema,
   })
   .strict();
 export type MoveCharityToSaleRequest = z.infer<typeof MoveCharityToSaleRequestSchema>;
-export const ExportCharityRequestSchema = MoveCharityToSaleRequestSchema;
+export const ExportCharityRequestSchema = MoveCharityToSaleRequestSchema.omit({
+  bagQuantity: true,
+});
 export type ExportCharityRequest = z.infer<typeof ExportCharityRequestSchema>;
 export const StoreSortedStockResponseSchema = z.object({ data: StoreSortedStockSchema }).strict();
 export const StoreSortingResultResponseSchema = z

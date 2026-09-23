@@ -2181,9 +2181,9 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(cancelled.json().data.pieceCount, null);
   });
 
-  test('moves one exact-cost lot only after source dispatch and destination confirmation', async () => {
+  test('moves only sorted Sale bags and credits destination after confirmation', async () => {
     const adminCookie = cookieOf(await login('admin'));
-    const createdDestinationAccount = await app.inject({
+    const account = await app.inject({
       method: 'POST',
       url: '/api/v1/admin/accounts',
       headers: { cookie: adminCookie },
@@ -2195,174 +2195,140 @@ describe('KHOHANG-IDOSI API', () => {
         storeId: MEMORY_SEED_IDS.bdStore,
       },
     });
-    assert.equal(createdDestinationAccount.statusCode, 201);
-
+    assert.equal(account.statusCode, 201);
     const sourceCookie = cookieOf(await login('ds_nvt'));
     const destinationCookie = cookieOf(await login('ds_bd'));
-    const destinationDirectory = await app.inject({
-      method: 'GET',
-      url: '/api/v1/store-transfers/destinations',
-      headers: { cookie: sourceCookie },
-    });
-    assert.equal(destinationDirectory.statusCode, 200);
-    assert.ok(
-      destinationDirectory.json().data.some((store) => store.id === MEMORY_SEED_IDS.bdStore),
-    );
-    assert.ok(
-      destinationDirectory
-        .json()
-        .data.every(
-          (store) =>
-            store.id !== MEMORY_SEED_IDS.nvtStore &&
-            store.kind === 'RETAIL' &&
-            store.status === 'ACTIVE',
-        ),
-    );
-    const createPayload = {
+    const legacy = await mutateTransfer(sourceCookie, '/api/v1/store-transfers', 'legacy-blocked', {
       sourceStoreId: MEMORY_SEED_IDS.nvtStore,
       destinationStoreId: MEMORY_SEED_IDS.bdStore,
       sourceInventoryBagId: MEMORY_SEED_IDS.inventoryBag,
-      weightKg: '5.000',
+      weightKg: '1.000',
       expectedSourceBagVersion: 0,
-      note: 'Bổ sung tồn kho cửa hàng Bình Dương',
-    };
-    const created = await mutateTransfer(
-      sourceCookie,
-      '/api/v1/store-transfers',
-      'transfer-create-0001',
-      createPayload,
-    );
-    assert.equal(created.statusCode, 201);
-    assert.equal(created.json().data.status, 'DRAFT');
-    assert.equal(created.json().data.costVnd, null);
-    const transferId = created.json().data.id;
+      note: null,
+    });
+    assert.equal(legacy.statusCode, 409);
 
-    const replayedCreate = await mutateTransfer(
-      sourceCookie,
-      '/api/v1/store-transfers',
-      'transfer-create-0001',
-      createPayload,
-    );
-    assert.equal(replayedCreate.statusCode, 201);
-    assert.equal(replayedCreate.headers['idempotency-replayed'], 'true');
-    assert.equal(replayedCreate.json().data.id, transferId);
+    const now = new Date();
+    const period = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      year: 'numeric',
+      month: '2-digit',
+    }).format(now);
+    for (const [cookie, storeId] of [
+      [sourceCookie, MEMORY_SEED_IDS.nvtStore],
+      [destinationCookie, MEMORY_SEED_IDS.bdStore],
+    ]) {
+      const principal = (await repository.resolveSession(cookie.split('=')[1])).principal;
+      const storeCode = repository.stores.get(storeId).code;
+      const payload = idosiStatisticsPayload(300_000);
+      await repository.recordIdosiStatisticsSuccess(
+        principal,
+        { storeId, period, date: null, shiftId: null, paymentMethod: null },
+        {
+          ...payload,
+          storeId: storeCode,
+          store: { ...payload.store, id: storeCode },
+          filters: { ...payload.filters, period },
+          generatedAt: now.toISOString(),
+        },
+        now,
+        now,
+        { requestId: 'sale-transfer-snapshot' },
+      );
+    }
 
-    const destinationCannotDispatch = await mutateTransfer(
-      destinationCookie,
-      `/api/v1/store-transfers/${transferId}/dispatch`,
-      'transfer-wrong-dispatch',
-      { expectedVersion: 0, expectedSourceBagVersion: 0 },
-    );
-    assert.equal(destinationCannotDispatch.statusCode, 403);
-
-    const dispatched = await mutateTransfer(
-      sourceCookie,
-      `/api/v1/store-transfers/${transferId}/dispatch`,
-      'transfer-dispatch-0001',
-      { expectedVersion: 0, expectedSourceBagVersion: 0 },
-    );
-    assert.equal(dispatched.statusCode, 200);
-    assert.equal(dispatched.json().data.status, 'IN_TRANSIT');
-    assert.equal(dispatched.json().data.costVnd, 500_000);
-
-    const sourceInventory = await app.inject({
+    const sorted = await mutateTransfer(sourceCookie, '/api/v1/store-sortings', 'sort-sale-bags', {
+      storeId: MEMORY_SEED_IDS.nvtStore,
+      inventoryLotId: MEMORY_SEED_IDS.inventoryBag,
+      expectedInventoryVersion: 0,
+      reason: 'SALE',
+      bagQuantity: 2,
+      weightKg: '5.000',
+    });
+    assert.equal(sorted.statusCode, 201, sorted.body);
+    const sourceBefore = await app.inject({
       method: 'GET',
-      url: '/api/v1/store-inventory-bags',
+      url: '/api/v1/store-sorted-stocks',
       headers: { cookie: sourceCookie },
     });
-    assert.equal(sourceInventory.json().data[0].remainingWeightKg, '19.500');
-    assert.equal(sourceInventory.json().data[0].version, 1);
-
-    const sourceCannotReceive = await mutateTransfer(
+    assert.equal(sourceBefore.json().data[0].bagQuantity, 2);
+    assert.equal(sourceBefore.json().data[0].saleWeightKg, '5.000');
+    const stock = sourceBefore.json().data[0];
+    const input = {
+      sourceStockId: stock.id,
+      sourceStoreId: MEMORY_SEED_IDS.nvtStore,
+      destinationStoreId: MEMORY_SEED_IDS.bdStore,
+      expectedStockVersion: stock.version,
+      bagQuantity: 1,
+      weightKg: null,
+      note: null,
+    };
+    const transfer = await mutateTransfer(
       sourceCookie,
-      `/api/v1/store-transfers/${transferId}/receive`,
-      'transfer-wrong-receive',
-      { expectedVersion: 1 },
+      '/api/v1/sorted-sale-transfers',
+      'sorted-transfer-create',
+      input,
     );
-    assert.equal(sourceCannotReceive.statusCode, 403);
-
+    assert.equal(transfer.statusCode, 201, transfer.body);
+    assert.equal(transfer.json().data.status, 'IN_TRANSIT');
+    assert.equal(transfer.json().data.weightKg, '2.500');
+    const replay = await mutateTransfer(
+      sourceCookie,
+      '/api/v1/sorted-sale-transfers',
+      'sorted-transfer-create',
+      input,
+    );
+    assert.equal(replay.headers['idempotency-replayed'], 'true');
+    const sourceAfter = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-sorted-stocks',
+      headers: { cookie: sourceCookie },
+    });
+    assert.equal(sourceAfter.json().data[0].bagQuantity, 1);
+    assert.equal(sourceAfter.json().data[0].saleWeightKg, '2.500');
+    const destinationBefore = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-sorted-stocks',
+      headers: { cookie: destinationCookie },
+    });
+    assert.equal(destinationBefore.json().data.length, 0);
+    const transferId = transfer.json().data.id;
+    const wrongReceiver = await mutateTransfer(
+      sourceCookie,
+      `/api/v1/sorted-sale-transfers/${transferId}/receive`,
+      'wrong-receiver',
+      { expectedVersion: 0 },
+    );
+    assert.equal(wrongReceiver.statusCode, 403);
     const received = await mutateTransfer(
       destinationCookie,
-      `/api/v1/store-transfers/${transferId}/receive`,
-      'transfer-receive-0001',
-      { expectedVersion: 1 },
+      `/api/v1/sorted-sale-transfers/${transferId}/receive`,
+      'receive-sorted-transfer',
+      { expectedVersion: 0 },
     );
-    assert.equal(received.statusCode, 200);
+    assert.equal(received.statusCode, 200, received.body);
     assert.equal(received.json().data.status, 'RECEIVED');
-    assert.ok(received.json().data.destinationInventoryBagId);
-
-    const replayedReceipt = await mutateTransfer(
+    const receivedReplay = await mutateTransfer(
       destinationCookie,
-      `/api/v1/store-transfers/${transferId}/receive`,
-      'transfer-receive-0001',
-      { expectedVersion: 1 },
+      `/api/v1/sorted-sale-transfers/${transferId}/receive`,
+      'receive-sorted-transfer',
+      { expectedVersion: 0 },
     );
-    assert.equal(replayedReceipt.statusCode, 200);
-    assert.equal(replayedReceipt.headers['idempotency-replayed'], 'true');
-    assert.equal(
-      replayedReceipt.json().data.destinationInventoryBagId,
-      received.json().data.destinationInventoryBagId,
-    );
-
-    const destinationInventory = await app.inject({
+    assert.equal(receivedReplay.headers['idempotency-replayed'], 'true');
+    const destinationAfter = await app.inject({
       method: 'GET',
-      url: '/api/v1/store-inventory-bags',
+      url: '/api/v1/store-sorted-stocks',
       headers: { cookie: destinationCookie },
     });
-    assert.equal(destinationInventory.statusCode, 200);
-    assert.equal(destinationInventory.json().pagination.totalItems, 1);
-    assert.equal(destinationInventory.json().data[0].remainingWeightKg, '5.000');
-    assert.equal(destinationInventory.json().data[0].sourceTransferId, transferId);
-    assert.equal(
-      destinationInventory.json().data[0].sourceInventoryBagId,
-      MEMORY_SEED_IDS.inventoryBag,
-    );
-
-    const destinationLedger = await app.inject({
-      method: 'GET',
-      url: `/api/v1/store-inventory-bags/${received.json().data.destinationInventoryBagId}/ledger`,
-      headers: { cookie: destinationCookie },
-    });
-    assert.equal(destinationLedger.statusCode, 200);
-    assert.equal(destinationLedger.json().data[0].operation, 'RECEIVE');
-
-    const oversight = await app.inject({
-      method: 'GET',
-      url: '/api/v1/store-transfers?status=RECEIVED',
-      headers: { cookie: cookieOf(await login('htkd')) },
-    });
-    assert.equal(oversight.statusCode, 200);
-    assert.equal(oversight.json().pagination.totalItems, 1);
-    assert.equal(oversight.json().data[0].id, transferId);
-
-    const concurrentDraft = await mutateTransfer(
+    assert.equal(destinationAfter.json().data[0].bagQuantity, 1);
+    assert.equal(destinationAfter.json().data[0].saleWeightKg, '2.500');
+    const stale = await mutateTransfer(
       sourceCookie,
-      '/api/v1/store-transfers',
-      'transfer-create-concurrent',
-      {
-        ...createPayload,
-        weightKg: '1.000',
-        expectedSourceBagVersion: 1,
-      },
+      '/api/v1/sorted-sale-transfers',
+      'stale-sorted-transfer',
+      input,
     );
-    assert.equal(concurrentDraft.statusCode, 201);
-    const concurrentId = concurrentDraft.json().data.id;
-    const concurrentDispatches = await Promise.all([
-      mutateTransfer(
-        sourceCookie,
-        `/api/v1/store-transfers/${concurrentId}/dispatch`,
-        'transfer-dispatch-concurrent-a',
-        { expectedVersion: 0, expectedSourceBagVersion: 1 },
-      ),
-      mutateTransfer(
-        sourceCookie,
-        `/api/v1/store-transfers/${concurrentId}/dispatch`,
-        'transfer-dispatch-concurrent-b',
-        { expectedVersion: 0, expectedSourceBagVersion: 1 },
-      ),
-    ]);
-    assert.equal(concurrentDispatches.filter((response) => response.statusCode === 200).length, 1);
-    assert.equal(concurrentDispatches.filter((response) => response.statusCode === 409).length, 1);
+    assert.equal(stale.statusCode, 409);
   });
 
   test('lists and filters store-scoped wait tickets, offers and history', async () => {
