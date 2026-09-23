@@ -13,6 +13,7 @@ import {
   CancelStoreOrderRequestSchema,
   CreateOrderSessionRequestSchema,
   ListAllocationsResponseSchema,
+  ListHeldAllocationsResponseSchema,
   ListReceiptsResponseSchema,
   ListStorePartnerInboundsResponseSchema,
   StorePartnerInboundResponseSchema,
@@ -52,6 +53,7 @@ import {
   type OrderSession,
   type PriorityOffer,
   type PriorityOfferStatus,
+  type HeldAllocation,
   type Receipt,
   type ReceiptStatus,
   type RespondPriorityOfferRequest,
@@ -569,6 +571,14 @@ export async function listStoreReceipts(filters: ReceiptFilters = {}): Promise<R
   return listAllPages('/store-receipts', query, (payload) =>
     ListReceiptsResponseSchema.parse(payload),
   );
+}
+
+/** Priority goods allocated to a store but held until its next ordinary order ships them. */
+export async function listHeldAllocations(storeId?: string): Promise<HeldAllocation[]> {
+  const query = new URLSearchParams();
+  if (storeId) query.set('storeId', storeId);
+  const suffix = query.size > 0 ? `?${query.toString()}` : '';
+  return ListHeldAllocationsResponseSchema.parse(await request(`/held-allocations${suffix}`)).data;
 }
 
 export async function getStoreReceipt(receiptId: string): Promise<Receipt> {

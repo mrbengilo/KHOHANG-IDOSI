@@ -9,6 +9,7 @@ import {
   dispatchWarehouseOutboundRequest,
   finalizeStoreReceipt,
   inventorySnapshots,
+  listHeldAllocationStock,
   listStoreReceiptSources,
   listWarehouseOutboundRequests,
   mergedOrders,
@@ -208,6 +209,11 @@ describePostgres('priority goods join the next ordinary shipment', () => {
         expect(
           held.every((row) => row.status === 'active' && row.outboundRequestLineId === null),
         ).toBe(true);
+        // Held goods are not silent: the store and its HTKD see them waiting for the next order.
+        expect(await listHeldAllocationStock(db, { storeIds: [store!.id] })).toEqual([
+          expect.objectContaining({ storeId: store!.id, productId: product!.id, heldQuantity: 3 }),
+        ]);
+        expect(await listHeldAllocationStock(db, { storeIds: [] })).toEqual([]);
 
         const [normal] = await db
           .insert(orderRequests)
@@ -313,6 +319,7 @@ describePostgres('priority goods join the next ordinary shipment', () => {
           dispatchedByUserId: null,
         });
         expect(outbound.lines[0]!.dispatchedQuantity).toBe(6);
+        expect(await listHeldAllocationStock(db, { storeIds: [store!.id] })).toEqual([]);
         await expect(
           dispatchWarehouseOutboundRequest(db, {
             outboundRequestId: outbound.id,

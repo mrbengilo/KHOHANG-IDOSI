@@ -503,3 +503,34 @@ export const ListStoreReceiptSourcesResponseSchema = z
   .object({ data: z.array(StoreReceiptSourceSchema), pagination: PaginationMetaSchema })
   .strict();
 export type ListStoreReceiptSourcesResponse = z.infer<typeof ListStoreReceiptSourcesResponseSchema>;
+
+/**
+ * Priority goods already allocated and reserved in the central warehouse that have no shipment
+ * yet. By rule they travel with the store's next ordinary order, so they are shown rather than
+ * shipped on their own.
+ */
+export const HeldAllocationSchema = z
+  .object({
+    storeId: EntityIdSchema,
+    productId: EntityIdSchema,
+    heldUnits: z.number().int().positive().safe(),
+    heldSince: IsoDateTimeSchema,
+  })
+  .strict();
+export type HeldAllocation = z.infer<typeof HeldAllocationSchema>;
+
+export const ListHeldAllocationsQuerySchema = z
+  .object({ storeId: EntityIdSchema.optional() })
+  .strict();
+export type ListHeldAllocationsQuery = z.infer<typeof ListHeldAllocationsQuerySchema>;
+
+export const ListHeldAllocationsResponseSchema = z
+  .object({ data: z.array(HeldAllocationSchema).max(10_000) })
+  .strict()
+  .refine(
+    (response) =>
+      new Set(response.data.map((row) => `${row.storeId}:${row.productId}`)).size ===
+      response.data.length,
+    { path: ['data'], message: 'A store and product may appear only once' },
+  );
+export type ListHeldAllocationsResponse = z.infer<typeof ListHeldAllocationsResponseSchema>;

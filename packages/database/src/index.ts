@@ -199,8 +199,13 @@ export type {
   StorePartnerInboundRecord,
 } from './store-partner-inbound.js';
 
-export { assembleStoreReceiptSources, listStoreReceiptSources } from './receipt-sources.js';
+export {
+  assembleStoreReceiptSources,
+  listHeldAllocationStock,
+  listStoreReceiptSources,
+} from './receipt-sources.js';
 export type {
+  HeldAllocationRecord,
   StoreReceiptSourceLineRecord,
   StoreReceiptSourceListInput,
   StoreReceiptSourcePage,

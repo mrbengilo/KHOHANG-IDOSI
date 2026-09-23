@@ -34,6 +34,7 @@ import type {
   ListStoreInventoryBagLedgerQuery,
   ListStoreInventoryBagsQuery,
   ListStoreOutboundsQuery,
+  ListHeldAllocationsQuery,
   ListStoreReceiptSourcesQuery,
   ListPriorityOffersQuery,
   ListProductConversionsQuery,
@@ -57,6 +58,7 @@ import type {
   StoreInventoryBagLedgerEntry,
   StoreOrderRequest,
   StoreOutbound,
+  HeldAllocation,
   StoreReceiptSource,
   StorePartnerInbound,
   SubmitStoreReceiptRequest,
@@ -494,6 +496,11 @@ export interface WarehouseRepository {
     actor: AuthenticatedPrincipal,
     query: ListStoreReceiptSourcesQuery,
   ): Promise<Page<StoreReceiptSource>>;
+  /** Allocated priority goods held for the store's next ordinary order; scoped server-side. */
+  listHeldAllocations(
+    actor: AuthenticatedPrincipal,
+    query: ListHeldAllocationsQuery,
+  ): Promise<HeldAllocation[]>;
   getReceipt(actor: AuthenticatedPrincipal, receiptId: string): Promise<Receipt>;
   declareStoreReceipt(
     actor: AuthenticatedPrincipal,

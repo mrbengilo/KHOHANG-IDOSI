@@ -8,13 +8,15 @@ import {
   inArray,
   isNotNull,
   isNull,
+  min,
   ne,
   notExists,
+  sum,
   type SQL,
 } from 'drizzle-orm';
 
 import type { Database } from './client.js';
-import { outboundRequestLines, outboundRequests, storeReceipts } from './schema.js';
+import { outboundRequestLines, outboundRequests, reservations, storeReceipts } from './schema.js';
 
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
@@ -251,4 +253,54 @@ function pageMetadata(
     totalItems,
     totalPages: totalItems === 0 ? 0 : Math.ceil(totalItems / pageSize),
   };
+}
+
+export interface HeldAllocationRecord {
+  readonly storeId: string;
+  readonly productId: string;
+  readonly heldQuantity: number;
+  readonly heldSince: Date;
+}
+
+/**
+ * Active allocation reservations with no shipment line: priority goods intentionally held in
+ * the central warehouse until the store's next ordinary order carries them (continuous ordering
+ * rule). `storeIds` is a server-authorized scope; undefined means every store.
+ */
+export async function listHeldAllocationStock(
+  database: Database,
+  input: { readonly storeIds?: readonly string[] },
+): Promise<readonly HeldAllocationRecord[]> {
+  if (input.storeIds?.length === 0) return [];
+  const conditions: SQL[] = [
+    eq(reservations.status, 'active'),
+    isNull(reservations.deletedAt),
+    isNotNull(reservations.allocationLineId),
+    isNull(reservations.outboundRequestLineId),
+  ];
+  if (input.storeIds !== undefined) {
+    conditions.push(inArray(reservations.storeId, [...new Set(input.storeIds)]));
+  }
+  const rows = await database
+    .select({
+      storeId: reservations.storeId,
+      productId: reservations.productId,
+      heldQuantity: sum(reservations.quantity).mapWith(Number),
+      heldSince: min(reservations.createdAt),
+    })
+    .from(reservations)
+    .where(and(...conditions))
+    .groupBy(reservations.storeId, reservations.productId)
+    .orderBy(reservations.storeId, reservations.productId);
+  return rows.map((row) => {
+    if (row.heldSince === null || !Number.isSafeInteger(row.heldQuantity)) {
+      throw new Error('A held allocation must have a quantity and a start time.');
+    }
+    return {
+      storeId: row.storeId,
+      productId: row.productId,
+      heldQuantity: row.heldQuantity,
+      heldSince: row.heldSince,
+    };
+  });
 }
