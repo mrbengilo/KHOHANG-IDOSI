@@ -2562,6 +2562,105 @@ describe('KHOHANG-IDOSI API', () => {
     );
   });
 
+  test('replaces a locked or disabled store account without restoring its access', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const oldCookie = cookieOf(await login('ds_nvt'));
+    const accountPath = `/api/v1/admin/accounts/${MEMORY_SEED_IDS.storeAccount}`;
+    const locked = await app.inject({
+      method: 'PATCH',
+      url: accountPath,
+      headers: { cookie: adminCookie },
+      payload: { status: 'LOCKED', expectedSessionVersion: 0 },
+    });
+    assert.equal(locked.statusCode, 200, locked.body);
+    assert.equal(
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/api/v1/auth/session',
+          headers: { cookie: oldCookie },
+        })
+      ).statusCode,
+      401,
+    );
+    const lockedLogin = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { username: 'ds_nvt', password: PASSWORD },
+    });
+    assert.equal(lockedLogin.statusCode, 403);
+    assert.equal(lockedLogin.json().error.code, 'ACCOUNT_INACTIVE');
+
+    const replacementPassword = 'Replacement-store-password-2026!';
+    const create = () =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/accounts',
+        headers: { cookie: adminCookie },
+        payload: {
+          username: 'ds_nvt',
+          displayName: 'Replacement NVT',
+          password: replacementPassword,
+          role: 'STORE',
+          storeId: MEMORY_SEED_IDS.nvtStore,
+        },
+      });
+    const replacement = await create();
+    assert.equal(replacement.statusCode, 201, replacement.body);
+    assert.notEqual(replacement.json().data.id, MEMORY_SEED_IDS.storeAccount);
+    assert.equal((await create()).statusCode, 409);
+
+    const oldPasswordLogin = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { username: 'ds_nvt', password: PASSWORD },
+    });
+    assert.equal(oldPasswordLogin.statusCode, 401);
+    const newPasswordLogin = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { username: 'ds_nvt', password: replacementPassword },
+    });
+    assert.equal(newPasswordLogin.statusCode, 200, newPasswordLogin.body);
+    assert.equal(newPasswordLogin.json().data.principal.accountId, replacement.json().data.id);
+
+    const reactivateOld = await app.inject({
+      method: 'PATCH',
+      url: accountPath,
+      headers: { cookie: adminCookie },
+      payload: { status: 'ACTIVE', expectedSessionVersion: locked.json().data.sessionVersion },
+    });
+    assert.equal(reactivateOld.statusCode, 409, reactivateOld.body);
+    assert.equal(reactivateOld.json().error.code, 'CONFLICT');
+
+    const disabled = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/accounts/${replacement.json().data.id}`,
+      headers: { cookie: adminCookie },
+      payload: { status: 'DISABLED', expectedSessionVersion: 0 },
+    });
+    assert.equal(disabled.statusCode, 200, disabled.body);
+    assert.equal(
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/api/v1/auth/session',
+          headers: { cookie: cookieOf(newPasswordLogin) },
+        })
+      ).statusCode,
+      401,
+    );
+    const disabledLogin = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { username: 'ds_nvt', password: replacementPassword },
+    });
+    assert.equal(disabledLogin.statusCode, 403);
+    assert.equal(disabledLogin.json().error.code, 'ACCOUNT_INACTIVE');
+    const third = await create();
+    assert.equal(third.statusCode, 201, third.body);
+  });
+
   test('lists and atomically replaces audited HTKD store assignments for ADMIN', async () => {
     const adminCookie = cookieOf(await login('admin'));
     const storeCookie = cookieOf(await login('ds_nvt'));

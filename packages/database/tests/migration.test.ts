@@ -210,7 +210,7 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(13);
+    expect(journal.entries).toHaveLength(14);
     expect(journal.entries[8]).toMatchObject({ tag: '0008_optional_supplier_weight' });
     expect(journal.entries[9]).toMatchObject({ tag: '0009_supported_allocation_policy' });
     expect(journal.entries[10]).toMatchObject({
@@ -225,6 +225,10 @@ describe('initial migration invariants', () => {
     });
     expect(journal.entries[12]).toMatchObject({
       tag: '0012_store_partner_inbound',
+      breakpoints: true,
+    });
+    expect(journal.entries[13]).toMatchObject({
+      tag: '0013_replace_inactive_store_accounts',
       breakpoints: true,
     });
     expect(journal.entries[7]).toMatchObject({ tag: '0007_receipt_vat', breakpoints: true });
@@ -436,11 +440,20 @@ describe('initial migration invariants', () => {
     expect(migration).toContain('store_outbounds_validate_review');
   });
 
-  it('uses exact case-sensitive account identity and one non-deleted STORE account per store', () => {
+  it('uses exact case-sensitive account identity and one active STORE account per store', () => {
     expect(migration).toContain('"users_email_uidx"');
     expect(migration).not.toContain('users_email_lower_uidx');
     expect(migration).toContain('"users_one_store_account_uidx"');
     expect(migration).toMatch(/"role" = 'store' AND "users"\."deleted_at" IS NULL/);
+    const replacement = readFileSync(
+      new URL('../migrations/0013_replace_inactive_store_accounts.sql', import.meta.url),
+      'utf8',
+    );
+    expect(replacement).toContain('"users_active_email_uidx"');
+    expect(replacement).toMatch(
+      /"role" = 'store' AND "status" = 'active' AND "deleted_at" IS NULL/,
+    );
+    expect(schemaSource).toContain("${table.status} = 'active' AND ${table.deletedAt} IS NULL");
   });
 
   it('revokes sessions when store access or HTKD assignment is revoked', () => {

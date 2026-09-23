@@ -6,7 +6,7 @@ import { closeDatabase, db, storeGroups, stores, users } from '@idosi/database';
 import { and, eq, isNull } from 'drizzle-orm';
 
 import { PostgresWarehouseRepository } from '../dist/postgres-repository.js';
-import { hashPassword } from '../dist/security.js';
+import { hashPassword, verifyPassword } from '../dist/security.js';
 
 const describePostgres = process.env.RUN_POSTGRES_TESTS === '1' ? describe : describe.skip;
 
@@ -75,6 +75,65 @@ describePostgres('PostgreSQL account conflicts', () => {
         .from(users)
         .where(eq(users.storeId, store.id));
       assert.equal(existing.length, 1);
+
+      const oldCredentials = await repository.findCredentials(`store.existing.${suffix}`);
+      const oldToken = `${randomUUID()}-${randomUUID()}`;
+      await repository.createSession(
+        oldCredentials,
+        oldToken,
+        new Date(Date.now() + 60_000),
+        context,
+      );
+
+      const locked = await repository.updateAccount(
+        actor,
+        existing[0].id,
+        { status: 'LOCKED', expectedSessionVersion: 0 },
+        context,
+      );
+      assert.equal(locked.status, 'LOCKED');
+      await assert.rejects(
+        () => repository.resolveSession(oldToken),
+        (error) => error.code === 'SESSION_REVOKED',
+      );
+      const replacement = await repository.createAccount(
+        actor,
+        {
+          displayName: 'Replacement store account',
+          password: 'Replacement-store-password-2026!',
+          role: 'STORE',
+          storeId: store.id,
+          username: `store.existing.${suffix}`,
+        },
+        context,
+      );
+      const newCredentials = await repository.findCredentials(`store.existing.${suffix}`);
+      assert.equal(newCredentials.id, replacement.id);
+      assert.equal(
+        await verifyPassword('Existing-store-password-2026!', newCredentials.passwordHash),
+        false,
+      );
+      const replacementToken = `${randomUUID()}-${randomUUID()}`;
+      await repository.createSession(
+        newCredentials,
+        replacementToken,
+        new Date(Date.now() + 60_000),
+        context,
+      );
+      assert.equal(
+        (await repository.resolveSession(replacementToken)).principal.accountId,
+        replacement.id,
+      );
+      await assert.rejects(
+        () =>
+          repository.updateAccount(
+            actor,
+            existing[0].id,
+            { status: 'ACTIVE', expectedSessionVersion: locked.sessionVersion },
+            context,
+          ),
+        (error) => error.code === 'CONFLICT' && error.statusCode === 409,
+      );
     } finally {
       await db.delete(users).where(eq(users.storeId, store.id));
       await db.delete(stores).where(eq(stores.id, store.id));

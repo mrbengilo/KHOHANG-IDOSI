@@ -314,6 +314,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       .select()
       .from(users)
       .where(and(eq(users.email, username.trim()), isNull(users.deletedAt)))
+      .orderBy(desc(sql`${users.status} = 'active'`), desc(users.createdAt))
       .limit(1);
     if (!account) return null;
     return this.credentialsFromRow(account);
@@ -541,7 +542,8 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         return result;
       });
     } catch (error) {
-      if (isUniqueViolation(error)) throw conflict('Tên đăng nhập hoặc cửa hàng đã có tài khoản');
+      if (isUniqueViolation(error))
+        throw conflict('Tên đăng nhập hoặc cửa hàng đã có tài khoản đang hoạt động');
       throw error;
     }
   }
@@ -557,59 +559,65 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     if (accountId === actor.accountId && input.status !== undefined && input.status !== 'ACTIVE') {
       throw forbidden('Không thể tự khóa hoặc vô hiệu hóa tài khoản quản trị đang dùng');
     }
-    return db.transaction(async (tx) => {
-      const [current] = await tx
-        .select()
-        .from(users)
-        .where(and(eq(users.id, accountId), isNull(users.deletedAt)))
-        .for('update')
-        .limit(1);
-      if (!current) throw notFound('Không tìm thấy tài khoản');
-      assertPostgresAccountVersion(current.tokenVersion, input.expectedSessionVersion);
-      const currentDto = accountDto(current);
-      const nextDisplayName = input.displayName ?? currentDto.displayName;
-      const nextStatus = input.status ?? currentDto.status;
-      const statusChanged = nextStatus !== currentDto.status;
-      if (nextDisplayName === currentDto.displayName && !statusChanged) return currentDto;
+    try {
+      return await db.transaction(async (tx) => {
+        const [current] = await tx
+          .select()
+          .from(users)
+          .where(and(eq(users.id, accountId), isNull(users.deletedAt)))
+          .for('update')
+          .limit(1);
+        if (!current) throw notFound('Không tìm thấy tài khoản');
+        assertPostgresAccountVersion(current.tokenVersion, input.expectedSessionVersion);
+        const currentDto = accountDto(current);
+        const nextDisplayName = input.displayName ?? currentDto.displayName;
+        const nextStatus = input.status ?? currentDto.status;
+        const statusChanged = nextStatus !== currentDto.status;
+        if (nextDisplayName === currentDto.displayName && !statusChanged) return currentDto;
 
-      const now = new Date();
-      const nextVersion = current.tokenVersion + (statusChanged ? 1 : 0);
-      const [updated] = await tx
-        .update(users)
-        .set({
-          displayName: nextDisplayName,
-          status: databaseAccountStatus(nextStatus),
-          tokenVersion: nextVersion,
-          updatedAt: now,
-        })
-        .where(and(eq(users.id, accountId), eq(users.tokenVersion, current.tokenVersion)))
-        .returning();
-      if (!updated) throw accountVersionConflict();
+        const now = new Date();
+        const nextVersion = current.tokenVersion + (statusChanged ? 1 : 0);
+        const [updated] = await tx
+          .update(users)
+          .set({
+            displayName: nextDisplayName,
+            status: databaseAccountStatus(nextStatus),
+            tokenVersion: nextVersion,
+            updatedAt: now,
+          })
+          .where(and(eq(users.id, accountId), eq(users.tokenVersion, current.tokenVersion)))
+          .returning();
+        if (!updated) throw accountVersionConflict();
 
-      const sessionsRevoked = statusChanged
-        ? (
-            await tx
-              .update(sessions)
-              .set({ revokedAt: now, revokeReason: 'account_status_changed' })
-              .where(and(eq(sessions.userId, accountId), isNull(sessions.revokedAt)))
-              .returning({ id: sessions.id })
-          ).length
-        : 0;
-      const result = accountDto(updated);
-      await tx.insert(auditLogs).values({
-        ...auditValue(
-          actor,
-          context,
-          statusChanged ? 'ACCOUNT_STATUS_UPDATED' : 'ACCOUNT_UPDATED',
-          'user',
-          accountId,
-          accountJson(currentDto),
-          accountJson(result),
-        ),
-        metadata: { sessionsRevoked },
+        const sessionsRevoked = statusChanged
+          ? (
+              await tx
+                .update(sessions)
+                .set({ revokedAt: now, revokeReason: 'account_status_changed' })
+                .where(and(eq(sessions.userId, accountId), isNull(sessions.revokedAt)))
+                .returning({ id: sessions.id })
+            ).length
+          : 0;
+        const result = accountDto(updated);
+        await tx.insert(auditLogs).values({
+          ...auditValue(
+            actor,
+            context,
+            statusChanged ? 'ACCOUNT_STATUS_UPDATED' : 'ACCOUNT_UPDATED',
+            'user',
+            accountId,
+            accountJson(currentDto),
+            accountJson(result),
+          ),
+          metadata: { sessionsRevoked },
+        });
+        return result;
       });
-      return result;
-    });
+    } catch (error) {
+      if (isUniqueViolation(error))
+        throw conflict('Tên đăng nhập hoặc cửa hàng đã có tài khoản đang hoạt động');
+      throw error;
+    }
   }
 
   public async resetAccountPassword(
