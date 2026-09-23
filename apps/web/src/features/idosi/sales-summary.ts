@@ -11,6 +11,12 @@ import type { IdosiStatisticsState } from '@idosi/contracts';
 const productIdentity = (item: { canonicalProductId?: string | undefined; productId: string }) =>
   item.canonicalProductId?.trim() || item.productId;
 
+const addKg = (left: number, right: number): number =>
+  (Math.round(left * 1_000_000) + Math.round(right * 1_000_000)) / 1_000_000;
+
+const sumRevenue = (values: readonly number[]): bigint =>
+  values.reduce((sum, value) => sum + BigInt(value), 0n);
+
 /** Snapshot replacement is handled by the server; never add successive syncs. */
 export function summarizeIdosiSales(states: readonly IdosiStatisticsState[]) {
   const snapshots = states.flatMap((state) => (state.snapshot ? [state.snapshot] : []));
@@ -33,6 +39,13 @@ export function summarizeIdosiSales(states: readonly IdosiStatisticsState[]) {
       productName: string;
       productCode: string | null | undefined;
       pieces: number;
+      normalPieces: number;
+      unclassifiedPieces: number;
+      salePiecePieces: number;
+      salePieceKg: number;
+      saleKg: number;
+      salePieceComplete: boolean;
+      saleKgComplete: boolean;
       knownKg: number;
       isComplete: boolean;
     }
@@ -50,11 +63,29 @@ export function summarizeIdosiSales(states: readonly IdosiStatisticsState[]) {
       productName: item.productName,
       productCode: item.canonicalProductCode ?? item.productCode,
       pieces: 0,
+      normalPieces: 0,
+      unclassifiedPieces: 0,
+      salePiecePieces: 0,
+      salePieceKg: 0,
+      saleKg: 0,
+      salePieceComplete: true,
+      saleKgComplete: true,
       knownKg: 0,
       isComplete: true,
     };
     total.pieces += item.unit === 'PIECE' ? item.quantity : 0;
-    total.knownKg += item.weight.knownKg;
+    if (item.classification === 'NORMAL') total.normalPieces += item.quantity;
+    if (item.classification === 'UNCLASSIFIED') total.unclassifiedPieces += item.quantity;
+    if (item.classification === 'SALE_PIECE') {
+      total.salePiecePieces += item.quantity;
+      total.salePieceKg = addKg(total.salePieceKg, item.weight.estimatedKg);
+      total.salePieceComplete = total.salePieceComplete && item.weight.isComplete;
+    }
+    if (item.classification === 'SALE_KG') {
+      total.saleKg = addKg(total.saleKg, item.weight.actualKg);
+      total.saleKgComplete = total.saleKgComplete && item.weight.isComplete;
+    }
+    total.knownKg = addKg(total.knownKg, item.weight.knownKg);
     total.isComplete = total.isComplete && item.weight.isComplete;
     byProduct.set(identity, total);
   }
@@ -71,6 +102,38 @@ export function summarizeIdosiSales(states: readonly IdosiStatisticsState[]) {
       (sum, snapshot) => sum + BigInt(snapshot.payload.totals.revenue),
       0n,
     ),
+    normalRevenueVnd: sumRevenue(
+      snapshots.map(
+        (snapshot) =>
+          snapshot.payload.totals.revenueByType.NORMAL -
+          snapshot.payload.totals.unclassifiedRevenue,
+      ),
+    ),
+    salePieceRevenueVnd: sumRevenue(
+      snapshots.map((snapshot) => snapshot.payload.totals.revenueByType.SALE_PIECE),
+    ),
+    saleKgRevenueVnd: sumRevenue(
+      snapshots.map((snapshot) => snapshot.payload.totals.revenueByType.SALE_KG),
+    ),
+    unclassifiedRevenueVnd: sumRevenue(
+      snapshots.map((snapshot) => snapshot.payload.totals.unclassifiedRevenue),
+    ),
+    salePieceQuantity: snapshots.reduce(
+      (sum, snapshot) => sum + snapshot.payload.products.salePieceQuantity,
+      0,
+    ),
+    salePieceEstimatedKg: snapshots.reduce(
+      (sum, snapshot) =>
+        addKg(sum, snapshot.payload.totals.weight.byRevenueType.SALE_PIECE.estimatedKg),
+      0,
+    ),
+    salePieceWeightComplete: snapshots.every(
+      (snapshot) => snapshot.payload.totals.weight.byRevenueType.SALE_PIECE.isComplete,
+    ),
+    saleKgActualKg: snapshots.reduce(
+      (sum, snapshot) => addKg(sum, snapshot.payload.totals.weight.byRevenueType.SALE_KG.actualKg),
+      0,
+    ),
     pieces: products.reduce((sum, item) => sum + (item.unit === 'PIECE' ? item.quantity : 0), 0),
     actualKg: snapshots.reduce(
       (sum, snapshot) => sum + snapshot.payload.products.weight.actualKg,
@@ -85,6 +148,20 @@ export function summarizeIdosiSales(states: readonly IdosiStatisticsState[]) {
       (sum, snapshot) => sum + snapshot.payload.products.unclassifiedOrders,
       0,
     ),
+    revenueUnclassifiedOrders: snapshots.reduce(
+      (sum, snapshot) => sum + snapshot.payload.totals.unclassifiedOrders,
+      0,
+    ),
     staleStores: states.filter((state) => state.freshness === 'STALE').length,
+    resyncStores: states.filter((state) => state.freshness === 'RESYNC_REQUIRED').length,
+    reconciliationMismatches: snapshots.filter((snapshot) => {
+      const totals = snapshot.payload.totals;
+      const { NORMAL, SALE_KG, SALE_PIECE } = totals.revenueByType;
+      return (
+        NORMAL + SALE_KG + SALE_PIECE !== totals.revenue ||
+        NORMAL - totals.unclassifiedRevenue + SALE_KG + SALE_PIECE + totals.unclassifiedRevenue !==
+          totals.revenue
+      );
+    }).length,
   };
 }
