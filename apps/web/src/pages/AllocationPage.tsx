@@ -525,6 +525,13 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
       ),
     [sessionsQuery.data, orderRequestsQuery.data, storesQuery.data],
   );
+  const sessionRowSpans = useMemo(() => {
+    const spans = new Map<string, number>();
+    for (const row of sessionRows) {
+      spans.set(row.session.id, (spans.get(row.session.id) ?? 0) + 1);
+    }
+    return spans;
+  }, [sessionRows]);
   const settingsQuery = useQuery({
     enabled: role === 'ADMIN',
     queryFn: () => getAdminOperationalSettings(1),
@@ -1006,7 +1013,11 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                           </button>
                         </td>
                         {role === 'ADMIN' && firstOfSession ? (
-                          <td data-label="Thao tác">
+                          <td
+                            className="allocation-session-action-cell"
+                            data-label="Thao tác"
+                            rowSpan={sessionRowSpans.get(session.id) ?? 1}
+                          >
                             <div className="allocation-session-actions">
                               {transitions.includes('OPEN') ? (
                                 <button
@@ -1054,11 +1065,6 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                               ) : null}
                               {transitions.length === 0 ? <span>Không còn thao tác</span> : null}
                             </div>
-                          </td>
-                        ) : null}
-                        {role === 'ADMIN' && !firstOfSession ? (
-                          <td data-label="Thao tác">
-                            <small>Thao tác phiên ở dòng đầu của phiên này</small>
                           </td>
                         ) : null}
                       </tr>
