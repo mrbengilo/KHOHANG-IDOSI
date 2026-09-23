@@ -19,11 +19,10 @@ test('admin menu and branding match the warehouse role', async ({ page }) => {
     .locator('a svg')
     .evaluateAll((elements) => elements.map((element) => getComputedStyle(element).color));
   expect(new Set(iconColors).size).toBeGreaterThanOrEqual(3);
-  expect(
-    await page
-      .locator('.sidebar .app-logo')
-      .evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0),
-  ).toBe(true);
+  const logo = page.locator('.sidebar .app-logo');
+  await expect
+    .poll(() => logo.evaluate((image: HTMLImageElement) => image.naturalWidth))
+    .toBeGreaterThan(0);
   const favicon = await page.locator('link[rel="icon"]').getAttribute('href');
   expect((await page.request.get(favicon!)).ok()).toBe(true);
 });
