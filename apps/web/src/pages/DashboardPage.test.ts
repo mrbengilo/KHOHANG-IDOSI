@@ -134,6 +134,22 @@ describe('dashboard authorization scope', () => {
     });
     expect(resolveDashboardScope(sessionFor('HTKD'), [], storeId)).toBeNull();
   });
+
+  it('lets the wholesale desk see all assigned wholesale stores or one selected store', () => {
+    const wholesaleSession = {
+      ...sessionFor('WHOLESALE'),
+      principal: {
+        ...sessionFor('WHOLESALE').principal,
+        assignedStoreIds: [secondStoreId],
+      },
+    };
+    expect(resolveDashboardScope(wholesaleSession, stores, '')).toEqual({ kind: 'ALL' });
+    expect(resolveDashboardScope(wholesaleSession, stores, secondStoreId)).toEqual({
+      kind: 'STORE',
+      storeId: secondStoreId,
+    });
+    expect(resolveDashboardScope(wholesaleSession, stores, storeId)).toEqual({ kind: 'ALL' });
+  });
 });
 
 describe('dashboard state and actions', () => {

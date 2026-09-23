@@ -7,6 +7,7 @@ import type {
   ReturnReceiptForCorrectionRequest,
   StoreReceiptSource,
   SubmitStoreReceiptRequest,
+  UnexpectedReceiptItem,
 } from '@idosi/contracts';
 import {
   AlertTriangle,
@@ -118,26 +119,40 @@ function ProductionReceivePage({ role }: AppOutletContext) {
   const operationKeys = useRef(new Map<string, string>());
   const operationInFlight = useRef(false);
   const principalStoreId = sessionQuery.data?.principal.storeId ?? '';
+  const isStoreReceiver = role === 'STORE' || role === 'WHOLESALE';
 
   const storesQuery = useQuery({
     queryFn: listAccessibleStores,
     queryKey: ['stores', 'accessible'],
     retry: false,
   });
+  const wholesaleStores = (storesQuery.data ?? []).filter((store) => store.kind === 'WHOLESALE');
+  const receivingStoreId =
+    role === 'WHOLESALE'
+      ? wholesaleStores.find((store) => store.id === storeFilter)?.id ||
+        wholesaleStores[0]?.id ||
+        ''
+      : principalStoreId;
   const catalogQuery = useQuery({ queryFn: listCatalog, queryKey: ['catalog'], retry: false });
   const receiptSourcesQuery = useQuery({
-    enabled: role === 'STORE' && Boolean(principalStoreId),
-    queryFn: () => listStoreReceiptSources({ storeId: principalStoreId }),
-    queryKey: ['store-receipt-sources', principalStoreId],
+    enabled: isStoreReceiver && Boolean(receivingStoreId),
+    queryFn: () => listStoreReceiptSources({ storeId: receivingStoreId }),
+    queryKey: ['store-receipt-sources', receivingStoreId],
     retry: false,
   });
   const receiptsQuery = useQuery({
+    enabled: role !== 'WHOLESALE' || Boolean(receivingStoreId),
     queryFn: () =>
       listStoreReceipts({
         ...(statusFilter === 'ALL' ? {} : { status: statusFilter }),
-        ...(role !== 'STORE' && storeFilter ? { storeId: storeFilter } : {}),
+        ...(role === 'WHOLESALE' && receivingStoreId ? { storeId: receivingStoreId } : {}),
+        ...(role === 'HTKD' || role === 'ADMIN'
+          ? storeFilter
+            ? { storeId: storeFilter }
+            : {}
+          : {}),
       }),
-    queryKey: ['store-receipts', role, storeFilter, statusFilter],
+    queryKey: ['store-receipts', role, receivingStoreId, storeFilter, statusFilter],
     retry: false,
   });
 
@@ -157,6 +172,7 @@ function ProductionReceivePage({ role }: AppOutletContext) {
     () => new Map((catalogQuery.data ?? []).map((product) => [product.id, product.name])),
     [catalogQuery.data],
   );
+  const activeProducts = (catalogQuery.data ?? []).filter((product) => product.status === 'ACTIVE');
   const storeNameById = useMemo(
     () => new Map(stores.map((store) => [store.id, store.name])),
     [stores],
@@ -189,7 +205,7 @@ function ProductionReceivePage({ role }: AppOutletContext) {
       queryClient.setQueryData(['store-receipt', receipt.id], receipt);
       if (operation.kind === 'DECLARE') {
         queryClient.setQueryData<StoreReceiptSource[]>(
-          ['store-receipt-sources', principalStoreId],
+          ['store-receipt-sources', receivingStoreId],
           (sources = []) => removeDeclaredReceiptSource(sources, operation.input.outboundRequestId),
         );
       }
@@ -249,11 +265,11 @@ function ProductionReceivePage({ role }: AppOutletContext) {
     <>
       <PageHeader
         description={
-          role === 'STORE'
+          isStoreReceiver
             ? 'Cửa hàng khai số thực nhận; tồn kho chỉ tăng sau khi HTKD duyệt.'
             : 'Đối chiếu khai nhận, cân từng Mã bao và chốt chi phí trước khi nhập kho.'
         }
-        title={role === 'STORE' ? 'Xác nhận nhận hàng' : 'Duyệt phiếu nhận hàng'}
+        title={isStoreReceiver ? 'Xác nhận nhận hàng' : 'Duyệt phiếu nhận hàng'}
       />
 
       <div className="stats-grid stats-grid--small">
@@ -282,26 +298,27 @@ function ProductionReceivePage({ role }: AppOutletContext) {
         />
       </div>
 
-      {role === 'STORE' && principalStoreId ? (
+      {isStoreReceiver && receivingStoreId ? (
         <CreateReceiptForm
           busy={pendingOperation === 'DECLARE'}
           disabled={mutation.isPending}
           onDeclare={(input) => runOperation({ kind: 'DECLARE', input })}
           onRefresh={() => receiptSourcesQuery.refetch()}
           productNameById={productNameById}
+          unexpectedProducts={activeProducts}
           sources={receiptSourcesQuery.data ?? []}
           sourcesError={receiptSourcesQuery.error}
           sourcesFetching={receiptSourcesQuery.isFetching}
           sourcesPending={receiptSourcesQuery.isPending}
-          storeId={principalStoreId}
+          storeId={receivingStoreId}
         />
       ) : null}
 
-      {role === 'STORE' && principalStoreId ? (
+      {isStoreReceiver && receivingStoreId ? (
         <HeldAllocationsPanel
           audience="STORE"
           productNameById={productNameById}
-          storeId={principalStoreId}
+          storeId={receivingStoreId}
           storeNameById={storeNameById}
         />
       ) : null}
@@ -313,10 +330,10 @@ function ProductionReceivePage({ role }: AppOutletContext) {
             <select
               disabled={mutation.isPending}
               onChange={(event) => setStoreFilter(event.target.value)}
-              value={storeFilter}
+              value={role === 'WHOLESALE' ? receivingStoreId : storeFilter}
             >
-              <option value="">Tất cả phạm vi được giao</option>
-              {stores.map((store) => (
+              {role !== 'WHOLESALE' ? <option value="">Tất cả phạm vi được giao</option> : null}
+              {(role === 'WHOLESALE' ? wholesaleStores : stores).map((store) => (
                 <option key={store.id} value={store.id}>
                   {store.code} · {store.name}
                 </option>
@@ -399,7 +416,8 @@ function ProductionReceivePage({ role }: AppOutletContext) {
                   type="button"
                 >
                   <span className="receipt-card__identity">
-                    <strong>{storeNameById.get(receipt.storeId) ?? receipt.storeId}</strong>
+                    <strong>{receipt.receiptNumber}</strong>
+                    <small>{storeNameById.get(receipt.storeId) ?? receipt.storeId}</small>
                     <small>Cập nhật {formatDateTime(receipt.updatedAt)}</small>
                   </span>
                   <Badge tone={copy.tone}>{copy.label}</Badge>
@@ -434,6 +452,7 @@ function ProductionReceivePage({ role }: AppOutletContext) {
                   runOperation({ kind: 'SUBMIT', receiptId: selectedReceipt.id, input })
                 }
                 productNameById={productNameById}
+                unexpectedProducts={activeProducts}
                 pendingOperation={pendingOperation}
                 receipt={selectedReceipt}
                 role={role}
@@ -474,6 +493,7 @@ function CreateReceiptForm({
   onDeclare,
   onRefresh,
   productNameById,
+  unexpectedProducts,
   sources,
   sourcesError,
   sourcesFetching,
@@ -485,6 +505,7 @@ function CreateReceiptForm({
   readonly onDeclare: (input: DeclareStoreReceiptRequest) => Promise<boolean>;
   readonly onRefresh: () => Promise<unknown>;
   readonly productNameById: ReadonlyMap<string, string>;
+  readonly unexpectedProducts: readonly { readonly id: string; readonly name: string }[];
   readonly sources: readonly StoreReceiptSource[];
   readonly sourcesError: unknown;
   readonly sourcesFetching: boolean;
@@ -495,6 +516,7 @@ function CreateReceiptForm({
   const [selectedSourceId, setSelectedSourceId] = useState('');
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [discrepancyNote, setDiscrepancyNote] = useState('');
+  const [unexpectedItems, setUnexpectedItems] = useState<UnexpectedReceiptItem[]>([]);
   const [formError, setFormError] = useState('');
   const selectedSource = sources.find((source) => source.id === selectedSourceId) ?? null;
 
@@ -503,12 +525,14 @@ function CreateReceiptForm({
     setSelectedSourceId('');
     setLines([]);
     setDiscrepancyNote('');
+    setUnexpectedItems([]);
   }, [selectedSource, selectedSourceId]);
 
   const chooseSource = (source: StoreReceiptSource) => {
     setSelectedSourceId(source.id);
     setLines(receiptSourceDraftLines(source));
     setDiscrepancyNote('');
+    setUnexpectedItems([]);
     setFormError('');
   };
 
@@ -524,7 +548,9 @@ function CreateReceiptForm({
       productId: line.productId,
       receivedUnits: line.receivedUnits,
     }));
-    const hasShortage = normalizedLines.some((line) => line.receivedUnits < line.approvedUnits);
+    const hasDiscrepancy =
+      normalizedLines.some((line) => line.receivedUnits < line.approvedUnits) ||
+      unexpectedItems.length > 0;
     if (!selectedSource || normalizedLines.length === 0) {
       setFormError('Chọn một lệnh xuất đang chờ nhận trước khi tạo phiếu.');
       return;
@@ -542,14 +568,24 @@ function CreateReceiptForm({
       setFormError('Số thực nhận phải là số nguyên từ 0 đến số đã duyệt.');
       return;
     }
-    if (hasShortage && discrepancyNote.trim().length < 3) {
-      setFormError('Phiếu nhận thiếu cần ghi rõ nguyên nhân hoặc bằng chứng.');
+    if (
+      unexpectedItems.some(
+        (item) =>
+          !Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 100000,
+      )
+    ) {
+      setFormError('Số bao nhận dư phải là số nguyên từ 1 đến 100000.');
+      return;
+    }
+    if (hasDiscrepancy && discrepancyNote.trim().length < 3) {
+      setFormError('Chênh lệch nhận hàng cần ghi rõ nguyên nhân hoặc bằng chứng.');
       return;
     }
     setFormError('');
     const input: DeclareStoreReceiptRequest = {
       discrepancyNote: discrepancyNote.trim() || null,
       lines: normalizedLines,
+      unexpectedItems,
       outboundRequestId: selectedSource.id,
       storeId,
     };
@@ -557,6 +593,7 @@ function CreateReceiptForm({
       setSelectedSourceId('');
       setLines([]);
       setDiscrepancyNote('');
+      setUnexpectedItems([]);
       setExpanded(false);
     });
   };
@@ -691,13 +728,83 @@ function CreateReceiptForm({
                         value={line.receivedUnits}
                       />
                     </label>
+                    <span className="receipt-line-editor__difference">
+                      {line.approvedUnits === line.receivedUnits
+                        ? 'Nhận đủ'
+                        : `Thiếu ${line.approvedUnits - line.receivedUnits} bao`}
+                    </span>
                   </div>
                 ))}
+              </div>
+              <div className="receipt-unexpected-items">
+                <strong>Hàng nhận dư khác mặt hàng đã duyệt</strong>
+                <p>Ghi đúng mặt hàng và số bao. HTKD sẽ đối chiếu riêng; chưa cộng vào tồn kho.</p>
+                {unexpectedItems.map((item) => (
+                  <div className="receipt-unexpected-item" key={item.productId}>
+                    <span>{productNameById.get(item.productId) ?? item.productId}</span>
+                    <input
+                      aria-label={`Số bao dư ${productNameById.get(item.productId) ?? item.productId}`}
+                      type="number"
+                      min="1"
+                      max="100000"
+                      disabled={disabled}
+                      value={item.quantity}
+                      onChange={(event) =>
+                        setUnexpectedItems((current) =>
+                          current.map((row) =>
+                            row.productId === item.productId
+                              ? { ...row, quantity: event.target.valueAsNumber }
+                              : row,
+                          ),
+                        )
+                      }
+                    />
+                    <Button
+                      tone="secondary"
+                      disabled={disabled}
+                      onClick={() =>
+                        setUnexpectedItems((current) =>
+                          current.filter((row) => row.productId !== item.productId),
+                        )
+                      }
+                    >
+                      Xóa
+                    </Button>
+                  </div>
+                ))}
+                <select
+                  aria-label="Thêm mặt hàng nhận dư"
+                  disabled={disabled}
+                  value=""
+                  onChange={(event) => {
+                    if (event.target.value)
+                      setUnexpectedItems((current) => [
+                        ...current,
+                        { productId: event.target.value, quantity: 1 },
+                      ]);
+                  }}
+                >
+                  <option value="">Chọn mặt hàng nhận dư…</option>
+                  {unexpectedProducts
+                    .filter(
+                      (product) =>
+                        !lines.some((line) => line.productId === product.id) &&
+                        !unexpectedItems.some((item) => item.productId === product.id),
+                    )
+                    .map((product) => (
+                      <option key={product.id} value={product.id}>
+                        {product.name}
+                      </option>
+                    ))}
+                </select>
               </div>
               <label>
                 <span className="field-label">Ghi chú / bằng chứng chênh lệch</span>
                 <textarea
-                  required={lines.some((line) => line.receivedUnits < line.approvedUnits)}
+                  required={
+                    lines.some((line) => line.receivedUnits < line.approvedUnits) ||
+                    unexpectedItems.length > 0
+                  }
                   disabled={disabled}
                   onChange={(event) => setDiscrepancyNote(event.target.value)}
                   placeholder="Bắt buộc khi nhận thiếu; ghi rõ chênh lệch giao nhận"
@@ -732,6 +839,7 @@ function ReceiptDetail({
   onReturn,
   onSubmit,
   productNameById,
+  unexpectedProducts,
   pendingOperation,
   receipt,
   role,
@@ -741,6 +849,7 @@ function ReceiptDetail({
   readonly onReturn: (input: ReturnReceiptForCorrectionRequest) => Promise<boolean>;
   readonly onSubmit: (input: SubmitStoreReceiptRequest) => Promise<boolean>;
   readonly productNameById: ReadonlyMap<string, string>;
+  readonly unexpectedProducts: readonly { readonly id: string; readonly name: string }[];
   readonly pendingOperation: ReceiptOperationKind | null;
   readonly receipt: Receipt;
   readonly role: AppOutletContext['role'];
@@ -752,7 +861,7 @@ function ReceiptDetail({
     <>
       <div className="receipt-detail__header">
         <div>
-          <span>Phiếu nhận hàng</span>
+          <span>Phiếu nhận hàng · {receipt.receiptNumber}</span>
           <h2>{storeName}</h2>
           <small>
             {total} bao · cập nhật {formatDateTime(receipt.updatedAt)}
@@ -782,21 +891,35 @@ function ReceiptDetail({
           </span>
         </div>
       ) : null}
-      {role === 'STORE' ? (
+      {role === 'STORE' || role === 'WHOLESALE' ? (
         <StoreReceiptForm
           pendingOperation={pendingOperation}
           onSubmit={onSubmit}
           productNameById={productNameById}
+          unexpectedProducts={unexpectedProducts}
           receipt={receipt}
         />
       ) : (
-        <ReviewerReceiptForm
-          onFinalize={onFinalize}
-          onReturn={onReturn}
-          productNameById={productNameById}
-          pendingOperation={pendingOperation}
-          receipt={receipt}
-        />
+        <>
+          {(receipt.unexpectedItems?.length ?? 0) > 0 ? (
+            <div className="receipt-unexpected-items">
+              <strong>Hàng nhận dư cần HTKD đối chiếu</strong>
+              {receipt.unexpectedItems?.map((item) => (
+                <p key={item.productId}>
+                  {productNameById.get(item.productId) ?? item.productId}: {item.quantity} bao
+                </p>
+              ))}
+              <p>{receipt.discrepancyNote}</p>
+            </div>
+          ) : null}
+          <ReviewerReceiptForm
+            onFinalize={onFinalize}
+            onReturn={onReturn}
+            productNameById={productNameById}
+            pendingOperation={pendingOperation}
+            receipt={receipt}
+          />
+        </>
       )}
     </>
   );
@@ -806,11 +929,13 @@ function StoreReceiptForm({
   onSubmit,
   pendingOperation,
   productNameById,
+  unexpectedProducts,
   receipt,
 }: {
   readonly onSubmit: (input: SubmitStoreReceiptRequest) => Promise<boolean>;
   readonly pendingOperation: ReceiptOperationKind | null;
   readonly productNameById: ReadonlyMap<string, string>;
+  readonly unexpectedProducts: readonly { readonly id: string; readonly name: string }[];
   readonly receipt: Receipt;
 }) {
   const [lines, setLines] = useState(() =>
@@ -821,13 +946,17 @@ function StoreReceiptForm({
     })),
   );
   const [note, setNote] = useState(receipt.discrepancyNote ?? '');
+  const [unexpectedItems, setUnexpectedItems] = useState<UnexpectedReceiptItem[]>(
+    receipt.unexpectedItems ?? [],
+  );
   const [formError, setFormError] = useState('');
   const editable = receipt.status === 'DRAFT' || receipt.status === 'RETURNED';
   const submitting = pendingOperation === 'SUBMIT';
   const mutationPending = pendingOperation !== null;
 
   const submit = async () => {
-    const hasShortage = lines.some((line) => line.receivedUnits < line.approvedUnits);
+    const hasDiscrepancy =
+      lines.some((line) => line.receivedUnits < line.approvedUnits) || unexpectedItems.length > 0;
     if (
       lines.some(
         (line) =>
@@ -839,8 +968,17 @@ function StoreReceiptForm({
       setFormError('Số thực nhận phải từ 0 đến số đã duyệt.');
       return;
     }
-    if (hasShortage && note.trim().length < 3) {
-      setFormError('Phiếu nhận thiếu cần ghi rõ nguyên nhân hoặc bằng chứng.');
+    if (
+      unexpectedItems.some(
+        (item) =>
+          !Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 100000,
+      )
+    ) {
+      setFormError('Số bao nhận dư phải là số nguyên từ 1 đến 100000.');
+      return;
+    }
+    if (hasDiscrepancy && note.trim().length < 3) {
+      setFormError('Chênh lệch nhận hàng cần ghi rõ nguyên nhân hoặc bằng chứng.');
       return;
     }
     setFormError('');
@@ -848,6 +986,7 @@ function StoreReceiptForm({
       discrepancyNote: note.trim() || null,
       expectedVersion: receipt.version,
       lines,
+      unexpectedItems,
     });
   };
 
@@ -917,10 +1056,83 @@ function StoreReceiptForm({
           </tbody>
         </table>
       </div>
+      <div className="receipt-unexpected-items">
+        <strong>Hàng nhận dư khác mặt hàng đã duyệt</strong>
+        {unexpectedItems.length === 0 ? <p>Không có hàng nhận dư.</p> : null}
+        {unexpectedItems.map((item) => (
+          <div className="receipt-unexpected-item" key={item.productId}>
+            <span>{productNameById.get(item.productId) ?? item.productId}</span>
+            {editable ? (
+              <>
+                <input
+                  aria-label={`Số bao dư ${productNameById.get(item.productId) ?? item.productId}`}
+                  type="number"
+                  min="1"
+                  max="100000"
+                  disabled={mutationPending}
+                  value={item.quantity}
+                  onChange={(event) =>
+                    setUnexpectedItems((current) =>
+                      current.map((row) =>
+                        row.productId === item.productId
+                          ? { ...row, quantity: event.target.valueAsNumber }
+                          : row,
+                      ),
+                    )
+                  }
+                />
+                <Button
+                  tone="secondary"
+                  disabled={mutationPending}
+                  onClick={() =>
+                    setUnexpectedItems((current) =>
+                      current.filter((row) => row.productId !== item.productId),
+                    )
+                  }
+                >
+                  Xóa
+                </Button>
+              </>
+            ) : (
+              <strong>{item.quantity} bao</strong>
+            )}
+          </div>
+        ))}
+        {editable ? (
+          <select
+            aria-label="Thêm mặt hàng nhận dư"
+            disabled={mutationPending}
+            value=""
+            onChange={(event) => {
+              if (event.target.value)
+                setUnexpectedItems((current) => [
+                  ...current,
+                  { productId: event.target.value, quantity: 1 },
+                ]);
+            }}
+          >
+            <option value="">Chọn mặt hàng nhận dư…</option>
+            {unexpectedProducts
+              .filter(
+                (product) =>
+                  !lines.some((line) => line.productId === product.id) &&
+                  !unexpectedItems.some((item) => item.productId === product.id),
+              )
+              .map((product) => (
+                <option key={product.id} value={product.id}>
+                  {product.name}
+                </option>
+              ))}
+          </select>
+        ) : null}
+      </div>
       <label>
         <span className="field-label">Ghi chú / bằng chứng</span>
         <textarea
-          required={lines.some((line) => line.receivedUnits < line.approvedUnits)}
+          required={
+            lines.some((line) => line.receivedUnits < line.approvedUnits) ||
+            unexpectedItems.length > 0
+          }
           disabled={!editable || mutationPending}
           onChange={(event) => setNote(event.target.value)}
           placeholder="Mô tả chênh lệch hoặc tình trạng niêm phong"
