@@ -199,9 +199,20 @@ test('sorting credits Sale kilograms and transfers weighed bags per product', as
   });
 
   await page.goto('/sorting');
-  const reason = page.getByLabel('Lý do');
+  await expect(page.getByText('Số bao có thể lọc')).toBeVisible();
+  const reason = page.getByLabel('Loại hàng');
   await expect(reason).toBeVisible();
   await expect(reason.locator('option')).toHaveText(['Từ thiện', 'Sale', 'Hủy']);
+  await page.setViewportSize({ width: 1366, height: 900 });
+  const weightBox = await page.getByLabel('Khối lượng đã lọc (kg)').boundingBox();
+  const reasonBox = await reason.boundingBox();
+  const saveBox = await page.getByRole('button', { name: 'Lưu khối lượng đã lọc' }).boundingBox();
+  expect(weightBox).not.toBeNull();
+  expect(reasonBox).not.toBeNull();
+  expect(saveBox).not.toBeNull();
+  expect(Math.abs(weightBox!.y - reasonBox!.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(weightBox!.height - reasonBox!.height)).toBeLessThanOrEqual(2);
+  expect(saveBox!.width).toBeLessThanOrEqual(weightBox!.width + 1);
   await reason.selectOption('SALE');
   await expect(page.getByLabel('Hình thức sale')).toHaveCount(0);
   await expect(page.getByLabel('Số cái')).toHaveCount(0);
