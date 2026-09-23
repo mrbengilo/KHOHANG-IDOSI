@@ -102,6 +102,14 @@
   }
 }
 
+/* Cùng mốc với bảng quản trị: từ 820px trở xuống bảng hiển thị dạng thẻ nên bỏ bề rộng tối thiểu. */
+@media (max-width: 820px) {
+  .store-lifecycle-table,
+  .store-lifecycle-table--stores {
+    min-width: 0;
+  }
+}
+
 @media (max-width: 760px) {
   .store-lifecycle-summary,
   .store-lifecycle-filters,
@@ -115,7 +123,7 @@
   }
 
   .store-lifecycle-heading .button {
-    width: 100%;
+    align-self: flex-start;
   }
 
   .store-lifecycle-filters .admin-field--search,
@@ -123,11 +131,6 @@
   #store-group-editor .admin-field--wide,
   #store-editor .admin-field--wide {
     grid-column: auto;
-  }
-
-  .store-lifecycle-table,
-  .store-lifecycle-table--stores {
-    min-width: 0;
   }
 }
 
@@ -139,13 +142,13 @@
   .page-header__actions:has(.store-lifecycle-add-group) {
     width: 100%;
     min-width: 0;
+    align-items: flex-start;
     flex-direction: column;
     overflow-x: visible;
   }
 
   .page-header__actions:has(.store-lifecycle-add-group) .button {
-    width: 100%;
-    min-height: 45px;
+    min-height: 44px;
   }
 
   .page-header__actions .store-lifecycle-add-group {

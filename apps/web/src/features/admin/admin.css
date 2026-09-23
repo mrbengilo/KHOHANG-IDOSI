@@ -153,12 +153,12 @@
 .admin-field textarea,
 .admin-status-control select {
   width: 100%;
-  min-height: 42px;
+  min-height: var(--control-h);
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface);
   color: var(--text);
-  padding: 9px 11px;
+  padding: 7px 10px;
   transition:
     border-color 120ms ease,
     box-shadow 120ms ease,
@@ -362,14 +362,14 @@
 
 .admin-status-control select {
   width: 138px;
-  min-height: 44px;
+  min-height: var(--control-h);
   padding: 6px 8px;
   font-size: 12px;
 }
 
 .admin-action {
   display: inline-flex;
-  min-height: 44px;
+  min-height: var(--control-h);
   align-items: center;
   justify-content: center;
   gap: 6px;
@@ -698,6 +698,29 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  /*
+   * Bộ lọc tài khoản: ô lọc chia đều hàng, hai nút Lọc/Xóa lọc đứng cạnh nhau theo bề rộng
+   * nhãn thay vì mỗi nút chiếm trọn một ô lưới (quá dài trên tablet và điện thoại).
+   */
+  .admin-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+  }
+
+  .admin-filters > .admin-field {
+    flex: 1 1 200px;
+  }
+
+  .admin-filters > .admin-field--search {
+    flex-basis: 100%;
+  }
+
+  .admin-filters > .button {
+    flex: 0 0 auto;
+    min-width: 96px;
+  }
+
   .admin-field--search,
   .admin-form-actions--filters {
     grid-column: 1 / -1;
@@ -712,37 +735,8 @@
   }
 }
 
-@media (max-width: 760px) {
-  .admin-feature {
-    gap: 14px;
-  }
-
-  .admin-panel {
-    border-radius: 13px;
-    padding: 15px;
-  }
-
-  .admin-form-grid,
-  .admin-filters,
-  .admin-audit-filters,
-  .admin-audit-meta {
-    grid-template-columns: 1fr;
-  }
-
-  .admin-field--search,
-  .admin-form-actions--filters {
-    grid-column: auto;
-  }
-
-  .admin-form-actions--filters > *,
-  .admin-form-actions > * {
-    flex: 1 1 150px;
-  }
-
-  .admin-security-note {
-    align-items: flex-start;
-  }
-
+/* Từ tablet dọc (≤820px) bảng quản trị chuyển thành thẻ để nút thao tác không bị đẩy khuất sang phải. */
+@media (max-width: 820px) {
   .admin-table-wrap {
     overflow: visible;
     border: 0;
@@ -788,15 +782,56 @@
     text-transform: uppercase;
   }
 
-  .admin-row-actions,
+  /* Nút thao tác trong thẻ nằm cạnh nhau theo bề rộng nhãn, không kéo dài hết thẻ. */
+  .admin-row-actions {
+    flex-wrap: wrap;
+  }
+
   .admin-status-control {
-    align-items: stretch;
+    align-items: flex-start;
     flex-direction: column;
   }
 
-  .admin-status-control select,
-  .admin-action {
+  .admin-status-control select {
     width: 100%;
+  }
+}
+
+@media (max-width: 760px) {
+  .admin-feature {
+    gap: 14px;
+  }
+
+  .admin-panel {
+    border-radius: 13px;
+    padding: 15px;
+  }
+
+  .admin-form-grid,
+  .admin-filters,
+  .admin-audit-filters,
+  .admin-audit-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-field--search,
+  .admin-form-actions--filters {
+    grid-column: auto;
+  }
+
+  /* Điện thoại: mỗi ô lọc một hàng, hai nút Lọc/Xóa lọc cùng nằm ở hàng cuối. */
+  .admin-filters > .admin-field {
+    flex-basis: 100%;
+  }
+
+  .admin-form-actions--filters > *,
+  .admin-form-actions > * {
+    flex: 0 1 auto;
+    min-width: 112px;
+  }
+
+  .admin-security-note {
+    align-items: flex-start;
   }
 
   .admin-pagination {

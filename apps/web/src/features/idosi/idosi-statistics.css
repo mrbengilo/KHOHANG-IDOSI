@@ -50,7 +50,7 @@
 .idosi-statistics__controls input,
 .idosi-statistics__controls .button,
 .idosi-statistics__message .button {
-  min-height: 44px;
+  min-height: var(--control-h);
 }
 
 .idosi-statistics__controls input {
@@ -180,8 +180,7 @@
 
 @media (max-width: 760px) {
   .idosi-statistics__controls,
-  .idosi-statistics__controls label,
-  .idosi-statistics__controls .button {
+  .idosi-statistics__controls label {
     width: 100%;
   }
 
@@ -192,7 +191,7 @@
 
   .idosi-statistics__message .button {
     grid-column: 1 / -1;
-    width: 100%;
+    justify-self: start;
   }
 
   .idosi-statistics__details {
@@ -236,7 +235,7 @@
 }
 .idosi-sales-summary input,
 .idosi-sales-summary select {
-  min-height: 44px;
+  min-height: var(--control-h);
   width: 100%;
   border: 1px solid var(--border);
   border-radius: 8px;

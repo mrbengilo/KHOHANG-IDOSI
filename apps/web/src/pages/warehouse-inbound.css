@@ -24,7 +24,7 @@
   justify-self: start;
   width: auto;
   max-width: 100%;
-  min-height: 44px;
+  min-height: var(--control-h);
   margin-top: 8px;
 }
 @media (max-width: 1100px) {

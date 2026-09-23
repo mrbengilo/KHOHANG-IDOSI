@@ -16,7 +16,7 @@
 .outbound-create .button,
 .review-actions .button,
 .source-error .button {
-  min-height: 44px;
+  min-height: var(--control-h);
 }
 
 .inventory-panel,
@@ -78,12 +78,12 @@
 .inventory-scope-select select,
 .oversight-banner select,
 .review-actions input {
-  min-height: 44px;
+  min-height: var(--control-h);
   border: 1px solid var(--border);
   border-radius: 0.7rem;
   background: var(--surface);
   color: var(--text);
-  padding: 0.65rem 0.75rem;
+  padding: 0.45rem 0.7rem;
   font: inherit;
 }
 
@@ -193,7 +193,7 @@
 
 .open-bag-fields select {
   width: 100%;
-  min-height: 44px;
+  min-height: var(--control-h);
   border: 1px solid var(--border);
   border-radius: 0.7rem;
   background: var(--surface);
@@ -408,7 +408,7 @@
 }
 
 .sorting-history__filters input {
-  min-height: 44px;
+  min-height: var(--control-h);
   border: 1px solid var(--border);
   border-radius: 0.7rem;
   background: var(--surface);
@@ -420,7 +420,7 @@
 .sorting-history__filters .button,
 .sorting-history__pagination .button,
 .sorting-history__error .button {
-  min-height: 44px;
+  min-height: var(--control-h);
 }
 
 .sorting-history__error {
@@ -472,8 +472,8 @@
   }
 
   .outbound-create__submit {
-    justify-self: stretch;
-    width: 100%;
+    justify-self: end;
+    width: auto;
     min-width: 0;
   }
 
@@ -488,16 +488,13 @@
   }
 
   .inventory-actions,
-  .inventory-actions .button,
-  .review-actions,
-  .review-actions .button {
+  .review-actions {
     width: 100%;
   }
 
   .sorting-history__filters,
   .sorting-history__filters label,
-  .sorting-history__filters input,
-  .sorting-history__filters .button {
+  .sorting-history__filters input {
     width: 100%;
   }
 
