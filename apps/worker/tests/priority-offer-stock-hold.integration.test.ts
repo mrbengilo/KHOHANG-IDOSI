@@ -15,6 +15,7 @@ import {
   users,
   waitTickets,
   warehouseBalances,
+  warehouseLedgerEntries,
   WaitTicketAuthorizationError,
 } from '@idosi/database';
 import { eq } from 'drizzle-orm';
@@ -154,7 +155,8 @@ describePostgres('priority offer stock holds', () => {
         finalDueAt,
         policyVersion: 'idosi-round-robin-p0a-p3-v1',
       };
-      await worker.captureSnapshotAndCreateOffers(scheduled, now);
+      expect((await worker.captureSnapshotAndCreateOffers(scheduled, now)).replayed).toBe(false);
+      expect((await worker.captureSnapshotAndCreateOffers(scheduled, now)).replayed).toBe(true);
       const offers = await db
         .select()
         .from(dailyPriorityOffers)
@@ -244,10 +246,22 @@ describePostgres('priority offer stock holds', () => {
             .where(eq(warehouseBalances.productId, product!.id))
         )[0]?.reservedQuantity,
       ).toBe(2);
-      await worker.expireOffersAndFinalizeAllocation(
-        scheduled,
-        new Date(finalDueAt.getTime() + 1_000),
-      );
+      expect(
+        (
+          await worker.expireOffersAndFinalizeAllocation(
+            scheduled,
+            new Date(finalDueAt.getTime() + 1_000),
+          )
+        ).replayed,
+      ).toBe(false);
+      expect(
+        (
+          await worker.expireOffersAndFinalizeAllocation(
+            scheduled,
+            new Date(finalDueAt.getTime() + 1_000),
+          )
+        ).replayed,
+      ).toBe(true);
       const lines = await db
         .select()
         .from(allocationLines)
@@ -266,6 +280,11 @@ describePostgres('priority offer stock holds', () => {
             .where(eq(warehouseBalances.productId, product!.id))
         )[0]?.reservedQuantity,
       ).toBe(4);
+      const ledger = await db
+        .select({ reservedDelta: warehouseLedgerEntries.reservedDelta })
+        .from(warehouseLedgerEntries)
+        .where(eq(warehouseLedgerEntries.productId, product!.id));
+      expect(ledger.reduce((total, entry) => total + entry.reservedDelta, 0)).toBe(4);
       expect(
         (
           await db.select().from(dailyPriorityOffers).where(eq(dailyPriorityOffers.id, accepted.id))
