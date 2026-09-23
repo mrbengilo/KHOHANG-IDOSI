@@ -1085,7 +1085,11 @@ async function assertActorMayAccessStore(
   if (!actor || actor.status !== 'active') {
     throw new WaitTicketAuthorizationError();
   }
-  if (actor.role === 'admin' || (actor.role === 'store' && actor.storeId === storeId)) {
+  if (
+    actor.role === 'admin' ||
+    actor.role === 'wholesale_account' ||
+    (actor.role === 'store' && actor.storeId === storeId)
+  ) {
     return actor;
   }
   if (actor.role !== 'htkd') {

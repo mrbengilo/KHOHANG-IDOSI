@@ -560,9 +560,28 @@ async function assertStoreAccountMayDeclare(
     .from(users)
     .where(and(eq(users.id, userId), isNull(users.deletedAt)))
     .limit(1);
-  if (!user || user.status !== 'active' || user.role !== 'store' || user.storeId !== storeId) {
+  if (!user || user.status !== 'active') {
     throw new StoreReceiptAuthorizationError();
   }
+  
+  // STORE role must match storeId
+  if (user.role === 'store' && user.storeId === storeId) {
+    return;
+  }
+  
+  // WHOLESALE_ACCOUNT can declare receipt for any wholesale store
+  if (user.role === 'wholesale_account') {
+    const [wholesaleStore] = await tx
+      .select({ kind: stores.kind })
+      .from(stores)
+      .where(eq(stores.id, storeId))
+      .limit(1);
+    if (wholesaleStore?.kind === 'wholesale') {
+      return;
+    }
+  }
+  
+  throw new StoreReceiptAuthorizationError();
 }
 
 async function assertReviewerMayAccessStore(

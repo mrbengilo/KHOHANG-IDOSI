@@ -285,7 +285,11 @@ export async function assertUserMayAccessStore(
     throw new OrderRequestAuthorizationError();
   }
 
-  if (user.role === 'admin' || (user.role === 'store' && user.storeId === storeId)) {
+  if (
+    user.role === 'admin' ||
+    user.role === 'wholesale_account' ||
+    (user.role === 'store' && user.storeId === storeId)
+  ) {
     return;
   }
 
