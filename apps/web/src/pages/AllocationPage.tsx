@@ -940,22 +940,24 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                         key={key}
                       >
                         <td data-label="Thời gian">
-                          {firstOfDay ? (
-                            <span className="session-request-day">Ngày {dayLabel}</span>
-                          ) : null}
-                          {submitted ? (
-                            <>
-                              <strong>
-                                {submitted.time} · {submitted.date}
-                              </strong>
-                              <small>Phiên {session.businessDate}</small>
-                            </>
-                          ) : (
-                            <>
-                              <strong>Chưa có yêu cầu</strong>
-                              <small>Phiên {session.businessDate}</small>
-                            </>
-                          )}
+                          <div className="session-request-time">
+                            {firstOfDay ? (
+                              <span className="session-request-day">Ngày {dayLabel}</span>
+                            ) : null}
+                            {submitted ? (
+                              <>
+                                <strong>
+                                  {submitted.time} · {submitted.date}
+                                </strong>
+                                <small>Phiên {session.businessDate}</small>
+                              </>
+                            ) : (
+                              <>
+                                <strong>Chưa có yêu cầu</strong>
+                                <small>Phiên {session.businessDate}</small>
+                              </>
+                            )}
+                          </div>
                         </td>
                         <td data-label="Cửa hàng">
                           {request ? (
