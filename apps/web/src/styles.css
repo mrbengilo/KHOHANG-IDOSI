@@ -429,7 +429,23 @@ p {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 6px;
+}
+
+/*
+ * Nhãn nút luôn theo màu/cỡ chữ của chính nút. Các rule dạng `.khung span` (vd.
+ * `.transfer-form aside span`, `.dashboard-message span`) từng lọt vào span nhãn và làm
+ * chữ nút xám 10px trên nền tím — gần như không đọc được.
+ */
+.button > .button__content {
+  display: inline-flex;
+  overflow: visible;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  text-align: center;
+  white-space: inherit;
 }
 
 .button__content--hidden {
@@ -639,10 +655,20 @@ textarea:focus {
 
 .section-heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  margin: 26px 0 12px;
+  gap: 10px 16px;
+  margin: 20px 0 10px;
+}
+
+/*
+ * Tiêu đề chiếm phần còn lại; ô tìm/lọc bên phải xuống dòng khi hết chỗ thay vì bị ép hẹp
+ * đến mức nhãn "Tìm chứng từ" xuống dòng từng ký tự trên điện thoại.
+ */
+.section-heading > div:first-child {
+  min-width: 0;
+  flex: 1 1 240px;
 }
 
 .section-heading h2,
@@ -843,7 +869,8 @@ textarea:focus {
 .alert-row strong {
   font-size: 13px;
 }
-.alert-row span {
+/* Chỉ áp cho dòng mô tả; không lan vào badge số liệu bên phải (badge giữ màu theo mức độ). */
+.alert-row > div > span {
   overflow: hidden;
   color: var(--muted);
   font-size: 11px;
@@ -1477,9 +1504,10 @@ td small {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--text-secondary);
+  font-size: 11px;
   font-weight: 700;
+  white-space: nowrap;
 }
 .inline-select select,
 .inline-select input {
