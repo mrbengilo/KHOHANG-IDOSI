@@ -531,6 +531,7 @@ export const orderRequests = pgTable(
   'order_requests',
   {
     id: uuid('id').defaultRandom().primaryKey(),
+    code: text('code').notNull().default(''),
     orderSessionId: uuid('order_session_id')
       .notNull()
       .references(() => orderSessions.id, { onDelete: 'restrict' }),
@@ -699,6 +700,7 @@ export const waitTickets = pgTable(
   'wait_tickets',
   {
     id: uuid('id').defaultRandom().primaryKey(),
+    code: text('code').notNull().default(''),
     storeId: uuid('store_id')
       .notNull()
       .references(() => stores.id, { onDelete: 'restrict' }),
@@ -749,6 +751,7 @@ export const dailyPriorityOffers = pgTable(
   'daily_priority_offers',
   {
     id: uuid('id').defaultRandom().primaryKey(),
+    code: text('code').notNull().default(''),
     businessDate: date('business_date', { mode: 'string' }).notNull(),
     storeId: uuid('store_id')
       .notNull()

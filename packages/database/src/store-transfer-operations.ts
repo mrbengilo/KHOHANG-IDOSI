@@ -216,7 +216,7 @@ export async function createStoreTransfer(
         const [created] = await tx
           .insert(storeTransfers)
           .values({
-            transferNumber: transferNumber(now),
+            transferNumber: '',
             sourceStoreId: input.sourceStoreId,
             destinationStoreId: input.destinationStoreId,
             sourceInventoryBagId: bag.id,
@@ -715,8 +715,4 @@ function mutationResult(
     resourceType: 'store_transfer',
     resourceId: transferId,
   };
-}
-
-function transferNumber(now: Date): string {
-  return `TR-${now.toISOString().slice(0, 10).replaceAll('-', '')}-${randomUUID().slice(0, 12).toUpperCase()}`;
 }

@@ -1041,6 +1041,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                       return (
                         <tr key={outbound.id}>
                           <td data-label="Thời gian">
+                            {outbound.code ? <strong>{outbound.code} · </strong> : null}
                             {new Date(outbound.createdAt).toLocaleString('vi-VN')}
                           </td>
                           <td data-label="Mã bao">

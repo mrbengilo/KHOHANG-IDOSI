@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import { and, eq, isNull, ne } from 'drizzle-orm';
 
 import type { Database } from './client.js';
@@ -111,7 +109,7 @@ export async function createOrderSession(
         const [created] = await tx
           .insert(orderSessions)
           .values({
-            code: `SESSION-${input.businessDate}-${randomUUID().slice(0, 8).toUpperCase()}`,
+            code: '', // Assigned by the database in the same transaction.
             businessDate: input.businessDate,
             status: 'draft',
             openedAt: input.requestOpensAt,

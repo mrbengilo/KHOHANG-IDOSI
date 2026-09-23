@@ -108,7 +108,7 @@ function ControlledPriorityOffer({
         <span className="priority-offer__eyebrow">PHIẾU ƯU TIÊN</span>
         <strong id={headingId}>{message}</strong>
         <span>
-          {offer.id} • hết hạn {new Date(offer.expiresAt).toLocaleString('vi-VN')}
+          {offer.code ?? offer.id} • hết hạn {new Date(offer.expiresAt).toLocaleString('vi-VN')}
         </span>
         {error ? (
           <span className="priority-offer__error" role="alert">

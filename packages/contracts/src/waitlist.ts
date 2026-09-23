@@ -36,6 +36,10 @@ export type WaitTicketStatus = z.infer<typeof WaitTicketStatusSchema>;
 export const WaitTicketSchema = z
   .object({
     id: EntityIdSchema,
+    code: z
+      .string()
+      .regex(/^PC-[0-9]{7}$/)
+      .optional(),
     sessionId: EntityIdSchema,
     mergedOrderId: EntityIdSchema.nullable(),
     storeId: EntityIdSchema,
@@ -128,6 +132,10 @@ export type PriorityOfferStatus = z.infer<typeof PriorityOfferStatusSchema>;
 export const PriorityOfferSchema = z
   .object({
     id: EntityIdSchema,
+    code: z
+      .string()
+      .regex(/^PUT-[0-9]{6}$/)
+      .optional(),
     waitTicketId: EntityIdSchema,
     storeId: EntityIdSchema,
     productId: EntityIdSchema,

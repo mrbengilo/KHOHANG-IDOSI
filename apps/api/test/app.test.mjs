@@ -1573,7 +1573,7 @@ describe('KHOHANG-IDOSI API', () => {
     const [source] = storeSources.json().data;
     assert.equal(source.id, MEMORY_SEED_IDS.secondOutboundRequest);
     assert.notEqual(source.id, MEMORY_SEED_IDS.outboundRequest);
-    assert.equal(source.requestNumber, 'OUT-MEMORY-002');
+    assert.equal(source.requestNumber, 'PXK-000002');
     assert.equal(source.storeId, MEMORY_SEED_IDS.nvtStore);
     assert.equal(Number.isNaN(Date.parse(source.dispatchedAt)), false);
     assert.deepEqual(Object.keys(source).sort(), [

@@ -243,7 +243,7 @@ export async function declareStoreReceiptInTransaction(
     const [created] = await tx
       .insert(storeReceipts)
       .values({
-        receiptNumber: `SR-${outbound.requestNumber}`,
+        receiptNumber: '',
         outboundRequestId: outbound.id,
         storeId: outbound.storeId,
         status: 'draft',
