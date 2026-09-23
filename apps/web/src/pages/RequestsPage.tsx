@@ -450,7 +450,8 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
               >
                 {sessions.map((session) => (
                   <option key={session.id} value={session.id}>
-                    {session.code ?? session.businessDate} · đóng{' '}
+                    {session.code ? `${session.code} · ` : ''}
+                    {session.businessDate} · đóng{' '}
                     {new Date(session.requestClosesAt).toLocaleString('vi-VN')}
                   </option>
                 ))}
@@ -482,7 +483,8 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
             >
               {sessions.map((session) => (
                 <option key={session.id} value={session.id}>
-                  {session.code ?? session.businessDate} · đóng{' '}
+                  {session.code ? `${session.code} · ` : ''}
+                  {session.businessDate} · đóng{' '}
                   {new Date(session.requestClosesAt).toLocaleString('vi-VN')}
                 </option>
               ))}
