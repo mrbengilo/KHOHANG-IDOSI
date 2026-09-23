@@ -239,7 +239,14 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
           ),
         );
     }
-    request.log.error({ err: error, requestId: request.id }, 'request failed');
+    // Query errors may embed SQL parameters, including password hashes, in their message.
+    request.log.error(
+      {
+        errorType: error instanceof Error ? error.constructor.name : 'NonError',
+        requestId: request.id,
+      },
+      'request failed',
+    );
     return reply
       .status(500)
       .send(errorEnvelope('INTERNAL_ERROR', 'Lỗi hệ thống ngoài dự kiến', request.id));
