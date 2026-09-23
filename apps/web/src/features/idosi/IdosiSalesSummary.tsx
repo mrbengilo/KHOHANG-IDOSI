@@ -113,7 +113,13 @@ export function IdosiSalesSummary({
         <>
           <div className="idosi-sales-coverage">
             <Badge
-              tone={partial || summary.staleStores ? 'warning' : hasData ? 'success' : 'neutral'}
+              tone={
+                partial || summary.staleStores || summary.resyncStores
+                  ? 'warning'
+                  : hasData
+                    ? 'success'
+                    : 'neutral'
+              }
             >
               {summary.snapshots.length}/{query.data?.length ?? 0} cửa hàng có dữ liệu
             </Badge>
@@ -121,6 +127,9 @@ export function IdosiSalesSummary({
               {partial ? 'Tổng dưới đây chỉ gồm cửa hàng đã đồng bộ. ' : ''}
               {summary.staleStores
                 ? `${summary.staleStores} cửa hàng có lần đồng bộ gần nhất thất bại. `
+                : ''}
+              {summary.resyncStores
+                ? `${summary.resyncStores} cửa hàng có snapshot cũ cần đồng bộ lại. `
                 : ''}
               Khách sỉ không thuộc nguồn bán lẻ IDOSI.
             </span>
@@ -133,6 +142,12 @@ export function IdosiSalesSummary({
               </strong>{' '}
               Số liệu của những mặt hàng đó có thể bị tách hoặc gộp nhầm. Hãy đồng bộ lại sau khi
               IDOSI gửi kèm định danh chuẩn cho các cửa hàng này.
+            </p>
+          ) : null}
+          {summary.reconciliationMismatches > 0 ? (
+            <p className="idosi-sales-warning" role="alert">
+              {formatInteger(summary.reconciliationMismatches)} cửa hàng có tổng doanh thu lệch ba
+              loại bán. Cần đối soát với IDOSI; số nguồn không được tự sửa.
             </p>
           ) : null}
           <div className="stats-grid stats-grid--small">
@@ -166,6 +181,66 @@ export function IdosiSalesSummary({
                   ? `${formatInteger(summary.unclassifiedOrders)} đơn chưa phân loại mặt hàng`
                   : 'Khối lượng quy đổi từ số cái theo hệ số của mặt hàng'
               }
+            />
+          </div>
+          <div className="section-heading section-heading--compact">
+            <h3>Doanh thu theo loại bán</h3>
+          </div>
+          <div className="stats-grid stats-grid--small">
+            <StatCard
+              label="Bán thường"
+              value={hasData ? money(summary.normalRevenueVnd) : 'Chưa có dữ liệu'}
+              detail="Chỉ phần đã phân loại NORMAL"
+            />
+            <StatCard
+              label="Sale theo cái"
+              value={hasData ? money(summary.salePieceRevenueVnd) : 'Chưa có dữ liệu'}
+              detail="Tiền sale theo số cái"
+              tone="info"
+            />
+            <StatCard
+              label="Sale theo ký"
+              value={hasData ? money(summary.saleKgRevenueVnd) : 'Chưa có dữ liệu'}
+              detail="Tiền sale theo kg thực bán"
+              tone="info"
+            />
+            <StatCard
+              label="Chưa phân loại"
+              value={hasData ? money(summary.unclassifiedRevenueVnd) : 'Chưa có dữ liệu'}
+              detail={
+                summary.revenueUnclassifiedOrders
+                  ? `${formatInteger(summary.revenueUnclassifiedOrders)} đơn cần đối soát`
+                  : 'Không có đơn thiếu dấu phân loại'
+              }
+              tone={summary.revenueUnclassifiedOrders ? 'warning' : 'success'}
+            />
+          </div>
+          <div className="section-heading section-heading--compact">
+            <h3>Số lượng và khối lượng sale</h3>
+          </div>
+          <div className="stats-grid stats-grid--small">
+            <StatCard
+              label="Sale theo cái · số lượng"
+              value={
+                hasData ? `${formatInteger(summary.salePieceQuantity)} cái` : 'Chưa có dữ liệu'
+              }
+              detail="Không cộng kg vào số cái"
+            />
+            <StatCard
+              label="Sale theo cái · khối lượng"
+              value={hasData ? formatKg(summary.salePieceEstimatedKg) : 'Chưa có dữ liệu'}
+              detail={
+                summary.salePieceWeightComplete
+                  ? 'Kg quy đổi ước tính theo mặt hàng'
+                  : 'Chỉ phần đã biết · còn thiếu hệ số'
+              }
+              tone={summary.salePieceWeightComplete ? 'info' : 'warning'}
+            />
+            <StatCard
+              label="Sale theo ký · khối lượng"
+              value={hasData ? formatKg(summary.saleKgActualKg) : 'Chưa có dữ liệu'}
+              detail="Kg thực bán, không quy đổi lần nữa"
+              tone="info"
             />
           </div>
           <details className="idosi-sales-sources">
@@ -232,6 +307,8 @@ export function IdosiSalesSummary({
                       <th>Mặt hàng</th>
                       <th>Số lượng bán</th>
                       <th>Khối lượng bán</th>
+                      <th>Sale theo cái</th>
+                      <th>Sale theo ký</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -247,6 +324,14 @@ export function IdosiSalesSummary({
                           {!item.isComplete ? (
                             <small>Chỉ phần đã biết · dữ liệu khối lượng chưa đầy đủ</small>
                           ) : null}
+                        </td>
+                        <td data-label="Sale theo cái">
+                          {formatInteger(item.salePiecePieces)} cái · {formatKg(item.salePieceKg)}{' '}
+                          ước tính{!item.salePieceComplete ? <small>Chỉ phần đã biết</small> : null}
+                        </td>
+                        <td data-label="Sale theo ký">
+                          {formatKg(item.saleKg)} thực bán
+                          {!item.saleKgComplete ? <small>Chỉ phần đã biết</small> : null}
                         </td>
                       </tr>
                     ))}

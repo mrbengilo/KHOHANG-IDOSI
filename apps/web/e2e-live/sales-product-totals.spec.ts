@@ -102,10 +102,13 @@ test('sales workspace groups source products and month/store filters preserve sc
               cashOrders: 1,
               transferOrders: 0,
               revenueByType: { NORMAL: 100, SALE_KG: 0, SALE_PIECE: 0 },
+              unclassifiedRevenue: 0,
+              unclassifiedOrders: 0,
               weight,
             },
             products: {
               totalQuantity: quantity,
+              salePieceQuantity: 0,
               totalWeightKg: 0,
               productTypes: 1,
               ordersWithItems: 1,
@@ -119,6 +122,7 @@ test('sales workspace groups source products and month/store filters preserve sc
                   quantity,
                   unit: 'PIECE',
                   revenueType: 'NORMAL',
+                  classification: 'NORMAL',
                   orders: 1,
                   weight,
                 },
@@ -156,7 +160,7 @@ test('sales workspace groups source products and month/store filters preserve sc
   await expect(row).toContainText('6 cái');
   await expect(row).toContainText('2 kg');
   await expect(region).toContainText('Dữ liệu nguồn lúc');
-  for (const width of [375, 768, 1440]) {
+  for (const width of [360, 390, 768, 1366]) {
     await page.setViewportSize({ width, height: 900 });
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))

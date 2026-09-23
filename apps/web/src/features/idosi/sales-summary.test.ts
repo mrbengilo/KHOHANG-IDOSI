@@ -50,10 +50,13 @@ const state = IdosiStatisticsStateSchema.parse({
         cashOrders: 1,
         transferOrders: 1,
         revenueByType: { NORMAL: 100, SALE_KG: 200, SALE_PIECE: 0 },
+        unclassifiedRevenue: 0,
+        unclassifiedOrders: 0,
         weight,
       },
       products: {
         totalQuantity: 5,
+        salePieceQuantity: 0,
         totalWeightKg: 2,
         productTypes: 1,
         ordersWithItems: 2,
@@ -67,6 +70,7 @@ const state = IdosiStatisticsStateSchema.parse({
             quantity: 5,
             unit: 'PIECE',
             revenueType: 'NORMAL',
+            classification: 'NORMAL',
             orders: 1,
             weight,
           },
@@ -76,6 +80,7 @@ const state = IdosiStatisticsStateSchema.parse({
             quantity: 2,
             unit: 'KG',
             revenueType: 'SALE_KG',
+            classification: 'SALE_KG',
             orders: 1,
             weight,
           },
@@ -115,6 +120,62 @@ describe('sales snapshot summary', () => {
       missingStores: 0,
     });
   });
+  it('projects sale revenue, pieces and distinct real versus estimated kilograms for one store', () => {
+    const sale = structuredClone(state);
+    const product = sale.snapshot!.payload.products.items[0]!;
+    Object.assign(sale.snapshot!.payload.totals, {
+      revenue: 350,
+      revenueByType: { NORMAL: 100, SALE_KG: 200, SALE_PIECE: 50 },
+      unclassifiedRevenue: 40,
+      unclassifiedOrders: 1,
+      weight: {
+        ...weight,
+        byRevenueType: {
+          NORMAL: bucket,
+          SALE_KG: { ...bucket, actualKg: 2 },
+          SALE_PIECE: { ...bucket, estimatedKg: 1 },
+        },
+      },
+    });
+    Object.assign(sale.snapshot!.payload.products, {
+      salePieceQuantity: 3,
+      items: [
+        ...sale.snapshot!.payload.products.items,
+        {
+          ...product,
+          quantity: 3,
+          revenueType: 'SALE_PIECE',
+          classification: 'SALE_PIECE',
+          weight: { ...weight, estimatedKg: 1, knownKg: 1, totalKg: 1 },
+        },
+      ],
+    });
+    expect(summarizeIdosiSales([sale])).toMatchObject({
+      revenueVnd: 350n,
+      normalRevenueVnd: 60n,
+      salePieceRevenueVnd: 50n,
+      saleKgRevenueVnd: 200n,
+      unclassifiedRevenueVnd: 40n,
+      salePieceQuantity: 3,
+      salePieceEstimatedKg: 1,
+      saleKgActualKg: 2,
+      revenueUnclassifiedOrders: 1,
+      reconciliationMismatches: 0,
+    });
+  });
+  it('flags a source revenue mismatch while preserving every supplied amount', () => {
+    const mismatched = structuredClone(state);
+    mismatched.snapshot!.payload.totals.revenue = 301;
+    const result = summarizeIdosiSales([mismatched]);
+    expect(result.reconciliationMismatches).toBe(1);
+    expect(result.revenueVnd).toBe(301n);
+    expect(
+      result.normalRevenueVnd +
+        result.saleKgRevenueVnd +
+        result.salePieceRevenueVnd +
+        result.unclassifiedRevenueVnd,
+    ).toBe(300n);
+  });
   it('preserves missing-store and incomplete-weight coverage rather than treating unknown as zero', () => {
     const incomplete = structuredClone(state);
     incomplete.snapshot!.payload.products.weight.isComplete = false;
@@ -143,9 +204,20 @@ describe('sales snapshot summary', () => {
   });
   const withItems = (items: readonly Record<string, unknown>[]) => {
     const raw = JSON.parse(JSON.stringify(state)) as {
-      snapshot: { payload: { products: { items: readonly Record<string, unknown>[] } } };
+      snapshot: {
+        payload: {
+          products: { items: readonly Record<string, unknown>[]; salePieceQuantity: number };
+        };
+      };
     };
-    raw.snapshot.payload.products.items = items;
+    raw.snapshot.payload.products.items = items.map((item) => ({
+      ...item,
+      classification: item.classification ?? item.revenueType,
+    }));
+    raw.snapshot.payload.products.salePieceQuantity = items.reduce(
+      (sum, item) => sum + (item.revenueType === 'SALE_PIECE' ? Number(item.quantity) : 0),
+      0,
+    );
     return IdosiStatisticsStateSchema.parse(raw);
   };
 

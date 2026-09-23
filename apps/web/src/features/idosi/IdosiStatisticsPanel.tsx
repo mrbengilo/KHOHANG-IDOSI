@@ -52,6 +52,14 @@ export function currentIdosiPeriod(now = new Date()): string {
 }
 
 export function idosiFreshnessView(state: IdosiStatisticsState): FreshnessView {
+  if (state.freshness === 'RESYNC_REQUIRED') {
+    return {
+      detail:
+        'Snapshot cũ thiếu trường đối soát sale và phân loại. Đồng bộ lại để xem số liệu đúng.',
+      label: 'Cần đồng bộ lại',
+      tone: 'warning',
+    };
+  }
   if (state.integrationStatus === 'NOT_CONFIGURED') {
     return {
       detail: 'Máy chủ chưa có khóa tích hợp; dữ liệu đã lưu vẫn được giữ nguyên.',
@@ -96,7 +104,9 @@ function formatTimestamp(value: string): string {
   }).format(new Date(value));
 }
 
-function displayedWeight(weight: IdosiWeightSummary): number {
+function displayedWeight(
+  weight: Pick<IdosiWeightSummary, 'isComplete' | 'totalKg' | 'knownKg'>,
+): number {
   return weight.isComplete && weight.totalKg !== null ? weight.totalKg : weight.knownKg;
 }
 
@@ -157,6 +167,12 @@ export function IdosiStatisticsPanel({ storeId, period: sharedPeriod }: IdosiSta
   const view = state ? idosiFreshnessView(state) : null;
   const snapshot = state?.snapshot ?? null;
   const payload = snapshot?.payload;
+  const revenueMismatch = payload
+    ? payload.totals.revenueByType.NORMAL +
+        payload.totals.revenueByType.SALE_KG +
+        payload.totals.revenueByType.SALE_PIECE !==
+      payload.totals.revenue
+    : false;
   const syncDisabled = state?.integrationStatus === 'NOT_CONFIGURED';
 
   return (
@@ -263,16 +279,32 @@ export function IdosiStatisticsPanel({ storeId, period: sharedPeriod }: IdosiSta
       {state && !snapshot ? (
         <EmptyState
           detail={
-            syncDisabled
-              ? 'Admin cần cấu hình khóa tích hợp IDOSI trên máy chủ trước khi đồng bộ.'
-              : 'Bấm “Đồng bộ ngay” để tạo snapshot đầu tiên cho kỳ đã chọn.'
+            state.freshness === 'RESYNC_REQUIRED'
+              ? 'Snapshot cũ vẫn được lưu trên máy chủ. Bấm “Đồng bộ ngay” để lấy đủ chỉ số theo loại bán.'
+              : syncDisabled
+                ? 'Admin cần cấu hình khóa tích hợp IDOSI trên máy chủ trước khi đồng bộ.'
+                : 'Bấm “Đồng bộ ngay” để tạo snapshot đầu tiên cho kỳ đã chọn.'
           }
-          title="Chưa có snapshot thống kê"
+          title={
+            state.freshness === 'RESYNC_REQUIRED' ? 'Cần đồng bộ lại' : 'Chưa có snapshot thống kê'
+          }
         />
       ) : null}
 
       {payload && snapshot ? (
         <>
+          {revenueMismatch ? (
+            <div
+              className="idosi-statistics__message idosi-statistics__message--warning"
+              role="alert"
+            >
+              <AlertTriangle aria-hidden="true" size={18} />
+              <div>
+                <strong>Doanh thu ba loại bán không khớp tổng IDOSI</strong>
+                <span>Giữ nguyên số nguồn để đối soát; không tự điều chỉnh.</span>
+              </div>
+            </div>
+          ) : null}
           <div className="stats-grid stats-grid--small idosi-statistics__stats">
             <StatCard
               detail={`${formatInteger(payload.totals.cashOrders)} tiền mặt · ${formatInteger(payload.totals.transferOrders)} chuyển khoản`}
@@ -308,9 +340,44 @@ export function IdosiStatisticsPanel({ storeId, period: sharedPeriod }: IdosiSta
                 {Object.entries(payload.totals.revenueByType).map(([type, value]) => (
                   <div key={type}>
                     <dt>{revenueTypeCopy[type as keyof typeof revenueTypeCopy]}</dt>
-                    <dd>{formatVnd(value)}</dd>
+                    <dd>
+                      {formatVnd(
+                        type === 'NORMAL' ? value - payload.totals.unclassifiedRevenue : value,
+                      )}
+                    </dd>
                   </div>
                 ))}
+                <div>
+                  <dt>Chưa phân loại ({formatInteger(payload.totals.unclassifiedOrders)} đơn)</dt>
+                  <dd>{formatVnd(payload.totals.unclassifiedRevenue)}</dd>
+                </div>
+                <div>
+                  <dt>Tổng doanh thu</dt>
+                  <dd>{formatVnd(payload.totals.revenue)}</dd>
+                </div>
+              </dl>
+            </article>
+            <article>
+              <h3>Số lượng và khối lượng sale</h3>
+              <dl>
+                <div>
+                  <dt>Sale theo cái</dt>
+                  <dd>{formatInteger(payload.products.salePieceQuantity)} cái</dd>
+                </div>
+                <div>
+                  <dt>Khối lượng sale theo cái</dt>
+                  <dd>
+                    {formatKg(displayedWeight(payload.totals.weight.byRevenueType.SALE_PIECE))} ước
+                    tính
+                    {!payload.totals.weight.byRevenueType.SALE_PIECE.isComplete
+                      ? ' · chưa đủ hệ số'
+                      : ''}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Sale theo ký</dt>
+                  <dd>{formatKg(payload.totals.weight.byRevenueType.SALE_KG.actualKg)} thực bán</dd>
+                </div>
               </dl>
             </article>
             <article>
@@ -331,6 +398,63 @@ export function IdosiStatisticsPanel({ storeId, period: sharedPeriod }: IdosiSta
               </dl>
             </article>
           </div>
+
+          {(
+            [
+              ['day', 'Theo ngày'],
+              ['shift', 'Theo ca'],
+            ] as const
+          ).map(([groupKey, title]) =>
+            payload.groups[groupKey].length ? (
+              <details className="idosi-statistics__products" key={groupKey}>
+                <summary>
+                  {title} · {formatInteger(payload.groups[groupKey].length)} dòng
+                </summary>
+                <div className="responsive-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>{groupKey === 'day' ? 'Ngày' : 'Ca'}</th>
+                        <th>Bán thường</th>
+                        <th>Sale theo ký</th>
+                        <th>Sale theo cái</th>
+                        <th>Chưa phân loại</th>
+                        <th>Tổng</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {payload.groups[groupKey].map((group) => (
+                        <tr key={group.key}>
+                          <td data-label={groupKey === 'day' ? 'Ngày' : 'Ca'}>{group.key}</td>
+                          <td data-label="Bán thường">
+                            {formatVnd(group.revenueByType.NORMAL - group.unclassifiedRevenue)}
+                          </td>
+                          <td data-label="Sale theo ký">
+                            {formatVnd(group.revenueByType.SALE_KG)}
+                          </td>
+                          <td data-label="Sale theo cái">
+                            {formatVnd(group.revenueByType.SALE_PIECE)}
+                          </td>
+                          <td data-label="Chưa phân loại">
+                            {formatVnd(group.unclassifiedRevenue)}
+                          </td>
+                          <td data-label="Tổng">
+                            {formatVnd(group.revenue)}
+                            {group.revenueByType.NORMAL +
+                              group.revenueByType.SALE_KG +
+                              group.revenueByType.SALE_PIECE !==
+                            group.revenue ? (
+                              <small> · Lệch số nguồn</small>
+                            ) : null}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            ) : null,
+          )}
 
           <div className="idosi-statistics__products">
             <div className="section-heading section-heading--compact">
@@ -358,12 +482,16 @@ export function IdosiStatisticsPanel({ storeId, period: sharedPeriod }: IdosiSta
                   </thead>
                   <tbody>
                     {payload.products.items.map((item) => (
-                      <tr key={`${item.productId}:${item.revenueType}:${item.unit}`}>
+                      <tr key={`${item.productId}:${item.classification}:${item.unit}`}>
                         <td data-label="Sản phẩm">
                           <strong>{item.productName}</strong>
                           <small>{item.productCode ?? item.productId}</small>
                         </td>
-                        <td data-label="Loại doanh thu">{revenueTypeCopy[item.revenueType]}</td>
+                        <td data-label="Loại doanh thu">
+                          {item.classification === 'UNCLASSIFIED'
+                            ? 'Chưa phân loại'
+                            : revenueTypeCopy[item.revenueType]}
+                        </td>
                         <td data-label="Đơn">{formatInteger(item.orders)}</td>
                         <td data-label="Số lượng">
                           {new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 3 }).format(

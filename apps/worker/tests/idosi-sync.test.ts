@@ -128,10 +128,13 @@ function payload(storeCode: string): IdosiOrderStatisticsPayload {
       cashOrders: 0,
       transferOrders: 0,
       revenueByType: { NORMAL: 0, SALE_KG: 0, SALE_PIECE: 0 },
+      unclassifiedRevenue: 0,
+      unclassifiedOrders: 0,
       weight,
     },
     products: {
       totalQuantity: 0,
+      salePieceQuantity: 0,
       totalWeightKg: 0,
       productTypes: 0,
       ordersWithItems: 0,

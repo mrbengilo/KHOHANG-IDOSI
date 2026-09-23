@@ -339,7 +339,24 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(first.json().data.snapshot.storeId, MEMORY_SEED_IDS.nvtStore);
     assert.equal(first.json().data.snapshot.payload.storeId, 'S01');
     assert.equal(first.json().data.snapshot.payload.totals.revenue, 300_000);
+    assert.equal(first.json().data.snapshot.payload.totals.revenueByType.SALE_PIECE, 30_000);
+    assert.equal(first.json().data.snapshot.payload.products.salePieceQuantity, 3);
+    assert.equal(
+      first.json().data.snapshot.payload.totals.weight.byRevenueType.SALE_KG.actualKg,
+      2.5,
+    );
     const snapshotId = first.json().data.snapshot.id;
+
+    // A persisted pre-contract snapshot must ask for a refresh instead of showing fake zeroes.
+    const stored = [...repository.idosiStatisticsSnapshots.values()][0];
+    delete stored.payload.totals.unclassifiedRevenue;
+    const needsResync = await app.inject({
+      method: 'GET',
+      url: query,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(needsResync.json().data.freshness, 'RESYNC_REQUIRED');
+    assert.equal(needsResync.json().data.snapshot, null);
 
     remoteRevenue = 450_000;
     const replacement = await app.inject({
@@ -3395,14 +3412,30 @@ function idosiStatisticsPayload(revenue) {
   const weight = {
     ...bucket,
     actualKg: 2.5,
-    estimatedKg: 5,
-    knownKg: 7.5,
-    totalKg: 7.5,
+    estimatedKg: 6,
+    knownKg: 8.5,
+    totalKg: 8.5,
     schemaVersion: 1,
     unit: 'KG',
     tableVersion: 'IDOSI-2026-09-15-v2',
-    byRevenueType: { NORMAL: bucket, SALE_KG: bucket, SALE_PIECE: bucket },
+    byRevenueType: {
+      NORMAL: { ...bucket, estimatedKg: 5, knownKg: 5, totalKg: 5 },
+      SALE_KG: { ...bucket, actualKg: 2.5, knownKg: 2.5, totalKg: 2.5 },
+      SALE_PIECE: { ...bucket, estimatedKg: 1, knownKg: 1, totalKg: 1 },
+    },
   };
+  const typeWeight = (type) => ({
+    ...weight,
+    actualKg: weight.byRevenueType[type].actualKg,
+    estimatedKg: weight.byRevenueType[type].estimatedKg,
+    knownKg: weight.byRevenueType[type].knownKg,
+    totalKg: weight.byRevenueType[type].totalKg,
+    byRevenueType: {
+      NORMAL: type === 'NORMAL' ? weight.byRevenueType.NORMAL : bucket,
+      SALE_KG: type === 'SALE_KG' ? weight.byRevenueType.SALE_KG : bucket,
+      SALE_PIECE: type === 'SALE_PIECE' ? weight.byRevenueType.SALE_PIECE : bucket,
+    },
+  });
   return {
     ok: true,
     apiVersion: 1,
@@ -3420,11 +3453,14 @@ function idosiStatisticsPayload(revenue) {
       revenue,
       cashOrders: 2,
       transferOrders: 0,
-      revenueByType: { NORMAL: revenue, SALE_KG: 0, SALE_PIECE: 0 },
+      revenueByType: { NORMAL: revenue - 80_000, SALE_KG: 50_000, SALE_PIECE: 30_000 },
+      unclassifiedRevenue: 0,
+      unclassifiedOrders: 0,
       weight,
     },
     products: {
-      totalQuantity: 15,
+      totalQuantity: 18,
+      salePieceQuantity: 3,
       totalWeightKg: 2.5,
       productTypes: 1,
       ordersWithItems: 2,
@@ -3437,8 +3473,31 @@ function idosiStatisticsPayload(revenue) {
           quantity: 15,
           unit: 'PIECE',
           revenueType: 'NORMAL',
+          classification: 'NORMAL',
           orders: 2,
-          weight,
+          weight: typeWeight('NORMAL'),
+        },
+        {
+          productId: 'P01',
+          productCode: 'DO-NAM',
+          productName: 'Đồ nam',
+          quantity: 3,
+          unit: 'PIECE',
+          revenueType: 'SALE_PIECE',
+          classification: 'SALE_PIECE',
+          orders: 1,
+          weight: typeWeight('SALE_PIECE'),
+        },
+        {
+          productId: 'P01',
+          productCode: 'DO-NAM',
+          productName: 'Đồ nam',
+          quantity: 2.5,
+          unit: 'KG',
+          revenueType: 'SALE_KG',
+          classification: 'SALE_KG',
+          orders: 1,
+          weight: typeWeight('SALE_KG'),
         },
       ],
       weight,
@@ -3448,7 +3507,7 @@ function idosiStatisticsPayload(revenue) {
           productCode: 'DO-NAM',
           productName: 'Đồ nam',
           orders: 2,
-          totalQuantity: 15,
+          totalQuantity: 18,
           weight,
         },
       ],

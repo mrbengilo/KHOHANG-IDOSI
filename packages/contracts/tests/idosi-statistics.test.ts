@@ -47,10 +47,13 @@ const payload = {
     cashOrders: 1,
     transferOrders: 1,
     revenueByType: { NORMAL: 200_000, SALE_KG: 100_000, SALE_PIECE: 0 },
+    unclassifiedRevenue: 0,
+    unclassifiedOrders: 0,
     weight,
   },
   products: {
     totalQuantity: 15,
+    salePieceQuantity: 0,
     totalWeightKg: 2.5,
     productTypes: 1,
     ordersWithItems: 2,
@@ -63,6 +66,7 @@ const payload = {
         quantity: 15,
         unit: 'PIECE' as const,
         revenueType: 'NORMAL' as const,
+        classification: 'NORMAL' as const,
         orders: 2,
         weight,
       },
@@ -148,13 +152,13 @@ describe('IDOSI statistics contracts and gateway', () => {
     });
   });
 
-  it('rejects inconsistent revenue and dates outside the selected period', () => {
+  it('preserves a revenue mismatch for review and rejects dates outside the selected period', () => {
     expect(
       IdosiOrderStatisticsPayloadSchema.safeParse({
         ...payload,
         totals: { ...payload.totals, revenue: 300_001 },
       }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       SyncIdosiStatisticsRequestSchema.safeParse({
         storeId: '20000000-0000-4000-8000-000000000001',
@@ -162,6 +166,53 @@ describe('IDOSI statistics contracts and gateway', () => {
         date: '2026-10-01',
         shiftId: null,
         paymentMethod: null,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('requires classified sale quantities and keeps legacy money within raw NORMAL', () => {
+    const legacy = {
+      ...payload,
+      totals: {
+        ...payload.totals,
+        revenueByType: { NORMAL: 170_000, SALE_KG: 100_000, SALE_PIECE: 30_000 },
+        unclassifiedRevenue: 50_000,
+        unclassifiedOrders: 1,
+      },
+      products: {
+        ...payload.products,
+        salePieceQuantity: 3,
+        items: [
+          ...payload.products.items,
+          {
+            ...payload.products.items[0],
+            quantity: 3,
+            revenueType: 'SALE_PIECE',
+            classification: 'SALE_PIECE',
+          },
+        ],
+      },
+    };
+    expect(IdosiOrderStatisticsPayloadSchema.safeParse(legacy).success).toBe(true);
+    expect(
+      IdosiOrderStatisticsPayloadSchema.safeParse({
+        ...legacy,
+        products: { ...legacy.products, salePieceQuantity: 0 },
+      }).success,
+    ).toBe(false);
+    expect(
+      IdosiOrderStatisticsPayloadSchema.safeParse({
+        ...legacy,
+        totals: { ...legacy.totals, unclassifiedRevenue: 300_000 },
+      }).success,
+    ).toBe(false);
+    expect(
+      IdosiOrderStatisticsPayloadSchema.safeParse({
+        ...legacy,
+        products: {
+          ...legacy.products,
+          items: legacy.products.items.map(({ classification: _classification, ...item }) => item),
+        },
       }).success,
     ).toBe(false);
   });
