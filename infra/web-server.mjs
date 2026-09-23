@@ -1,11 +1,12 @@
-import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { constants, createReadStream } from 'node:fs';
+import { copyFile, mkdir, readdir, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, resolve, sep } from 'node:path';
 
 const host = process.env.WEB_HOST ?? '0.0.0.0';
 const port = parsePort(process.env.WEB_PORT ?? '8080');
 const root = resolve(process.env.WEB_ROOT ?? '/app/public');
+const assetSource = process.env.WEB_ASSET_SOURCE;
 
 const contentTypes = new Map([
   ['.avif', 'image/avif'],
@@ -134,6 +135,10 @@ server.requestTimeout = 15_000;
 server.headersTimeout = 10_000;
 server.keepAliveTimeout = 5_000;
 
+if (assetSource) {
+  await publishAssets(resolve(assetSource), resolve(root, 'assets'));
+}
+
 server.listen(port, host, () => {
   console.log(JSON.stringify({ event: 'web_server_started', host, port }));
 });
@@ -163,6 +168,30 @@ async function statFile(filePath) {
       return undefined;
     }
     throw error;
+  }
+}
+
+async function publishAssets(source, destination) {
+  await mkdir(destination, { recursive: true });
+
+  for (const entry of await readdir(source, { withFileTypes: true })) {
+    const sourcePath = resolve(source, entry.name);
+    const destinationPath = resolve(destination, entry.name);
+
+    if (entry.isDirectory()) {
+      await publishAssets(sourcePath, destinationPath);
+    } else if (entry.isFile()) {
+      try {
+        // Content-hashed files from earlier releases must stay available to open tabs.
+        await copyFile(sourcePath, destinationPath, constants.COPYFILE_EXCL);
+      } catch (error) {
+        if (!error || typeof error !== 'object' || error.code !== 'EEXIST') {
+          throw error;
+        }
+      }
+    } else {
+      throw new Error(`Unsupported asset entry: ${sourcePath}`);
+    }
   }
 }
 

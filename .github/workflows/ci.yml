@@ -128,6 +128,7 @@ jobs:
           bash infra/scripts/tests/deployment-scripts.test.sh
           node --check infra/scripts/run-migrations.mjs
           node --check infra/web-server.mjs
+          node --test infra/web-server.test.mjs
           docker compose --file docker-compose.yml config --quiet
           docker compose --file docker-compose.yml config --format json | node --input-type=module -e '
             import assert from "node:assert/strict";

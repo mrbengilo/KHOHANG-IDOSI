@@ -71,6 +71,41 @@ sudo ./infra/scripts/backup-db.sh \
 
 Lần triển khai đầu tiên chưa có database đang chạy thì bỏ qua bước backup.
 
+### Giữ asset của các tab đang mở
+
+Web dùng volume `khohang-idosi_web-assets` để giữ các file `/assets` có hash qua các lần
+thay container. Trước **lần đầu** nâng cấp từ phiên bản chưa có volume này, chuyển asset
+từ các image web còn giữ trên VPS vào volume **trước khi** thay container. Cách này
+khôi phục được cả asset của tab mở từ bản cũ hơn container đang chạy:
+
+```bash
+set -euo pipefail
+mapfile -t web_images < <(
+  docker image ls --format '{{.Repository}}:{{.Tag}}' |
+    grep -E '^local/khohang-idosi-web:[0-9a-f]{40}$'
+)
+test "${#web_images[@]}" -gt 0
+docker volume create khohang-idosi_web-assets >/dev/null
+for image in "${web_images[@]}"; do
+  docker run --rm --network none --read-only --user 0:0 \
+    --mount type=volume,source=khohang-idosi_web-assets,target=/retained \
+    --entrypoint /bin/sh "$image" \
+    -c 'cp -an /app/public/assets/. /retained/'
+done
+docker run --rm --network none --read-only --user 0:0 \
+  --mount type=volume,source=khohang-idosi_web-assets,target=/retained \
+  --entrypoint /bin/sh "${web_images[0]}" \
+  -c 'chown -R 1000:1000 /retained'
+docker run --rm --network none --read-only \
+  --mount type=volume,source=khohang-idosi_web-assets,target=/retained,readonly \
+  --entrypoint /bin/sh "${web_images[0]}" \
+  -c 'test -n "$(find /retained -type f -print -quit)"'
+```
+
+Không xóa volume này khi deploy hoặc rollback. Các tab tham chiếu tới asset không còn
+trong bất kỳ image nào cần tải lại trang một lần. Theo dõi dung lượng volume và chỉ dọn các
+asset cũ sau khi chắc chắn không còn tab nào dùng phiên bản tương ứng.
+
 ## Build và triển khai
 
 VPS build ảnh bất biến từ đúng checkout; `--pull never` ngăn Compose tìm registry khi dùng prefix
