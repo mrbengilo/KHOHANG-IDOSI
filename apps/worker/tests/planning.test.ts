@@ -62,6 +62,40 @@ describe('domain-backed worker planning', () => {
     expect(offers.reduce((total, offer) => total + offer.offeredQuantity, 0)).toBe(1);
   });
 
+  it('does not re-offer a ticket already offered on the same business date', () => {
+    const first = ticket('ticket-1', 'store-1');
+    const second = ticket('ticket-2', 'store-2');
+    // The earlier session of the day offered ticket-1 and the hold expired unanswered.
+    const earlier = createDailyPriorityOffer(first, [], {
+      id: 'offer-2026-09-10-ticket-1',
+      businessDate: '2026-09-10',
+      offeredQuantity: 1,
+      createdAt: '2026-09-10T01:00:00.000Z',
+      expiresAt: '2026-09-10T02:00:00.000Z',
+    });
+    const plan = () =>
+      planPriorityOffers({
+        businessDate: '2026-09-10',
+        createdAt: '2026-09-10T03:00:00.000Z',
+        expiresAt: '2026-09-10T04:00:00.000Z',
+        snapshots: [
+          {
+            id: 'snapshot-2',
+            version: '2',
+            productId: 'product-1',
+            availableQuantity: 4,
+            capturedAt: '2026-09-10T03:00:00.000Z',
+          },
+        ],
+        waitTickets: [first, second],
+        existingOffers: [earlier],
+        offerId: (ticketId) => `offer-2026-09-10-${ticketId}`,
+      });
+
+    expect(plan).not.toThrow();
+    expect(plan().map((offer) => offer.waitTicketId)).toEqual(['ticket-2']);
+  });
+
   it('delegates final priority and round-robin behavior to @idosi/domain', () => {
     const requests = [
       createStoreOrderRequest({
