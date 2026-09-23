@@ -1988,13 +1988,13 @@ body.dialog-open {
 .receipt-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px 10px;
+  gap: 3px 10px;
   width: 100%;
   border: 1px solid var(--border);
   border-radius: 11px;
   background: white;
   color: var(--text);
-  padding: 12px;
+  padding: 11px 12px;
   text-align: left;
   transition:
     background 140ms ease,
@@ -2024,15 +2024,26 @@ body.dialog-open {
   opacity: 0.68;
 }
 
-.receipt-card > span:first-child {
+.receipt-card__identity {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: 3px;
 }
 
+.receipt-card__identity strong {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.receipt-card > .badge {
+  align-self: center;
+  grid-column: 2;
+  grid-row: 1 / 3;
+}
+
 .receipt-card small,
-.receipt-card__meta,
+.receipt-card__count,
 .receipt-detail__header small,
 .receipt-detail__header span,
 .receipt-review-line small {
@@ -2043,8 +2054,15 @@ body.dialog-open {
   text-overflow: ellipsis;
 }
 
-.receipt-card__meta {
-  grid-column: 1 / -1;
+.receipt-card__count {
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+
+.receipt-card small,
+.receipt-card__count,
+.receipt-detail__header small {
+  font-size: 11px;
 }
 
 .receipt-detail__header,
@@ -2065,6 +2083,49 @@ body.dialog-open {
   display: flex;
   min-width: 0;
   flex-direction: column;
+}
+
+.receipt-detail__references {
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 12px;
+  padding-top: 8px;
+}
+
+.receipt-detail__references summary {
+  width: fit-content;
+  color: var(--brand-dark);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.receipt-detail__references summary:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--brand);
+  outline-offset: 3px;
+}
+
+.receipt-detail__references dl {
+  display: grid;
+  gap: 6px;
+  margin: 9px 0 0;
+}
+
+.receipt-detail__references dt {
+  font-weight: 700;
+}
+
+.receipt-detail__references dd {
+  color: var(--text-secondary);
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.receipt-review-guidance {
+  color: var(--text-secondary);
+  font-size: 11px;
+  margin: 0;
 }
 
 .receipt-policy,
