@@ -502,7 +502,6 @@ p {
 .sync-status,
 .conservation-banner,
 .operation-step,
-.report-metric,
 .empty-state,
 .request-summary,
 .login-panel,
@@ -1358,10 +1357,15 @@ td small {
 
 .allocation-session-actions {
   display: flex;
-  min-width: 150px;
+  min-width: 0;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   gap: 7px;
+}
+
+.allocation-session-action-cell {
+  min-width: 160px;
+  vertical-align: middle;
 }
 
 .allocation-session-actions > span {
@@ -2233,6 +2237,14 @@ body.dialog-open {
   gap: 10px;
 }
 
+.receipt-review-line__fields > label {
+  min-width: 0;
+}
+
+.receipt-review-line__fields .field-label {
+  min-height: 1.4em;
+}
+
 .receipt-actions {
   display: flex;
   justify-content: flex-end;
@@ -2500,11 +2512,19 @@ body.dialog-open {
   gap: 3px;
 }
 
-.report-counts dl > div,
-.report-ratio-row {
+.report-counts dl > div {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
+  border-radius: 8px;
+  padding: 9px 10px;
+}
+
+.report-ratio-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
   gap: 16px;
   border-radius: 8px;
   padding: 9px 10px;
@@ -2517,6 +2537,7 @@ body.dialog-open {
 
 .report-counts dt,
 .report-ratio-row > span {
+  min-width: 0;
   color: var(--muted);
   font-size: 11px;
 }
@@ -2529,21 +2550,23 @@ body.dialog-open {
 
 .report-metric {
   display: grid;
-  justify-items: end;
+  min-width: 0;
+  justify-items: start;
   gap: 2px;
-  text-align: right;
+  text-align: left;
 }
 
 .report-metric strong {
   color: var(--navy);
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .report-metric small {
-  max-width: 240px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 10px;
   line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .report-metric--unavailable strong,
@@ -3353,6 +3376,9 @@ label:has(:required) > .field-label::after {
   .receipt-fees {
     grid-template-columns: 1fr;
   }
+  .report-ratio-row {
+    grid-template-columns: 1fr;
+  }
   .quota-card progress {
     width: 100%;
   }
@@ -3485,14 +3511,6 @@ label:has(:required) > .field-label::after {
   }
   .report-message .button {
     width: 100%;
-  }
-  .report-ratio-row {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-  .report-metric {
-    justify-items: start;
-    text-align: left;
   }
   .priority-offer {
     grid-template-columns: 1fr;

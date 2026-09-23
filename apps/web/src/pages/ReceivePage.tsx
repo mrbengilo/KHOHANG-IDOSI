@@ -1085,10 +1085,7 @@ function ReviewerReceiptForm({
             </label>
             {(weights[line.productId] ?? []).map((weight, index) => (
               <label key={`${line.productId}:bag:${index + 1}`}>
-                Khối lượng bao {index + 1} (kg){' '}
-                <span aria-hidden="true" style={{ color: '#dc2626' }}>
-                  *
-                </span>
+                <span className="field-label">Khối lượng bao {index + 1} (kg)</span>
                 <input
                   required
                   disabled={mutationPending}
