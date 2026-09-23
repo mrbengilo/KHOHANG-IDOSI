@@ -1320,9 +1320,14 @@ td small {
   color: var(--danger);
 }
 
-/* Mỗi yêu cầu là một dòng; vạch đậm hơn ở dòng đầu mỗi phiên để tách các phiên với nhau. */
-.allocation-session-console tbody tr.session-request-row--first:not(:first-child) td {
-  border-top: 2px solid #c7d2fe;
+/*
+ * Mỗi yêu cầu là một dòng; vạch đậm hơn ở dòng đầu mỗi phiên để tách các phiên với nhau.
+ * Chỉ dùng khi bảng còn là bảng: dưới 620px mỗi dòng đã là một thẻ riêng có viền.
+ */
+@media (min-width: 621px) {
+  .allocation-session-console tbody tr.session-request-row--first:not(:first-child) td {
+    border-top: 2px solid #c7d2fe;
+  }
 }
 
 .allocation-session-actions {
