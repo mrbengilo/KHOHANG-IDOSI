@@ -374,7 +374,10 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
 
   public async findCredentials(username: string): Promise<AccountCredentials | null> {
     const normalized = username.trim();
-    return [...this.accounts.values()].find((account) => account.username === normalized) ?? null;
+    const matches = [...this.accounts.values()].filter(
+      (account) => account.username === normalized,
+    );
+    return matches.find((account) => account.status === 'ACTIVE') ?? matches.at(-1) ?? null;
   }
 
   public async createSession(
@@ -494,7 +497,11 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     context: RequestContext,
   ): Promise<Account> {
     requireMemoryAdmin(actor);
-    if ([...this.accounts.values()].some((account) => account.username === input.username)) {
+    if (
+      [...this.accounts.values()].some(
+        (account) => account.username === input.username && account.status === 'ACTIVE',
+      )
+    ) {
       throw conflict('Tên đăng nhập đã tồn tại');
     }
     if (input.role === 'STORE') {
@@ -503,7 +510,10 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         throw notFound('Không tìm thấy cửa hàng đang hoạt động');
       if (
         [...this.accounts.values()].some(
-          (account) => account.role === 'STORE' && account.storeId === input.storeId,
+          (account) =>
+            account.role === 'STORE' &&
+            account.storeId === input.storeId &&
+            account.status === 'ACTIVE',
         )
       ) {
         throw conflict('Cửa hàng đã có tài khoản');
@@ -549,6 +559,31 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const nameChanged =
       input.displayName !== undefined && input.displayName !== account.displayName;
     if (!statusChanged && !nameChanged) return before;
+
+    if (statusChanged && input.status === 'ACTIVE') {
+      if (
+        [...this.accounts.values()].some(
+          (other) =>
+            other.id !== accountId &&
+            other.status === 'ACTIVE' &&
+            other.username === account.username,
+        )
+      ) {
+        throw conflict('Tên đăng nhập đang được tài khoản khác sử dụng');
+      }
+      if (
+        account.role === 'STORE' &&
+        [...this.accounts.values()].some(
+          (other) =>
+            other.id !== accountId &&
+            other.role === 'STORE' &&
+            other.status === 'ACTIVE' &&
+            other.storeId === account.storeId,
+        )
+      ) {
+        throw conflict('Cửa hàng đã có tài khoản đang hoạt động');
+      }
+    }
 
     if (input.displayName !== undefined) account.displayName = input.displayName;
     if (input.status !== undefined) account.status = input.status;

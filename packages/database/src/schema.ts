@@ -242,10 +242,15 @@ export const users = pgTable(
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
   },
   (table) => [
-    uniqueIndex('users_email_uidx').on(table.email),
+    uniqueIndex('users_active_email_uidx')
+      .on(table.email)
+      .where(sql`${table.status} = 'active' AND ${table.deletedAt} IS NULL`),
+    index('users_email_idx').on(table.email),
     uniqueIndex('users_one_store_account_uidx')
       .on(table.storeId)
-      .where(sql`${table.role} = 'store' AND ${table.deletedAt} IS NULL`),
+      .where(
+        sql`${table.role} = 'store' AND ${table.status} = 'active' AND ${table.deletedAt} IS NULL`,
+      ),
     index('users_store_status_idx').on(table.storeId, table.status),
     check(
       'users_email_canonical',
