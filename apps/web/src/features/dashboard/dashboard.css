@@ -1,7 +1,7 @@
 .dashboard-page .button,
 .dashboard-page input,
 .dashboard-page select {
-  min-height: 44px;
+  min-height: var(--control-h);
 }
 
 .dashboard-filters {
@@ -9,7 +9,7 @@
 }
 
 .dashboard-filters__source {
-  min-height: 44px;
+  min-height: var(--control-h);
 }
 
 .dashboard-message {
@@ -27,7 +27,7 @@
   gap: 4px;
 }
 
-.dashboard-message span {
+.dashboard-message > div > span {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.5;
@@ -63,12 +63,9 @@
   gap: 4px;
 }
 
+/* Mỗi box cao theo nội dung của nó; không kéo box ngắn cho bằng box dài để tránh khoảng trắng. */
 .dashboard-operations {
-  align-items: stretch;
-}
-
-.dashboard-operations > .panel {
-  min-height: 100%;
+  align-items: start;
 }
 
 .dashboard-activity {
@@ -95,7 +92,7 @@
 
   .dashboard-message .button {
     grid-column: 1 / -1;
-    width: 100%;
+    justify-self: start;
   }
 }
 

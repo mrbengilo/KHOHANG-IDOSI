@@ -90,7 +90,7 @@
 }
 
 .catalog-actions button {
-  min-height: 44px;
+  min-height: var(--control-h);
   border-radius: 7px;
   padding: 8px 6px;
   transition:

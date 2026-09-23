@@ -13,7 +13,7 @@
 .transfer-create input,
 .transfer-create select,
 .transfer-card__actions input {
-  min-height: 44px;
+  min-height: var(--control-h);
 }
 
 .transfer-create .section-heading > svg,
@@ -204,9 +204,7 @@
     grid-column: auto;
   }
 
-  .transfer-create > .button,
   .transfer-card__actions,
-  .transfer-card__actions .button,
   .transfer-filter {
     width: 100%;
   }
