@@ -243,7 +243,7 @@ test('sorting credits Sale bags and kilograms and offers Sale, Charity and Cance
       bagQuantity: 1,
       weightKg: null,
     });
-  await expect(page.getByText('1 bao · 0,63 kg · v1')).toBeVisible();
+  await expect(page.getByText('1 bao · 0,625 kg · v1')).toBeVisible();
   for (const width of [360, 390, 768, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
@@ -254,6 +254,6 @@ test('sorting credits Sale bags and kilograms and offers Sale, Charity and Cance
   activeStoreId = destinationStoreId;
   await page.reload();
   await page.getByRole('button', { name: 'Xác nhận đã nhận' }).click();
-  await expect(page.getByText('1 bao · 0,63 kg · v0')).toBeVisible();
+  await expect(page.getByText('1 bao · 0,625 kg · v0')).toBeVisible();
   await expect(page.locator('.transfer-card header span').getByText('Đã nhận')).toBeVisible();
 });

@@ -28,7 +28,7 @@ import { DashboardSkeleton } from '../../components/Skeleton';
 import { StatCard } from '../../components/StatCard';
 import { ApiClientError, listAccessibleStores, listCatalog } from '../../lib/api';
 import { useSession } from '../../lib/auth';
-import { formatKg, formatVnd } from '../../lib/format';
+import { formatKg, formatKgExact, formatVnd } from '../../lib/format';
 import { IdosiSalesWorkspace } from '../idosi/IdosiSalesWorkspace';
 import { isOpenBagSelectionCurrent, OpenBagConfirmation } from './OpenBagConfirmation';
 import {
@@ -1455,7 +1455,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
           <div className="stats-grid stats-grid--small">
             <StatCard
               label="Sale còn"
-              value={formatKg(gramsToKilograms(saleGrams))}
+              value={formatKgExact(gramsToKilograms(saleGrams))}
               detail="Tự trừ theo IDOSI"
               tone="info"
             />
@@ -1589,7 +1589,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
                             {productNames.get(item.productId) ?? item.productId}
                           </td>
                           <td data-label="Sale còn">
-                            <strong>{formatKg(gramsToKilograms(item.grams))}</strong>
+                            <strong>{formatKgExact(gramsToKilograms(item.grams))}</strong>
                           </td>
                           <td data-label="Số bao">{item.bags}</td>
                         </tr>
