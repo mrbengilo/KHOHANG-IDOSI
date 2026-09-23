@@ -42,6 +42,10 @@ export const PositiveKilogramsDecimalSchema = KilogramsDecimalSchema.refine(
 );
 export type PositiveKilogramsDecimal = z.infer<typeof PositiveKilogramsDecimalSchema>;
 
+/** Weight of each physical bag in a dispatch, in bag order (Bao 1, Bao 2, ...). */
+export const BagWeightsKgSchema = z.array(PositiveKilogramsDecimalSchema).min(1).max(100);
+export type BagWeightsKg = z.infer<typeof BagWeightsKgSchema>;
+
 export const GramsSchema = z.number().int().nonnegative().safe();
 export type Grams = z.infer<typeof GramsSchema>;
 

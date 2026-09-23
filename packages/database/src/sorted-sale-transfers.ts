@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import {
@@ -20,6 +20,7 @@ import {
   kilogramsToGramsExact,
   StoreOperationConflictError,
   StoreOperationValidationError,
+  weighBags,
 } from './store-operations.js';
 import { withAdvisoryLock, type Transaction } from './transaction.js';
 
@@ -33,12 +34,10 @@ interface CommandContext {
 }
 
 export interface CreateSortedSaleTransferInput extends CommandContext {
-  readonly sourceStockId: string;
   readonly sourceStoreId: string;
   readonly destinationStoreId: string;
-  readonly expectedStockVersion: number;
-  readonly bagQuantity: number;
-  readonly weightKg: string | null;
+  readonly productId: string;
+  readonly bagWeightsKg: readonly string[];
   readonly note: string | null;
 }
 
@@ -81,13 +80,9 @@ export async function createSortedSaleTransfer(
   database: Database,
   input: CreateSortedSaleTransferInput,
 ): Promise<IdempotencyResult<{ transferId: string }>> {
-  if (!Number.isSafeInteger(input.bagQuantity) || input.bagQuantity <= 0)
-    throw new StoreOperationValidationError('Transfer bag quantity must be positive.');
   if (input.sourceStoreId === input.destinationStoreId)
     throw new StoreOperationValidationError('Source and destination stores must differ.');
-  const enteredGrams = input.weightKg === null ? null : kilogramsToGramsExact(input.weightKg);
-  if (enteredGrams !== null && enteredGrams <= 0n)
-    throw new StoreOperationValidationError('Transfer weight must be positive.');
+  const { bagWeightsKg, totalGrams: movedGrams } = weighBags(input.bagWeightsKg);
   return withIdempotency(
     database,
     {
@@ -99,78 +94,89 @@ export async function createSortedSaleTransfer(
       withAdvisoryLock(tx, 'store-sorting', input.sourceStoreId, async () => {
         await assertRetailStoreActor(tx, input.actorUserId, input.sourceStoreId);
         await assertActiveRetailStore(tx, input.destinationStoreId);
-        const [stock] = await tx
+        // Same lot order as IDOSI sale consumption: the oldest Sale leaves first.
+        const lots = await tx
           .select()
           .from(storeSortedStocks)
-          .where(eq(storeSortedStocks.id, input.sourceStockId))
-          .for('update')
-          .limit(1);
-        if (!stock || stock.storeId !== input.sourceStoreId)
-          throw new StoreOperationValidationError('Sale stock was not found at the source store.');
-        if (stock.version !== input.expectedStockVersion)
-          throw new StoreOperationConflictError('Sale stock changed before transfer.');
-        if (stock.bagQuantity < input.bagQuantity || stock.bagQuantity === 0)
-          throw new StoreOperationValidationError('Transfer bags exceed sorted Sale stock.');
-        const beforeGrams = kilogramsToGramsExact(stock.saleWeightKg);
-        const movedGrams =
-          enteredGrams ??
-          (input.bagQuantity === stock.bagQuantity
-            ? beforeGrams
-            : (beforeGrams * BigInt(input.bagQuantity)) / BigInt(stock.bagQuantity));
-        if (
-          movedGrams <= 0n ||
-          movedGrams > beforeGrams ||
-          (input.bagQuantity === stock.bagQuantity && movedGrams !== beforeGrams) ||
-          (input.bagQuantity < stock.bagQuantity && movedGrams === beforeGrams)
-        )
+          .where(
+            and(
+              eq(storeSortedStocks.storeId, input.sourceStoreId),
+              eq(storeSortedStocks.productId, input.productId),
+            ),
+          )
+          .orderBy(asc(storeSortedStocks.createdAt), asc(storeSortedStocks.id))
+          .for('update');
+        const availableGrams = lots.reduce(
+          (sum, lot) => sum + kilogramsToGramsExact(lot.saleWeightKg),
+          0n,
+        );
+        if (movedGrams > availableGrams)
           throw new StoreOperationValidationError(
-            'Transfer weight is inconsistent with the remaining bags.',
+            'Total bag weight exceeds the Sale stock of this product.',
           );
         const now = new Date();
+        const consumed: { lot: (typeof lots)[number]; grams: bigint }[] = [];
+        let remaining = movedGrams;
+        for (const lot of lots) {
+          if (remaining === 0n) break;
+          const balance = kilogramsToGramsExact(lot.saleWeightKg);
+          const take = balance < remaining ? balance : remaining;
+          if (take <= 0n) continue;
+          consumed.push({ lot, grams: take });
+          remaining -= take;
+        }
+        const firstLot = consumed[0]?.lot;
+        if (!firstLot || remaining !== 0n)
+          throw new StoreOperationValidationError('Sale stock could not cover the transfer.');
         const [transfer] = await tx
           .insert(sortedSaleTransfers)
           .values({
             transferNumber: '',
-            sourceStockId: stock.id,
+            sourceStockId: firstLot.id,
             sourceStoreId: input.sourceStoreId,
             destinationStoreId: input.destinationStoreId,
-            productId: stock.productId,
-            bagQuantity: input.bagQuantity,
+            productId: input.productId,
+            bagQuantity: bagWeightsKg.length,
             weightKg: gramsToKilogramsExact(movedGrams),
-            enteredWeightKg: input.weightKg,
+            enteredWeightKg: gramsToKilogramsExact(movedGrams),
+            bagWeightsKg,
             note: input.note,
             createdByUserId: input.actorUserId,
             createdAt: now,
           })
           .returning({ id: sortedSaleTransfers.id });
         if (!transfer) throw new Error('Transfer insert returned no row.');
-        const [updated] = await tx
-          .update(storeSortedStocks)
-          .set({
-            bagQuantity: stock.bagQuantity - input.bagQuantity,
-            saleWeightKg: gramsToKilogramsExact(beforeGrams - movedGrams),
-            transferredOutBagQuantity: stock.transferredOutBagQuantity + input.bagQuantity,
-            transferredOutWeightKg: gramsToKilogramsExact(
-              kilogramsToGramsExact(stock.transferredOutWeightKg) + movedGrams,
-            ),
-            version: stock.version + 1,
-            updatedAt: now,
-          })
-          .where(
-            and(eq(storeSortedStocks.id, stock.id), eq(storeSortedStocks.version, stock.version)),
-          )
-          .returning({ id: storeSortedStocks.id });
-        if (!updated) throw new StoreOperationConflictError('Sale stock changed during transfer.');
-        await tx.insert(storeSortingEvents).values({
-          storeSortedStockId: stock.id,
-          storeInventoryBagId: stock.storeInventoryBagId,
-          storeId: stock.storeId,
-          productId: stock.productId,
-          action: 'sale_transfer_out',
-          weightKg: gramsToKilogramsExact(movedGrams),
-          actorUserId: input.actorUserId,
-          occurredAt: now,
-        });
+        for (const { lot, grams } of consumed) {
+          const after = kilogramsToGramsExact(lot.saleWeightKg) - grams;
+          const [updated] = await tx
+            .update(storeSortedStocks)
+            .set({
+              saleWeightKg: gramsToKilogramsExact(after),
+              // Legacy lots carried a bag count; it no longer describes an emptied lot.
+              ...(after === 0n ? { bagQuantity: 0 } : {}),
+              transferredOutWeightKg: gramsToKilogramsExact(
+                kilogramsToGramsExact(lot.transferredOutWeightKg) + grams,
+              ),
+              version: lot.version + 1,
+              updatedAt: now,
+            })
+            .where(
+              and(eq(storeSortedStocks.id, lot.id), eq(storeSortedStocks.version, lot.version)),
+            )
+            .returning({ id: storeSortedStocks.id });
+          if (!updated)
+            throw new StoreOperationConflictError('Sale stock changed during transfer.');
+          await tx.insert(storeSortingEvents).values({
+            storeSortedStockId: lot.id,
+            storeInventoryBagId: lot.storeInventoryBagId,
+            storeId: lot.storeId,
+            productId: lot.productId,
+            action: 'sale_transfer_out',
+            weightKg: gramsToKilogramsExact(grams),
+            actorUserId: input.actorUserId,
+            occurredAt: now,
+          });
+        }
         await tx.insert(auditLogs).values({
           requestId: input.requestId,
           actorUserId: input.actorUserId,
@@ -179,13 +185,19 @@ export async function createSortedSaleTransfer(
           action: 'SORTED_SALE_TRANSFER_DISPATCHED',
           entityType: 'sorted_sale_transfer',
           entityId: transfer.id,
-          before: { stockId: stock.id, bags: stock.bagQuantity, weightKg: stock.saleWeightKg },
+          before: {
+            productId: input.productId,
+            saleWeightKg: gramsToKilogramsExact(availableGrams),
+          },
           after: {
-            bags: stock.bagQuantity - input.bagQuantity,
-            weightKg: gramsToKilogramsExact(beforeGrams - movedGrams),
+            saleWeightKg: gramsToKilogramsExact(availableGrams - movedGrams),
             destinationStoreId: input.destinationStoreId,
-            movedBags: input.bagQuantity,
+            bagWeightsKg,
             movedWeightKg: gramsToKilogramsExact(movedGrams),
+            lots: consumed.map(({ lot, grams }) => ({
+              stockId: lot.id,
+              weightKg: gramsToKilogramsExact(grams),
+            })),
           },
         });
         return result({ transferId: transfer.id }, transfer.id, 201);
@@ -244,8 +256,6 @@ export async function receiveSortedSaleTransfer(
               storeId: transfer.destinationStoreId,
               productId: transfer.productId,
               sourceTransferId: transfer.id,
-              bagQuantity: transfer.bagQuantity,
-              creditedBagQuantity: transfer.bagQuantity,
               saleCreditedWeightKg: transfer.weightKg,
               saleWeightKg: transfer.weightKg,
               createdAt: now,

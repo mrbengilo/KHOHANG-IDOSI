@@ -113,6 +113,26 @@ export function kilogramsToGramsExact(value: string): bigint {
   return BigInt(whole) * 1_000n + BigInt(fraction.padEnd(3, '0'));
 }
 
+export interface WeighedBags {
+  /** Canonical kilogram strings in bag order. */
+  readonly bagWeightsKg: string[];
+  readonly totalGrams: bigint;
+}
+
+/** Validate bags weighed one by one; every bag must be positive and exact to the gram. */
+export function weighBags(bagWeightsKg: readonly string[]): WeighedBags {
+  if (bagWeightsKg.length === 0 || bagWeightsKg.length > 100)
+    throw new StoreOperationValidationError('Enter between 1 and 100 bags.');
+  let totalGrams = 0n;
+  const canonical = bagWeightsKg.map((value) => {
+    const grams = kilogramsToGramsExact(value);
+    if (grams <= 0n) throw new StoreOperationValidationError('Every bag weight must be positive.');
+    totalGrams += grams;
+    return gramsToKilogramsExact(grams);
+  });
+  return { bagWeightsKg: canonical, totalGrams };
+}
+
 export function gramsToKilogramsExact(grams: bigint): string {
   if (grams < 0n) {
     throw new StoreOperationValidationError('Weight cannot be negative.');

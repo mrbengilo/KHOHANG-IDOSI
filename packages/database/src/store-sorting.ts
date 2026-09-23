@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
@@ -7,6 +7,7 @@ import {
   storeInventoryBags,
   storeInventoryLedgerEntries,
   sortedSaleTransfers,
+  storeCharityExports,
   storeSortedStocks,
   storeSortingEvents,
   stores,
@@ -18,6 +19,7 @@ import {
   kilogramsToGramsExact,
   StoreOperationConflictError,
   StoreOperationValidationError,
+  weighBags,
 } from './store-operations.js';
 import { withAdvisoryLock, type Transaction } from './transaction.js';
 
@@ -43,7 +45,6 @@ export interface CreateStoreSortingInput {
   readonly expectedInventoryVersion: number;
   readonly reason: SortingReason;
   readonly weightKg: string;
-  readonly bagQuantity: number | null;
   readonly actorUserId: string;
   readonly idempotencyKey: string;
   readonly requestHash: string;
@@ -55,7 +56,6 @@ export interface SortedStockMutationInput {
   readonly storeId: string;
   readonly expectedVersion: number;
   readonly weightKg: string;
-  readonly bagQuantity: number | null;
   readonly actorUserId: string;
   readonly idempotencyKey: string;
   readonly requestHash: string;
@@ -113,11 +113,6 @@ export async function createStoreSorting(
   const weightGrams = kilogramsToGramsExact(input.weightKg);
   if (weightGrams <= 0n)
     throw new StoreOperationValidationError('Sorting weight must be positive.');
-  if (
-    input.reason === 'SALE' &&
-    (!Number.isSafeInteger(input.bagQuantity) || (input.bagQuantity ?? 0) <= 0)
-  )
-    throw new StoreOperationValidationError('Sorting into Sale requires a positive bag quantity.');
   return withIdempotency(
     database,
     {
@@ -200,10 +195,6 @@ export async function createStoreSorting(
                     (input.reason === 'SALE' ? weightGrams : 0n),
                 ),
                 saleWeightKg: gramsToKilogramsExact(saleGrams),
-                bagQuantity:
-                  existing.bagQuantity + (input.reason === 'SALE' ? input.bagQuantity! : 0),
-                creditedBagQuantity:
-                  existing.creditedBagQuantity + (input.reason === 'SALE' ? input.bagQuantity! : 0),
                 charityWeightKg: gramsToKilogramsExact(charityGrams),
                 version: existing.version + 1,
                 updatedAt: now,
@@ -222,8 +213,6 @@ export async function createStoreSorting(
                   input.reason === 'SALE' ? weightGrams : 0n,
                 ),
                 saleWeightKg: gramsToKilogramsExact(saleGrams),
-                bagQuantity: input.reason === 'SALE' ? input.bagQuantity! : 0,
-                creditedBagQuantity: input.reason === 'SALE' ? input.bagQuantity! : 0,
                 charityWeightKg: gramsToKilogramsExact(charityGrams),
                 createdAt: now,
                 updatedAt: now,
@@ -278,7 +267,6 @@ export async function createStoreSorting(
           after: {
             reason: input.reason,
             weightKg: input.weightKg,
-            bagQuantity: input.bagQuantity,
             bagId: bag.id,
             stockId: stock?.id ?? null,
           },
@@ -320,11 +308,6 @@ async function mutateCharity(
 ): Promise<IdempotencyResult<StoreSortingMutationResult>> {
   const weightGrams = kilogramsToGramsExact(input.weightKg);
   if (weightGrams <= 0n) throw new StoreOperationValidationError('Weight must be positive.');
-  if (
-    action === 'charity_to_sale' &&
-    (!Number.isSafeInteger(input.bagQuantity) || (input.bagQuantity ?? 0) <= 0)
-  )
-    throw new StoreOperationValidationError('Moving charity into Sale requires a bag quantity.');
   return withIdempotency(
     database,
     {
@@ -384,10 +367,6 @@ async function mutateCharity(
               kilogramsToGramsExact(stock.saleWeightKg) +
                 (action === 'charity_to_sale' ? weightGrams : 0n),
             ),
-            bagQuantity:
-              stock.bagQuantity + (action === 'charity_to_sale' ? input.bagQuantity! : 0),
-            creditedBagQuantity:
-              stock.creditedBagQuantity + (action === 'charity_to_sale' ? input.bagQuantity! : 0),
             version: stock.version + 1,
             updatedAt: now,
           })
@@ -425,7 +404,6 @@ async function mutateCharity(
           after: {
             stockId: stock.id,
             weightKg: input.weightKg,
-            bagQuantity: input.bagQuantity,
             version: updated.version,
           },
         });
@@ -449,6 +427,299 @@ async function mutateCharity(
         };
       }),
   );
+}
+
+interface ProductCharityCommand {
+  readonly storeId: string;
+  readonly productId: string;
+  readonly actorUserId: string;
+  readonly idempotencyKey: string;
+  readonly requestHash: string;
+  readonly requestId?: string;
+}
+
+export interface MoveProductCharityToSaleInput extends ProductCharityCommand {
+  readonly weightKg: string;
+}
+
+export interface CreateCharityExportInput extends ProductCharityCommand {
+  readonly bagWeightsKg: readonly string[];
+  readonly note: string | null;
+}
+
+// A type alias (not an interface) so it is assignable to the JSON idempotency body.
+export type ProductCharityBalanceRecord = {
+  readonly storeId: string;
+  readonly productId: string;
+  readonly charityWeightKg: string;
+  readonly saleWeightKg: string;
+};
+
+type CharityExportRow = typeof storeCharityExports.$inferSelect;
+
+export async function listCharityExports(
+  database: Database,
+  storeIds: readonly string[],
+): Promise<CharityExportRow[]> {
+  if (storeIds.length === 0) return [];
+  return database
+    .select()
+    .from(storeCharityExports)
+    .where(inArray(storeCharityExports.storeId, [...storeIds]))
+    .orderBy(desc(storeCharityExports.createdAt))
+    .limit(500);
+}
+
+export async function getCharityExport(
+  database: Database,
+  id: string,
+): Promise<CharityExportRow | undefined> {
+  const [row] = await database
+    .select()
+    .from(storeCharityExports)
+    .where(eq(storeCharityExports.id, id))
+    .limit(1);
+  return row;
+}
+
+/** Move charity weight of one product back into Sale, oldest sorted lots first. */
+export async function moveProductCharityToSale(
+  database: Database,
+  input: MoveProductCharityToSaleInput,
+): Promise<IdempotencyResult<ProductCharityBalanceRecord>> {
+  const weightGrams = kilogramsToGramsExact(input.weightKg);
+  if (weightGrams <= 0n) throw new StoreOperationValidationError('Weight must be positive.');
+  return withIdempotency(
+    database,
+    {
+      scope: `store-sorting.product_charity_to_sale:${input.storeId}`,
+      key: input.idempotencyKey,
+      requestHash: input.requestHash,
+    },
+    (tx) =>
+      withAdvisoryLock(tx, 'store-sorting', input.storeId, async () => {
+        await assertActiveStoreActor(tx, input.actorUserId, input.storeId);
+        const lots = await lockProductLots(tx, input.storeId, input.productId);
+        const consumed = takeCharity(lots, weightGrams);
+        const now = new Date();
+        if (!lots.some((lot) => kilogramsToGramsExact(lot.saleWeightKg) > 0n))
+          await initializeSaleBaseline(tx, input.storeId, input.productId, now);
+        const eventIds: string[] = [];
+        for (const { lot, grams } of consumed) {
+          const [updated] = await tx
+            .update(storeSortedStocks)
+            .set({
+              charityWeightKg: gramsToKilogramsExact(
+                kilogramsToGramsExact(lot.charityWeightKg) - grams,
+              ),
+              saleCreditedWeightKg: gramsToKilogramsExact(
+                kilogramsToGramsExact(lot.saleCreditedWeightKg) + grams,
+              ),
+              saleWeightKg: gramsToKilogramsExact(kilogramsToGramsExact(lot.saleWeightKg) + grams),
+              version: lot.version + 1,
+              updatedAt: now,
+            })
+            .where(
+              and(eq(storeSortedStocks.id, lot.id), eq(storeSortedStocks.version, lot.version)),
+            )
+            .returning({ id: storeSortedStocks.id });
+          if (!updated) throw new StoreOperationConflictError('Charity stock changed during move.');
+          eventIds.push(await recordCharityEvent(tx, lot, 'charity_to_sale', grams, input, now));
+        }
+        await settleProductSaleProgress(tx, input.storeId, input.productId, now);
+        const balance = await productBalance(tx, input.storeId, input.productId);
+        await tx.insert(auditLogs).values({
+          requestId: input.requestId,
+          actorUserId: input.actorUserId,
+          actorRole: 'store',
+          actorStoreId: input.storeId,
+          action: 'STORE_CHARITY_MOVED_TO_SALE',
+          entityType: 'store_sorting_event',
+          entityId: eventIds[0]!,
+          after: {
+            productId: input.productId,
+            weightKg: gramsToKilogramsExact(weightGrams),
+            lots: consumed.map(({ lot, grams }) => ({
+              stockId: lot.id,
+              weightKg: gramsToKilogramsExact(grams),
+            })),
+            balance,
+          },
+        });
+        return {
+          value: balance,
+          responseBody: balance,
+          responseStatus: 200,
+          resourceType: 'store_sorting_event',
+          resourceId: eventIds[0]!,
+        };
+      }),
+  );
+}
+
+/** Export charity of one product bag by bag, oldest sorted lots first. */
+export async function createCharityExport(
+  database: Database,
+  input: CreateCharityExportInput,
+): Promise<IdempotencyResult<{ exportId: string }>> {
+  const { bagWeightsKg, totalGrams } = weighBags(input.bagWeightsKg);
+  return withIdempotency(
+    database,
+    {
+      scope: `store-sorting.charity_export_bags:${input.storeId}`,
+      key: input.idempotencyKey,
+      requestHash: input.requestHash,
+    },
+    (tx) =>
+      withAdvisoryLock(tx, 'store-sorting', input.storeId, async () => {
+        await assertActiveStoreActor(tx, input.actorUserId, input.storeId);
+        const lots = await lockProductLots(tx, input.storeId, input.productId);
+        const consumed = takeCharity(lots, totalGrams);
+        const now = new Date();
+        const [created] = await tx
+          .insert(storeCharityExports)
+          .values({
+            exportNumber: '',
+            storeId: input.storeId,
+            productId: input.productId,
+            bagQuantity: bagWeightsKg.length,
+            weightKg: gramsToKilogramsExact(totalGrams),
+            bagWeightsKg,
+            note: input.note,
+            createdByUserId: input.actorUserId,
+            createdAt: now,
+          })
+          .returning({ id: storeCharityExports.id });
+        if (!created) throw new Error('Charity export insert returned no row.');
+        for (const { lot, grams } of consumed) {
+          const [updated] = await tx
+            .update(storeSortedStocks)
+            .set({
+              charityWeightKg: gramsToKilogramsExact(
+                kilogramsToGramsExact(lot.charityWeightKg) - grams,
+              ),
+              version: lot.version + 1,
+              updatedAt: now,
+            })
+            .where(
+              and(eq(storeSortedStocks.id, lot.id), eq(storeSortedStocks.version, lot.version)),
+            )
+            .returning({ id: storeSortedStocks.id });
+          if (!updated)
+            throw new StoreOperationConflictError('Charity stock changed during export.');
+          await recordCharityEvent(tx, lot, 'charity_export', grams, input, now);
+        }
+        await tx.insert(auditLogs).values({
+          requestId: input.requestId,
+          actorUserId: input.actorUserId,
+          actorRole: 'store',
+          actorStoreId: input.storeId,
+          action: 'STORE_CHARITY_EXPORTED',
+          entityType: 'store_charity_export',
+          entityId: created.id,
+          after: {
+            productId: input.productId,
+            bagWeightsKg,
+            weightKg: gramsToKilogramsExact(totalGrams),
+            lots: consumed.map(({ lot, grams }) => ({
+              stockId: lot.id,
+              weightKg: gramsToKilogramsExact(grams),
+            })),
+          },
+        });
+        const value = { exportId: created.id };
+        return {
+          value,
+          responseBody: value,
+          responseStatus: 201,
+          resourceType: 'store_charity_export',
+          resourceId: created.id,
+        };
+      }),
+  );
+}
+
+async function lockProductLots(
+  tx: Transaction,
+  storeId: string,
+  productId: string,
+): Promise<SortedStockRow[]> {
+  return tx
+    .select()
+    .from(storeSortedStocks)
+    .where(and(eq(storeSortedStocks.storeId, storeId), eq(storeSortedStocks.productId, productId)))
+    .orderBy(asc(storeSortedStocks.createdAt), asc(storeSortedStocks.id))
+    .for('update');
+}
+
+function takeCharity(
+  lots: readonly SortedStockRow[],
+  grams: bigint,
+): { lot: SortedStockRow; grams: bigint }[] {
+  const consumed: { lot: SortedStockRow; grams: bigint }[] = [];
+  let remaining = grams;
+  for (const lot of lots) {
+    if (remaining === 0n) break;
+    const balance = kilogramsToGramsExact(lot.charityWeightKg);
+    const take = balance < remaining ? balance : remaining;
+    if (take <= 0n) continue;
+    consumed.push({ lot, grams: take });
+    remaining -= take;
+  }
+  if (remaining !== 0n || consumed.length === 0)
+    throw new StoreOperationValidationError('Weight exceeds the charity stock of this product.');
+  return consumed;
+}
+
+async function recordCharityEvent(
+  tx: Transaction,
+  lot: SortedStockRow,
+  action: 'charity_to_sale' | 'charity_export',
+  grams: bigint,
+  input: ProductCharityCommand,
+  now: Date,
+): Promise<string> {
+  const [event] = await tx
+    .insert(storeSortingEvents)
+    .values({
+      storeSortedStockId: lot.id,
+      storeInventoryBagId: lot.storeInventoryBagId,
+      storeId: lot.storeId,
+      productId: lot.productId,
+      action,
+      weightKg: gramsToKilogramsExact(grams),
+      actorUserId: input.actorUserId,
+      occurredAt: now,
+    })
+    .returning({ id: storeSortingEvents.id });
+  if (!event) throw new Error('Charity event insert returned no row.');
+  return event.id;
+}
+
+async function productBalance(
+  tx: Transaction,
+  storeId: string,
+  productId: string,
+): Promise<ProductCharityBalanceRecord> {
+  const lots = await tx
+    .select({
+      saleWeightKg: storeSortedStocks.saleWeightKg,
+      charityWeightKg: storeSortedStocks.charityWeightKg,
+    })
+    .from(storeSortedStocks)
+    .where(and(eq(storeSortedStocks.storeId, storeId), eq(storeSortedStocks.productId, productId)));
+  let sale = 0n;
+  let charity = 0n;
+  for (const lot of lots) {
+    sale += kilogramsToGramsExact(lot.saleWeightKg);
+    charity += kilogramsToGramsExact(lot.charityWeightKg);
+  }
+  return {
+    storeId,
+    productId,
+    charityWeightKg: gramsToKilogramsExact(charity),
+    saleWeightKg: gramsToKilogramsExact(sale),
+  };
 }
 
 async function assertActiveStoreActor(

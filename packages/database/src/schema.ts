@@ -1930,10 +1930,6 @@ export const storeSortedStocks = pgTable(
       sql`${table.bagQuantity} + ${table.transferredOutBagQuantity} <= ${table.creditedBagQuantity}`,
     ),
     check(
-      'store_sorted_stocks_new_sale_bags_with_weight',
-      sql`${table.creditedBagQuantity} = 0 OR ((${table.bagQuantity} = 0) = (${table.saleWeightKg} = 0))`,
-    ),
-    check(
       'store_sorted_stocks_weight_after_transfer',
       sql`${table.transferredOutWeightKg} >= 0 AND ${table.saleWeightKg} + ${table.transferredOutWeightKg} <= ${table.saleCreditedWeightKg}`,
     ),
@@ -1970,6 +1966,8 @@ export const sortedSaleTransfers = pgTable(
     bagQuantity: integer('bag_quantity').notNull(),
     weightKg: numeric('weight_kg', { precision: 14, scale: 3 }).notNull(),
     enteredWeightKg: numeric('entered_weight_kg', { precision: 14, scale: 3 }),
+    // Weighed bags in dispatch order. NULL only for transfers created before bags were weighed.
+    bagWeightsKg: numeric('bag_weights_kg', { precision: 14, scale: 3 }).array(),
     status: text('status').notNull().default('in_transit'),
     note: text('note'),
     version: integer('version').notNull().default(0),
@@ -1998,11 +1996,47 @@ export const sortedSaleTransfers = pgTable(
       'sorted_sale_transfers_entered_weight_positive',
       sql`${table.enteredWeightKg} IS NULL OR ${table.enteredWeightKg} > 0`,
     ),
+    check(
+      'sorted_sale_transfers_bag_weights',
+      sql`${table.bagWeightsKg} IS NULL OR (cardinality(${table.bagWeightsKg}) = ${table.bagQuantity} AND 0 < ALL (${table.bagWeightsKg}))`,
+    ),
     check('sorted_sale_transfers_status', sql`${table.status} IN ('in_transit', 'received')`),
     check('sorted_sale_transfers_version_nonnegative', sql`${table.version} >= 0`),
     check(
       'sorted_sale_transfers_receipt',
       sql`${table.status} <> 'received' OR (${table.destinationStockId} IS NOT NULL AND ${table.receivedByUserId} IS NOT NULL AND ${table.receivedAt} IS NOT NULL)`,
+    ),
+  ],
+);
+
+/** A charity dispatch from a product's charity pool, recorded bag by bag. */
+export const storeCharityExports = pgTable(
+  'store_charity_exports',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    exportNumber: text('export_number').notNull().unique(),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    bagQuantity: integer('bag_quantity').notNull(),
+    weightKg: numeric('weight_kg', { precision: 14, scale: 3 }).notNull(),
+    bagWeightsKg: numeric('bag_weights_kg', { precision: 14, scale: 3 }).array().notNull(),
+    note: text('note'),
+    createdByUserId: uuid('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('store_charity_exports_store_created_idx').on(table.storeId, table.createdAt),
+    check('store_charity_exports_bags_positive', sql`${table.bagQuantity} > 0`),
+    check('store_charity_exports_weight_positive', sql`${table.weightKg} > 0`),
+    check(
+      'store_charity_exports_bag_weights',
+      sql`cardinality(${table.bagWeightsKg}) = ${table.bagQuantity} AND 0 < ALL (${table.bagWeightsKg})`,
     ),
   ],
 );

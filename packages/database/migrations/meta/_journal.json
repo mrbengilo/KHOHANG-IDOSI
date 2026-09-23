@@ -141,6 +141,13 @@
       "when": 1790159516000,
       "tag": "0019_sorted_sale_transfers",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790163000000,
+      "tag": "0020_weighed_dispatch_bags",
+      "breakpoints": true
     }
   ]
 }

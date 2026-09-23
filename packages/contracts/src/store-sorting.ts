@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import {
+  BagWeightsKgSchema,
   EntityIdSchema,
   IsoDateTimeSchema,
   KilogramsDecimalSchema,
@@ -42,13 +43,10 @@ export const CreateStoreSortingRequestSchema = z
     expectedInventoryVersion: z.number().int().nonnegative(),
     reason: StoreSortingReasonSchema,
     weightKg: PositiveKilogramsDecimalSchema,
-    bagQuantity: PositiveUnitQuantitySchema.nullable(),
+    /** Deprecated: sorted Sale is tracked by weight only. Accepted and ignored for old clients. */
+    bagQuantity: PositiveUnitQuantitySchema.nullable().optional(),
   })
-  .strict()
-  .refine((value) => value.reason !== 'SALE' || value.bagQuantity !== null, {
-    path: ['bagQuantity'],
-    message: 'Sorting into Sale requires a bag quantity',
-  });
+  .strict();
 export type CreateStoreSortingRequest = z.infer<typeof CreateStoreSortingRequestSchema>;
 
 export const StoreSortingResultSchema = z
@@ -65,7 +63,8 @@ export const MoveCharityToSaleRequestSchema = z
   .object({
     expectedVersion: z.number().int().nonnegative(),
     weightKg: PositiveKilogramsDecimalSchema,
-    bagQuantity: PositiveUnitQuantitySchema,
+    /** Deprecated: accepted and ignored for old clients. */
+    bagQuantity: PositiveUnitQuantitySchema.nullable().optional(),
   })
   .strict();
 export type MoveCharityToSaleRequest = z.infer<typeof MoveCharityToSaleRequestSchema>;
@@ -76,4 +75,61 @@ export type ExportCharityRequest = z.infer<typeof ExportCharityRequestSchema>;
 export const StoreSortedStockResponseSchema = z.object({ data: StoreSortedStockSchema }).strict();
 export const StoreSortingResultResponseSchema = z
   .object({ data: StoreSortingResultSchema })
+  .strict();
+
+/** Product-level charity actions take weight from the oldest sorted lots first. */
+export const MoveProductCharityToSaleRequestSchema = z
+  .object({
+    storeId: EntityIdSchema,
+    productId: EntityIdSchema,
+    weightKg: PositiveKilogramsDecimalSchema,
+  })
+  .strict();
+export type MoveProductCharityToSaleRequest = z.infer<typeof MoveProductCharityToSaleRequestSchema>;
+
+export const ProductCharityBalanceSchema = z
+  .object({
+    storeId: EntityIdSchema,
+    productId: EntityIdSchema,
+    charityWeightKg: KilogramsDecimalSchema,
+    saleWeightKg: KilogramsDecimalSchema,
+  })
+  .strict();
+export type ProductCharityBalance = z.infer<typeof ProductCharityBalanceSchema>;
+export const ProductCharityBalanceResponseSchema = z
+  .object({ data: ProductCharityBalanceSchema })
+  .strict();
+
+export const CreateCharityExportRequestSchema = z
+  .object({
+    storeId: EntityIdSchema,
+    productId: EntityIdSchema,
+    bagWeightsKg: BagWeightsKgSchema,
+    note: z.string().trim().max(500).nullable(),
+  })
+  .strict();
+export type CreateCharityExportRequest = z.infer<typeof CreateCharityExportRequestSchema>;
+
+export const CharityExportSchema = z
+  .object({
+    id: EntityIdSchema,
+    exportNumber: z.string().min(1),
+    storeId: EntityIdSchema,
+    productId: EntityIdSchema,
+    bagQuantity: PositiveUnitQuantitySchema,
+    weightKg: PositiveKilogramsDecimalSchema,
+    bagWeightsKg: z.array(PositiveKilogramsDecimalSchema).min(1),
+    note: z.string().nullable(),
+    createdAt: IsoDateTimeSchema,
+  })
+  .strict();
+export type CharityExport = z.infer<typeof CharityExportSchema>;
+
+export const ListCharityExportsQuerySchema = z
+  .object({ storeId: EntityIdSchema.optional() })
+  .strict();
+export type ListCharityExportsQuery = z.infer<typeof ListCharityExportsQuerySchema>;
+export const CharityExportResponseSchema = z.object({ data: CharityExportSchema }).strict();
+export const CharityExportsResponseSchema = z
+  .object({ data: z.array(CharityExportSchema) })
   .strict();

@@ -8,12 +8,13 @@ import {
   closeDatabase,
   createStorePartnerInbound,
   createStoreSorting,
+  createCharityExport,
   createSortedSaleTransfer,
   db,
-  exportCharity,
+  listCharityExports,
   listStoreSortedStocks,
   listSortedSaleTransfers,
-  moveCharityToSale,
+  moveProductCharityToSale,
   products,
   recordIdosiStatisticsSuccess,
   receiveSortedSaleTransfer,
@@ -215,7 +216,6 @@ describePostgres('sorted sale and charity stock with IDOSI reconciliation', () =
         expectedInventoryVersion: bag.version,
         reason,
         weightKg,
-        bagQuantity: reason === 'SALE' ? 1 : null,
         actorUserId: actor!.id,
         idempotencyKey: randomUUID(),
         requestHash: randomUUID(),
@@ -242,35 +242,58 @@ describePostgres('sorted sale and charity stock with IDOSI reconciliation', () =
       '24.000',
     );
     const charity = stocks.find((stock) => stock.inventoryLotId === charityBag.id)!;
-    await moveCharityToSale(db, {
-      stockId: charity.id,
+    const charityCommand = {
       storeId: store!.id,
-      expectedVersion: charity.version,
-      weightKg: '2.000',
-      bagQuantity: 1,
+      productId: dressProduct.id,
       actorUserId: actor!.id,
-      idempotencyKey: randomUUID(),
       requestHash: randomUUID(),
+    };
+    await moveProductCharityToSale(db, {
+      ...charityCommand,
+      weightKg: '2.000',
+      idempotencyKey: randomUUID(),
     });
     const moved = (await listStoreSortedStocks(db, store!.id)).find(
       (stock) => stock.id === charity.id,
     )!;
     expect(moved.saleWeightKg).toBe('2.000');
     expect(moved.charityWeightKg).toBe('3.000');
-    await exportCharity(db, {
-      stockId: charity.id,
-      storeId: store!.id,
-      expectedVersion: moved.version,
-      weightKg: '3.000',
-      bagQuantity: null,
-      actorUserId: actor!.id,
+    await expect(
+      createCharityExport(db, {
+        ...charityCommand,
+        bagWeightsKg: ['2.000', '1.001'],
+        note: null,
+        idempotencyKey: randomUUID(),
+      }),
+    ).rejects.toThrow(/exceeds the charity stock/u);
+    await createCharityExport(db, {
+      ...charityCommand,
+      bagWeightsKg: ['1', '0.5'],
+      note: null,
       idempotencyKey: randomUUID(),
-      requestHash: randomUUID(),
+    });
+    const partial = (await listStoreSortedStocks(db, store!.id)).find(
+      (stock) => stock.id === charity.id,
+    )!;
+    expect(partial.charityWeightKg).toBe('1.500');
+    await createCharityExport(db, {
+      ...charityCommand,
+      bagWeightsKg: ['1.500'],
+      note: null,
+      idempotencyKey: randomUUID(),
     });
     const finished = (await listStoreSortedStocks(db, store!.id)).find(
       (stock) => stock.id === charity.id,
     )!;
     expect(finished.charityWeightKg).toBe('0.000');
+    const charityExports = await listCharityExports(db, [store!.id]);
+    expect(
+      charityExports.map((row) => [row.bagQuantity, row.weightKg, row.bagWeightsKg]).sort(),
+    ).toEqual([
+      [1, '1.500', ['1.500']],
+      [2, '1.500', ['1.000', '0.500']],
+    ]);
+    expect(charityExports.every((row) => row.exportNumber.startsWith('PTT-'))).toBe(true);
     const progress = await db
       .select()
       .from(storeSaleSyncProgress)
@@ -381,21 +404,30 @@ describePostgres('sorted sale and charity stock with IDOSI reconciliation', () =
       expectedInventoryVersion: bag!.version,
       reason: 'SALE',
       weightKg: '9.000',
-      bagQuantity: 3,
       actorUserId: sourceUser!.id,
       idempotencyKey: randomUUID(),
       requestHash: randomUUID(),
     });
     const [stock] = await listStoreSortedStocks(db, source!.id);
-    expect([stock?.bagQuantity, stock?.saleWeightKg]).toEqual([3, '9.000']);
-    const command = () =>
+    expect(stock?.saleWeightKg).toBe('9.000');
+    await expect(
       createSortedSaleTransfer(db, {
-        sourceStockId: stock!.id,
         sourceStoreId: source!.id,
         destinationStoreId: destination!.id,
-        expectedStockVersion: stock!.version,
-        bagQuantity: 2,
-        weightKg: null,
+        productId: product!.id,
+        bagWeightsKg: ['5.000', '4.001'],
+        note: null,
+        actorUserId: sourceUser!.id,
+        idempotencyKey: randomUUID(),
+        requestHash: randomUUID(),
+      }),
+    ).rejects.toThrow(/exceeds the Sale stock/u);
+    const command = () =>
+      createSortedSaleTransfer(db, {
+        sourceStoreId: source!.id,
+        destinationStoreId: destination!.id,
+        productId: product!.id,
+        bagWeightsKg: ['2.5', '3.500'],
         note: null,
         actorUserId: sourceUser!.id,
         idempotencyKey: randomUUID(),
@@ -405,10 +437,15 @@ describePostgres('sorted sale and charity stock with IDOSI reconciliation', () =
     expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(1);
     expect(attempts.filter((attempt) => attempt.status === 'rejected')).toHaveLength(1);
     const [transfer] = await listSortedSaleTransfers(db, [source!.id]);
-    expect([transfer?.status, transfer?.weightKg]).toEqual(['in_transit', '6.000']);
+    expect([
+      transfer?.status,
+      transfer?.bagQuantity,
+      transfer?.weightKg,
+      transfer?.bagWeightsKg,
+    ]).toEqual(['in_transit', 2, '6.000', ['2.500', '3.500']]);
     expect(await listStoreSortedStocks(db, destination!.id)).toHaveLength(0);
     const [sourceAfter] = await listStoreSortedStocks(db, source!.id);
-    expect([sourceAfter?.bagQuantity, sourceAfter?.saleWeightKg]).toEqual([1, '3.000']);
+    expect(sourceAfter?.saleWeightKg).toBe('3.000');
     await receiveSortedSaleTransfer(db, {
       transferId: transfer!.id,
       expectedVersion: 0,
@@ -417,12 +454,12 @@ describePostgres('sorted sale and charity stock with IDOSI reconciliation', () =
       requestHash: randomUUID(),
     });
     const [received] = await listStoreSortedStocks(db, destination!.id);
-    expect([received?.bagQuantity, received?.saleWeightKg]).toEqual([2, '6.000']);
+    expect(received?.saleWeightKg).toBe('6.000');
     await snapshot(source, 9, 1);
     const [sold] = await listStoreSortedStocks(db, source!.id);
-    expect([sold?.bagQuantity, sold?.saleWeightKg]).toEqual([0, '0.000']);
+    expect(sold?.saleWeightKg).toBe('0.000');
     await snapshot(source, 0, 2);
     const [corrected] = await listStoreSortedStocks(db, source!.id);
-    expect([corrected?.bagQuantity, corrected?.saleWeightKg]).toEqual([1, '3.000']);
+    expect(corrected?.saleWeightKg).toBe('3.000');
   });
 });
