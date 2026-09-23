@@ -13,8 +13,11 @@ import {
   ListStoreSortedStocksResponseSchema,
   StoreSortingResultResponseSchema,
   CreateStoreSortingRequestSchema,
-  MoveCharityToSaleRequestSchema,
-  ExportCharityRequestSchema,
+  MoveProductCharityToSaleRequestSchema,
+  ProductCharityBalanceResponseSchema,
+  CreateCharityExportRequestSchema,
+  CharityExportResponseSchema,
+  CharityExportsResponseSchema,
   type CreateStoreOutboundRequest,
   type OpenStoreInventoryBagRequest,
   type OutboundReason,
@@ -27,8 +30,10 @@ import {
   type StoreSortedStock,
   type StoreSortingResult,
   type CreateStoreSortingRequest,
-  type MoveCharityToSaleRequest,
-  type ExportCharityRequest,
+  type MoveProductCharityToSaleRequest,
+  type ProductCharityBalance,
+  type CreateCharityExportRequest,
+  type CharityExport,
 } from '@idosi/contracts';
 import { reportUnauthorizedResponse } from '../../lib/session-expiry';
 import { addTabSessionHeader } from '../../lib/tab-session';
@@ -230,14 +235,13 @@ export async function createStoreSorting(
   ).data;
 }
 
-export async function moveCharityToSale(
-  stockId: string,
-  input: MoveCharityToSaleRequest,
+export async function moveProductCharityToSale(
+  input: MoveProductCharityToSaleRequest,
   idempotencyKey: string,
-): Promise<StoreSortingResult> {
-  const parsed = MoveCharityToSaleRequestSchema.parse(input);
-  return StoreSortingResultResponseSchema.parse(
-    await request(`/store-sorted-stocks/${encodeURIComponent(stockId)}/move-to-sale`, {
+): Promise<ProductCharityBalance> {
+  const parsed = MoveProductCharityToSaleRequestSchema.parse(input);
+  return ProductCharityBalanceResponseSchema.parse(
+    await request('/store-charity/move-to-sale', {
       method: 'POST',
       headers: { 'Idempotency-Key': idempotencyKey },
       body: JSON.stringify(parsed),
@@ -245,14 +249,18 @@ export async function moveCharityToSale(
   ).data;
 }
 
-export async function exportCharity(
-  stockId: string,
-  input: ExportCharityRequest,
+export async function listCharityExports(storeId?: string): Promise<CharityExport[]> {
+  const query = storeId ? `?${new URLSearchParams({ storeId })}` : '';
+  return CharityExportsResponseSchema.parse(await request(`/store-charity-exports${query}`)).data;
+}
+
+export async function createCharityExport(
+  input: CreateCharityExportRequest,
   idempotencyKey: string,
-): Promise<StoreSortingResult> {
-  const parsed = ExportCharityRequestSchema.parse(input);
-  return StoreSortingResultResponseSchema.parse(
-    await request(`/store-sorted-stocks/${encodeURIComponent(stockId)}/export-charity`, {
+): Promise<CharityExport> {
+  const parsed = CreateCharityExportRequestSchema.parse(input);
+  return CharityExportResponseSchema.parse(
+    await request('/store-charity-exports', {
       method: 'POST',
       headers: { 'Idempotency-Key': idempotencyKey },
       body: JSON.stringify(parsed),

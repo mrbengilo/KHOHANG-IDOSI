@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { Store } from '@idosi/contracts';
+import type { Store, StoreSortedStock } from '@idosi/contracts';
 import { useMemo, useRef, useState } from 'react';
 
+import { BagWeightsInput } from '../../components/BagWeightsInput';
 import { Button } from '../../components/Button';
 import { EmptyState } from '../../components/EmptyState';
 import { ApiClientError } from '../../lib/api';
+import { checkBagWeights } from '../../lib/bag-weights';
 import { formatKgExact } from '../../lib/format';
 import type { Role } from '../../lib/types';
 import { listStoreSortedStocks } from '../inventory/inventoryApi';
@@ -14,30 +16,33 @@ import {
   receiveSortedSaleTransfer,
 } from './sortedSaleApi';
 
-const kilogramsPattern = /^(?:0|[1-9]\d*)(?:\.\d{1,3})?$/;
-
 function grams(value: string): bigint {
   const [whole = '0', fraction = ''] = value.split('.');
   return BigInt(whole) * 1000n + BigInt(fraction.padEnd(3, '0') || '0');
 }
 
-export function validSortedSaleTransfer(
-  quantity: string,
-  weightKg: string,
-  availableBags: number,
-  availableKg: string,
-): boolean {
-  if (!/^[1-9]\d*$/.test(quantity) || !Number.isSafeInteger(Number(quantity))) return false;
-  const bags = Number(quantity);
-  if (bags > availableBags) return false;
-  if (!weightKg.trim()) return (grams(availableKg) * BigInt(bags)) / BigInt(availableBags) > 0n;
-  if (!kilogramsPattern.test(weightKg)) return false;
-  const entered = grams(weightKg);
-  return (
-    entered > 0n &&
-    entered <= grams(availableKg) &&
-    (bags === availableBags ? entered === grams(availableKg) : entered < grams(availableKg))
-  );
+function kilograms(value: bigint): string {
+  return `${value / 1000n}.${String(value % 1000n).padStart(3, '0')}`;
+}
+
+export interface SaleProductBalance {
+  readonly productId: string;
+  readonly saleWeightKg: string;
+}
+
+/** Sale is transferred per product, from every sorted lot of that product. */
+export function saleBalancesByProduct(
+  stocks: readonly StoreSortedStock[],
+  storeId: string,
+): SaleProductBalance[] {
+  const totals = new Map<string, bigint>();
+  for (const stock of stocks) {
+    if (stock.storeId !== storeId) continue;
+    totals.set(stock.productId, (totals.get(stock.productId) ?? 0n) + grams(stock.saleWeightKg));
+  }
+  return [...totals]
+    .filter(([, total]) => total > 0n)
+    .map(([productId, total]) => ({ productId, saleWeightKg: kilograms(total) }));
 }
 
 function message(error: unknown): string {
@@ -69,36 +74,28 @@ export function SortedSaleTransferWorkspace({
     retry: false,
   });
   const [destinationId, setDestinationId] = useState('');
-  const [stockId, setStockId] = useState('');
-  const [quantity, setQuantity] = useState('');
-  const [weightKg, setWeightKg] = useState('');
+  const [productId, setProductId] = useState('');
+  const [bagCount, setBagCount] = useState('');
+  const [bagWeights, setBagWeights] = useState<string[]>([]);
   const [note, setNote] = useState('');
   const [notice, setNotice] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const mutationKeys = useRef(new Map<string, string>());
-  const sourceStocks = useMemo(
-    () =>
-      (stocksQuery.data ?? []).filter(
-        (stock) => stock.storeId === principalStoreId && stock.bagQuantity > 0,
-      ),
+  const products = useMemo(
+    () => saleBalancesByProduct(stocksQuery.data ?? [], principalStoreId),
     [stocksQuery.data, principalStoreId],
   );
-  const effectiveStockId = sourceStocks.some((stock) => stock.id === stockId)
-    ? stockId
-    : (sourceStocks[0]?.id ?? '');
-  const selectedStock = sourceStocks.find((stock) => stock.id === effectiveStockId);
+  const selectedProduct =
+    products.find((product) => product.productId === productId) ?? products[0];
+  const productName = (id: string) => productNames.get(id) ?? id;
   const effectiveDestinationId = destinations.some((store) => store.id === destinationId)
     ? destinationId
     : (destinations[0]?.id ?? '');
+  const bagCheck = checkBagWeights(bagCount, bagWeights, selectedProduct?.saleWeightKg ?? '0');
   const canCreate =
     role === 'STORE' &&
-    Boolean(selectedStock) &&
+    Boolean(selectedProduct) &&
     Boolean(effectiveDestinationId) &&
-    validSortedSaleTransfer(
-      quantity,
-      weightKg,
-      selectedStock?.bagQuantity ?? 0,
-      selectedStock?.saleWeightKg ?? '0',
-    );
+    bagCheck.valid;
 
   const invalidate = async () =>
     Promise.all([
@@ -108,14 +105,12 @@ export function SortedSaleTransferWorkspace({
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      if (!selectedStock || !effectiveDestinationId)
-        throw new Error('Chưa chọn tồn Sale hoặc cửa hàng nhận.');
+      if (!selectedProduct || !effectiveDestinationId || !bagCheck.valid)
+        throw new Error('Chưa chọn mặt hàng, cửa hàng nhận hoặc kg từng bao.');
       const signature = [
-        selectedStock.id,
-        selectedStock.version,
+        selectedProduct.productId,
         effectiveDestinationId,
-        quantity,
-        weightKg,
+        bagCheck.bagWeightsKg.join(','),
         note,
       ].join(':');
       const key = mutationKeys.current.get(signature) ?? crypto.randomUUID();
@@ -124,10 +119,8 @@ export function SortedSaleTransferWorkspace({
         {
           sourceStoreId: principalStoreId,
           destinationStoreId: effectiveDestinationId,
-          sourceStockId: selectedStock.id,
-          bagQuantity: Number(quantity),
-          weightKg: weightKg.trim() || null,
-          expectedStockVersion: selectedStock.version,
+          productId: selectedProduct.productId,
+          bagWeightsKg: bagCheck.bagWeightsKg,
           note: note.trim() || null,
         },
         key,
@@ -139,10 +132,10 @@ export function SortedSaleTransferWorkspace({
     onSuccess: async (transfer) => {
       setNotice({
         tone: 'success',
-        text: `Đã điều chuyển ${transfer.bagQuantity} bao (${formatKgExact(transfer.weightKg)}) theo phiếu ${transfer.transferNumber}.`,
+        text: `Đã điều chuyển ${transfer.bagQuantity} bao ${productName(transfer.productId)} (${formatKgExact(transfer.weightKg)}) theo phiếu ${transfer.transferNumber}.`,
       });
-      setQuantity('');
-      setWeightKg('');
+      setBagCount('');
+      setBagWeights([]);
       setNote('');
       await invalidate();
     },
@@ -162,6 +155,10 @@ export function SortedSaleTransferWorkspace({
   });
 
   const loadError = stocksQuery.error ?? transfersQuery.error;
+  const saleOverview = [...new Set((stocksQuery.data ?? []).map((stock) => stock.storeId))].flatMap(
+    (storeId) =>
+      saleBalancesByProduct(stocksQuery.data ?? [], storeId).map((item) => ({ ...item, storeId })),
+  );
   const storeName = (id: string) => {
     const store = stores.find((item) => item.id === id);
     return store ? `${store.code} · ${store.name}` : id;
@@ -195,8 +192,8 @@ export function SortedSaleTransferWorkspace({
             <div>
               <h2>Điều chuyển từ Sale sau lọc</h2>
               <p>
-                Tồn Sale nguồn giảm ngay khi bấm Điều chuyển. Cửa hàng nhận xác nhận trước khi được
-                cộng tồn.
+                Chọn mặt hàng, nhập số bao và kg từng bao. Tồn Sale nguồn giảm ngay khi bấm Điều
+                chuyển; cửa hàng nhận xác nhận trước khi được cộng tồn.
               </p>
             </div>
           </div>
@@ -219,45 +216,21 @@ export function SortedSaleTransferWorkspace({
             </label>
             <label>
               Mặt hàng Sale sau lọc
-              <select value={effectiveStockId} onChange={(event) => setStockId(event.target.value)}>
-                {sourceStocks.length === 0 ? (
-                  <option value="">Chưa có tồn Sale sau lọc</option>
-                ) : null}
-                {sourceStocks.map((stock) => (
-                  <option key={stock.id} value={stock.id}>
-                    {productNames.get(stock.productId) ?? stock.productId} · {stock.bagCode} ·{' '}
-                    {stock.bagQuantity} bao · {formatKgExact(stock.saleWeightKg)}
+              <select
+                value={selectedProduct?.productId ?? ''}
+                onChange={(event) => setProductId(event.target.value)}
+              >
+                {products.length === 0 ? <option value="">Chưa có tồn Sale sau lọc</option> : null}
+                {products.map((product) => (
+                  <option key={product.productId} value={product.productId}>
+                    {productName(product.productId)} · {formatKgExact(product.saleWeightKg)}
                   </option>
                 ))}
               </select>
-            </label>
-            <label>
-              Số lượng (bao)
-              <input
-                type="number"
-                min="1"
-                step="1"
-                inputMode="numeric"
-                value={quantity}
-                onChange={(event) => setQuantity(event.target.value)}
-                placeholder="Ví dụ: 2"
-              />
               <small>
-                {selectedStock ? `Tối đa ${selectedStock.bagQuantity} bao` : 'Chọn mặt hàng trước'}
-              </small>
-            </label>
-            <label>
-              Khối lượng (kg), không bắt buộc
-              <input
-                inputMode="decimal"
-                value={weightKg}
-                onChange={(event) => setWeightKg(event.target.value)}
-                placeholder="Để trống để hệ thống tính theo số bao"
-              />
-              <small>
-                {selectedStock
-                  ? `Tồn Sale: ${formatKgExact(selectedStock.saleWeightKg)}`
-                  : 'Chọn mặt hàng trước'}
+                {selectedProduct
+                  ? `Sale khả dụng: ${formatKgExact(selectedProduct.saleWeightKg)}`
+                  : 'Chưa có mặt hàng Sale để điều chuyển'}
               </small>
             </label>
             <label className="transfer-create__note">
@@ -270,6 +243,20 @@ export function SortedSaleTransferWorkspace({
               />
             </label>
           </div>
+          {selectedProduct ? (
+            <BagWeightsInput
+              idPrefix="sale-transfer"
+              productName={productName(selectedProduct.productId)}
+              availableKg={selectedProduct.saleWeightKg}
+              count={bagCount}
+              weights={bagWeights}
+              check={bagCheck}
+              onChange={(count, weights) => {
+                setBagCount(count);
+                setBagWeights(weights);
+              }}
+            />
+          ) : null}
           <Button
             busy={createMutation.isPending}
             disabled={!canCreate || createMutation.isPending}
@@ -286,22 +273,21 @@ export function SortedSaleTransferWorkspace({
         <div className="section-heading section-heading--compact">
           <div>
             <h2>Tồn Sale sau lọc</h2>
-            <p>Số bao và khối lượng hiện còn trong phạm vi được xem.</p>
+            <p>Khối lượng Sale hiện còn theo cửa hàng và mặt hàng.</p>
           </div>
         </div>
-        {(stocksQuery.data ?? []).length === 0 ? (
+        {saleOverview.length === 0 ? (
           <EmptyState
             title="Chưa có tồn Sale"
             detail="Sau khi lọc, đưa hàng vào Sale để bán hoặc điều chuyển."
           />
         ) : (
           <div className="transfer-card-grid">
-            {(stocksQuery.data ?? []).map((stock) => (
-              <article className="transfer-card" key={stock.id}>
-                <strong>{storeName(stock.storeId)}</strong>
-                <p>{productNames.get(stock.productId) ?? stock.productId}</p>
+            {saleOverview.map((item) => (
+              <article className="transfer-card" key={`${item.storeId}:${item.productId}`}>
+                <strong>{storeName(item.storeId)}</strong>
                 <p>
-                  {stock.bagQuantity} bao · {formatKgExact(stock.saleWeightKg)} · v{stock.version}
+                  {productName(item.productId)} · {formatKgExact(item.saleWeightKg)}
                 </p>
               </article>
             ))}
@@ -318,7 +304,7 @@ export function SortedSaleTransferWorkspace({
         {(transfersQuery.data ?? []).length === 0 ? (
           <EmptyState
             title="Chưa có phiếu điều chuyển Sale"
-            detail="Chọn cửa hàng nhận, mặt hàng và số bao để điều chuyển."
+            detail="Chọn cửa hàng nhận, mặt hàng, số bao và kg từng bao để điều chuyển."
           />
         ) : (
           <div className="transfer-card-grid">
@@ -332,10 +318,19 @@ export function SortedSaleTransferWorkspace({
                   {storeName(transfer.sourceStoreId)} → {storeName(transfer.destinationStoreId)}
                 </p>
                 <p>
-                  {productNames.get(transfer.productId) ?? transfer.productId} ·{' '}
-                  {transfer.bagQuantity} bao · {formatKgExact(transfer.weightKg)}
+                  {productName(transfer.productId)} · {transfer.bagQuantity} bao ·{' '}
+                  {formatKgExact(transfer.weightKg)}
                 </p>
-                {transfer.enteredWeightKg === null ? (
+                {transfer.bagWeightsKg.length > 0 ? (
+                  <ul className="transfer-card__bags" aria-label="Khối lượng từng bao">
+                    {transfer.bagWeightsKg.map((weight, index) => (
+                      <li key={index}>
+                        Bao {index + 1} · {productName(transfer.productId)} ·{' '}
+                        {formatKgExact(weight)}
+                      </li>
+                    ))}
+                  </ul>
+                ) : transfer.enteredWeightKg === null ? (
                   <small>Kg tính theo tỷ lệ số bao</small>
                 ) : null}
                 {transfer.note ? <p>{transfer.note}</p> : null}

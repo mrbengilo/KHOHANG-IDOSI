@@ -230,15 +230,22 @@ export {
   StoreInventoryAuthorizationError,
 } from './store-inventory-operations.js';
 export {
+  createCharityExport,
   createStoreSorting,
   exportCharity,
+  getCharityExport,
   getStoreSortedStock,
+  listCharityExports,
   listStoreSortedStocks,
   moveCharityToSale,
+  moveProductCharityToSale,
 } from './store-sorting.js';
 export { idosiProductSaleGrams } from './store-sale-sync.js';
 export type {
+  CreateCharityExportInput,
   CreateStoreSortingInput,
+  MoveProductCharityToSaleInput,
+  ProductCharityBalanceRecord,
   SortedStockMutationInput,
   SortedStockRecord,
   StoreSortingMutationResult,

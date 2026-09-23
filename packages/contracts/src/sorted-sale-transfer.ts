@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import {
+  BagWeightsKgSchema,
   EntityIdSchema,
   IsoDateTimeSchema,
   PositiveKilogramsDecimalSchema,
@@ -18,6 +19,8 @@ export const SortedSaleTransferSchema = z
     bagQuantity: PositiveUnitQuantitySchema,
     weightKg: PositiveKilogramsDecimalSchema,
     enteredWeightKg: PositiveKilogramsDecimalSchema.nullable(),
+    /** Per-bag weights in bag order; empty for transfers created before bags were weighed. */
+    bagWeightsKg: z.array(PositiveKilogramsDecimalSchema),
     status: z.enum(['IN_TRANSIT', 'RECEIVED']),
     version: z.number().int().nonnegative(),
     note: z.string().nullable(),
@@ -27,14 +30,16 @@ export const SortedSaleTransferSchema = z
   .strict();
 export type SortedSaleTransfer = z.infer<typeof SortedSaleTransferSchema>;
 
+/**
+ * A transfer takes weight from the product's whole Sale pool at the source store,
+ * oldest sorted lots first. The total of the bag weights must fit that pool.
+ */
 export const CreateSortedSaleTransferRequestSchema = z
   .object({
-    sourceStockId: EntityIdSchema,
     sourceStoreId: EntityIdSchema,
     destinationStoreId: EntityIdSchema,
-    expectedStockVersion: z.number().int().nonnegative(),
-    bagQuantity: PositiveUnitQuantitySchema,
-    weightKg: PositiveKilogramsDecimalSchema.nullable(),
+    productId: EntityIdSchema,
+    bagWeightsKg: BagWeightsKgSchema,
     note: z.string().trim().max(500).nullable(),
   })
   .strict()
