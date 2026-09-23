@@ -45,6 +45,7 @@ import {
   ListStoreInventoryBagLedgerQuerySchema,
   ListStoreInventoryBagsQuerySchema,
   ListStoreOutboundsQuerySchema,
+  ListHeldAllocationsQuerySchema,
   ListStoreReceiptSourcesQuerySchema,
   ListStoreOrderRequestsQuerySchema,
   ListStoreGroupsQuerySchema,
@@ -952,6 +953,12 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return repository.listStoreReceiptSources(session.principal, query);
   });
 
+  app.get('/api/v1/held-allocations', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = ListHeldAllocationsQuerySchema.parse(request.query);
+    return { data: await repository.listHeldAllocations(session.principal, query) };
+  });
+
   app.get('/api/v1/store-receipts/:receiptId', async (request) => {
     const session = await authenticate(request, repository);
     const { receiptId } = ReceiptParamsSchema.parse(request.params);
@@ -1725,6 +1732,14 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: { '200': { description: 'Dispatched or replayed warehouse outbound' } },
+        },
+      },
+      '/api/v1/held-allocations': {
+        get: {
+          summary:
+            'Priority goods allocated and held in the central warehouse until the store next orders',
+          security: cookieSecurity,
+          responses: { '200': { description: 'Scoped held allocations by store and product' } },
         },
       },
       '/api/v1/ordering-context': {

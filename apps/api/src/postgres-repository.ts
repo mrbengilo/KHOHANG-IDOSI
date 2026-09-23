@@ -42,6 +42,7 @@ import type {
   ListStoreInventoryBagLedgerQuery,
   ListStoreInventoryBagsQuery,
   ListStoreOutboundsQuery,
+  ListHeldAllocationsQuery,
   ListStoreReceiptSourcesQuery,
   ListProductConversionsQuery,
   ListStoreOrderRequestsQuery,
@@ -74,6 +75,7 @@ import type {
   StoreOrderRequest,
   StorePartnerInbound,
   StoreOutbound,
+  HeldAllocation,
   StoreReceiptSource,
   SubmitStoreReceiptRequest,
   TransitionOrderSessionRequest,
@@ -129,6 +131,7 @@ import {
   listStoreInventoryLedger as listDatabaseStoreInventoryLedger,
   listStoreOutbounds as listDatabaseStoreOutbounds,
   listStoreReceiptSources as listDatabaseStoreReceiptSources,
+  listHeldAllocationStock as listDatabaseHeldAllocationStock,
   listWaitTickets as listDatabaseWaitTickets,
   listWarehouseOutboundRequests as listDatabaseWarehouseOutboundRequests,
   loadMonthlyOperationalReport,
@@ -2460,6 +2463,32 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       data: await Promise.all(rows.map((row) => this.receiptDto(row.id))),
       pagination: pagination(query.page, query.pageSize, totalRow?.value ?? 0),
     };
+  }
+
+  public async listHeldAllocations(
+    actor: AuthenticatedPrincipal,
+    query: ListHeldAllocationsQuery,
+  ): Promise<HeldAllocation[]> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const storeIds =
+      query.storeId !== undefined
+        ? [query.storeId]
+        : actor.role === 'ADMIN'
+          ? undefined
+          : actor.role === 'STORE'
+            ? actor.storeId === null
+              ? []
+              : [actor.storeId]
+            : [...actor.assignedStoreIds];
+    const rows = await listDatabaseHeldAllocationStock(db, {
+      ...(storeIds === undefined ? {} : { storeIds }),
+    });
+    return rows.map((row) => ({
+      storeId: row.storeId,
+      productId: row.productId,
+      heldUnits: row.heldQuantity,
+      heldSince: row.heldSince.toISOString(),
+    }));
   }
 
   public async listStoreReceiptSources(

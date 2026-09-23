@@ -38,6 +38,7 @@ import { PriorityOffer } from '../components/PriorityOffer';
 import { StatCard } from '../components/StatCard';
 import { WaitlistPanel } from '../components/WaitlistPanel';
 import { getAdminOperationalSettings } from '../features/admin/adminApi';
+import { HeldAllocationsPanel } from '../features/receipts/HeldAllocationsPanel';
 import {
   ApiClientError,
   createOrderSession,
@@ -593,6 +594,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
       storesQuery.refetch(),
       sessionsQuery.refetch(),
       orderRequestsQuery.refetch(),
+      queryClient.invalidateQueries({ queryKey: ['held-allocations'] }),
       ...(role === 'ADMIN' ? [settingsQuery.refetch()] : []),
     ]);
   };
@@ -770,6 +772,12 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
           {notice.message}
         </p>
       ) : null}
+
+      <HeldAllocationsPanel
+        audience="OPERATIONS"
+        productNameById={productNameById}
+        storeNameById={storeNameById}
+      />
 
       {showCreateForm && role === 'ADMIN' ? (
         <form className="panel allocation-session-form" onSubmit={submitCreate}>

@@ -95,6 +95,7 @@ export type {
 } from './order-sessions.js';
 
 export {
+  dispatchWarehouseOutboundInTransaction,
   dispatchWarehouseOutboundRequest,
   getWarehouseOutboundRequest,
   listWarehouseOutboundRequests,
@@ -104,13 +105,24 @@ export {
   WarehouseOutboundValidationError,
 } from './outbound-requests.js';
 export type {
+  DispatchWarehouseOutboundInTransactionInput,
   DispatchWarehouseOutboundRequestInput,
   ListWarehouseOutboundRequestsInput,
   WarehouseOutboundDatabaseStatus,
   WarehouseOutboundRequestLineRecord,
   WarehouseOutboundRequestPage,
+  WarehouseOutboundDispatcher,
   WarehouseOutboundRequestRecord,
 } from './outbound-requests.js';
+
+export {
+  dispatchStrandedAllocationOutbounds,
+  listStrandedAllocationOutbounds,
+} from './stranded-outbounds.js';
+export type {
+  StrandedOutboundBackfillResult,
+  StrandedOutboundRecord,
+} from './stranded-outbounds.js';
 
 export {
   cancelSupplierInbound,
@@ -196,8 +208,13 @@ export type {
   StorePartnerInboundRecord,
 } from './store-partner-inbound.js';
 
-export { assembleStoreReceiptSources, listStoreReceiptSources } from './receipt-sources.js';
+export {
+  assembleStoreReceiptSources,
+  listHeldAllocationStock,
+  listStoreReceiptSources,
+} from './receipt-sources.js';
 export type {
+  HeldAllocationRecord,
   StoreReceiptSourceLineRecord,
   StoreReceiptSourceListInput,
   StoreReceiptSourcePage,

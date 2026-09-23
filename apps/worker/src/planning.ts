@@ -53,9 +53,14 @@ export function planPriorityOffers(input: PlanPriorityOffersInput): readonly Dai
     ]),
   );
   const ticketsByProduct = new Map<string, WaitTicket[]>();
+  // A ticket gets at most one priority offer per business date. When a session is cancelled
+  // and replaced on the same date, the replacement must not offer that ticket again: the
+  // deterministic offer id would collide and abort the whole 08:00 job for every store.
+  const existingOfferIds = new Set(input.existingOffers.map((offer) => offer.id));
 
   for (const ticket of input.waitTickets) {
     if (ticket.status !== 'ACTIVE' || ticket.openQuantity <= ticket.reservedQuantity) continue;
+    if (existingOfferIds.has(input.offerId(ticket.id))) continue;
     const group = ticketsByProduct.get(ticket.productId) ?? [];
     group.push(ticket);
     ticketsByProduct.set(ticket.productId, group);

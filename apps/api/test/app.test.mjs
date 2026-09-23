@@ -1412,6 +1412,43 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(replay.json().error.code, 'VERSION_CONFLICT');
   });
 
+  test('scopes held priority goods to the stores the account may see', async () => {
+    const unauthenticated = await app.inject({ method: 'GET', url: '/api/v1/held-allocations' });
+    assert.equal(unauthenticated.statusCode, 401);
+
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const own = await app.inject({
+      method: 'GET',
+      url: `/api/v1/held-allocations?storeId=${MEMORY_SEED_IDS.nvtStore}`,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(own.statusCode, 200);
+    assert.deepEqual(own.json(), { data: [] });
+
+    const otherStore = await app.inject({
+      method: 'GET',
+      url: `/api/v1/held-allocations?storeId=${MEMORY_SEED_IDS.bdStore}`,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(otherStore.statusCode, 403);
+
+    const adminCookie = cookieOf(await login('admin'));
+    const all = await app.inject({
+      method: 'GET',
+      url: '/api/v1/held-allocations',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(all.statusCode, 200);
+    assert.ok(Array.isArray(all.json().data));
+
+    const invalid = await app.inject({
+      method: 'GET',
+      url: '/api/v1/held-allocations?storeId=not-an-id',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(invalid.statusCode, 400);
+  });
+
   test('lists only authorized dispatched sources that do not have a receipt', async () => {
     const unauthenticated = await app.inject({
       method: 'GET',
