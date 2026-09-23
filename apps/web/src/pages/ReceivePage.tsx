@@ -395,16 +395,15 @@ function ProductionReceivePage({ role }: AppOutletContext) {
                   disabled={mutation.isPending}
                   key={receipt.id}
                   onClick={() => setSelectedReceiptId(receipt.id)}
+                  title={receipt.receiptNumber}
                   type="button"
                 >
-                  <span>
-                    <strong>{receipt.receiptNumber}</strong>
-                    <small>{storeNameById.get(receipt.storeId) ?? receipt.storeId}</small>
+                  <span className="receipt-card__identity">
+                    <strong>{storeNameById.get(receipt.storeId) ?? receipt.storeId}</strong>
+                    <small>Cập nhật {formatDateTime(receipt.updatedAt)}</small>
                   </span>
                   <Badge tone={copy.tone}>{copy.label}</Badge>
-                  <span className="receipt-card__meta">
-                    {total} bao · cập nhật {formatDateTime(receipt.updatedAt)}
-                  </span>
+                  <span className="receipt-card__count">{total} bao</span>
                 </button>
               );
             })}
@@ -749,16 +748,32 @@ function ReceiptDetail({
   readonly storeName: string;
 }) {
   const copy = receiptStatusCopy[receipt.status];
+  const total = receipt.lines.reduce((sum, line) => sum + line.receivedUnits, 0);
   return (
     <>
       <div className="receipt-detail__header">
         <div>
-          <span>{storeName}</span>
-          <h2>{receipt.receiptNumber}</h2>
-          <small>Lệnh xuất {receipt.outboundRequestId}</small>
+          <span>Phiếu nhận hàng</span>
+          <h2>{storeName}</h2>
+          <small>
+            {total} bao · cập nhật {formatDateTime(receipt.updatedAt)}
+          </small>
         </div>
         <Badge tone={copy.tone}>{copy.label}</Badge>
       </div>
+      <details className="receipt-detail__references">
+        <summary>Mã đối chiếu</summary>
+        <dl>
+          <div>
+            <dt>Phiếu nhận</dt>
+            <dd>{receipt.receiptNumber}</dd>
+          </div>
+          <div>
+            <dt>Lệnh xuất</dt>
+            <dd>{receipt.outboundRequestId}</dd>
+          </div>
+        </dl>
+      </details>
       {receipt.reviewNote ? (
         <div className="receipt-review-note">
           <RotateCcw aria-hidden="true" size={17} />
@@ -1036,13 +1051,9 @@ function ReviewerReceiptForm({
 
   return (
     <div className="receipt-form-stack">
-      <div className="receipt-policy">
-        <ClipboardCheck aria-hidden="true" size={20} />
-        <span>
-          <strong>Đối chiếu, không sửa khai nhận</strong>
-          Nếu số bao chưa đúng, trả phiếu về cửa hàng kèm lý do.
-        </span>
-      </div>
+      <p className="receipt-review-guidance">
+        Nếu số bao chưa đúng, trả phiếu về cửa hàng kèm lý do.
+      </p>
       {receipt.lines.map((line) => (
         <article className="receipt-review-line" key={line.productId}>
           <div className="receipt-review-line__title">
@@ -1272,6 +1283,7 @@ function formatDateTime(value: string): string {
     hour: '2-digit',
     minute: '2-digit',
     month: '2-digit',
+    timeZone: 'Asia/Ho_Chi_Minh',
   }).format(new Date(value));
 }
 

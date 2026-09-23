@@ -2,7 +2,8 @@ import type { OrderSession, StoreOrderRequest } from '@idosi/contracts';
 import { describe, expect, it } from 'vitest';
 import { formatRequestSubmittedAt, sessionRequestRows } from './session-request-rows';
 
-const session = (id: string): OrderSession => ({ id }) as OrderSession;
+const session = (id: string, businessDate = '2026-09-23'): OrderSession =>
+  ({ id, businessDate }) as OrderSession;
 const request = (
   id: string,
   sessionId: string,
@@ -37,7 +38,32 @@ describe('session request rows', () => {
   it('keeps a session without requests visible as a single row', () => {
     const rows = sessionRequestRows([session('empty')], [], stores);
     expect(rows).toEqual([
-      { key: 'empty', session: session('empty'), request: null, firstOfSession: true, store: null },
+      {
+        key: 'empty',
+        session: session('empty'),
+        request: null,
+        firstOfSession: true,
+        firstOfDay: true,
+        dayLabel: '23/09/2026',
+        store: null,
+      },
+    ]);
+  });
+
+  it('starts a date group only when the Vietnam submission day changes', () => {
+    const rows = sessionRequestRows(
+      [session('s2', '2026-09-24'), session('s1', '2026-09-23')],
+      [
+        request('r1', 's2', 'vl', '2026-09-23T18:00:00.000Z'),
+        request('r2', 's2', 'ct', '2026-09-23T16:00:00.000Z'),
+        request('r3', 's1', 'vl', '2026-09-23T01:00:00.000Z'),
+      ],
+      stores,
+    );
+    expect(rows.map((row) => [row.key, row.dayLabel, row.firstOfDay])).toEqual([
+      ['r1', '24/09/2026', true],
+      ['r2', '23/09/2026', true],
+      ['r3', '23/09/2026', false],
     ]);
   });
 
