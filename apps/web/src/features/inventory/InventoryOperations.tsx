@@ -825,6 +825,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
     storesQuery.error ?? catalogQuery.error ?? bagsQuery.error ?? outboundsQuery.error;
   const pending = displayedOutbounds.filter((outbound) => outbound.status === 'PENDING').length;
   const approved = displayedOutbounds.filter((outbound) => outbound.status === 'APPROVED').length;
+  const reasonLabel = mode === 'SORTING' ? 'Loại hàng' : 'Lý do';
 
   return (
     <>
@@ -957,7 +958,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                   </label>
                 ) : (
                   <label>
-                    <span className="field-label">Lý do</span>
+                    <span className="field-label">{reasonLabel}</span>
                     <select
                       required
                       onChange={(event) => setReason(event.target.value as OutboundReason)}
@@ -986,8 +987,8 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
               <div>
                 <strong>Chế độ duyệt</strong>
                 <p>
-                  Kiểm tra Mã bao, khối lượng và lý do trước khi duyệt. Duyệt sẽ trừ tồn và ghi sổ
-                  trong cùng giao dịch.
+                  Kiểm tra Mã bao, khối lượng và {reasonLabel.toLowerCase()} trước khi duyệt. Duyệt
+                  sẽ trừ tồn và ghi sổ trong cùng giao dịch.
                 </p>
               </div>
               <label>
@@ -1024,7 +1025,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                     <tr>
                       <th>Thời gian</th>
                       <th>Mã bao</th>
-                      <th>Lý do</th>
+                      <th>{reasonLabel}</th>
                       <th>Khối lượng</th>
                       {mode === 'SALE' ? <th>Doanh thu</th> : null}
                       <th>Trạng thái</th>
@@ -1048,7 +1049,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                             <strong>{bag?.bagCode ?? outbound.inventoryLotId}</strong>
                             <small>{storeName(stores, outbound.storeId)}</small>
                           </td>
-                          <td data-label="Lý do">{reasonCopy[outbound.reason]}</td>
+                          <td data-label={reasonLabel}>{reasonCopy[outbound.reason]}</td>
                           <td data-label="Khối lượng">{formatKg(outbound.weightKg)}</td>
                           {mode === 'SALE' ? (
                             <td data-label="Doanh thu">
