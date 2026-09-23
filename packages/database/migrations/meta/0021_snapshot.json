@@ -1,5 +1,5 @@
 {
-  "id": "69dceb26-1331-49fc-863f-29e1b1ae9318",
+  "id": "2edfbc56-9225-4a71-8ffb-d5dc9a2dbc70",
   "prevId": "c1363bcd-018c-44ff-9c4b-f1f2100aa5dc",
   "version": "7",
   "dialect": "postgresql",
@@ -5662,150 +5662,6 @@
       },
       "isRLSEnabled": false
     },
-    "public.store_charity_exports": {
-      "name": "store_charity_exports",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "export_number": {
-          "name": "export_number",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "store_id": {
-          "name": "store_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "product_id": {
-          "name": "product_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "bag_quantity": {
-          "name": "bag_quantity",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "weight_kg": {
-          "name": "weight_kg",
-          "type": "numeric(14, 3)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "bag_weights_kg": {
-          "name": "bag_weights_kg",
-          "type": "numeric(14, 3)[]",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "note": {
-          "name": "note",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_by_user_id": {
-          "name": "created_by_user_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "store_charity_exports_store_created_idx": {
-          "name": "store_charity_exports_store_created_idx",
-          "columns": [
-            {
-              "expression": "store_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "store_charity_exports_store_id_stores_id_fk": {
-          "name": "store_charity_exports_store_id_stores_id_fk",
-          "tableFrom": "store_charity_exports",
-          "tableTo": "stores",
-          "columnsFrom": ["store_id"],
-          "columnsTo": ["id"],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
-        "store_charity_exports_product_id_products_id_fk": {
-          "name": "store_charity_exports_product_id_products_id_fk",
-          "tableFrom": "store_charity_exports",
-          "tableTo": "products",
-          "columnsFrom": ["product_id"],
-          "columnsTo": ["id"],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
-        "store_charity_exports_created_by_user_id_users_id_fk": {
-          "name": "store_charity_exports_created_by_user_id_users_id_fk",
-          "tableFrom": "store_charity_exports",
-          "tableTo": "users",
-          "columnsFrom": ["created_by_user_id"],
-          "columnsTo": ["id"],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "store_charity_exports_export_number_unique": {
-          "name": "store_charity_exports_export_number_unique",
-          "nullsNotDistinct": false,
-          "columns": ["export_number"]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {
-        "store_charity_exports_bags_positive": {
-          "name": "store_charity_exports_bags_positive",
-          "value": "\"store_charity_exports\".\"bag_quantity\" > 0"
-        },
-        "store_charity_exports_weight_positive": {
-          "name": "store_charity_exports_weight_positive",
-          "value": "\"store_charity_exports\".\"weight_kg\" > 0"
-        },
-        "store_charity_exports_bag_weights": {
-          "name": "store_charity_exports_bag_weights",
-          "value": "cardinality(\"store_charity_exports\".\"bag_weights_kg\") = \"store_charity_exports\".\"bag_quantity\" AND 0 < ALL (\"store_charity_exports\".\"bag_weights_kg\")"
-        }
-      },
-      "isRLSEnabled": false
-    },
     "public.store_groups": {
       "name": "store_groups",
       "schema": "",
@@ -7277,13 +7133,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "priority_queued_quantity": {
-          "name": "priority_queued_quantity",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
         "price_per_kg_vnd": {
           "name": "price_per_kg_vnd",
           "type": "bigint",
@@ -7403,14 +7252,6 @@
           "name": "store_receipt_lines_received_nonnegative",
           "value": "\"store_receipt_lines\".\"received_quantity\" >= 0"
         },
-        "store_receipt_lines_priority_queued_nonnegative": {
-          "name": "store_receipt_lines_priority_queued_nonnegative",
-          "value": "\"store_receipt_lines\".\"priority_queued_quantity\" >= 0"
-        },
-        "store_receipt_lines_priority_queued_not_over_shortage": {
-          "name": "store_receipt_lines_priority_queued_not_over_shortage",
-          "value": "\"store_receipt_lines\".\"priority_queued_quantity\" <= \"store_receipt_lines\".\"approved_quantity\" - \"store_receipt_lines\".\"received_quantity\""
-        },
         "store_receipt_lines_received_not_over_approved": {
           "name": "store_receipt_lines_received_not_over_approved",
           "value": "\"store_receipt_lines\".\"received_quantity\" <= \"store_receipt_lines\".\"approved_quantity\""
@@ -7468,6 +7309,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "unexpected_items": {
+          "name": "unexpected_items",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
         },
         "review_note": {
           "name": "review_note",
@@ -7666,6 +7514,10 @@
         "store_receipts_number_not_blank": {
           "name": "store_receipts_number_not_blank",
           "value": "length(btrim(\"store_receipts\".\"receipt_number\")) > 0"
+        },
+        "store_receipts_unexpected_items_array": {
+          "name": "store_receipts_unexpected_items_array",
+          "value": "jsonb_typeof(\"store_receipts\".\"unexpected_items\") = 'array'"
         },
         "store_receipts_goods_cost_nonnegative": {
           "name": "store_receipts_goods_cost_nonnegative",
@@ -8074,6 +7926,150 @@
         "store_sorted_stocks_version_nonnegative": {
           "name": "store_sorted_stocks_version_nonnegative",
           "value": "\"store_sorted_stocks\".\"version\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.store_charity_exports": {
+      "name": "store_charity_exports",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "export_number": {
+          "name": "export_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "store_id": {
+          "name": "store_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "product_id": {
+          "name": "product_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "bag_quantity": {
+          "name": "bag_quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "weight_kg": {
+          "name": "weight_kg",
+          "type": "numeric(14, 3)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "bag_weights_kg": {
+          "name": "bag_weights_kg",
+          "type": "numeric(14, 3)[]",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_by_user_id": {
+          "name": "created_by_user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "store_charity_exports_store_created_idx": {
+          "name": "store_charity_exports_store_created_idx",
+          "columns": [
+            {
+              "expression": "store_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "store_charity_exports_store_id_stores_id_fk": {
+          "name": "store_charity_exports_store_id_stores_id_fk",
+          "tableFrom": "store_charity_exports",
+          "tableTo": "stores",
+          "columnsFrom": ["store_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "store_charity_exports_product_id_products_id_fk": {
+          "name": "store_charity_exports_product_id_products_id_fk",
+          "tableFrom": "store_charity_exports",
+          "tableTo": "products",
+          "columnsFrom": ["product_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "store_charity_exports_created_by_user_id_users_id_fk": {
+          "name": "store_charity_exports_created_by_user_id_users_id_fk",
+          "tableFrom": "store_charity_exports",
+          "tableTo": "users",
+          "columnsFrom": ["created_by_user_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "store_charity_exports_export_number_unique": {
+          "name": "store_charity_exports_export_number_unique",
+          "nullsNotDistinct": false,
+          "columns": ["export_number"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "store_charity_exports_bags_positive": {
+          "name": "store_charity_exports_bags_positive",
+          "value": "\"store_charity_exports\".\"bag_quantity\" > 0"
+        },
+        "store_charity_exports_weight_positive": {
+          "name": "store_charity_exports_weight_positive",
+          "value": "\"store_charity_exports\".\"weight_kg\" > 0"
+        },
+        "store_charity_exports_bag_weights": {
+          "name": "store_charity_exports_bag_weights",
+          "value": "cardinality(\"store_charity_exports\".\"bag_weights_kg\") = \"store_charity_exports\".\"bag_quantity\" AND 0 < ALL (\"store_charity_exports\".\"bag_weights_kg\")"
         }
       },
       "isRLSEnabled": false

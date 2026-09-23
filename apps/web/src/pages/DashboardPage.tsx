@@ -6,7 +6,7 @@ import type {
   Session,
   Store,
 } from '@idosi/contracts';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { IdosiSalesSummary } from '../features/idosi/IdosiSalesSummary';
 import {
@@ -39,6 +39,7 @@ import {
 import '../features/dashboard/dashboard.css';
 import { businessDate } from '../lib/business-time';
 import { formatKg } from '../lib/format';
+import { WholesaleOverview } from '../features/dashboard/WholesaleOverview';
 import type { Role, StatusTone, StoreKind } from '../lib/types';
 
 const sourceLabels: Record<ReportMetricSource, string> = {
@@ -108,6 +109,16 @@ export function resolveDashboardScope(
     return principal.storeId === null ? null : { kind: 'STORE', storeId: principal.storeId };
   }
 
+  if (principal.role === 'WHOLESALE') {
+    const wholesaleStores = stores.filter(
+      (store) => store.kind === 'WHOLESALE' && principal.assignedStoreIds.includes(store.id),
+    );
+    if (wholesaleStores.length === 0) return null;
+    return wholesaleStores.some((store) => store.id === requestedScope)
+      ? { kind: 'STORE', storeId: requestedScope }
+      : { kind: 'ALL' };
+  }
+
   const assignedStores = stores.filter((store) => principal.assignedStoreIds.includes(store.id));
   const requested = assignedStores.find((store) => store.id === requestedScope);
   const store = requested ?? assignedStores[0];
@@ -119,8 +130,10 @@ export function dashboardRouteForAction(
   role: Role,
   storeKind: StoreKind | null,
 ): string {
-  if (action === 'WAITING') return role === 'STORE' ? '/requests' : '/allocations';
+  if (action === 'WAITING')
+    return role === 'STORE' || role === 'WHOLESALE' ? '/requests' : '/allocations';
   if (role === 'STORE') return storeKind === 'WHOLESALE' ? '/requests' : '/receive';
+  if (role === 'WHOLESALE') return '/requests';
   return '/reports';
 }
 
@@ -279,6 +292,7 @@ function recentActivity(snapshot: DashboardSnapshot, stores: readonly Store[]): 
 }
 
 export function DashboardPage() {
+  const queryClient = useQueryClient();
   const { role: shellRole, storeKind: shellStoreKind } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
   const [search, setSearch] = useSearchParams();
@@ -304,8 +318,9 @@ export function DashboardPage() {
     : null;
   const parsedMonth = parseMonth(yearMonth);
   const scopeKey = scope?.kind === 'ALL' ? 'ALL' : scope?.storeId;
+  const isWholesaleDesk = (bootstrap?.session.principal.role ?? shellRole) === 'WHOLESALE';
   const snapshotQuery = useQuery({
-    enabled: scope !== null && parsedMonth !== null,
+    enabled: !isWholesaleDesk && scope !== null && parsedMonth !== null,
     queryFn: () => {
       if (!scope || !parsedMonth) throw new Error('Dashboard scope is incomplete');
       return loadDashboardSnapshot({ ...parsedMonth, scope });
@@ -333,6 +348,10 @@ export function DashboardPage() {
 
   const refresh = async () => {
     const bootstrapResult = await bootstrapQuery.refetch();
+    if (isWholesaleDesk) {
+      await queryClient.invalidateQueries({ queryKey: ['wholesale-overview'] });
+      return;
+    }
     if (!bootstrapResult.isError && scope !== null && parsedMonth !== null) {
       await snapshotQuery.refetch();
     }
@@ -350,17 +369,21 @@ export function DashboardPage() {
       ? reportDrilldownPath(yearMonth, scopeKey)
       : primaryTarget;
   const primaryLabel =
-    sessionRole === 'STORE'
-      ? effectiveStoreKind === 'WHOLESALE'
-        ? 'Đặt hàng'
-        : 'Nhận hàng'
-      : 'Xem báo cáo';
+    sessionRole === 'WHOLESALE'
+      ? 'Đặt hàng'
+      : sessionRole === 'STORE'
+        ? effectiveStoreKind === 'WHOLESALE'
+          ? 'Đặt hàng'
+          : 'Nhận hàng'
+        : 'Xem báo cáo';
   const title =
-    sessionRole === 'STORE'
-      ? effectiveStoreKind === 'WHOLESALE'
-        ? 'Tổng quan khách sỉ'
-        : 'Tổng quan cửa hàng'
-      : 'Tổng quan điều hành';
+    sessionRole === 'WHOLESALE'
+      ? 'Tổng quan cửa hàng sỉ'
+      : sessionRole === 'STORE'
+        ? effectiveStoreKind === 'WHOLESALE'
+          ? 'Tổng quan khách sỉ'
+          : 'Tổng quan cửa hàng'
+        : 'Tổng quan điều hành';
 
   return (
     <div className="dashboard-page">
@@ -435,7 +458,7 @@ export function DashboardPage() {
         />
       ) : null}
 
-      {!roleMismatch && viewState === 'SNAPSHOT_LOADING' ? (
+      {!roleMismatch && !isWholesaleDesk && viewState === 'SNAPSHOT_LOADING' ? (
         <DashboardMessage
           detail="Đang tổng hợp báo cáo, phiếu nhận, phiếu chờ, offer và yêu cầu đặt hàng."
           loading
@@ -443,7 +466,7 @@ export function DashboardPage() {
         />
       ) : null}
 
-      {!roleMismatch && viewState === 'SNAPSHOT_ERROR' ? (
+      {!roleMismatch && !isWholesaleDesk && viewState === 'SNAPSHOT_ERROR' ? (
         <DashboardMessage
           action={<Button onClick={retry}>Thử lại</Button>}
           detail={errorMessage(snapshotQuery.error)}
@@ -452,7 +475,20 @@ export function DashboardPage() {
         />
       ) : null}
 
-      {!roleMismatch && viewState === 'READY' && bootstrap && snapshotQuery.data ? (
+      {!roleMismatch && isWholesaleDesk && bootstrap && scope && parsedMonth ? (
+        <WholesaleOverview
+          accountId={bootstrap.session.principal.accountId}
+          period={yearMonth}
+          scope={scope}
+          stores={bootstrap.stores}
+        />
+      ) : null}
+
+      {!roleMismatch &&
+      !isWholesaleDesk &&
+      viewState === 'READY' &&
+      bootstrap &&
+      snapshotQuery.data ? (
         <>
           {effectiveStoreKind !== 'WHOLESALE' ? (
             <IdosiSalesSummary
@@ -522,6 +558,7 @@ function DashboardFilters({
             value={scopeValue}
           >
             {role === 'ADMIN' ? <option value="ALL">Toàn hệ thống</option> : null}
+            {role === 'WHOLESALE' ? <option value="ALL">Tất cả cửa hàng sỉ</option> : null}
             {stores.map((store) => (
               <option key={store.id} value={store.id}>
                 {store.code} • {store.name}
@@ -535,7 +572,7 @@ function DashboardFilters({
         <Database aria-hidden="true" size={16} />
         <span>
           {scope?.kind === 'ALL'
-            ? `${stores.length} cửa hàng được trả về theo quyền Admin`
+            ? `${stores.length} cửa hàng trong phạm vi tài khoản`
             : 'Phạm vi được khóa theo session và quyền truy cập backend'}
         </span>
       </div>

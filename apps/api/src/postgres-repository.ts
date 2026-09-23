@@ -2121,23 +2121,43 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     query: ListStoreOrderRequestsQuery,
   ): Promise<Page<StoreOrderRequest>> {
     if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const storeIds =
+      query.storeId !== undefined
+        ? [query.storeId]
+        : actor.role === 'ADMIN'
+          ? undefined
+          : actor.role === 'STORE'
+            ? actor.storeId === null
+              ? []
+              : [actor.storeId]
+            : actor.assignedStoreIds;
+    if (storeIds?.length === 0) {
+      return { data: [], pagination: pagination(query.page, query.pageSize, 0) };
+    }
+    const conditions: SQL[] = [isNull(orderRequests.deletedAt)];
+    if (storeIds !== undefined) conditions.push(inArray(orderRequests.storeId, [...storeIds]));
+    if (query.sessionId !== undefined)
+      conditions.push(eq(orderRequests.orderSessionId, query.sessionId));
+    if (query.status === 'SUBMITTED')
+      conditions.push(inArray(orderRequests.status, ['draft', 'submitted']));
+    if (query.status === 'CANCELLED') conditions.push(eq(orderRequests.status, 'cancelled'));
+    if (query.status === 'MERGED')
+      conditions.push(
+        inArray(orderRequests.status, ['merged', 'partially_allocated', 'allocated', 'waitlisted']),
+      );
+    const where = and(...conditions);
+    const [total] = await db.select({ value: count() }).from(orderRequests).where(where);
     const rows = await db
-      .select()
+      .select({ id: orderRequests.id })
       .from(orderRequests)
-      .where(isNull(orderRequests.deletedAt))
-      .orderBy(asc(orderRequests.createdAt));
-    const filtered = rows.filter(
-      (row) =>
-        canAccessStore(actor, row.storeId) &&
-        (query.storeId === undefined || row.storeId === query.storeId) &&
-        (query.sessionId === undefined || row.orderSessionId === query.sessionId) &&
-        (query.status === undefined || orderStatus(row.status) === query.status),
-    );
-    const selected = slicePage(filtered, query.page, query.pageSize);
-    const data = await Promise.all(selected.map((row) => this.requestDto(row.id)));
+      .where(where)
+      .orderBy(asc(orderRequests.createdAt), asc(orderRequests.id))
+      .limit(query.pageSize)
+      .offset((query.page - 1) * query.pageSize);
+    const data = await Promise.all(rows.map((row) => this.requestDto(row.id)));
     return {
       data,
-      pagination: pagination(query.page, query.pageSize, filtered.length),
+      pagination: pagination(query.page, query.pageSize, total?.value ?? 0),
     };
   }
 
@@ -2472,7 +2492,10 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     if (actor.role === 'STORE' && actor.storeId === null) {
       return { data: [], pagination: pagination(query.page, query.pageSize, 0) };
     }
-    if (actor.role === 'HTKD' && actor.assignedStoreIds.length === 0) {
+    if (
+      (actor.role === 'HTKD' || actor.role === 'WHOLESALE') &&
+      actor.assignedStoreIds.length === 0
+    ) {
       return { data: [], pagination: pagination(query.page, query.pageSize, 0) };
     }
 
@@ -2481,7 +2504,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       conditions.push(eq(storeReceipts.storeId, query.storeId));
     } else if (actor.role === 'STORE' && actor.storeId !== null) {
       conditions.push(eq(storeReceipts.storeId, actor.storeId));
-    } else if (actor.role === 'HTKD') {
+    } else if (actor.role === 'HTKD' || actor.role === 'WHOLESALE') {
       conditions.push(inArray(storeReceipts.storeId, [...actor.assignedStoreIds]));
     }
     if (query.outboundRequestId !== undefined) {
@@ -2598,6 +2621,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
           receivedQuantity: line.receivedUnits,
         })),
         discrepancyNote: input.discrepancyNote,
+        unexpectedItems: input.unexpectedItems ?? [],
         requestId: context.requestId,
         idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
         requestHash,
@@ -2631,6 +2655,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
           receivedQuantity: line.receivedUnits,
         })),
         discrepancyNote: input.discrepancyNote,
+        unexpectedItems: input.unexpectedItems ?? [],
         requestId: context.requestId,
         idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
         requestHash,
@@ -3816,6 +3841,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         pricePerKgVnd: line.pricePerKgVnd === null ? null : safeVnd(line.pricePerKgVnd),
       })),
       discrepancyNote: receipt.discrepancyNote,
+      unexpectedItems: receipt.unexpectedItems.map((item) => ({ ...item })),
       status: receiptStatus(receipt.status),
       freightVnd: safeVnd(receipt.freightVnd),
       handlingVnd: safeVnd(receipt.handlingVnd),

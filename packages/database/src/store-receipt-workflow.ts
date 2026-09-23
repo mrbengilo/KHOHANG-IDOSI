@@ -1,4 +1,4 @@
-import { and, eq, isNull, or } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
@@ -7,6 +7,7 @@ import {
   htkdAssignments,
   outboundRequestLines,
   outboundRequests,
+  products,
   storeReceiptLines,
   storeReceipts,
   stores,
@@ -28,11 +29,17 @@ export interface DeclareStoreReceiptLineInput {
   readonly receivedQuantity: number;
 }
 
+export interface UnexpectedStoreReceiptItemInput {
+  readonly productId: string;
+  readonly quantity: number;
+}
+
 export interface DeclareStoreReceiptInput {
   readonly outboundRequestId: string;
   readonly storeId: string;
   readonly declaredByUserId: string;
   readonly lines: readonly DeclareStoreReceiptLineInput[];
+  readonly unexpectedItems?: readonly UnexpectedStoreReceiptItemInput[];
   readonly discrepancyNote?: string | null;
   readonly requestId?: string;
   readonly idempotencyKey: string;
@@ -44,6 +51,7 @@ export interface SubmitStoreReceiptInput {
   readonly expectedVersion: number;
   readonly submittedByUserId: string;
   readonly lines: readonly DeclareStoreReceiptLineInput[];
+  readonly unexpectedItems?: readonly UnexpectedStoreReceiptItemInput[];
   readonly discrepancyNote?: string | null;
   readonly requestId?: string;
   readonly idempotencyKey: string;
@@ -89,6 +97,7 @@ export function validateStoreReceiptDeclaration(
   lines: readonly DeclareStoreReceiptLineInput[],
   dispatchedLines: readonly DispatchedStoreReceiptLine[],
   discrepancyNote?: string | null,
+  unexpectedItems: readonly UnexpectedStoreReceiptItemInput[] = [],
 ): void {
   if (
     lines.length === 0 ||
@@ -153,8 +162,51 @@ export function validateStoreReceiptDeclaration(
   }
 
   const normalizedNote = normalizeOptionalNote(discrepancyNote, 'discrepancyNote', 1_000);
-  if (hasShortage && normalizedNote === null) {
-    throw new StoreOperationValidationError('A short receipt requires a discrepancy note.');
+  const unexpectedIds = new Set<string>();
+  if (
+    unexpectedItems.length > 500 ||
+    unexpectedItems.some((item) => {
+      if (
+        !item.productId ||
+        !Number.isSafeInteger(item.quantity) ||
+        item.quantity <= 0 ||
+        dispatchedByProduct.has(item.productId) ||
+        unexpectedIds.has(item.productId)
+      )
+        return true;
+      unexpectedIds.add(item.productId);
+      return false;
+    })
+  ) {
+    throw new StoreOperationValidationError(
+      'Unexpected goods must have unique, non-dispatched products and positive quantities.',
+    );
+  }
+  if ((hasShortage || unexpectedItems.length > 0) && normalizedNote === null) {
+    throw new StoreOperationValidationError('A receipt discrepancy requires a note.');
+  }
+}
+
+async function assertUnexpectedProductsExist(
+  tx: Transaction,
+  items: readonly UnexpectedStoreReceiptItemInput[],
+): Promise<void> {
+  if (items.length === 0) return;
+  const found = await tx
+    .select({ id: products.id })
+    .from(products)
+    .where(
+      and(
+        inArray(
+          products.id,
+          items.map((item) => item.productId),
+        ),
+        eq(products.isActive, true),
+        isNull(products.deletedAt),
+      ),
+    );
+  if (found.length !== items.length) {
+    throw new StoreOperationValidationError('An unexpected product is inactive or unknown.');
   }
 }
 
@@ -241,7 +293,9 @@ export async function declareStoreReceiptInTransaction(
         approvedQuantity: line.dispatchedQuantity,
       })),
       input.discrepancyNote,
+      input.unexpectedItems,
     );
+    await assertUnexpectedProductsExist(tx, input.unexpectedItems ?? []);
 
     const declaredByProduct = new Map(input.lines.map((line) => [line.productId, line]));
     const now = new Date();
@@ -254,6 +308,7 @@ export async function declareStoreReceiptInTransaction(
         storeId: outbound.storeId,
         status: 'draft',
         discrepancyNote,
+        unexpectedItems: (input.unexpectedItems ?? []).map((item) => ({ ...item })),
         declaredByUserId: input.declaredByUserId,
       })
       .returning({ id: storeReceipts.id, version: storeReceipts.version });
@@ -297,6 +352,7 @@ export async function declareStoreReceiptInTransaction(
         version: result.version,
         outboundRequestId: outbound.id,
         discrepancyNote,
+        unexpectedItems: (input.unexpectedItems ?? []).map((item) => ({ ...item })),
         lines: input.lines.map((line) => ({
           productId: line.productId,
           approvedQuantity: line.approvedQuantity,
@@ -373,7 +429,13 @@ export async function submitStoreReceiptInTransaction(
       .where(eq(storeReceiptLines.storeReceiptId, receipt.id))
       .orderBy(storeReceiptLines.productId)
       .for('update');
-    validateStoreReceiptDeclaration(input.lines, persistedLines, input.discrepancyNote);
+    validateStoreReceiptDeclaration(
+      input.lines,
+      persistedLines,
+      input.discrepancyNote,
+      input.unexpectedItems,
+    );
+    await assertUnexpectedProductsExist(tx, input.unexpectedItems ?? []);
 
     return withStoreProductWaitLocks(
       tx,
@@ -466,6 +528,7 @@ export async function submitStoreReceiptInTransaction(
           .set({
             status: 'pending_htkd',
             discrepancyNote,
+            unexpectedItems: (input.unexpectedItems ?? []).map((item) => ({ ...item })),
             reviewNote: null,
             declaredByUserId: input.submittedByUserId,
             reviewedByUserId: null,
@@ -499,7 +562,7 @@ export async function submitStoreReceiptInTransaction(
         await tx.insert(auditLogs).values({
           requestId: input.requestId ?? null,
           actorUserId: input.submittedByUserId,
-          actorRole: 'store',
+          actorRole: declaringRole,
           actorStoreId: receipt.storeId,
           action: 'STORE_RECEIPT_SUBMITTED',
           entityType: 'store_receipt',
@@ -509,6 +572,7 @@ export async function submitStoreReceiptInTransaction(
             status: result.status,
             version: result.version,
             discrepancyNote,
+            unexpectedItems: (input.unexpectedItems ?? []).map((item) => ({ ...item })),
             lines: input.lines.map((line) => ({
               productId: line.productId,
               approvedQuantity: line.approvedQuantity,

@@ -465,6 +465,12 @@ export async function listAccessibleOrderRequests(): Promise<StoreOrderRequest[]
   );
 }
 
+export async function listStoreOrderHistory(storeId: string): Promise<StoreOrderRequest[]> {
+  return listAllPages('/order-requests', new URLSearchParams({ storeId }), (payload) =>
+    ListStoreOrderRequestsResponseSchema.parse(payload),
+  );
+}
+
 export async function submitStoreOrderRequest(
   input: CreateStoreOrderRequest,
   idempotencyKey: string,

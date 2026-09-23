@@ -229,12 +229,37 @@ describe('initial migration invariants', () => {
 
   it('tracks already queued receipt shortages without rewriting legacy receipts', () => {
     const shortageMigration = readFileSync(
-      new URL('../migrations/0021_auto_priority_receipt_shortage.sql', import.meta.url),
+      new URL('../migrations/0022_auto_priority_receipt_shortage.sql', import.meta.url),
       'utf8',
     );
     expect(shortageMigration).toContain('"priority_queued_quantity" integer DEFAULT 0 NOT NULL');
     expect(shortageMigration).toContain('store_receipt_lines_priority_queued_not_over_shortage');
     expect(shortageMigration).not.toMatch(/UPDATE \w+ SET|DELETE FROM|DROP TABLE/i);
+  });
+
+  it('records unexpected receipt goods in a forward-only migration and snapshot', () => {
+    const sql = readFileSync(
+      new URL('../migrations/0021_receipt_unexpected_items.sql', import.meta.url),
+      'utf8',
+    );
+    const previous = JSON.parse(
+      readFileSync(new URL('../migrations/meta/0020_snapshot.json', import.meta.url), 'utf8'),
+    ) as { id: string };
+    const current = JSON.parse(
+      readFileSync(new URL('../migrations/meta/0021_snapshot.json', import.meta.url), 'utf8'),
+    ) as {
+      prevId: string;
+      tables: Record<
+        string,
+        { columns: Record<string, unknown>; checkConstraints: Record<string, unknown> }
+      >;
+    };
+    expect(sql).toContain("ADD COLUMN unexpected_items jsonb NOT NULL DEFAULT '[]'::jsonb");
+    expect(current.prevId).toBe(previous.id);
+    expect(current.tables['public.store_receipts']?.columns).toHaveProperty('unexpected_items');
+    expect(current.tables['public.store_receipts']?.checkConstraints).toHaveProperty(
+      'store_receipts_unexpected_items_array',
+    );
   });
 
   it.each(requiredTables)('creates %s', (tableName) => {
@@ -251,7 +276,7 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(23);
+    expect(journal.entries).toHaveLength(24);
     expect(journal.entries[8]).toMatchObject({ tag: '0008_optional_supplier_weight' });
     expect(journal.entries[9]).toMatchObject({ tag: '0009_supported_allocation_policy' });
     expect(journal.entries[10]).toMatchObject({
@@ -285,8 +310,9 @@ describe('initial migration invariants', () => {
     expect(journal.entries[18]).toMatchObject({ tag: '0018_sorted_stock_idosi_sync' });
     expect(journal.entries[19]).toMatchObject({ tag: '0019_sorted_sale_transfers' });
     expect(journal.entries[20]).toMatchObject({ tag: '0020_weighed_dispatch_bags' });
-    expect(journal.entries[21]).toMatchObject({ tag: '0021_auto_priority_receipt_shortage' });
-    expect(journal.entries[22]).toMatchObject({ tag: '0022_priority_offer_stock_holds' });
+    expect(journal.entries[21]).toMatchObject({ tag: '0021_receipt_unexpected_items' });
+    expect(journal.entries[22]).toMatchObject({ tag: '0022_auto_priority_receipt_shortage' });
+    expect(journal.entries[23]).toMatchObject({ tag: '0023_priority_offer_stock_holds' });
     expect(journal.entries[7]).toMatchObject({ tag: '0007_receipt_vat', breakpoints: true });
     expect(journal.entries[0]).toMatchObject({
       tag: '0000_initial',

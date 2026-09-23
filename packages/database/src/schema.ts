@@ -1395,6 +1395,10 @@ export const storeReceipts = pgTable(
       .references(() => stores.id, { onDelete: 'restrict' }),
     status: storeReceiptStatusEnum('status').notNull().default('draft'),
     discrepancyNote: text('discrepancy_note'),
+    unexpectedItems: jsonb('unexpected_items')
+      .$type<readonly { readonly productId: string; readonly quantity: number }[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     reviewNote: text('review_note'),
     goodsCostVnd: bigint('goods_cost_vnd', { mode: 'bigint' })
       .notNull()
@@ -1430,6 +1434,10 @@ export const storeReceipts = pgTable(
       .where(sql`${table.deletedAt} IS NULL`),
     index('store_receipts_store_status_idx').on(table.storeId, table.status, table.createdAt),
     check('store_receipts_number_not_blank', sql`length(btrim(${table.receiptNumber})) > 0`),
+    check(
+      'store_receipts_unexpected_items_array',
+      sql`jsonb_typeof(${table.unexpectedItems}) = 'array'`,
+    ),
     check('store_receipts_goods_cost_nonnegative', sql`${table.goodsCostVnd} >= 0`),
     check('store_receipts_freight_nonnegative', sql`${table.freightVnd} >= 0`),
     check('store_receipts_handling_nonnegative', sql`${table.handlingVnd} >= 0`),

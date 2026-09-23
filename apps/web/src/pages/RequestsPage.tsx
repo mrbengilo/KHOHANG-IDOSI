@@ -11,6 +11,7 @@ import { WaitlistPanel } from '../components/WaitlistPanel';
 import {
   ApiClientError,
   cancelStoreOrderRequest,
+  listStoreOrderHistory,
   listAccessibleStores,
   listCatalog,
   prepareOrderingContext,
@@ -36,7 +37,7 @@ export function RequestsPage() {
   const [requests, setRequests] = useState(initialRequests);
   const [submitted, setSubmitted] = useState(false);
   const remaining = submitted ? 1 : 2;
-  const isWholesale = role === 'STORE' && storeKind === 'WHOLESALE';
+  const isWholesale = role === 'WHOLESALE' || (role === 'STORE' && storeKind === 'WHOLESALE');
 
   const grouped = useMemo(
     () =>
@@ -263,7 +264,16 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
     () => new Map(catalogProducts.map((product) => [product.id, product.name])),
     [catalogProducts],
   );
-  const isWholesale = role === 'STORE' && storeKind === 'WHOLESALE';
+  const isWholesale = role === 'WHOLESALE' || (role === 'STORE' && storeKind === 'WHOLESALE');
+  const historyQuery = useQuery({
+    enabled: Boolean(effectiveStoreId),
+    queryFn: () => listStoreOrderHistory(effectiveStoreId),
+    queryKey: ['order-request-history', effectiveStoreId],
+    retry: false,
+  });
+  const orderHistory = (historyQuery.data ?? [])
+    .filter((request) => request.storeId === effectiveStoreId)
+    .toSorted((left, right) => right.submittedAt.localeCompare(left.submittedAt));
 
   const resetMutationKey = () => {
     idempotencyKey.current = null;
@@ -316,7 +326,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
         kind: 'success',
         message: 'Đã gửi yêu cầu. Kho chỉ giữ hàng sau khi chạy phân bổ.',
       });
-      await Promise.all([requestsQuery.refetch(), sessionsQuery.refetch()]);
+      await Promise.all([requestsQuery.refetch(), sessionsQuery.refetch(), historyQuery.refetch()]);
     } catch (cause) {
       if (cause instanceof ApiClientError && cause.code === 'SESSION_NOT_OPEN') {
         idempotencyKey.current = null;
@@ -354,7 +364,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
       setCancelRequestId(null);
       setCancelReason('');
       setHistoryNotice({ kind: 'success', message: 'Đã hủy yêu cầu đặt hàng.' });
-      await requestsQuery.refetch();
+      await Promise.all([requestsQuery.refetch(), historyQuery.refetch()]);
     } catch (cause) {
       setHistoryNotice({
         kind: 'error',
@@ -387,6 +397,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
     void catalogQuery.refetch();
     if (effectiveStoreId) void sessionsQuery.refetch();
     if (effectiveStoreId && activeSession) void requestsQuery.refetch();
+    if (effectiveStoreId) void historyQuery.refetch();
   };
 
   return (
@@ -511,7 +522,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
         <section className="permission-card">
           <strong>Quyền hạn khách sỉ</strong>
           <span>Đặt hàng • xem phân bổ • phiếu chờ</span>
-          <small>Không nhận / khui / bán / tồn / điều chuyển</small>
+          <small>Nhận hàng theo lệnh xuất; không khui, bán lẻ hoặc điều chuyển</small>
         </section>
       ) : null}
 
@@ -546,24 +557,30 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
               );
               resetMutationKey();
             }}
-            renderDetails={(productId) => (
-              <label>
-                Ghi chú mặt hàng — {productNameById.get(productId)}
-                <textarea
-                  maxLength={500}
-                  rows={2}
-                  value={draftLines.find((line) => line.productId === productId)?.note ?? ''}
-                  onChange={(event) => {
-                    setDraftLines((current) =>
-                      current.map((line) =>
-                        line.productId === productId ? { ...line, note: event.target.value } : line,
-                      ),
-                    );
-                    resetMutationKey();
-                  }}
-                />
-              </label>
-            )}
+            {...(isWholesale
+              ? {}
+              : {
+                  renderDetails: (productId: string) => (
+                    <label>
+                      Ghi chú mặt hàng — {productNameById.get(productId)}
+                      <textarea
+                        maxLength={500}
+                        rows={2}
+                        value={draftLines.find((line) => line.productId === productId)?.note ?? ''}
+                        onChange={(event) => {
+                          setDraftLines((current) =>
+                            current.map((line) =>
+                              line.productId === productId
+                                ? { ...line, note: event.target.value }
+                                : line,
+                            ),
+                          );
+                          resetMutationKey();
+                        }}
+                      />
+                    </label>
+                  ),
+                })}
           />
         </section>
 
@@ -580,7 +597,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
               <div>
                 <strong>{productNameById.get(line.productId) ?? line.productId}</strong>
                 <span>
-                  {line.quantity} bao • {line.note || 'Không có ghi chú'}
+                  {line.quantity} bao{isWholesale ? '' : ` • ${line.note || 'Không có ghi chú'}`}
                 </span>
               </div>
               <button
@@ -625,8 +642,8 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
       <section className="panel history-list">
         <div className="section-heading section-heading--compact">
           <div>
-            <h2>Yêu cầu trong phiên</h2>
-            <p>Dữ liệu trực tiếp từ máy chủ; ưu tiên do hệ thống phân bổ gán.</p>
+            <h2>Lịch sử đặt hàng</h2>
+            <p>Tất cả phiếu đã gửi của cửa hàng, gồm các phiên trước.</p>
           </div>
         </div>
         {historyNotice ? (
@@ -637,8 +654,19 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
             {historyNotice.message}
           </div>
         ) : null}
-        {submittedRequests.length === 0 ? <p>Chưa có yêu cầu đã gửi.</p> : null}
-        {submittedRequests.map((request) => (
+        {historyQuery.isPending ? <p>Đang tải lịch sử đặt hàng…</p> : null}
+        {historyQuery.isError ? (
+          <div className="form-error" role="alert">
+            Không thể tải lịch sử đặt hàng.{' '}
+            <Button tone="secondary" onClick={() => void historyQuery.refetch()}>
+              Thử lại
+            </Button>
+          </div>
+        ) : null}
+        {historyQuery.isSuccess && orderHistory.length === 0 ? (
+          <p>Chưa có yêu cầu đã gửi.</p>
+        ) : null}
+        {orderHistory.map((request) => (
           <article className="request-history-card" key={request.id}>
             <div className="request-history-card__summary">
               <div>
@@ -686,7 +714,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
                 {request.lines.map((line) => (
                   <li key={line.productId}>
                     <strong>{productNameById.get(line.productId) ?? line.productId}</strong>
-                    <span>{line.note || 'Không có ghi chú'}</span>
+                    {!isWholesale ? <span>{line.note || 'Không có ghi chú'}</span> : null}
                   </li>
                 ))}
               </ul>

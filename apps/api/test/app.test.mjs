@@ -1719,12 +1719,15 @@ describe('KHOHANG-IDOSI API', () => {
       headers: { cookie: storeCookie },
     });
     const product = products.json().data[1];
+    const extraProduct = products.json().data[2];
     assert.ok(product);
+    assert.ok(extraProduct);
 
     const declaration = {
       storeId: MEMORY_SEED_IDS.nvtStore,
       outboundRequestId: MEMORY_SEED_IDS.secondOutboundRequest,
       lines: [{ productId: product.id, approvedUnits: 2, receivedUnits: 1 }],
+      unexpectedItems: [{ productId: extraProduct.id, quantity: 3 }],
       discrepancyNote: 'Thiếu một bao khi giao nhận',
     };
     const declared = await mutateReceipt(
@@ -1736,6 +1739,8 @@ describe('KHOHANG-IDOSI API', () => {
     );
     assert.equal(declared.statusCode, 201);
     assert.equal(declared.json().data.status, 'DRAFT');
+    assert.deepEqual(declared.json().data.unexpectedItems, declaration.unexpectedItems);
+    assert.match(declared.json().data.receiptNumber, /^PNH-\d{6}$/u);
     assert.equal(declared.json().data.version, 0);
     assert.equal(declared.json().data.outboundRequestId, MEMORY_SEED_IDS.secondOutboundRequest);
     const receiptId = declared.json().data.id;
@@ -1767,6 +1772,7 @@ describe('KHOHANG-IDOSI API', () => {
       {
         ...declaration,
         lines: [{ productId: product.id, approvedUnits: 2, receivedUnits: 2 }],
+        unexpectedItems: [],
         discrepancyNote: null,
       },
     );
@@ -1775,6 +1781,7 @@ describe('KHOHANG-IDOSI API', () => {
 
     const submitPayload = {
       lines: declaration.lines,
+      unexpectedItems: declaration.unexpectedItems,
       discrepancyNote: declaration.discrepancyNote,
       expectedVersion: 0,
     };
@@ -1787,6 +1794,7 @@ describe('KHOHANG-IDOSI API', () => {
     );
     assert.equal(submitted.statusCode, 200);
     assert.equal(submitted.json().data.status, 'PENDING_HTKD');
+    assert.deepEqual(submitted.json().data.unexpectedItems, declaration.unexpectedItems);
     assert.equal(submitted.json().data.version, 1);
 
     const finalization = {
@@ -1851,6 +1859,7 @@ describe('KHOHANG-IDOSI API', () => {
     );
     assert.equal(finalized.statusCode, 200);
     assert.equal(finalized.json().data.status, 'FINALIZED');
+    assert.deepEqual(finalized.json().data.unexpectedItems, declaration.unexpectedItems);
     assert.equal(finalized.json().data.version, 4);
     assert.equal(finalized.json().data.totalCostVnd, 40_101);
 

@@ -1,6 +1,6 @@
 {
-  "id": "69dceb26-1331-49fc-863f-29e1b1ae9318",
-  "prevId": "2edfbc56-9225-4a71-8ffb-d5dc9a2dbc70",
+  "id": "41936beb-37e4-440e-b027-b4592e47fb06",
+  "prevId": "69dceb26-1331-49fc-863f-29e1b1ae9318",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -987,6 +987,13 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
+        },
+        "stock_held_quantity": {
+          "name": "stock_held_quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
         }
       },
       "indexes": {
@@ -1170,6 +1177,14 @@
         "daily_priority_offers_response_timestamp": {
           "name": "daily_priority_offers_response_timestamp",
           "value": "\"daily_priority_offers\".\"status\" NOT IN ('accepted', 'declined') OR \"daily_priority_offers\".\"responded_at\" IS NOT NULL"
+        },
+        "daily_priority_offers_stock_held_nonnegative": {
+          "name": "daily_priority_offers_stock_held_nonnegative",
+          "value": "\"daily_priority_offers\".\"stock_held_quantity\" >= 0"
+        },
+        "daily_priority_offers_stock_held_not_over_offered": {
+          "name": "daily_priority_offers_stock_held_not_over_offered",
+          "value": "\"daily_priority_offers\".\"stock_held_quantity\" <= \"daily_priority_offers\".\"offered_quantity\""
         }
       },
       "isRLSEnabled": false
