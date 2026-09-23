@@ -2181,7 +2181,7 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(cancelled.json().data.pieceCount, null);
   });
 
-  test('moves only sorted Sale bags and credits destination after confirmation', async () => {
+  test('transfers weighed Sale bags per product and credits destination after confirmation', async () => {
     const adminCookie = cookieOf(await login('admin'));
     const account = await app.inject({
       method: 'POST',
@@ -2242,7 +2242,6 @@ describe('KHOHANG-IDOSI API', () => {
       inventoryLotId: MEMORY_SEED_IDS.inventoryBag,
       expectedInventoryVersion: 0,
       reason: 'SALE',
-      bagQuantity: 2,
       weightKg: '5.000',
     });
     assert.equal(sorted.statusCode, 201, sorted.body);
@@ -2251,18 +2250,29 @@ describe('KHOHANG-IDOSI API', () => {
       url: '/api/v1/store-sorted-stocks',
       headers: { cookie: sourceCookie },
     });
-    assert.equal(sourceBefore.json().data[0].bagQuantity, 2);
     assert.equal(sourceBefore.json().data[0].saleWeightKg, '5.000');
     const stock = sourceBefore.json().data[0];
     const input = {
-      sourceStockId: stock.id,
       sourceStoreId: MEMORY_SEED_IDS.nvtStore,
       destinationStoreId: MEMORY_SEED_IDS.bdStore,
-      expectedStockVersion: stock.version,
-      bagQuantity: 1,
-      weightKg: null,
+      productId: stock.productId,
+      bagWeightsKg: ['1.000', '1.500'],
       note: null,
     };
+    const tooHeavy = await mutateTransfer(
+      sourceCookie,
+      '/api/v1/sorted-sale-transfers',
+      'sorted-transfer-too-heavy',
+      { ...input, bagWeightsKg: ['3.000', '2.001'] },
+    );
+    assert.equal(tooHeavy.statusCode, 409, tooHeavy.body);
+    const zeroBag = await mutateTransfer(
+      sourceCookie,
+      '/api/v1/sorted-sale-transfers',
+      'sorted-transfer-zero-bag',
+      { ...input, bagWeightsKg: ['1.000', '0.000'] },
+    );
+    assert.equal(zeroBag.statusCode, 400, zeroBag.body);
     const transfer = await mutateTransfer(
       sourceCookie,
       '/api/v1/sorted-sale-transfers',
@@ -2272,6 +2282,8 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(transfer.statusCode, 201, transfer.body);
     assert.equal(transfer.json().data.status, 'IN_TRANSIT');
     assert.equal(transfer.json().data.weightKg, '2.500');
+    assert.equal(transfer.json().data.bagQuantity, 2);
+    assert.deepEqual(transfer.json().data.bagWeightsKg, ['1.000', '1.500']);
     const replay = await mutateTransfer(
       sourceCookie,
       '/api/v1/sorted-sale-transfers',
@@ -2284,7 +2296,6 @@ describe('KHOHANG-IDOSI API', () => {
       url: '/api/v1/store-sorted-stocks',
       headers: { cookie: sourceCookie },
     });
-    assert.equal(sourceAfter.json().data[0].bagQuantity, 1);
     assert.equal(sourceAfter.json().data[0].saleWeightKg, '2.500');
     const destinationBefore = await app.inject({
       method: 'GET',
@@ -2320,15 +2331,116 @@ describe('KHOHANG-IDOSI API', () => {
       url: '/api/v1/store-sorted-stocks',
       headers: { cookie: destinationCookie },
     });
-    assert.equal(destinationAfter.json().data[0].bagQuantity, 1);
     assert.equal(destinationAfter.json().data[0].saleWeightKg, '2.500');
-    const stale = await mutateTransfer(
+    const exceedsRemaining = await mutateTransfer(
       sourceCookie,
       '/api/v1/sorted-sale-transfers',
-      'stale-sorted-transfer',
-      input,
+      'exceeds-remaining-sorted-transfer',
+      { ...input, bagWeightsKg: ['2.000', '0.501'] },
     );
-    assert.equal(stale.statusCode, 409);
+    assert.equal(exceedsRemaining.statusCode, 409);
+  });
+
+  test('moves charity back to Sale and exports charity bag by bag per product', async () => {
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const now = new Date();
+    const period = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      year: 'numeric',
+      month: '2-digit',
+    }).format(now);
+    const principal = (await repository.resolveSession(storeCookie.split('=')[1])).principal;
+    const storeCode = repository.stores.get(MEMORY_SEED_IDS.nvtStore).code;
+    const payload = idosiStatisticsPayload(300_000);
+    await repository.recordIdosiStatisticsSuccess(
+      principal,
+      { storeId: MEMORY_SEED_IDS.nvtStore, period, date: null, shiftId: null, paymentMethod: null },
+      {
+        ...payload,
+        storeId: storeCode,
+        store: { ...payload.store, id: storeCode },
+        filters: { ...payload.filters, period },
+        generatedAt: now.toISOString(),
+      },
+      now,
+      now,
+      { requestId: 'charity-snapshot' },
+    );
+    const sorted = await mutateTransfer(storeCookie, '/api/v1/store-sortings', 'sort-charity', {
+      storeId: MEMORY_SEED_IDS.nvtStore,
+      inventoryLotId: MEMORY_SEED_IDS.inventoryBag,
+      expectedInventoryVersion: 0,
+      reason: 'CHARITY',
+      weightKg: '4.000',
+    });
+    assert.equal(sorted.statusCode, 201, sorted.body);
+    const stocks = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-sorted-stocks',
+      headers: { cookie: storeCookie },
+    });
+    const productId = stocks.json().data[0].productId;
+    const moved = await mutateTransfer(
+      storeCookie,
+      '/api/v1/store-charity/move-to-sale',
+      'charity-to-sale',
+      { storeId: MEMORY_SEED_IDS.nvtStore, productId, weightKg: '1.000' },
+    );
+    assert.equal(moved.statusCode, 200, moved.body);
+    assert.equal(moved.json().data.charityWeightKg, '3.000');
+    assert.equal(moved.json().data.saleWeightKg, '1.000');
+    const exportInput = {
+      storeId: MEMORY_SEED_IDS.nvtStore,
+      productId,
+      bagWeightsKg: ['1.000', '1.500'],
+      note: null,
+    };
+    const tooHeavy = await mutateTransfer(
+      storeCookie,
+      '/api/v1/store-charity-exports',
+      'charity-export-too-heavy',
+      { ...exportInput, bagWeightsKg: ['2.000', '1.001'] },
+    );
+    assert.equal(tooHeavy.statusCode, 409, tooHeavy.body);
+    const exported = await mutateTransfer(
+      storeCookie,
+      '/api/v1/store-charity-exports',
+      'charity-export',
+      exportInput,
+    );
+    assert.equal(exported.statusCode, 201, exported.body);
+    assert.equal(exported.json().data.bagQuantity, 2);
+    assert.equal(exported.json().data.weightKg, '2.500');
+    assert.deepEqual(exported.json().data.bagWeightsKg, ['1.000', '1.500']);
+    assert.match(exported.json().data.exportNumber, /^PTT-/);
+    const replay = await mutateTransfer(
+      storeCookie,
+      '/api/v1/store-charity-exports',
+      'charity-export',
+      exportInput,
+    );
+    assert.equal(replay.headers['idempotency-replayed'], 'true');
+    const after = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-sorted-stocks',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(after.json().data[0].charityWeightKg, '0.500');
+    const listed = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-charity-exports',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(listed.statusCode, 200);
+    assert.equal(listed.json().data.length, 1);
+    const adminCookie = cookieOf(await login('admin'));
+    const adminExport = await mutateTransfer(
+      adminCookie,
+      '/api/v1/store-charity-exports',
+      'admin-charity-export',
+      exportInput,
+    );
+    assert.equal(adminExport.statusCode, 403);
   });
 
   test('lists and filters store-scoped wait tickets, offers and history', async () => {

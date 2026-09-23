@@ -20,9 +20,12 @@ import {
   CreateStoreGroupRequestSchema,
   CreateStoreOutboundRequestSchema,
   CreateStoreSortingRequestSchema,
+  CreateCharityExportRequestSchema,
   ExportCharityRequestSchema,
+  ListCharityExportsQuerySchema,
   ListStoreSortedStocksQuerySchema,
   MoveCharityToSaleRequestSchema,
+  MoveProductCharityToSaleRequestSchema,
   StoreSortedStockParamsSchema,
   CreateStoreRequestSchema,
   DeclareStoreReceiptRequestSchema,
@@ -1252,6 +1255,44 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return reply.send({ data: result.data });
   });
 
+  app.post('/api/v1/store-charity/move-to-sale', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = MoveProductCharityToSaleRequestSchema.parse(request.body);
+    const result = await repository.moveProductCharityToSale(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'MOVE_PRODUCT_CHARITY_TO_SALE', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.get('/api/v1/store-charity-exports', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = ListCharityExportsQuerySchema.parse(request.query);
+    return { data: await repository.listCharityExports(session.principal, query.storeId) };
+  });
+
+  app.post('/api/v1/store-charity-exports', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = CreateCharityExportRequestSchema.parse(request.body);
+    const result = await repository.createCharityExport(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CREATE_CHARITY_EXPORT', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
+  });
+
   app.get('/api/v1/sorted-sale-transfers', async (request) => {
     const session = await authenticate(request, repository);
     return { data: await repository.listSortedSaleTransfers(session.principal) };
@@ -2176,6 +2217,32 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: { '200': { description: 'Exported the remaining Charity balance' } },
+        },
+      },
+      '/api/v1/store-charity/move-to-sale': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Moved Charity kilograms of a product back into Sale' },
+          },
+        },
+      },
+      '/api/v1/store-charity-exports': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Charity exports in caller scope' } },
+        },
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '201': { description: 'Exported Charity of a product with per-bag weights' },
+          },
         },
       },
       '/api/v1/sorted-sale-transfers': {

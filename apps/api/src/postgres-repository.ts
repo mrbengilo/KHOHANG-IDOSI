@@ -98,6 +98,10 @@ import type {
   SortedSaleTransfer,
   CreateSortedSaleTransferRequest,
   ReceiveSortedSaleTransferRequest,
+  MoveProductCharityToSaleRequest,
+  ProductCharityBalance,
+  CreateCharityExportRequest,
+  CharityExport,
   ListStoreTransfersQuery,
   CreateStoreTransferRequest,
   DispatchStoreTransferRequest,
@@ -121,6 +125,11 @@ import {
   listSortedSaleTransfers as listDatabaseSortedSaleTransfers,
   getSortedSaleTransfer as getDatabaseSortedSaleTransfer,
   type sortedSaleTransfers,
+  type storeCharityExports,
+  createCharityExport as createDatabaseCharityExport,
+  getCharityExport as getDatabaseCharityExport,
+  listCharityExports as listDatabaseCharityExports,
+  moveProductCharityToSale as moveDatabaseProductCharityToSale,
   exportCharity as exportDatabaseCharity,
   getStoreSortedStock as getDatabaseStoreSortedStock,
   listStoreSortedStocks as listDatabaseStoreSortedStocks,
@@ -2903,7 +2912,6 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         expectedInventoryVersion: input.expectedInventoryVersion,
         reason: input.reason,
         weightKg: input.weightKg,
-        bagQuantity: input.bagQuantity,
         actorUserId: actor.accountId,
         idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
         requestHash,
@@ -2965,8 +2973,6 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         storeId: current.storeId,
         expectedVersion: input.expectedVersion,
         weightKg: input.weightKg,
-        bagQuantity:
-          destination === 'SALE' ? (input as MoveCharityToSaleRequest).bagQuantity : null,
         actorUserId: actor.accountId,
         idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
         requestHash,
@@ -2983,19 +2989,76 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     });
   }
 
+  public async moveProductCharityToSale(
+    actor: AuthenticatedPrincipal,
+    input: MoveProductCharityToSaleRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ProductCharityBalance>> {
+    await this.authorizeRetailStoreOperation(actor);
+    if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
+    return withStoreInventoryErrors(async () => {
+      const result = await moveDatabaseProductCharityToSale(db, {
+        ...input,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      return {
+        data: (result.replayed ? result.responseBody : result.value) as ProductCharityBalance,
+        replayed: result.replayed,
+      };
+    });
+  }
+
+  public async listCharityExports(
+    actor: AuthenticatedPrincipal,
+    storeId: string | undefined,
+  ): Promise<readonly CharityExport[]> {
+    if (storeId !== undefined && !canAccessStore(actor, storeId)) throw forbidden();
+    const ids = storeId === undefined ? await this.retailScopeStoreIds(actor) : [storeId];
+    return (await listDatabaseCharityExports(db, ids)).map(charityExportDto);
+  }
+
+  public async createCharityExport(
+    actor: AuthenticatedPrincipal,
+    input: CreateCharityExportRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<CharityExport>> {
+    await this.authorizeRetailStoreOperation(actor);
+    if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
+    return withStoreInventoryErrors(async () => {
+      const result = await createDatabaseCharityExport(db, {
+        ...input,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const id = result.replayed ? result.resourceId : result.value.exportId;
+      if (!id) throw new Error('Charity export has no id.');
+      const row = await getDatabaseCharityExport(db, id);
+      if (!row) throw notFound('Không tìm thấy phiếu xuất từ thiện');
+      return { data: charityExportDto(row), replayed: result.replayed };
+    });
+  }
+
+  private async retailScopeStoreIds(actor: AuthenticatedPrincipal): Promise<string[]> {
+    if (actor.role === 'STORE') return actor.storeId ? [actor.storeId] : [];
+    if (actor.role === 'HTKD') return [...new Set(actor.assignedStoreIds)];
+    return (await db.select({ id: stores.id }).from(stores).where(eq(stores.kind, 'retail'))).map(
+      (store) => store.id,
+    );
+  }
+
   public async listSortedSaleTransfers(
     actor: AuthenticatedPrincipal,
   ): Promise<readonly SortedSaleTransfer[]> {
-    const ids =
-      actor.role === 'STORE'
-        ? actor.storeId
-          ? [actor.storeId]
-          : []
-        : actor.role === 'HTKD'
-          ? [...new Set(actor.assignedStoreIds)]
-          : (await db.select({ id: stores.id }).from(stores).where(eq(stores.kind, 'retail'))).map(
-              (store) => store.id,
-            );
+    const ids = await this.retailScopeStoreIds(actor);
     return (await listDatabaseSortedSaleTransfers(db, ids)).map(sortedSaleTransferDto);
   }
 
@@ -4003,11 +4066,26 @@ function sortedSaleTransferDto(row: typeof sortedSaleTransfers.$inferSelect): So
     bagQuantity: row.bagQuantity,
     weightKg: row.weightKg,
     enteredWeightKg: row.enteredWeightKg,
+    bagWeightsKg: row.bagWeightsKg ?? [],
     status: row.status === 'received' ? 'RECEIVED' : 'IN_TRANSIT',
     version: row.version,
     note: row.note,
     createdAt: row.createdAt.toISOString(),
     receivedAt: row.receivedAt?.toISOString() ?? null,
+  };
+}
+
+function charityExportDto(row: typeof storeCharityExports.$inferSelect): CharityExport {
+  return {
+    id: row.id,
+    exportNumber: row.exportNumber,
+    storeId: row.storeId,
+    productId: row.productId,
+    bagQuantity: row.bagQuantity,
+    weightKg: row.weightKg,
+    bagWeightsKg: row.bagWeightsKg,
+    note: row.note,
+    createdAt: row.createdAt.toISOString(),
   };
 }
 
@@ -4779,6 +4857,13 @@ async function withStoreInventoryErrors<T>(operation: () => Promise<T>): Promise
       if (/exceeds the remaining bag weight/iu.test(error.message)) {
         throw new ApiError('INSUFFICIENT_STOCK', 'Khối lượng xuất vượt quá tồn kho còn lại', 409);
       }
+      if (/exceeds the charity stock/iu.test(error.message)) {
+        throw new ApiError(
+          'INSUFFICIENT_STOCK',
+          'Khối lượng vượt quá kg Từ thiện còn lại của mặt hàng',
+          409,
+        );
+      }
       if (/not assigned|not an active admin or HTKD/iu.test(error.message)) throw forbidden();
       throw new ApiError('VALIDATION_ERROR', error.message, 400);
     }
@@ -4809,6 +4894,13 @@ async function withStoreTransferErrors<T>(operation: () => Promise<T>): Promise<
     if (error instanceof StoreOperationValidationError) {
       if (/exceeds available inventory/iu.test(error.message)) {
         throw new ApiError('INSUFFICIENT_STOCK', 'Khối lượng chuyển vượt tồn kho khả dụng', 409);
+      }
+      if (/exceeds the Sale stock/iu.test(error.message)) {
+        throw new ApiError(
+          'INSUFFICIENT_STOCK',
+          'Tổng kg các bao vượt quá kg Sale khả dụng của mặt hàng',
+          409,
+        );
       }
       throw new ApiError('VALIDATION_ERROR', error.message, 400);
     }
