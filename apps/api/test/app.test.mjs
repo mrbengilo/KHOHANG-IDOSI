@@ -905,7 +905,7 @@ describe('KHOHANG-IDOSI API', () => {
           inventoryLotId: MEMORY_SEED_IDS.inventoryBag,
           expectedInventoryVersion: 0,
           weightKg: '1.000',
-          reason: 'DISCOUNT_SALE',
+          reason: 'SALE_KG',
           revenueVnd: 10_000,
         }),
       () =>
@@ -1957,7 +1957,7 @@ describe('KHOHANG-IDOSI API', () => {
       inventoryLotId: bagId,
       expectedInventoryVersion: 0,
       weightKg: '5.250',
-      reason: 'DISCOUNT_SALE',
+      reason: 'SALE_KG',
       revenueVnd: 123_456,
     };
 
@@ -2115,6 +2115,70 @@ describe('KHOHANG-IDOSI API', () => {
     });
     assert.equal(ledger.json().pagination.totalItems, 1);
     assert.equal(ledger.json().data[0].operation, 'RECEIVE');
+  });
+
+  test('records sale by piece with count and rejects a missing count', async () => {
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const htkdCookie = cookieOf(await login('htkd'));
+    const payload = {
+      storeId: MEMORY_SEED_IDS.nvtStore,
+      inventoryLotId: MEMORY_SEED_IDS.inventoryBag,
+      expectedInventoryVersion: 0,
+      weightKg: '1.250',
+      reason: 'SALE_PIECE',
+      revenueVnd: 100_000,
+    };
+    const missingCount = await mutateInventory(
+      storeCookie,
+      '/api/v1/store-outbounds',
+      'outbound-piece-missing-count',
+      payload,
+    );
+    assert.equal(missingCount.statusCode, 400);
+
+    const retiredReason = await mutateInventory(
+      storeCookie,
+      '/api/v1/store-outbounds',
+      'outbound-retired-reason',
+      { ...payload, reason: 'TORN' },
+    );
+    assert.equal(retiredReason.statusCode, 400);
+
+    const created = await mutateInventory(
+      storeCookie,
+      '/api/v1/store-outbounds',
+      'outbound-piece-create',
+      { ...payload, pieceCount: 2 },
+    );
+    assert.equal(created.statusCode, 201);
+    assert.equal(created.json().data.reason, 'SALE_PIECE');
+    assert.equal(created.json().data.pieceCount, 2);
+
+    const approved = await mutateInventory(
+      htkdCookie,
+      `/api/v1/store-outbounds/${created.json().data.id}/review`,
+      'outbound-piece-approve',
+      { decision: 'APPROVE', note: null, expectedVersion: 0 },
+    );
+    assert.equal(approved.statusCode, 200);
+    assert.equal(approved.json().data.pieceCount, 2);
+
+    const inventory = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-inventory-bags',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(inventory.json().data[0].remainingWeightKg, '23.250');
+
+    const cancelled = await mutateInventory(
+      storeCookie,
+      '/api/v1/store-outbounds',
+      'outbound-cancel-create',
+      { ...payload, reason: 'CANCEL', revenueVnd: null, expectedInventoryVersion: 1 },
+    );
+    assert.equal(cancelled.statusCode, 201);
+    assert.equal(cancelled.json().data.reason, 'CANCEL');
+    assert.equal(cancelled.json().data.pieceCount, null);
   });
 
   test('moves one exact-cost lot only after source dispatch and destination confirmation', async () => {

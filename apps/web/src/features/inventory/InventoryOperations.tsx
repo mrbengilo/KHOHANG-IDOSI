@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   OutboundReason,
+  NewOutboundReason,
   Store,
   StoreInventoryBag,
   StoreInventoryBagStatus,
   StoreOutbound,
+  StoreSortedStock,
 } from '@idosi/contracts';
 import {
   ArrowDownToLine,
@@ -31,9 +33,13 @@ import { IdosiSalesWorkspace } from '../idosi/IdosiSalesWorkspace';
 import { isOpenBagSelectionCurrent, OpenBagConfirmation } from './OpenBagConfirmation';
 import {
   createStoreOutbound,
+  createStoreSorting,
+  exportCharity,
   listInventoryBags,
   listInventoryLedger,
+  listStoreSortedStocks,
   listStoreOutbounds,
+  moveCharityToSale,
   openInventoryBag,
   reviewStoreOutbound,
 } from './inventoryApi';
@@ -60,18 +66,30 @@ const outboundStatusCopy = {
 } as const;
 
 const reasonCopy: Record<OutboundReason, string> = {
-  DISCOUNT_SALE: 'Bán giảm giá',
+  DISCOUNT_SALE: 'Sale theo ký (cũ)',
+  SALE_KG: 'Sale theo ký',
+  SALE_PIECE: 'Sale theo cái',
   CHARITY: 'Từ thiện',
+  CANCEL: 'Hủy',
   TORN: 'Rách',
   DEFECTIVE: 'Lỗi',
   DIRTY: 'Bẩn',
   OTHER: 'Khác',
 };
 
-const sortingReasons = ['CHARITY', 'TORN', 'DEFECTIVE', 'DIRTY', 'OTHER'] as const;
+const sortingReasons = [
+  'CHARITY',
+  'SALE_KG',
+  'SALE_PIECE',
+  'CANCEL',
+  'TORN',
+  'DEFECTIVE',
+  'DIRTY',
+  'OTHER',
+] as const;
 
 export function outboundReasonsForMode(mode: 'SALE' | 'SORTING'): readonly OutboundReason[] {
-  return mode === 'SALE' ? ['DISCOUNT_SALE'] : sortingReasons;
+  return mode === 'SALE' ? ['DISCOUNT_SALE', 'SALE_KG', 'SALE_PIECE'] : sortingReasons;
 }
 
 const ledgerOperationCopy = {
@@ -118,6 +136,7 @@ function storeName(stores: readonly Store[], storeId: string): string {
 
 function downloadInventoryCsv(
   bags: readonly StoreInventoryBag[],
+  sortedStocks: readonly StoreSortedStock[],
   productNames: ReadonlyMap<string, string>,
   stores: readonly Store[],
 ): void {
@@ -130,6 +149,8 @@ function downloadInventoryCsv(
       'Trạng thái',
       'Khối lượng đầu',
       'Khối lượng còn',
+      'Sale còn',
+      'Từ thiện còn',
       'Phiên bản',
     ],
     ...bags.map((bag) => [
@@ -139,6 +160,8 @@ function downloadInventoryCsv(
       statusCopy[bag.status].label,
       bag.originalWeightKg,
       bag.remainingWeightKg,
+      sortedStocks.find((stock) => stock.inventoryLotId === bag.id)?.saleWeightKg ?? '0.000',
+      sortedStocks.find((stock) => stock.inventoryLotId === bag.id)?.charityWeightKg ?? '0.000',
       bag.version,
     ]),
   ];
@@ -221,6 +244,12 @@ function StoreInventoryPage({
     queryKey: ['store-inventory-bags', effectiveStoreId, status, query.trim()],
     retry: false,
   });
+  const sortedQuery = useQuery({
+    enabled: role !== 'STORE' || Boolean(effectiveStoreId),
+    queryFn: () => listStoreSortedStocks(effectiveStoreId || undefined),
+    queryKey: ['store-sorted-stocks', effectiveStoreId],
+    retry: false,
+  });
   const bags = bagsQuery.data ?? [];
   const effectiveBagId = bags.some((bag) => bag.id === selectedBagId)
     ? selectedBagId
@@ -236,6 +265,18 @@ function StoreInventoryPage({
     [catalogQuery.data],
   );
   const totalGrams = bags.reduce((sum, bag) => sum + kilogramsToGrams(bag.remainingWeightKg), 0n);
+  const visibleBagIds = new Set(bags.map((bag) => bag.id));
+  const visibleSortedStocks = (sortedQuery.data ?? []).filter((stock) =>
+    visibleBagIds.has(stock.inventoryLotId),
+  );
+  const sortedSaleGrams = visibleSortedStocks.reduce(
+    (sum, stock) => sum + kilogramsToGrams(stock.saleWeightKg),
+    0n,
+  );
+  const sortedCharityGrams = visibleSortedStocks.reduce(
+    (sum, stock) => sum + kilogramsToGrams(stock.charityWeightKg),
+    0n,
+  );
   const availableGrams = bags
     .filter((bag) => bag.status === 'AVAILABLE')
     .reduce((sum, bag) => sum + kilogramsToGrams(bag.remainingWeightKg), 0n);
@@ -243,7 +284,11 @@ function StoreInventoryPage({
     .filter((bag) => bag.status === 'OPEN')
     .reduce((sum, bag) => sum + kilogramsToGrams(bag.remainingWeightKg), 0n);
   const loadError =
-    sessionQuery.error ?? storesQuery.error ?? catalogQuery.error ?? bagsQuery.error;
+    sessionQuery.error ??
+    storesQuery.error ??
+    catalogQuery.error ??
+    bagsQuery.error ??
+    sortedQuery.error;
 
   const retry = async () => {
     await Promise.all([
@@ -251,6 +296,7 @@ function StoreInventoryPage({
       storesQuery.refetch(),
       catalogQuery.refetch(),
       bagsQuery.refetch(),
+      sortedQuery.refetch(),
       ...(effectiveBagId ? [ledgerQuery.refetch()] : []),
     ]);
   };
@@ -262,7 +308,7 @@ function StoreInventoryPage({
           <div className="inventory-actions">
             <Button
               disabled={bags.length === 0}
-              onClick={() => downloadInventoryCsv(bags, productNames, stores)}
+              onClick={() => downloadInventoryCsv(bags, visibleSortedStocks, productNames, stores)}
               tone="secondary"
             >
               <ArrowDownToLine aria-hidden="true" size={16} /> Xuất đối soát
@@ -273,6 +319,7 @@ function StoreInventoryPage({
                 storesQuery.isFetching ||
                 catalogQuery.isFetching ||
                 bagsQuery.isFetching ||
+                sortedQuery.isFetching ||
                 ledgerQuery.isFetching
               }
               onClick={() => void retry()}
@@ -298,6 +345,7 @@ function StoreInventoryPage({
               storesQuery.isFetching ||
               catalogQuery.isFetching ||
               bagsQuery.isFetching ||
+              sortedQuery.isFetching ||
               ledgerQuery.isFetching
             }
             onClick={() => void retry()}
@@ -306,7 +354,10 @@ function StoreInventoryPage({
             Thử lại
           </Button>
         </section>
-      ) : bagsQuery.isPending || catalogQuery.isPending || storesQuery.isPending ? (
+      ) : bagsQuery.isPending ||
+        sortedQuery.isPending ||
+        catalogQuery.isPending ||
+        storesQuery.isPending ? (
         <DashboardSkeleton />
       ) : (
         <>
@@ -326,7 +377,19 @@ function StoreInventoryPage({
               detail="Từ nguồn API tồn kho"
               label="Tổng còn lại"
               tone="success"
-              value={formatKg(gramsToKilograms(totalGrams))}
+              value={formatKg(gramsToKilograms(totalGrams + sortedSaleGrams + sortedCharityGrams))}
+            />
+            <StatCard
+              detail="Đã lọc, chưa bán hết"
+              label="Sale còn"
+              tone="info"
+              value={formatKg(gramsToKilograms(sortedSaleGrams))}
+            />
+            <StatCard
+              detail="Đã lọc, chưa xuất hết"
+              label="Từ thiện còn"
+              tone="warning"
+              value={formatKg(gramsToKilograms(sortedCharityGrams))}
             />
             <StatCard
               detail="Không cho sửa/xóa giao dịch"
@@ -695,16 +758,16 @@ interface OutboundPageProps extends AppOutletContext {
   readonly mode: 'SALE' | 'SORTING';
 }
 
-export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
+export function LegacyOutboundPage({ mode, role }: OutboundPageProps) {
   const queryClient = useQueryClient();
   const { catalogQuery, defaultStoreId, stores, storesQuery } = useInventorySources(role);
   const [storeId, setStoreId] = useState('');
   const [bagId, setBagId] = useState('');
   const [weightKg, setWeightKg] = useState('');
   const [revenueVnd, setRevenueVnd] = useState('');
-  const [reason, setReason] = useState<OutboundReason>(
-    mode === 'SALE' ? 'DISCOUNT_SALE' : 'CHARITY',
-  );
+  const [pieceCount, setPieceCount] = useState('');
+  const [reason, setReason] = useState<NewOutboundReason>(mode === 'SALE' ? 'SALE_KG' : 'CHARITY');
+  const isSale = mode === 'SALE' || reason === 'SALE_KG' || reason === 'SALE_PIECE';
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState('');
   const [operationError, setOperationError] = useState('');
@@ -750,20 +813,26 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
   const createMutation = useMutation({
     mutationFn: async () => {
       if (!selectedBag || !effectiveStoreId) throw new Error('Chưa chọn Mã bao hợp lệ.');
-      const signature = [selectedBag.id, selectedBag.version, weightKg, reason, revenueVnd].join(
-        ':',
-      );
+      const signature = [
+        selectedBag.id,
+        selectedBag.version,
+        weightKg,
+        reason,
+        revenueVnd,
+        pieceCount,
+      ].join(':');
       const key = operationKeys.current.get(signature) ?? uuid();
       operationKeys.current.set(signature, key);
-      const revenue = mode === 'SALE' ? Number(revenueVnd) : null;
+      const revenue = isSale ? Number(revenueVnd) : null;
       const result = await createStoreOutbound(
         {
           storeId: effectiveStoreId,
           inventoryLotId: selectedBag.id,
           expectedInventoryVersion: selectedBag.version,
           weightKg,
-          reason: mode === 'SALE' ? 'DISCOUNT_SALE' : reason,
+          reason: mode === 'SALE' ? 'SALE_KG' : reason,
           revenueVnd: revenue,
+          pieceCount: reason === 'SALE_PIECE' ? Number(pieceCount) : null,
         },
         key,
       );
@@ -776,6 +845,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
       setNotice('Đã tạo phiếu và gửi HTKD/Admin duyệt. Tồn chỉ giảm sau khi phiếu được duyệt.');
       setWeightKg('');
       setRevenueVnd('');
+      setPieceCount('');
       await queryClient.invalidateQueries({ queryKey: ['store-outbounds'] });
     },
   });
@@ -819,8 +889,13 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
   const formInvalid =
     !selectedBag ||
     !isOutboundWeightAllowed(weightKg, selectedBag.remainingWeightKg) ||
-    (mode === 'SALE' &&
-      (!/^\d+$/.test(revenueVnd) || !Number.isSafeInteger(parsedRevenue) || parsedRevenue < 0));
+    (isSale &&
+      (!/^\d+$/.test(revenueVnd) || !Number.isSafeInteger(parsedRevenue) || parsedRevenue < 0)) ||
+    (mode === 'SORTING' &&
+      reason === 'SALE_PIECE' &&
+      (!/^[1-9]\d*$/.test(pieceCount) ||
+        !Number.isSafeInteger(Number(pieceCount)) ||
+        Number(pieceCount) > 2_147_483_647));
   const loadError =
     storesQuery.error ?? catalogQuery.error ?? bagsQuery.error ?? outboundsQuery.error;
   const pending = displayedOutbounds.filter((outbound) => outbound.status === 'PENDING').length;
@@ -842,7 +917,7 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
         description={
           mode === 'SALE'
             ? 'Ghi doanh thu theo Mã bao; chỉ trừ kho khi người có quyền duyệt phiếu'
-            : 'Lập chứng từ cho hàng từ thiện, rách, lỗi, bẩn hoặc xử lý khác; không reset tồn'
+            : 'Lập chứng từ từ thiện, sale theo ký/cái hoặc hủy; không reset tồn'
         }
         title={mode === 'SALE' ? 'Bán & đồng bộ' : 'Lọc & xử lý'}
       />
@@ -943,7 +1018,29 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                       : 'Chưa có Mã bao khả dụng'}
                   </small>
                 </label>
-                {mode === 'SALE' ? (
+                {mode === 'SORTING' ? (
+                  <label>
+                    <span className="field-label">Lý do</span>
+                    <select
+                      required
+                      onChange={(event) => {
+                        setReason(
+                          event.target.value === 'SALE'
+                            ? 'SALE_KG'
+                            : (event.target.value as NewOutboundReason),
+                        );
+                        setPieceCount('');
+                        setRevenueVnd('');
+                      }}
+                      value={reason === 'SALE_KG' || reason === 'SALE_PIECE' ? 'SALE' : reason}
+                    >
+                      <option value="CHARITY">Từ thiện</option>
+                      <option value="SALE">Sale</option>
+                      <option value="CANCEL">Hủy</option>
+                    </select>
+                  </label>
+                ) : null}
+                {isSale ? (
                   <label>
                     <span className="field-label">Doanh thu (VND)</span>
                     <input
@@ -956,22 +1053,37 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                       value={revenueVnd}
                     />
                   </label>
-                ) : (
+                ) : null}
+                {mode === 'SORTING' && isSale ? (
                   <label>
                     <span className="field-label">{reasonLabel}</span>
                     <select
-                      required
-                      onChange={(event) => setReason(event.target.value as OutboundReason)}
+                      onChange={(event) => {
+                        setReason(event.target.value as 'SALE_KG' | 'SALE_PIECE');
+                        setPieceCount('');
+                      }}
                       value={reason}
                     >
-                      {sortingReasons.map((value) => (
-                        <option key={value} value={value}>
-                          {reasonCopy[value]}
-                        </option>
-                      ))}
+                      <option value="SALE_KG">Sale theo ký</option>
+                      <option value="SALE_PIECE">Sale theo cái</option>
                     </select>
                   </label>
-                )}
+                ) : null}
+                {mode === 'SORTING' && reason === 'SALE_PIECE' ? (
+                  <label>
+                    <span className="field-label">Số cái</span>
+                    <input
+                      required
+                      inputMode="numeric"
+                      min="1"
+                      max="2147483647"
+                      onChange={(event) => setPieceCount(event.target.value)}
+                      step="1"
+                      type="number"
+                      value={pieceCount}
+                    />
+                  </label>
+                ) : null}
               </div>
               <Button
                 busy={createMutation.isPending}
@@ -1027,7 +1139,8 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                       <th>Mã bao</th>
                       <th>{reasonLabel}</th>
                       <th>Khối lượng</th>
-                      {mode === 'SALE' ? <th>Doanh thu</th> : null}
+                      <th>Số cái</th>
+                      <th>Doanh thu</th>
                       <th>Trạng thái</th>
                       <th>Thao tác</th>
                     </tr>
@@ -1051,13 +1164,10 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
                           </td>
                           <td data-label={reasonLabel}>{reasonCopy[outbound.reason]}</td>
                           <td data-label="Khối lượng">{formatKg(outbound.weightKg)}</td>
-                          {mode === 'SALE' ? (
-                            <td data-label="Doanh thu">
-                              {outbound.revenueVnd === null
-                                ? 'Chưa ghi nhận'
-                                : formatVnd(outbound.revenueVnd)}
-                            </td>
-                          ) : null}
+                          <td data-label="Số cái">{outbound.pieceCount ?? '—'}</td>
+                          <td data-label="Doanh thu">
+                            {outbound.revenueVnd === null ? '—' : formatVnd(outbound.revenueVnd)}
+                          </td>
                           <td data-label="Trạng thái">
                             <Badge tone={outboundStatusCopy[outbound.status].tone}>
                               {outboundStatusCopy[outbound.status].label}
@@ -1124,5 +1234,459 @@ export function ProductionOutboundPage({ mode, role }: OutboundPageProps) {
         </>
       )}
     </>
+  );
+}
+
+export function ProductionOutboundPage(props: OutboundPageProps) {
+  return <SortedStockWorkspace {...props} />;
+}
+
+function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
+  const queryClient = useQueryClient();
+  const { catalogQuery, defaultStoreId, stores, storesQuery } = useInventorySources(role);
+  const [storeId, setStoreId] = useState('');
+  const [bagId, setBagId] = useState('');
+  const [reason, setReason] = useState<'CHARITY' | 'SALE' | 'CANCEL'>('CHARITY');
+  const [weightKg, setWeightKg] = useState('');
+  const [notice, setNotice] = useState('');
+  const [operationError, setOperationError] = useState('');
+  const operationKeys = useRef(new Map<string, string>());
+  const effectiveStoreId = role === 'STORE' ? defaultStoreId : storeId;
+  const sortedQuery = useQuery({
+    queryKey: ['store-sorted-stocks', effectiveStoreId],
+    queryFn: () => listStoreSortedStocks(effectiveStoreId || undefined),
+    enabled: role !== 'STORE' || Boolean(effectiveStoreId),
+    retry: false,
+  });
+  const bagsQuery = useQuery({
+    queryKey: ['store-inventory-bags', effectiveStoreId, 'sorting-source'],
+    queryFn: async () => {
+      const filters = effectiveStoreId ? { storeId: effectiveStoreId } : {};
+      const pages = await Promise.all([
+        listInventoryBags({ ...filters, status: 'AVAILABLE' }),
+        listInventoryBags({ ...filters, status: 'OPEN' }),
+      ]);
+      return pages.flat();
+    },
+    enabled: mode === 'SORTING' && (role !== 'STORE' || Boolean(effectiveStoreId)),
+    retry: false,
+  });
+  const productNames = useMemo(
+    () => new Map((catalogQuery.data ?? []).map((product) => [product.id, product.name])),
+    [catalogQuery.data],
+  );
+  const stocks = sortedQuery.data ?? [];
+  const eligibleBags = bagsQuery.data ?? [];
+  const effectiveBagId = eligibleBags.some((bag) => bag.id === bagId)
+    ? bagId
+    : (eligibleBags[0]?.id ?? '');
+  const selectedBag = eligibleBags.find((bag) => bag.id === effectiveBagId);
+  const saleGrams = stocks.reduce((sum, stock) => sum + kilogramsToGrams(stock.saleWeightKg), 0n);
+  const charityGrams = stocks.reduce(
+    (sum, stock) => sum + kilogramsToGrams(stock.charityWeightKg),
+    0n,
+  );
+  const saleByProduct = new Map<string, { storeId: string; productId: string; grams: bigint }>();
+  for (const stock of stocks) {
+    const key = `${stock.storeId}:${stock.productId}`;
+    const current = saleByProduct.get(key);
+    saleByProduct.set(key, {
+      storeId: stock.storeId,
+      productId: stock.productId,
+      grams: (current?.grams ?? 0n) + kilogramsToGrams(stock.saleWeightKg),
+    });
+  }
+  const charityStocks = stocks.filter((stock) => kilogramsToGrams(stock.charityWeightKg) > 0n);
+  const refreshStock = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['store-sorted-stocks'] }),
+      queryClient.invalidateQueries({ queryKey: ['store-inventory-bags'] }),
+      queryClient.invalidateQueries({ queryKey: ['store-inventory-ledger'] }),
+    ]);
+  };
+  const sortingMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedBag || !effectiveStoreId) throw new Error('Chưa chọn Mã bao hợp lệ.');
+      const signature = `${selectedBag.id}:${selectedBag.version}:${reason}:${weightKg}`;
+      const key = operationKeys.current.get(signature) ?? uuid();
+      operationKeys.current.set(signature, key);
+      const result = await createStoreSorting(
+        {
+          storeId: effectiveStoreId,
+          inventoryLotId: selectedBag.id,
+          expectedInventoryVersion: selectedBag.version,
+          reason,
+          weightKg,
+        },
+        key,
+      );
+      operationKeys.current.delete(signature);
+      return result;
+    },
+    onError: (error) => setOperationError(errorMessage(error)),
+    onSuccess: async () => {
+      setOperationError('');
+      setNotice(
+        reason === 'CANCEL'
+          ? 'Đã xác nhận hủy và ghi sổ.'
+          : `Đã cộng ${weightKg} kg vào mục ${reason === 'SALE' ? 'Sale' : 'Từ thiện'}.`,
+      );
+      setWeightKg('');
+      await refreshStock();
+    },
+  });
+  const charityMutation = useMutation({
+    mutationFn: async ({
+      stock,
+      action,
+      kilograms,
+    }: {
+      stock: StoreSortedStock;
+      action: 'SALE' | 'CHARITY';
+      kilograms: string;
+    }) => {
+      const signature = `${stock.id}:${stock.version}:${action}:${kilograms}`;
+      const key = operationKeys.current.get(signature) ?? uuid();
+      operationKeys.current.set(signature, key);
+      const request = { expectedVersion: stock.version, weightKg: kilograms };
+      const result =
+        action === 'SALE'
+          ? await moveCharityToSale(stock.id, request, key)
+          : await exportCharity(stock.id, request, key);
+      operationKeys.current.delete(signature);
+      return result;
+    },
+    onError: (error) => setOperationError(errorMessage(error)),
+    onSuccess: async (_result, variables) => {
+      setOperationError('');
+      setNotice(
+        variables.action === 'SALE'
+          ? `Đã cộng ${variables.kilograms} kg từ Từ thiện sang Sale.`
+          : 'Đã xác nhận xuất từ thiện; số dư Từ thiện của Mã bao đã về 0 kg.',
+      );
+      await refreshStock();
+    },
+  });
+  const loadError =
+    sortedQuery.error ??
+    catalogQuery.error ??
+    storesQuery.error ??
+    (mode === 'SORTING' ? bagsQuery.error : null);
+
+  return (
+    <>
+      <PageHeader
+        title={mode === 'SALE' ? 'Bán & đồng bộ' : 'Lọc & xử lý'}
+        description={
+          mode === 'SALE'
+            ? 'Số dư Sale theo mặt hàng tự cập nhật từ dữ liệu bán trên IDOSI'
+            : 'Lưu kg đã lọc vào Sale hoặc Từ thiện; xuất từ thiện sau khi xác nhận'
+        }
+        actions={
+          <Button
+            tone="secondary"
+            busy={sortedQuery.isFetching || bagsQuery.isFetching}
+            onClick={() =>
+              void Promise.all([
+                sortedQuery.refetch(),
+                ...(mode === 'SORTING' ? [bagsQuery.refetch()] : []),
+              ])
+            }
+          >
+            <RefreshCw aria-hidden="true" size={16} /> Làm mới
+          </Button>
+        }
+      />
+      {mode === 'SALE' ? (
+        <IdosiSalesWorkspace role={role} principalStoreId={defaultStoreId} stores={stores} />
+      ) : null}
+      {notice ? (
+        <div className="operation-notice operation-notice--success" role="status">
+          {notice}
+        </div>
+      ) : null}
+      {operationError ? (
+        <div className="operation-notice operation-notice--error" role="alert">
+          {operationError}
+        </div>
+      ) : null}
+      {loadError ? (
+        <section className="panel source-error" role="alert">
+          <strong>Không thể tải số dư đã lọc</strong>
+          <p>{errorMessage(loadError)}</p>
+        </section>
+      ) : sortedQuery.isPending ||
+        catalogQuery.isPending ||
+        (mode === 'SORTING' && bagsQuery.isPending) ? (
+        <DashboardSkeleton />
+      ) : (
+        <>
+          {role !== 'STORE' ? (
+            <section className="panel inventory-toolbar">
+              <label>
+                Cửa hàng
+                <select value={storeId} onChange={(event) => setStoreId(event.target.value)}>
+                  <option value="">Tất cả cửa hàng được phân quyền</option>
+                  {stores.map((store) => (
+                    <option key={store.id} value={store.id}>
+                      {store.code} · {store.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </section>
+          ) : null}
+          <div className="stats-grid stats-grid--small">
+            <StatCard
+              label="Sale còn"
+              value={formatKg(gramsToKilograms(saleGrams))}
+              detail="Tự trừ theo IDOSI"
+              tone="info"
+            />
+            <StatCard
+              label="Từ thiện còn"
+              value={formatKg(gramsToKilograms(charityGrams))}
+              detail="Chờ chuyển Sale hoặc xuất"
+              tone="warning"
+            />
+            {mode === 'SORTING' ? (
+              <StatCard
+                label="Mã bao có thể lọc"
+                value={String(eligibleBags.length)}
+                detail="Phần kg chưa phân loại"
+                tone="success"
+              />
+            ) : null}
+          </div>
+          {mode === 'SORTING' && role === 'STORE' ? (
+            <section className="panel outbound-create">
+              <div className="section-heading section-heading--compact">
+                <div>
+                  <h2>Lưu khối lượng đã lọc</h2>
+                  <p>Sale chỉ lưu kg. Số bán theo ký/cái được lấy từ IDOSI sau đó.</p>
+                </div>
+                <Scale aria-hidden="true" />
+              </div>
+              <div className="outbound-form-grid">
+                <label>
+                  <span className="field-label">Mã bao</span>
+                  <select value={effectiveBagId} onChange={(event) => setBagId(event.target.value)}>
+                    <option value="">Chọn Mã bao</option>
+                    {eligibleBags.map((bag) => (
+                      <option key={bag.id} value={bag.id}>
+                        {bag.bagCode} · {productNames.get(bag.productId) ?? bag.productId} · còn{' '}
+                        {formatKg(bag.remainingWeightKg)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span className="field-label">Lý do</span>
+                  <select
+                    value={reason}
+                    onChange={(event) => setReason(event.target.value as typeof reason)}
+                  >
+                    <option value="CHARITY">Từ thiện</option>
+                    <option value="SALE">Sale</option>
+                    <option value="CANCEL">Hủy</option>
+                  </select>
+                </label>
+                <label>
+                  <span className="field-label">Khối lượng đã lọc (kg)</span>
+                  <input
+                    type="number"
+                    min="0.001"
+                    step="0.001"
+                    inputMode="decimal"
+                    placeholder="0.000"
+                    value={weightKg}
+                    onChange={(event) => setWeightKg(event.target.value)}
+                  />
+                  <small>
+                    {selectedBag
+                      ? `Tối đa ${formatKg(selectedBag.remainingWeightKg)}`
+                      : 'Chưa có Mã bao khả dụng'}
+                  </small>
+                </label>
+              </div>
+              <Button
+                busy={sortingMutation.isPending}
+                disabled={
+                  !selectedBag || !isOutboundWeightAllowed(weightKg, selectedBag.remainingWeightKg)
+                }
+                onClick={() => sortingMutation.mutate()}
+              >
+                {reason === 'CANCEL' ? 'Xác nhận hủy' : 'Lưu khối lượng đã lọc'}
+              </Button>
+            </section>
+          ) : null}
+          {mode === 'SALE' ? (
+            <section className="panel table-panel">
+              <div className="section-heading section-heading--compact">
+                <div>
+                  <h2>Hàng Sale còn lại</h2>
+                  <p>Kg đã lọc trừ kg bán trên IDOSI, theo từng cửa hàng và mặt hàng.</p>
+                </div>
+              </div>
+              {saleByProduct.size === 0 ? (
+                <EmptyState
+                  title="Chưa có hàng Sale"
+                  detail="Lưu khối lượng Sale sau lọc để bắt đầu đối soát."
+                />
+              ) : (
+                <div className="responsive-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Cửa hàng</th>
+                        <th>Mặt hàng</th>
+                        <th>Sale còn</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...saleByProduct.values()].map((item) => (
+                        <tr key={`${item.storeId}:${item.productId}`}>
+                          <td data-label="Cửa hàng">{storeName(stores, item.storeId)}</td>
+                          <td data-label="Mặt hàng">
+                            {productNames.get(item.productId) ?? item.productId}
+                          </td>
+                          <td data-label="Sale còn">
+                            <strong>{formatKg(gramsToKilograms(item.grams))}</strong>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          ) : (
+            <section className="panel table-panel">
+              <div className="section-heading section-heading--compact">
+                <div>
+                  <h2>Hàng Từ thiện</h2>
+                  <p>
+                    Chuyển kg sang Sale hoặc xác nhận xuất toàn bộ số kg còn lại của từng Mã bao.
+                  </p>
+                </div>
+              </div>
+              {charityStocks.length === 0 ? (
+                <EmptyState
+                  title="Chưa có hàng Từ thiện"
+                  detail="Các Mã bao đã xuất hết sẽ về 0 kg."
+                />
+              ) : (
+                <div className="sorted-charity-grid">
+                  {charityStocks.map((stock) => (
+                    <CharityStockCard
+                      key={`${stock.id}:${stock.version}`}
+                      stock={stock}
+                      productName={productNames.get(stock.productId) ?? stock.productId}
+                      storeName={storeName(stores, stock.storeId)}
+                      editable={role === 'STORE'}
+                      busy={charityMutation.isPending}
+                      onAction={(action, kilograms) =>
+                        charityMutation.mutate({ stock, action, kilograms })
+                      }
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+function CharityStockCard({
+  stock,
+  productName,
+  storeName: sourceStoreName,
+  editable,
+  busy,
+  onAction,
+}: {
+  readonly stock: StoreSortedStock;
+  readonly productName: string;
+  readonly storeName: string;
+  readonly editable: boolean;
+  readonly busy: boolean;
+  readonly onAction: (action: 'SALE' | 'CHARITY', kilograms: string) => void;
+}) {
+  const [saleKg, setSaleKg] = useState('');
+  const [charityKg, setCharityKg] = useState(stock.charityWeightKg);
+  const [confirmExport, setConfirmExport] = useState(false);
+  const saleAllowed = isOutboundWeightAllowed(saleKg, stock.charityWeightKg);
+  const exportAllowed = charityKg === stock.charityWeightKg;
+  return (
+    <article className="sorted-charity-card">
+      <div>
+        <h3>{productName}</h3>
+        <small>
+          {sourceStoreName} · {stock.bagCode}
+        </small>
+      </div>
+      <strong>{formatKg(stock.charityWeightKg)} còn lại</strong>
+      {editable ? (
+        <>
+          <label>
+            Sale (kg)
+            <input
+              type="number"
+              min="0.001"
+              step="0.001"
+              inputMode="decimal"
+              value={saleKg}
+              onChange={(event) => setSaleKg(event.target.value)}
+            />
+          </label>
+          <Button
+            tone="secondary"
+            disabled={!saleAllowed || busy}
+            onClick={() => onAction('SALE', saleKg)}
+          >
+            Cộng vào Sale
+          </Button>
+          <label>
+            Từ thiện (kg)
+            <input
+              type="number"
+              min="0.001"
+              step="0.001"
+              inputMode="decimal"
+              value={charityKg}
+              onChange={(event) => {
+                setCharityKg(event.target.value);
+                setConfirmExport(false);
+              }}
+            />
+          </label>
+          {!confirmExport ? (
+            <Button disabled={!exportAllowed || busy} onClick={() => setConfirmExport(true)}>
+              Xuất từ thiện
+            </Button>
+          ) : (
+            <div
+              className="sorted-charity-confirm"
+              role="group"
+              aria-label="Xác nhận xuất từ thiện"
+            >
+              <p>Xác nhận xuất {formatKg(charityKg)} từ thiện? Số dư Mã bao sẽ về 0 kg.</p>
+              <Button
+                disabled={busy || !exportAllowed}
+                onClick={() => onAction('CHARITY', charityKg)}
+              >
+                Xác nhận xuất
+              </Button>
+              <Button tone="secondary" onClick={() => setConfirmExport(false)}>
+                Quay lại
+              </Button>
+            </div>
+          )}
+        </>
+      ) : null}
+    </article>
   );
 }

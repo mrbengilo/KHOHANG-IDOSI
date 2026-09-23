@@ -417,7 +417,7 @@ export async function loadMonthlyOperationalReport(
       .where(
         and(
           eq(storeOutbounds.status, 'approved'),
-          eq(storeOutbounds.reason, 'discount_sale'),
+          inArray(storeOutbounds.reason, ['discount_sale', 'sale_kg', 'sale_piece']),
           gte(storeOutbounds.reviewedAt, period.start),
           lt(storeOutbounds.reviewedAt, period.endExclusive),
           isNull(storeOutbounds.deletedAt),

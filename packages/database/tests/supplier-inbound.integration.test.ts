@@ -80,7 +80,19 @@ describePostgres('supplier inbound PostgreSQL lifecycle', () => {
         requestHash: key,
       };
     });
-    const results = await Promise.all(inputs.map((input) => receiveSupplierInbound(db, input)));
+    const attempts = await Promise.allSettled(
+      inputs.map((input) => receiveSupplierInbound(db, input)),
+    );
+    const results = await Promise.all(
+      attempts.map((attempt, index) => {
+        if (attempt.status === 'fulfilled') return attempt.value;
+        const error = attempt.reason as { code?: string; cause?: { code?: string } };
+        if (error.code !== '40001' && error.cause?.code !== '40001') throw attempt.reason;
+        // PostgreSQL may abort one serializable transaction; replay that exact command
+        // after both concurrent attempts settle, as the client would with its saved key.
+        return receiveSupplierInbound(db, inputs[index]!);
+      }),
+    );
     const numbers: string[] = [];
     for (const [index, result] of results.entries()) {
       if (result.replayed) throw new Error('Expected new receipt');

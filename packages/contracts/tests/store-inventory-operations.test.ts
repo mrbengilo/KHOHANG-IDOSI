@@ -4,6 +4,7 @@ import {
   CreateStoreOutboundRequestSchema,
   ListStoreInventoryBagLedgerQuerySchema,
   OpenStoreInventoryBagRequestSchema,
+  OutboundReasonSchema,
 } from '../src/index.js';
 
 describe('store inventory operation contracts', () => {
@@ -37,10 +38,13 @@ describe('store inventory operation contracts', () => {
       inventoryLotId: '22222222-2222-4222-8222-222222222222',
       expectedInventoryVersion: 3,
       weightKg: '12.500',
-      reason: 'DISCOUNT_SALE',
+      reason: 'SALE_KG',
       revenueVnd: 2_000_000,
     };
     expect(CreateStoreOutboundRequestSchema.safeParse(request).success).toBe(true);
+    expect(CreateStoreOutboundRequestSchema.safeParse({ ...request, reason: 'TORN' }).success).toBe(
+      false,
+    );
     expect(
       CreateStoreOutboundRequestSchema.safeParse({
         storeId: request.storeId,
@@ -50,5 +54,44 @@ describe('store inventory operation contracts', () => {
         revenueVnd: request.revenueVnd,
       }).success,
     ).toBe(false);
+  });
+
+  it('requires a positive piece count only for sale by piece', () => {
+    const request = {
+      storeId: '11111111-1111-4111-8111-111111111111',
+      inventoryLotId: '22222222-2222-4222-8222-222222222222',
+      expectedInventoryVersion: 3,
+      weightKg: '1.250',
+      reason: 'SALE_PIECE',
+      revenueVnd: 100_000,
+    };
+    expect(CreateStoreOutboundRequestSchema.safeParse(request).success).toBe(false);
+    expect(CreateStoreOutboundRequestSchema.safeParse({ ...request, pieceCount: 2 }).success).toBe(
+      true,
+    );
+    expect(CreateStoreOutboundRequestSchema.safeParse({ ...request, pieceCount: 0 }).success).toBe(
+      false,
+    );
+    expect(
+      CreateStoreOutboundRequestSchema.safeParse({ ...request, pieceCount: 2, revenueVnd: null })
+        .success,
+    ).toBe(false);
+    expect(
+      CreateStoreOutboundRequestSchema.safeParse({ ...request, reason: 'CHARITY', pieceCount: 2 })
+        .success,
+    ).toBe(false);
+    expect(
+      CreateStoreOutboundRequestSchema.safeParse({
+        ...request,
+        reason: 'CANCEL',
+        pieceCount: null,
+        revenueVnd: null,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('still recognizes historical reasons when reading old outbounds', () => {
+    expect(OutboundReasonSchema.parse('DISCOUNT_SALE')).toBe('DISCOUNT_SALE');
+    expect(OutboundReasonSchema.parse('TORN')).toBe('TORN');
   });
 });

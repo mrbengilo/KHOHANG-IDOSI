@@ -229,6 +229,20 @@ export {
   openStoreInventoryBag,
   StoreInventoryAuthorizationError,
 } from './store-inventory-operations.js';
+export {
+  createStoreSorting,
+  exportCharity,
+  getStoreSortedStock,
+  listStoreSortedStocks,
+  moveCharityToSale,
+} from './store-sorting.js';
+export { idosiProductSaleGrams } from './store-sale-sync.js';
+export type {
+  CreateStoreSortingInput,
+  SortedStockMutationInput,
+  SortedStockRecord,
+  StoreSortingMutationResult,
+} from './store-sorting.js';
 
 export {
   allocateTransferCostVnd,

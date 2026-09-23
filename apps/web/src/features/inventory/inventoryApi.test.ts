@@ -30,7 +30,7 @@ const outbound = {
   storeId: bag.storeId,
   inventoryLotId: bag.id,
   weightKg: '1.250',
-  reason: 'DISCOUNT_SALE',
+  reason: 'SALE_KG',
   revenueVnd: 250_000,
   status: 'PENDING',
   createdByAccountId: '70000000-0000-4000-8000-000000000001',
@@ -131,7 +131,7 @@ describe('inventory API client', () => {
       expect(JSON.parse(String(init?.body))).toEqual({
         expectedInventoryVersion: 2,
         inventoryLotId: bag.id,
-        reason: 'DISCOUNT_SALE',
+        reason: 'SALE_KG',
         revenueVnd: 250_000,
         storeId: bag.storeId,
         weightKg: '1.250',
@@ -145,7 +145,7 @@ describe('inventory API client', () => {
         {
           expectedInventoryVersion: 2,
           inventoryLotId: bag.id,
-          reason: 'DISCOUNT_SALE',
+          reason: 'SALE_KG',
           revenueVnd: 250_000,
           storeId: bag.storeId,
           weightKg: '1.250',

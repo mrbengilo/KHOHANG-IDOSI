@@ -25,10 +25,13 @@ describe('inventory exact-weight helpers', () => {
 });
 
 describe('inventory outbound mode filters', () => {
-  it('keeps sale and sorting reasons mutually exclusive and complete', () => {
-    expect(outboundReasonsForMode('SALE')).toEqual(['DISCOUNT_SALE']);
+  it('lists current sorting reasons and historical outbound reasons', () => {
+    expect(outboundReasonsForMode('SALE')).toEqual(['DISCOUNT_SALE', 'SALE_KG', 'SALE_PIECE']);
     expect(outboundReasonsForMode('SORTING')).toEqual([
       'CHARITY',
+      'SALE_KG',
+      'SALE_PIECE',
+      'CANCEL',
       'TORN',
       'DEFECTIVE',
       'DIRTY',

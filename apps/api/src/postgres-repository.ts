@@ -22,6 +22,9 @@ import type {
   CreateStorePartnerInboundRequest,
   CreateStoreGroupRequest,
   CreateStoreOutboundRequest,
+  CreateStoreSortingRequest,
+  MoveCharityToSaleRequest,
+  ExportCharityRequest,
   CreateStoreRequest,
   CreateAccountRequest,
   CreateInboundReceiptRequest,
@@ -75,6 +78,8 @@ import type {
   StoreOrderRequest,
   StorePartnerInbound,
   StoreOutbound,
+  StoreSortedStock,
+  StoreSortingResult,
   HeldAllocation,
   StoreReceiptSource,
   SubmitStoreReceiptRequest,
@@ -97,7 +102,7 @@ import type {
   CancelStoreTransferRequest,
   WarehouseBalancesResponse,
 } from '@idosi/contracts';
-import { StoreGroupSchema, StoreSchema } from '@idosi/contracts';
+import { StoreGroupSchema, StoreSchema, StoreSortingResultSchema } from '@idosi/contracts';
 import {
   ActiveWaitTicketExistsError,
   auditLogs,
@@ -107,6 +112,11 @@ import {
   createOrderSession as createDatabaseOrderSession,
   confirmSupplierInboundCosts as confirmDatabaseSupplierInboundCosts,
   createStoreOutbound as createDatabaseStoreOutbound,
+  createStoreSorting as createDatabaseStoreSorting,
+  exportCharity as exportDatabaseCharity,
+  getStoreSortedStock as getDatabaseStoreSortedStock,
+  listStoreSortedStocks as listDatabaseStoreSortedStocks,
+  moveCharityToSale as moveDatabaseCharityToSale,
   createStorePartnerInbound as createDatabaseStorePartnerInbound,
   type DatabaseUserRole,
   getStorePartnerInbound as getDatabaseStorePartnerInbound,
@@ -2816,6 +2826,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         weightKg: input.weightKg,
         reason: databaseOutboundReason(input.reason),
         revenueVnd: input.revenueVnd === null ? null : BigInt(input.revenueVnd),
+        pieceCount: input.pieceCount ?? null,
         createdByUserId: actor.accountId,
         idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
         requestHash,
@@ -2851,6 +2862,113 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       const resourceId = result.replayed ? result.resourceId : result.value.outboundId;
       if (!resourceId) throw new Error('Idempotent store outbound review has no resource id');
       return { data: await this.storeOutboundDto(resourceId), replayed: result.replayed };
+    });
+  }
+
+  public async listStoreSortedStocks(
+    actor: AuthenticatedPrincipal,
+    storeId?: string,
+  ): Promise<readonly StoreSortedStock[]> {
+    if (storeId && !canAccessStore(actor, storeId)) throw forbidden();
+    const rows = await listDatabaseStoreSortedStocks(db, storeId);
+    return rows
+      .filter((row) => canAccessStore(actor, row.storeId))
+      .map((row) => ({
+        ...row,
+        updatedAt: row.updatedAt.toISOString(),
+      }));
+  }
+
+  public async createStoreSorting(
+    actor: AuthenticatedPrincipal,
+    input: CreateStoreSortingRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreSortingResult>> {
+    await this.authorizeRetailStoreOperation(actor);
+    if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
+    return withStoreInventoryErrors(async () => {
+      const result = await createDatabaseStoreSorting(db, {
+        storeId: input.storeId,
+        inventoryBagId: input.inventoryLotId,
+        expectedInventoryVersion: input.expectedInventoryVersion,
+        reason: input.reason,
+        weightKg: input.weightKg,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      return {
+        data: StoreSortingResultSchema.parse(result.replayed ? result.responseBody : result.value),
+        replayed: result.replayed,
+      };
+    });
+  }
+
+  public async moveCharityToSale(
+    actor: AuthenticatedPrincipal,
+    stockId: string,
+    input: MoveCharityToSaleRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreSortingResult>> {
+    return this.mutateCharity(actor, stockId, input, idempotencyKey, requestHash, context, 'SALE');
+  }
+
+  public async exportCharity(
+    actor: AuthenticatedPrincipal,
+    stockId: string,
+    input: ExportCharityRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreSortingResult>> {
+    return this.mutateCharity(
+      actor,
+      stockId,
+      input,
+      idempotencyKey,
+      requestHash,
+      context,
+      'CHARITY',
+    );
+  }
+
+  private async mutateCharity(
+    actor: AuthenticatedPrincipal,
+    stockId: string,
+    input: MoveCharityToSaleRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+    destination: 'SALE' | 'CHARITY',
+  ): Promise<IdempotentResource<StoreSortingResult>> {
+    await this.authorizeRetailStoreOperation(actor);
+    const current = await getDatabaseStoreSortedStock(db, stockId);
+    if (!current) throw notFound('Không tìm thấy hàng đã lọc');
+    if (actor.role !== 'STORE' || actor.storeId !== current.storeId) throw forbidden();
+    return withStoreInventoryErrors(async () => {
+      const command = {
+        stockId,
+        storeId: current.storeId,
+        expectedVersion: input.expectedVersion,
+        weightKg: input.weightKg,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      };
+      const result =
+        destination === 'SALE'
+          ? await moveDatabaseCharityToSale(db, command)
+          : await exportDatabaseCharity(db, command);
+      return {
+        data: StoreSortingResultSchema.parse(result.replayed ? result.responseBody : result.value),
+        replayed: result.replayed,
+      };
     });
   }
 
@@ -3194,6 +3312,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         sku: products.sku,
         name: products.name,
         revenueVnd: storeOutbounds.revenueVnd,
+        reason: storeOutbounds.reason,
         weightKg: storeOutbounds.weightKg,
       })
       .from(storeOutbounds)
@@ -3203,7 +3322,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         and(
           eq(storeOutbounds.storeId, store.id),
           eq(storeOutbounds.status, 'approved'),
-          eq(storeOutbounds.reason, 'discount_sale'),
+          inArray(storeOutbounds.reason, ['discount_sale', 'sale_kg', 'sale_piece']),
           gte(storeOutbounds.createdAt, start),
           lt(storeOutbounds.createdAt, endExclusive),
           isNull(storeOutbounds.deletedAt),
@@ -3213,6 +3332,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       string,
       { productId: string; sku: string; name: string; revenueVnd: bigint; weightGrams: bigint }
     >();
+    let salePieceRevenue = 0n;
     for (const row of rows) {
       const current = grouped.get(row.productId) ?? {
         productId: row.productId,
@@ -3222,6 +3342,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         weightGrams: 0n,
       };
       current.revenueVnd += row.revenueVnd ?? 0n;
+      if (row.reason === 'sale_piece') salePieceRevenue += row.revenueVnd ?? 0n;
       current.weightGrams += kilogramsToGrams(row.weightKg);
       grouped.set(row.productId, current);
     }
@@ -3231,7 +3352,11 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       storeCode,
       period: { from, to },
       totals: {
-        revenueByType: { NORMAL: 0, SALE_KG: safeVnd(revenue), SALE_PIECE: 0 },
+        revenueByType: {
+          NORMAL: 0,
+          SALE_KG: safeVnd(revenue - salePieceRevenue),
+          SALE_PIECE: safeVnd(salePieceRevenue),
+        },
         revenue: safeVnd(revenue),
         weight: {
           actualKg: gramsToKilograms(grams),
@@ -3769,6 +3894,7 @@ function storeOutboundDto(row: typeof storeOutbounds.$inferSelect): StoreOutboun
     weightKg: row.weightKg,
     reason: row.reason.toUpperCase() as StoreOutbound['reason'],
     revenueVnd: row.revenueVnd === null ? null : safeVnd(row.revenueVnd),
+    pieceCount: row.pieceCount,
     status: row.status.toUpperCase() as StoreOutbound['status'],
     createdByAccountId: row.createdByUserId,
     reviewedByAccountId: row.reviewedByUserId,
