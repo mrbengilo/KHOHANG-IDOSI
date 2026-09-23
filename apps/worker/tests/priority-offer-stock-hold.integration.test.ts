@@ -18,7 +18,7 @@ import {
   warehouseLedgerEntries,
   WaitTicketAuthorizationError,
 } from '@idosi/database';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { PostgresAllocationJobRepository } from '../src/postgres-repository.js';
 
@@ -30,6 +30,7 @@ describePostgres('priority offer stock holds', () => {
     const db = client.db;
     const token = randomUUID().replaceAll('-', '');
     const now = new Date();
+    const sessionIds: string[] = [];
     const snapshotDueAt = new Date(now.getTime() - 30_000);
     const finalDueAt = new Date(now.getTime() + 120_000);
     const businessDate = new Date(
@@ -101,6 +102,7 @@ describePostgres('priority offer stock holds', () => {
           policyVersion: 'idosi-round-robin-p0a-p3-v1',
         })
         .returning();
+      sessionIds.push(sourceSession!.id, session!.id);
       const tickets: { id: string }[] = [];
       for (const store of storeRows.slice(0, 2)) {
         const [sourceOrder] = await db
@@ -291,6 +293,12 @@ describePostgres('priority offer stock holds', () => {
         )[0]?.stockHeldQuantity,
       ).toBe(0);
     } finally {
+      if (sessionIds.length > 0) {
+        await db
+          .update(orderSessions)
+          .set({ deletedAt: new Date() })
+          .where(inArray(orderSessions.id, sessionIds));
+      }
       await client.close();
     }
   });
