@@ -34,9 +34,9 @@ export function OpenBagConfirmation({
   readonly onConfirm: () => void;
 }) {
   return (
-    <section className="open-bag-preview" aria-label={`Xem trước khui ${bag.bagCode}`}>
+    <section className="open-bag-preview" aria-label={`Kiểm tra bao ${bag.bagCode}`}>
       <h3>Kiểm tra trước khi khui</h3>
-      <p>Chỉ Mã bao {bag.bagCode}; không phải tổng tồn cửa hàng.</p>
+      <p>Thao tác áp dụng cho bao {bag.bagCode}.</p>
       <dl>
         <div>
           <dt>Trước khi khui</dt>
@@ -47,7 +47,7 @@ export function OpenBagConfirmation({
           <dd>Đang bán tại CH · 1 bao · {formatKg(bag.remainingWeightKg)}</dd>
         </div>
       </dl>
-      <p>Chỉ chuyển trạng thái. Không tăng/giảm khối lượng hoặc giá vốn.</p>
+      <p>Tồn chưa khui giảm 1 bao, tồn đang bán tăng 1 bao. Tổng kg và giá vốn không đổi.</p>
       {!canConfirm && !busy ? (
         <p role="alert">
           Dữ liệu đã thay đổi hoặc đang được tải lại. Hãy kiểm tra và chọn lại bao trước khi xác
@@ -59,7 +59,7 @@ export function OpenBagConfirmation({
           Bỏ chọn
         </Button>
         <Button busy={busy} disabled={!canConfirm} onClick={onConfirm}>
-          Xác nhận khui 1 bao
+          Khui 1 bao
         </Button>
       </div>
     </section>

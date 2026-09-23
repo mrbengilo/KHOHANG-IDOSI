@@ -210,7 +210,7 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(14);
+    expect(journal.entries).toHaveLength(15);
     expect(journal.entries[8]).toMatchObject({ tag: '0008_optional_supplier_weight' });
     expect(journal.entries[9]).toMatchObject({ tag: '0009_supported_allocation_policy' });
     expect(journal.entries[10]).toMatchObject({
@@ -229,6 +229,10 @@ describe('initial migration invariants', () => {
     });
     expect(journal.entries[13]).toMatchObject({
       tag: '0013_replace_inactive_store_accounts',
+      breakpoints: true,
+    });
+    expect(journal.entries[14]).toMatchObject({
+      tag: '0014_store_bag_display_codes',
       breakpoints: true,
     });
     expect(journal.entries[7]).toMatchObject({ tag: '0007_receipt_vat', breakpoints: true });

@@ -14,7 +14,7 @@ const bag: StoreInventoryBag = {
   outboundOrderId: '50000000-0000-4000-8000-000000000001',
   sourceTransferId: null,
   sourceInventoryBagId: null,
-  bagCode: 'TEST-BAG-001',
+  bagCode: 'MB-00001',
   originalWeightKg: '5.009',
   receivedWeightKg: '5.009',
   remainingWeightKg: '5.009',
@@ -54,10 +54,10 @@ describe('open bag confirmation', () => {
       }),
     );
     expect(html.match(/5,01 kg/g)).toHaveLength(2);
-    expect(html).toContain('không phải tổng tồn cửa hàng');
+    expect(html).toContain('MB-00001');
     expect(html).toContain('Chưa khui');
     expect(html).toContain('Đang bán tại CH');
-    expect(html).toContain('Xác nhận khui 1 bao');
+    expect(html).toContain('Khui 1 bao');
     expect(html).not.toContain('disabled=""');
     expect(onConfirm).not.toHaveBeenCalled();
   });
@@ -75,10 +75,11 @@ describe('open bag confirmation', () => {
     expect(pending.match(/disabled=""/g)).toHaveLength(2);
   });
 
-  it('offers preview, not an immediate confirmation, on the initial store screen', () => {
+  it('asks for a product before showing its available bags', () => {
     const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
     client.setQueryData(['session'], { principal: { storeId: bag.storeId } });
     client.setQueryData(['stores', 'accessible'], []);
+    client.setQueryData(['catalog'], [{ id: bag.productId, name: 'Đầm' }]);
     client.setQueryData(['store-inventory-bags', bag.storeId, 'AVAILABLE'], [bag]);
     const html = renderToStaticMarkup(
       createElement(
@@ -87,9 +88,11 @@ describe('open bag confirmation', () => {
         createElement(ProductionOpenBagPage, { role: 'STORE', storeKind: 'RETAIL' }),
       ),
     );
-    expect(html).toContain('Xem trước khui');
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).not.toContain('Xác nhận khui');
+    expect(html).toContain('Chọn mặt hàng');
+    expect(html).toContain('Đầm');
+    expect(html).toContain('Bao khả dụng');
+    expect(html).not.toContain('MB-00001');
+    expect(html).not.toContain('Khui 1 bao');
     client.clear();
   });
 });

@@ -33,6 +33,7 @@ describe('store inventory operations', () => {
       expect(sql).toContain('"store_inventory_bags"."store_id"');
       expect(sql).toContain('"store_inventory_bags"."product_id"');
       expect(sql).toContain('"store_inventory_bags"."status"');
+      expect(sql).toContain('"store_inventory_bags"."display_code" ilike');
       expect(sql).toContain('"store_inventory_bags"."bag_code" ilike');
     }
     expect(rows.sql).toContain(

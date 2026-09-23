@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { and, asc, count, desc, eq, ilike, isNull, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, ilike, isNull, or, type SQL } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import {
@@ -47,6 +47,7 @@ export interface StoreInventoryPageInput {
 export interface StoreInventoryBagRecord {
   readonly id: string;
   readonly bagCode: string;
+  readonly displayCode: string;
   readonly storeId: string;
   readonly productId: string;
   readonly sourceStoreReceiptBagId: string | null;
@@ -160,6 +161,7 @@ export async function listStoreInventoryBags(
     data: rows.map(({ bag, outboundRequestId }) => ({
       id: bag.id,
       bagCode: bag.bagCode,
+      displayCode: bag.displayCode,
       storeId: bag.storeId,
       productId: bag.productId,
       sourceStoreReceiptBagId: bag.sourceStoreReceiptBagId,
@@ -194,7 +196,10 @@ export function buildStoreInventoryBagPageQueries(
   }
   if (input.status !== undefined) predicates.push(eq(storeInventoryBags.status, input.status));
   if (input.bagCode !== undefined) {
-    predicates.push(ilike(storeInventoryBags.bagCode, `%${escapeLike(input.bagCode)}%`));
+    const search = `%${escapeLike(input.bagCode)}%`;
+    predicates.push(
+      or(ilike(storeInventoryBags.displayCode, search), ilike(storeInventoryBags.bagCode, search))!,
+    );
   }
   const where = predicates.length > 0 ? and(...predicates) : undefined;
   return {

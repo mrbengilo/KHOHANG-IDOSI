@@ -8,6 +8,7 @@ import {
   htkdAssignments,
   products,
   storePartnerInbounds,
+  storeInventoryBags,
   stores,
   users,
 } from '@idosi/database';
@@ -121,6 +122,48 @@ describePostgres('PostgreSQL partner inbound for HTKD', () => {
       return true;
     });
 
+    await db.insert(htkdAssignments).values({ userId: htkd.id, storeId: unassignedStoreId });
+    await record(unassignedStoreId, `second-store-${suffix}`);
+    await Promise.all([
+      record(assignedStoreId, `concurrent-a-${suffix}`),
+      record(assignedStoreId, `concurrent-b-${suffix}`),
+    ]);
+
+    const codesFor = async (storeId) =>
+      (
+        await db
+          .select({
+            bagCode: storeInventoryBags.bagCode,
+            displayCode: storeInventoryBags.displayCode,
+          })
+          .from(storeInventoryBags)
+          .where(eq(storeInventoryBags.storeId, storeId))
+      )
+        .map((bag) => {
+          assert.match(bag.bagCode, /^PIB-/);
+          return bag.displayCode;
+        })
+        .sort();
+    assert.deepEqual(await codesFor(assignedStoreId), [
+      'MB-00001',
+      'MB-00002',
+      'MB-00003',
+      'MB-00004',
+      'MB-00005',
+      'MB-00006',
+    ]);
+    assert.deepEqual(await codesFor(unassignedStoreId), ['MB-00001', 'MB-00002']);
+    const listed = await repository.listStoreInventoryBags(actor, {
+      page: 1,
+      pageSize: 20,
+      storeId: assignedStoreId,
+      bagCode: 'MB-00003',
+    });
+    assert.deepEqual(
+      listed.data.map((bag) => bag.bagCode),
+      ['MB-00003'],
+    );
+
     await db
       .update(htkdAssignments)
       .set({ revokedAt: new Date() })
@@ -136,6 +179,6 @@ describePostgres('PostgreSQL partner inbound for HTKD', () => {
       .select({ id: storePartnerInbounds.id })
       .from(storePartnerInbounds)
       .where(eq(storePartnerInbounds.createdByUserId, htkd.id));
-    assert.equal(slips.length, 1);
+    assert.equal(slips.length, 4);
   });
 });

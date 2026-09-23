@@ -3556,6 +3556,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     return inventoryBagDto({
       id: row.bag.id,
       bagCode: row.bag.bagCode,
+      displayCode: row.bag.displayCode,
       storeId: row.bag.storeId,
       productId: row.bag.productId,
       sourceStoreReceiptBagId: row.bag.sourceStoreReceiptBagId,
@@ -3712,7 +3713,7 @@ function inventoryBagDto(record: StoreInventoryBagRecord): StoreInventoryBag {
     // Without this the bag reaches the client with no provenance at all and the store's
     // stock screen refuses the whole page.
     sourcePartnerInboundBagId: record.sourcePartnerInboundBagId,
-    bagCode: record.bagCode,
+    bagCode: record.displayCode,
     originalWeightKg: record.initialWeightKg,
     receivedWeightKg: record.initialWeightKg,
     remainingWeightKg: record.currentWeightKg,

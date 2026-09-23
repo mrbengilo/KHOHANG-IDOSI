@@ -2758,10 +2758,11 @@ describe('KHOHANG-IDOSI API', () => {
     });
     assert.equal(audit.statusCode, 200);
     assert.equal(audit.json().pagination.totalItems, 2);
-    assert.equal(audit.json().data[0].requestId, 'clear-htkd-scope');
-    assert.equal(audit.json().data[0].before.assignments.length, 1);
-    assert.equal(audit.json().data[0].after.assignments.length, 0);
-    assert.equal(audit.json().data[0].metadata.reason, 'Thu hồi toàn bộ phạm vi phụ trách');
+    const clearedAudit = audit.json().data.find((event) => event.requestId === 'clear-htkd-scope');
+    assert.ok(clearedAudit);
+    assert.equal(clearedAudit.before.assignments.length, 1);
+    assert.equal(clearedAudit.after.assignments.length, 0);
+    assert.equal(clearedAudit.metadata.reason, 'Thu hồi toàn bộ phạm vi phụ trách');
 
     const wholesaleStores = await app.inject({
       method: 'GET',

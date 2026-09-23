@@ -121,63 +121,77 @@ export function InventoryPage() {
 
 export function OpenBagPage() {
   const context = useOutletContext<AppOutletContext>();
-  const [selected, setSelected] = useState<string[]>(['GV-DAM-014']);
+  const [productId, setProductId] = useState('');
+  const [selectedBagId, setSelectedBagId] = useState('');
+  const [openedBagIds, setOpenedBagIds] = useState<string[]>([]);
   const bags = [
-    { id: 'GV-DAM-014', kg: 92 },
-    { id: 'GV-DAM-015', kg: 104 },
-    { id: 'GV-DAM-016', kg: 88 },
+    { id: 'MB-00001', kg: 92 },
+    { id: 'MB-00002', kg: 104 },
+    { id: 'MB-00003', kg: 88 },
   ];
-  const total = bags
-    .filter((bag) => selected.includes(bag.id))
-    .reduce((sum, bag) => sum + bag.kg, 0);
+  const availableBags = bags.filter((bag) => !openedBagIds.includes(bag.id));
+  const selectedBag = availableBags.find((bag) => bag.id === selectedBagId);
   if (!mockModeEnabled) return <ProductionOpenBagPage {...context} />;
   return (
     <>
       <PageHeader
-        description="Chọn đúng Mã bao và số bao cần khui; giữ nguyên tổng kg và giá vốn"
+        description="Chọn mặt hàng và bao khả dụng để khui; tổng khối lượng tồn kho không đổi"
         title="Khui kiện"
       />
-      <section className="panel operation-step">
-        <div className="operation-step__icon">
-          <PackageOpen />
+      <section className="panel open-bag-form">
+        <div className="section-heading section-heading--compact">
+          <div>
+            <h2>Chọn bao để khui</h2>
+            <p>{availableBags.length} bao chưa khui trong phạm vi đang xem</p>
+          </div>
+          <PackageOpen aria-hidden="true" />
         </div>
-        <div>
-          <h2>Chọn Mã bao & số bao</h2>
-          <p>Phiếu KK-GV-260912-006 • Đầm</p>
+        <div className="open-bag-fields">
+          <label>
+            Mặt hàng
+            <select
+              onChange={(event) => {
+                setProductId(event.target.value);
+                setSelectedBagId('');
+              }}
+              value={productId}
+            >
+              <option value="">Chọn mặt hàng</option>
+              {availableBags.length > 0 ? <option value="dam">Đầm</option> : null}
+            </select>
+          </label>
+          <label>
+            Bao khả dụng
+            <select
+              disabled={!productId}
+              onChange={(event) => setSelectedBagId(event.target.value)}
+              value={selectedBagId}
+            >
+              <option value="">Chọn bao</option>
+              {availableBags.map((bag) => (
+                <option key={bag.id} value={bag.id}>
+                  {bag.id} · {formatKg(bag.kg)}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
-        <Badge tone="info">Chưa khui 3 bao</Badge>
-      </section>
-      <section className="panel bag-picker">
-        <div>
-          {bags.map((bag) => (
-            <label className={selected.includes(bag.id) ? 'selected' : ''} key={bag.id}>
-              <input
-                checked={selected.includes(bag.id)}
-                onChange={() =>
-                  setSelected((current) =>
-                    current.includes(bag.id)
-                      ? current.filter((id) => id !== bag.id)
-                      : [...current, bag.id],
-                  )
-                }
-                type="checkbox"
-              />
-              <strong>{bag.id}</strong>
-              <span>{formatKg(bag.kg)}</span>
-            </label>
-          ))}
-        </div>
-        <aside>
-          <span>Trước khui</span>
-          <strong>3 bao • 284 kg</strong>
-          <ArrowRight />
-          <span>Sau khui</span>
-          <strong>
-            {3 - selected.length} chưa khui • {selected.length} đang bán tại CH
-          </strong>
-          <small>Đang chọn {formatKg(total)}. Tổng vẫn 284 kg; chỉ đổi trạng thái.</small>
-          <Button disabled={selected.length === 0}>Xác nhận khui {selected.length} bao</Button>
-        </aside>
+        {selectedBag ? (
+          <div className="open-bag-preview">
+            <h3>Kiểm tra trước khi khui</h3>
+            <p>Thao tác áp dụng cho bao {selectedBag.id}.</p>
+            <p>Tồn chưa khui giảm 1 bao, tồn đang bán tăng 1 bao. Tổng kg không đổi.</p>
+            <Button
+              onClick={() => {
+                setOpenedBagIds((current) => [...current, selectedBag.id]);
+                setSelectedBagId('');
+                if (availableBags.length === 1) setProductId('');
+              }}
+            >
+              Khui 1 bao
+            </Button>
+          </div>
+        ) : null}
       </section>
     </>
   );
