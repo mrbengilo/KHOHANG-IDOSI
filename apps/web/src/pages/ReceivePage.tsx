@@ -28,6 +28,7 @@ import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
 import { DashboardSkeleton } from '../components/Skeleton';
 import { StatCard } from '../components/StatCard';
+import { HeldAllocationsPanel } from '../features/receipts/HeldAllocationsPanel';
 import { listStoreReceiptSources } from '../features/receipts/receiptSourceApi';
 import '../features/receipts/receipt-source.css';
 import {
@@ -293,6 +294,15 @@ function ProductionReceivePage({ role }: AppOutletContext) {
           sourcesFetching={receiptSourcesQuery.isFetching}
           sourcesPending={receiptSourcesQuery.isPending}
           storeId={principalStoreId}
+        />
+      ) : null}
+
+      {role === 'STORE' && principalStoreId ? (
+        <HeldAllocationsPanel
+          audience="STORE"
+          productNameById={productNameById}
+          storeId={principalStoreId}
+          storeNameById={storeNameById}
         />
       ) : null}
 

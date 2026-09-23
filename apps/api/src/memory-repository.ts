@@ -40,6 +40,7 @@ import type {
   ListStoreInventoryBagLedgerQuery,
   ListStoreInventoryBagsQuery,
   ListStoreOutboundsQuery,
+  ListHeldAllocationsQuery,
   ListStoreReceiptSourcesQuery,
   ListProductConversionsQuery,
   ListStoreOrderRequestsQuery,
@@ -73,6 +74,7 @@ import type {
   StoreOrderRequest,
   StorePartnerInbound,
   StoreOutbound,
+  HeldAllocation,
   StoreReceiptSource,
   SubmitStoreReceiptRequest,
   TransitionOrderSessionRequest,
@@ -2200,6 +2202,18 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       input.dispatchNote ? { dispatchNote: input.dispatchNote } : {},
     );
     return { data: structuredClone(updated), replayed: false };
+  }
+
+  /**
+   * The in-memory store has no reservation ledger, so it never holds priority goods back; the
+   * scope checks still match the PostgreSQL repository.
+   */
+  public async listHeldAllocations(
+    actor: AuthenticatedPrincipal,
+    query: ListHeldAllocationsQuery,
+  ): Promise<HeldAllocation[]> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    return [];
   }
 
   public async listStoreReceiptSources(

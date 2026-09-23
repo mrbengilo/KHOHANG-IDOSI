@@ -353,11 +353,13 @@ export const WarehouseOutboundRequestSchema = z
         message: 'Dispatch timestamp must match the outbound request status',
       });
     }
-    if (dispatched !== (request.dispatchedByAccountId !== null)) {
+    // A null dispatcher on a dispatched request means the system released it: the 09:00
+    // allocation run dispatches its own shipments, so there is no account to name.
+    if (!dispatched && request.dispatchedByAccountId !== null) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['dispatchedByAccountId'],
-        message: 'Dispatcher must match the outbound request status',
+        message: 'Only a dispatched outbound request can name a dispatcher',
       });
     }
     if (dispatched && request.lines.some((line) => line.dispatchedUnits !== line.approvedUnits)) {

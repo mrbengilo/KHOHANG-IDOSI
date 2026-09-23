@@ -6,6 +6,7 @@ import {
   applyWarehouseMovement,
   auditLogs,
   dailyPriorityOffers,
+  dispatchWarehouseOutboundInTransaction,
   ensureDailyOrderingSession,
   inventorySnapshotItems,
   inventorySnapshots,
@@ -859,7 +860,17 @@ export async function materializeOutboundRequests(
       },
       createdAt: processedAt,
     });
-    affectedRows += 2;
+    // Nothing else in the product releases an allocation shipment, so the run releases it
+    // itself: the store sees it on /receive as soon as the allocation is published. Warehouse
+    // stock is unaffected here; it leaves on-hand once, when HTKD finalizes the receipt.
+    await dispatchWarehouseOutboundInTransaction(tx, {
+      outboundRequestId,
+      expectedVersion: 0,
+      dispatcher: { kind: 'system', trigger: 'allocation-finalize' },
+      dispatchedAt: processedAt,
+      auditId: deterministicUuid(`audit:outbound-dispatched:${outboundRequestId}`),
+    });
+    affectedRows += 3;
   }
   return affectedRows;
 }

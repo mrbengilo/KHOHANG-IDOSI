@@ -197,6 +197,19 @@ describe('receipt, outbound and report contracts', () => {
         lines: [{ ...reserved.lines[0], dispatchedUnits: 3 }],
       }).success,
     ).toBe(true);
+    // The 09:00 allocation run releases its own shipments, so no account dispatched them.
+    expect(
+      WarehouseOutboundRequestSchema.safeParse({
+        ...reserved,
+        status: 'DISPATCHED',
+        dispatchedAt: '2026-09-17T02:00:00Z',
+        lines: [{ ...reserved.lines[0], dispatchedUnits: 3 }],
+      }).success,
+    ).toBe(true);
+    expect(
+      WarehouseOutboundRequestSchema.safeParse({ ...reserved, dispatchedByAccountId: IDS.account })
+        .success,
+    ).toBe(false);
     expect(DispatchWarehouseOutboundRequestSchema.safeParse({ expectedVersion: 0 }).success).toBe(
       true,
     );
