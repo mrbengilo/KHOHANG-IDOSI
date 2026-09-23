@@ -2337,19 +2337,17 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
           (right.dispatchedAt ?? '').localeCompare(left.dispatchedAt ?? '') ||
           rightId.localeCompare(leftId),
       )
-      .map(
-        ([id, outbound]): StoreReceiptSource => ({
-          id,
-          requestNumber: outbound.requestNumber,
-          storeId: outbound.storeId,
-          dispatchedAt: outbound.dispatchedAt!,
-          lines: outbound.lines.map((line) => ({
-            productId: line.productId,
-            approvedUnits: line.approvedUnits,
-            dispatchedUnits: line.dispatchedUnits,
-          })),
-        }),
-      );
+      .map(([id, outbound]): StoreReceiptSource => ({
+        id,
+        requestNumber: outbound.requestNumber,
+        storeId: outbound.storeId,
+        dispatchedAt: outbound.dispatchedAt!,
+        lines: outbound.lines.map((line) => ({
+          productId: line.productId,
+          approvedUnits: line.approvedUnits,
+          dispatchedUnits: line.dispatchedUnits,
+        })),
+      }));
     return {
       data: slicePage(values, query.page, query.pageSize),
       pagination: pagination(query.page, query.pageSize, values.length),
