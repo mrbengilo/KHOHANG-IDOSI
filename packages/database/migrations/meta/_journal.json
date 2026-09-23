@@ -148,6 +148,13 @@
       "when": 1790163000000,
       "tag": "0020_weighed_dispatch_bags",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790178282791,
+      "tag": "0021_auto_priority_receipt_shortage",
+      "breakpoints": true
     }
   ]
 }

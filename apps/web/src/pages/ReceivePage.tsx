@@ -184,7 +184,18 @@ function ProductionReceivePage({ role }: AppOutletContext) {
       }
     },
     onSuccess: async (receipt, operation) => {
-      setNotice(operationNotice[operation.kind]);
+      const shortage =
+        operation.kind === 'SUBMIT'
+          ? operation.input.lines.reduce(
+              (sum, line) => sum + line.approvedUnits - line.receivedUnits,
+              0,
+            )
+          : 0;
+      setNotice(
+        shortage > 0
+          ? `Đã tự tạo phiếu chờ ưu tiên cho ${shortage} bao nhận thiếu. HTKD chỉ chốt khối lượng, giá và tồn thực nhận.`
+          : operationNotice[operation.kind],
+      );
       setSelectedReceiptId(receipt.id);
       queryClient.setQueryData(['store-receipt', receipt.id], receipt);
       if (operation.kind === 'DECLARE') {
@@ -857,7 +868,8 @@ function StoreReceiptForm({
         <PackageCheck aria-hidden="true" size={20} />
         <span>
           <strong>Số thực nhận do cửa hàng chịu trách nhiệm</strong>
-          HTKD có thể trả phiếu nhưng không thể âm thầm thay đổi số đã khai.
+          HTKD có thể trả phiếu nhưng không thể âm thầm thay đổi số đã khai. Hàng nhận thiếu sẽ tự
+          vào phiếu chờ ưu tiên khi gửi xác nhận.
         </span>
       </div>
       <div className="responsive-table receipt-lines-table">

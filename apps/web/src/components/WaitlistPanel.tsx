@@ -69,6 +69,7 @@ const auditActionLabel: Readonly<Record<string, string>> = {
   WAIT_TICKET_CREATED: 'Tạo phiếu chờ',
   WAIT_TICKET_FULFILLED: 'Cấp đủ phiếu chờ',
   WAIT_TICKET_UPDATED: 'Cập nhật phiếu chờ',
+  STORE_RECEIPT_SHORTAGE_PRIORITIZED: 'Tự duyệt ưu tiên khi cửa hàng nhận thiếu',
 };
 
 function amountLabel(amount: InventoryAmount): string {

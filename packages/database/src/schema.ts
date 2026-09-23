@@ -1458,6 +1458,7 @@ export const storeReceiptLines = pgTable(
       .references(() => products.id, { onDelete: 'restrict' }),
     approvedQuantity: integer('approved_quantity').notNull(),
     receivedQuantity: integer('received_quantity').notNull(),
+    priorityQueuedQuantity: integer('priority_queued_quantity').notNull().default(0),
     pricePerKgVnd: bigint('price_per_kg_vnd', { mode: 'bigint' }),
     goodsCostVnd: bigint('goods_cost_vnd', { mode: 'bigint' })
       .notNull()
@@ -1477,6 +1478,14 @@ export const storeReceiptLines = pgTable(
     ),
     check('store_receipt_lines_approved_positive', sql`${table.approvedQuantity} > 0`),
     check('store_receipt_lines_received_nonnegative', sql`${table.receivedQuantity} >= 0`),
+    check(
+      'store_receipt_lines_priority_queued_nonnegative',
+      sql`${table.priorityQueuedQuantity} >= 0`,
+    ),
+    check(
+      'store_receipt_lines_priority_queued_not_over_shortage',
+      sql`${table.priorityQueuedQuantity} <= ${table.approvedQuantity} - ${table.receivedQuantity}`,
+    ),
     check(
       'store_receipt_lines_received_not_over_approved',
       sql`${table.receivedQuantity} <= ${table.approvedQuantity}`,

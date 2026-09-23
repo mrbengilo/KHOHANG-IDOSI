@@ -11,9 +11,15 @@ import {
   storeReceipts,
   stores,
   users,
+  waitTickets,
   type JsonObject,
 } from './schema.js';
-import { StoreOperationConflictError, StoreOperationValidationError } from './store-operations.js';
+import {
+  reconcileReceiptShortageWait,
+  StoreOperationConflictError,
+  StoreOperationValidationError,
+  withStoreProductWaitLocks,
+} from './store-operations.js';
 import { withAdvisoryLock, type Transaction } from './transaction.js';
 
 export interface DeclareStoreReceiptLineInput {
@@ -355,7 +361,9 @@ export async function submitStoreReceiptInTransaction(
       .select({
         id: storeReceiptLines.id,
         productId: storeReceiptLines.productId,
+        outboundRequestLineId: storeReceiptLines.outboundRequestLineId,
         approvedQuantity: storeReceiptLines.approvedQuantity,
+        priorityQueuedQuantity: storeReceiptLines.priorityQueuedQuantity,
       })
       .from(storeReceiptLines)
       .where(eq(storeReceiptLines.storeReceiptId, receipt.id))
@@ -363,84 +371,152 @@ export async function submitStoreReceiptInTransaction(
       .for('update');
     validateStoreReceiptDeclaration(input.lines, persistedLines, input.discrepancyNote);
 
-    const discrepancyNote = normalizeOptionalNote(input.discrepancyNote, 'discrepancyNote', 1_000);
-    const suppliedByProduct = new Map(input.lines.map((line) => [line.productId, line]));
-    const now = new Date();
-    for (const persistedLine of persistedLines) {
-      const suppliedLine = suppliedByProduct.get(persistedLine.productId);
-      if (!suppliedLine) {
-        throw new StoreOperationValidationError('A persisted receipt product is missing.');
-      }
-      await tx
-        .update(storeReceiptLines)
-        .set({
-          receivedQuantity: suppliedLine.receivedQuantity,
-          shortageReason:
-            suppliedLine.receivedQuantity < persistedLine.approvedQuantity ? discrepancyNote : null,
-          pricePerKgVnd: null,
-          goodsCostVnd: 0n,
-          updatedAt: now,
-        })
-        .where(eq(storeReceiptLines.id, persistedLine.id));
-    }
+    return withStoreProductWaitLocks(
+      tx,
+      receipt.storeId,
+      persistedLines.map((line) => line.productId),
+      async () => {
+        const discrepancyNote = normalizeOptionalNote(
+          input.discrepancyNote,
+          'discrepancyNote',
+          1_000,
+        );
+        const suppliedByProduct = new Map(input.lines.map((line) => [line.productId, line]));
+        const now = new Date();
+        for (const persistedLine of persistedLines) {
+          const suppliedLine = suppliedByProduct.get(persistedLine.productId);
+          if (!suppliedLine) {
+            throw new StoreOperationValidationError('A persisted receipt product is missing.');
+          }
+          await reconcileReceiptShortageWait(tx, {
+            storeId: receipt.storeId,
+            productId: persistedLine.productId,
+            outboundRequestLineId: persistedLine.outboundRequestLineId,
+            approvedQuantity: persistedLine.approvedQuantity,
+            queuedQuantity: persistedLine.priorityQueuedQuantity,
+            receivedQuantity: suppliedLine.receivedQuantity,
+          });
+          const queuedQuantity = persistedLine.approvedQuantity - suppliedLine.receivedQuantity;
+          if (queuedQuantity > 0 && queuedQuantity !== persistedLine.priorityQueuedQuantity) {
+            const [ticket] = await tx
+              .select({
+                id: waitTickets.id,
+                originalQuantity: waitTickets.originalQuantity,
+                remainingQuantity: waitTickets.remainingQuantity,
+                priorityLevel: waitTickets.priorityLevel,
+              })
+              .from(waitTickets)
+              .where(
+                and(
+                  eq(waitTickets.storeId, receipt.storeId),
+                  eq(waitTickets.productId, persistedLine.productId),
+                  eq(waitTickets.status, 'active'),
+                  isNull(waitTickets.deletedAt),
+                ),
+              )
+              .limit(1);
+            if (!ticket)
+              throw new StoreOperationValidationError('Priority wait ticket was not created.');
+            await tx.insert(auditLogs).values({
+              requestId: input.requestId ?? null,
+              actorUserId: input.submittedByUserId,
+              actorRole: 'store',
+              actorStoreId: receipt.storeId,
+              action: 'STORE_RECEIPT_SHORTAGE_PRIORITIZED',
+              entityType: 'wait_ticket',
+              entityId: ticket.id,
+              after: {
+                status: 'active',
+                priorityLevel: ticket.priorityLevel,
+                originalQuantity: ticket.originalQuantity,
+                remainingQuantity: ticket.remainingQuantity,
+              },
+              metadata: {
+                receiptId: receipt.id,
+                productId: persistedLine.productId,
+                autoApproved: true,
+                previousShortageQuantity: persistedLine.priorityQueuedQuantity,
+                shortageQuantity: queuedQuantity,
+              },
+            });
+          }
+          await tx
+            .update(storeReceiptLines)
+            .set({
+              receivedQuantity: suppliedLine.receivedQuantity,
+              priorityQueuedQuantity:
+                persistedLine.approvedQuantity - suppliedLine.receivedQuantity,
+              shortageReason:
+                suppliedLine.receivedQuantity < persistedLine.approvedQuantity
+                  ? discrepancyNote
+                  : null,
+              pricePerKgVnd: null,
+              goodsCostVnd: 0n,
+              updatedAt: now,
+            })
+            .where(eq(storeReceiptLines.id, persistedLine.id));
+        }
 
-    const [submitted] = await tx
-      .update(storeReceipts)
-      .set({
-        status: 'pending_htkd',
-        discrepancyNote,
-        reviewNote: null,
-        declaredByUserId: input.submittedByUserId,
-        reviewedByUserId: null,
-        submittedAt: now,
-        finalizedAt: null,
-        goodsCostVnd: 0n,
-        freightVnd: 0n,
-        handlingVnd: 0n,
-        totalCostVnd: 0n,
-        version: receipt.version + 1,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(storeReceipts.id, receipt.id),
-          eq(storeReceipts.version, input.expectedVersion),
-          or(eq(storeReceipts.status, 'draft'), eq(storeReceipts.status, 'returned')),
-          isNull(storeReceipts.deletedAt),
-        ),
-      )
-      .returning({ version: storeReceipts.version });
-    if (!submitted) {
-      throw new StoreOperationConflictError('Store receipt changed during submission.');
-    }
+        const [submitted] = await tx
+          .update(storeReceipts)
+          .set({
+            status: 'pending_htkd',
+            discrepancyNote,
+            reviewNote: null,
+            declaredByUserId: input.submittedByUserId,
+            reviewedByUserId: null,
+            submittedAt: now,
+            finalizedAt: null,
+            goodsCostVnd: 0n,
+            freightVnd: 0n,
+            handlingVnd: 0n,
+            totalCostVnd: 0n,
+            version: receipt.version + 1,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(storeReceipts.id, receipt.id),
+              eq(storeReceipts.version, input.expectedVersion),
+              or(eq(storeReceipts.status, 'draft'), eq(storeReceipts.status, 'returned')),
+              isNull(storeReceipts.deletedAt),
+            ),
+          )
+          .returning({ version: storeReceipts.version });
+        if (!submitted) {
+          throw new StoreOperationConflictError('Store receipt changed during submission.');
+        }
 
-    const result: StoreReceiptWorkflowResult = {
-      receiptId: receipt.id,
-      status: 'pending_htkd',
-      version: submitted.version,
-    };
-    await tx.insert(auditLogs).values({
-      requestId: input.requestId ?? null,
-      actorUserId: input.submittedByUserId,
-      actorRole: 'store',
-      actorStoreId: receipt.storeId,
-      action: 'STORE_RECEIPT_SUBMITTED',
-      entityType: 'store_receipt',
-      entityId: receipt.id,
-      before: { status: receipt.status, version: receipt.version },
-      after: {
-        status: result.status,
-        version: result.version,
-        discrepancyNote,
-        lines: input.lines.map((line) => ({
-          productId: line.productId,
-          approvedQuantity: line.approvedQuantity,
-          receivedQuantity: line.receivedQuantity,
-        })),
+        const result: StoreReceiptWorkflowResult = {
+          receiptId: receipt.id,
+          status: 'pending_htkd',
+          version: submitted.version,
+        };
+        await tx.insert(auditLogs).values({
+          requestId: input.requestId ?? null,
+          actorUserId: input.submittedByUserId,
+          actorRole: 'store',
+          actorStoreId: receipt.storeId,
+          action: 'STORE_RECEIPT_SUBMITTED',
+          entityType: 'store_receipt',
+          entityId: receipt.id,
+          before: { status: receipt.status, version: receipt.version },
+          after: {
+            status: result.status,
+            version: result.version,
+            discrepancyNote,
+            lines: input.lines.map((line) => ({
+              productId: line.productId,
+              approvedQuantity: line.approvedQuantity,
+              receivedQuantity: line.receivedQuantity,
+              priorityQueuedQuantity: line.approvedQuantity - line.receivedQuantity,
+            })),
+          },
+        });
+
+        return result;
       },
-    });
-
-    return result;
+    );
   });
 }
 

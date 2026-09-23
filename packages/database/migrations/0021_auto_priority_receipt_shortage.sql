@@ -1,0 +1,3 @@
+ALTER TABLE "store_receipt_lines" ADD COLUMN "priority_queued_quantity" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "store_receipt_lines" ADD CONSTRAINT "store_receipt_lines_priority_queued_nonnegative" CHECK ("store_receipt_lines"."priority_queued_quantity" >= 0);--> statement-breakpoint
+ALTER TABLE "store_receipt_lines" ADD CONSTRAINT "store_receipt_lines_priority_queued_not_over_shortage" CHECK ("store_receipt_lines"."priority_queued_quantity" <= "store_receipt_lines"."approved_quantity" - "store_receipt_lines"."received_quantity");

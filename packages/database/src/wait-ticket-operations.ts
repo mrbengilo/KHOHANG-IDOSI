@@ -24,6 +24,8 @@ import {
   mergedOrderSources,
   orderRequestItems,
   orderRequests,
+  storeReceiptLines,
+  storeReceipts,
   stores,
   users,
   waitTickets,
@@ -668,6 +670,26 @@ export async function cancelWaitTicketInTransaction(
         }
         if (ticket.status !== 'active') {
           throw new WaitTicketConflictError('Only an active wait ticket can be cancelled.');
+        }
+
+        const [unsettledShortage] = await tx
+          .select({ id: storeReceiptLines.id })
+          .from(storeReceiptLines)
+          .innerJoin(storeReceipts, eq(storeReceiptLines.storeReceiptId, storeReceipts.id))
+          .where(
+            and(
+              eq(storeReceipts.storeId, ticket.storeId),
+              eq(storeReceiptLines.productId, ticket.productId),
+              gt(storeReceiptLines.priorityQueuedQuantity, 0),
+              inArray(storeReceipts.status, ['pending_htkd', 'returned']),
+              isNull(storeReceipts.deletedAt),
+            ),
+          )
+          .limit(1);
+        if (unsettledShortage) {
+          throw new WaitTicketConflictError(
+            'A store-confirmed receipt shortage is still awaiting finalization; its priority wait cannot be cancelled.',
+          );
         }
 
         const pendingOffers = await tx
