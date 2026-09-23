@@ -3,7 +3,14 @@ import { randomUUID } from 'node:crypto';
 import { describe, test } from 'node:test';
 
 import { and, eq } from 'drizzle-orm';
-import { auditLogs, db, storeGroups, stores, users } from '@idosi/database';
+import {
+  auditLogs,
+  db,
+  isRetryableTransactionError,
+  storeGroups,
+  stores,
+  users,
+} from '@idosi/database';
 
 import { PostgresWarehouseRepository } from '../dist/postgres-repository.js';
 
@@ -139,7 +146,13 @@ describePostgres('PostgreSQL store lifecycle repository', () => {
     ]);
     assert.equal(concurrent.filter((result) => result.status === 'fulfilled').length, 1);
     const rejectedConcurrent = concurrent.find((result) => result.status === 'rejected');
-    assert.equal(rejectedConcurrent?.reason?.code, 'VERSION_CONFLICT');
+    // A serializable loser may exhaust its retry budget under CI load before it can
+    // observe the winning version. The API maps that SQLSTATE to a retryable 409.
+    assert.ok(
+      rejectedConcurrent?.reason?.code === 'VERSION_CONFLICT' ||
+        isRetryableTransactionError(rejectedConcurrent?.reason),
+      `Expected a version or serialization conflict, got ${rejectedConcurrent?.reason}`,
+    );
 
     await assert.rejects(
       repository.updateStore(
