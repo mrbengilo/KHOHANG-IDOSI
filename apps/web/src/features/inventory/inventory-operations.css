@@ -43,6 +43,34 @@
   color: var(--text-secondary);
 }
 
+/* Các ô trong cùng hàng được kéo cao bằng nhau; giữ nội dung sát trên để ô nhập không phình. */
+.outbound-form-grid label {
+  align-content: start;
+}
+
+/* Gợi ý (vd. "Tối đa 6 kg") nằm cùng hàng với nhãn, căn phải, để ô nhập thẳng hàng với các cột khác. */
+.field-label-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.2rem 0.6rem;
+  min-width: 0;
+}
+
+.field-label-row small {
+  margin-left: auto;
+  font-weight: 650;
+  text-align: right;
+}
+
+/* Nút lưu rộng bằng một cột của lưới 3 cột (gap 0.8rem) và căn phải, thay vì kéo hết chiều ngang. */
+.outbound-create__submit {
+  justify-self: end;
+  width: calc((100% - 1.6rem) / 3);
+  min-width: max-content;
+}
+
 .inventory-toolbar input,
 .inventory-toolbar select,
 .outbound-form-grid input,
@@ -370,6 +398,12 @@
   .inventory-toolbar,
   .outbound-form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .outbound-create__submit {
+    justify-self: stretch;
+    width: 100%;
+    min-width: 0;
   }
 
   .oversight-banner {

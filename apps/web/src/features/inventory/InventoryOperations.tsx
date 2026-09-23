@@ -1478,7 +1478,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
             />
             {mode === 'SORTING' ? (
               <StatCard
-                label="Mã bao có thể lọc"
+                label="Số bao có thể lọc"
                 value={String(eligibleBags.length)}
                 detail="Phần kg chưa phân loại"
                 tone="success"
@@ -1511,7 +1511,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
                   </select>
                 </label>
                 <label>
-                  <span className="field-label">Lý do</span>
+                  <span className="field-label">Loại hàng</span>
                   <select
                     value={reason}
                     onChange={(event) => setReason(event.target.value as typeof reason)}
@@ -1522,7 +1522,14 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
                   </select>
                 </label>
                 <label>
-                  <span className="field-label">Khối lượng đã lọc (kg)</span>
+                  <span className="field-label-row">
+                    <span className="field-label">Khối lượng đã lọc (kg)</span>
+                    <small>
+                      {selectedBag
+                        ? `Tối đa ${formatKg(selectedBag.remainingWeightKg)}`
+                        : 'Chưa có Mã bao khả dụng'}
+                    </small>
+                  </span>
                   <input
                     type="number"
                     min="0.001"
@@ -1532,14 +1539,10 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
                     value={weightKg}
                     onChange={(event) => setWeightKg(event.target.value)}
                   />
-                  <small>
-                    {selectedBag
-                      ? `Tối đa ${formatKg(selectedBag.remainingWeightKg)}`
-                      : 'Chưa có Mã bao khả dụng'}
-                  </small>
                 </label>
               </div>
               <Button
+                className="outbound-create__submit"
                 busy={sortingMutation.isPending}
                 disabled={
                   !selectedBag || !isOutboundWeightAllowed(weightKg, selectedBag.remainingWeightKg)
