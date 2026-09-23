@@ -593,6 +593,94 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(session.statusCode, 401);
   });
 
+  test('keeps account sessions and logout independent across browser tabs', async () => {
+    const preflight = await app.inject({
+      method: 'OPTIONS',
+      url: '/api/v1/auth/session',
+      headers: {
+        origin: 'http://localhost:5173',
+        'access-control-request-headers': 'x-idosi-tab-id',
+      },
+    });
+    assert.equal(preflight.statusCode, 204);
+    assert.match(String(preflight.headers['access-control-allow-headers']), /x-idosi-tab-id/u);
+    const setupAdminCookie = cookieOf(await login('admin'));
+    const wholesaleAccount = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/accounts',
+      headers: { cookie: setupAdminCookie },
+      payload: {
+        username: 'wholesale.tab',
+        displayName: 'Bàn cửa hàng sỉ',
+        password: PASSWORD,
+        role: 'WHOLESALE',
+      },
+    });
+    assert.equal(wholesaleAccount.statusCode, 201, wholesaleAccount.body);
+    const tabIds = {
+      admin: 'a'.repeat(32),
+      htkd: 'b'.repeat(32),
+      store: 'c'.repeat(32),
+      wholesale: 'd'.repeat(32),
+      empty: 'e'.repeat(32),
+    };
+    const tabLogin = async (username, tabId) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/login',
+        headers: { 'x-idosi-tab-id': tabId },
+        payload: { username, password: PASSWORD },
+      });
+    const logins = await Promise.all([
+      tabLogin('admin', tabIds.admin),
+      tabLogin('htkd', tabIds.htkd),
+      tabLogin('ds_nvt', tabIds.store),
+      tabLogin('wholesale.tab', tabIds.wholesale),
+    ]);
+    for (const [index, loginResponse] of logins.entries()) {
+      assert.equal(loginResponse.statusCode, 200, loginResponse.body);
+      assert.match(
+        cookieOf(loginResponse),
+        new RegExp(`^idosi_session_${Object.values(tabIds)[index]}=`),
+      );
+      assert.match(String(loginResponse.headers['set-cookie']), /HttpOnly/u);
+    }
+    const sharedCookies = logins.map(cookieOf).join('; ');
+    const requestAs = (tabId, url = '/api/v1/auth/session') =>
+      app.inject({
+        method: 'GET',
+        url,
+        headers: { cookie: sharedCookies, 'x-idosi-tab-id': tabId },
+      });
+
+    assert.equal((await requestAs(tabIds.admin)).json().data.principal.role, 'ADMIN');
+    assert.equal((await requestAs(tabIds.htkd)).json().data.principal.role, 'HTKD');
+    assert.equal((await requestAs(tabIds.store)).json().data.principal.role, 'STORE');
+    assert.equal((await requestAs(tabIds.wholesale)).json().data.principal.role, 'WHOLESALE');
+    assert.equal((await requestAs(tabIds.empty)).statusCode, 401);
+    assert.equal((await requestAs(tabIds.store, '/api/v1/admin/accounts')).statusCode, 403);
+    assert.equal((await requestAs(tabIds.admin, '/api/v1/admin/accounts')).statusCode, 200);
+
+    const logout = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/logout',
+      headers: { cookie: sharedCookies, 'x-idosi-tab-id': tabIds.htkd },
+    });
+    assert.equal(logout.statusCode, 200);
+    assert.match(
+      String(logout.headers['set-cookie']),
+      new RegExp(`^idosi_session_${tabIds.htkd}=`),
+    );
+    assert.equal((await requestAs(tabIds.htkd)).statusCode, 401);
+    assert.equal((await requestAs(tabIds.admin)).statusCode, 200);
+    assert.equal((await requestAs(tabIds.store)).statusCode, 200);
+    assert.equal((await requestAs(tabIds.wholesale)).statusCode, 200);
+
+    const invalid = await tabLogin('admin', 'invalid');
+    assert.equal(invalid.statusCode, 400);
+    assert.equal(invalid.json().error.code, 'VALIDATION_ERROR');
+  });
+
   test('enforces STORE and HTKD scopes on the server', async () => {
     const storeCookie = cookieOf(await login('ds_nvt'));
     const stores = await app.inject({
@@ -1485,7 +1573,7 @@ describe('KHOHANG-IDOSI API', () => {
     const [source] = storeSources.json().data;
     assert.equal(source.id, MEMORY_SEED_IDS.secondOutboundRequest);
     assert.notEqual(source.id, MEMORY_SEED_IDS.outboundRequest);
-    assert.equal(source.requestNumber, 'OUT-MEMORY-002');
+    assert.equal(source.requestNumber, 'PXK-000002');
     assert.equal(source.storeId, MEMORY_SEED_IDS.nvtStore);
     assert.equal(Number.isNaN(Date.parse(source.dispatchedAt)), false);
     assert.deepEqual(Object.keys(source).sort(), [

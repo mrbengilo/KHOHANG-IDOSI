@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { tabApi } from './tab-api';
 
 test('sales workspace groups source products and month/store filters preserve scope', async ({
   page,
@@ -17,11 +18,9 @@ test('sales workspace groups source products and month/store filters preserve sc
   );
   await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
   expect((await loginResponsePromise).status()).toBe(200);
-  const storesResponse = await page
-    .context()
-    .request.get(
-      'http://127.0.0.1:3100/api/v1/stores?page=1&pageSize=100&kind=RETAIL&status=ACTIVE',
-    );
+  const storesResponse = await tabApi(page).get(
+    'http://127.0.0.1:3100/api/v1/stores?page=1&pageSize=100&kind=RETAIL&status=ACTIVE',
+  );
   expect(storesResponse.status()).toBe(200);
   const storesPayload = (await storesResponse.json()) as {
     data: Array<{ id: string; kind: string; name: string; status: string }>;

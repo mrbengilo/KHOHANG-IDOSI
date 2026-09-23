@@ -308,6 +308,7 @@ export function WaitlistPanel({
               return (
                 <article key={ticket.id}>
                   <div>
+                    <strong>{ticket.code ?? 'Phiếu chờ'}</strong>
                     <strong>{productNameById.get(ticket.productId) ?? ticket.productId}</strong>
                     <span>
                       <Clock3 aria-hidden="true" size={14} /> Còn {amountLabel(ticket.remaining)} •{' '}
@@ -453,7 +454,9 @@ function HistoryDialog({
               {history.offers.length === 0 ? <p>Chưa có lượt ưu tiên.</p> : null}
               {history.offers.map((offer) => (
                 <article key={offer.id}>
-                  <strong>{amountLabel(offer.offered)}</strong>
+                  <strong>
+                    {offer.code ?? 'Phiếu ưu tiên'} · {amountLabel(offer.offered)}
+                  </strong>
                   <span>
                     {offerStatusLabel[offer.status]} •{' '}
                     {new Date(offer.offeredAt).toLocaleString('vi-VN')}

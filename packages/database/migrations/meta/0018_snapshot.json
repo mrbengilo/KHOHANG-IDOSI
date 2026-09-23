@@ -1,6 +1,6 @@
 {
-  "id": "30bd56c4-a725-4534-b13f-7ce00b095cd5",
-  "prevId": "e81da19e-ac44-4aa8-8a53-a9e66a86dd06",
+  "id": "df06af1f-ce7d-43e6-a9a2-bad91ef2afbb",
+  "prevId": "30bd56c4-a725-4534-b13f-7ce00b095cd5",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -827,6 +827,13 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
+        },
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
         },
         "business_date": {
           "name": "business_date",
@@ -2885,6 +2892,13 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
+        },
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
         },
         "order_session_id": {
           "name": "order_session_id",
@@ -7254,6 +7268,492 @@
       },
       "isRLSEnabled": false
     },
+    "public.store_sale_sync_progress": {
+      "name": "store_sale_sync_progress",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "store_id": {
+          "name": "store_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "product_id": {
+          "name": "product_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "period": {
+          "name": "period",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sale_type": {
+          "name": "sale_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "baseline_grams": {
+          "name": "baseline_grams",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "0"
+        },
+        "observed_grams": {
+          "name": "observed_grams",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "0"
+        },
+        "applied_grams": {
+          "name": "applied_grams",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "0"
+        },
+        "source_snapshot_id": {
+          "name": "source_snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "store_sale_sync_progress_scope_uidx": {
+          "name": "store_sale_sync_progress_scope_uidx",
+          "columns": [
+            {
+              "expression": "store_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "product_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "period",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "sale_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "store_sale_sync_progress_store_id_stores_id_fk": {
+          "name": "store_sale_sync_progress_store_id_stores_id_fk",
+          "tableFrom": "store_sale_sync_progress",
+          "tableTo": "stores",
+          "columnsFrom": ["store_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "store_sale_sync_progress_product_id_products_id_fk": {
+          "name": "store_sale_sync_progress_product_id_products_id_fk",
+          "tableFrom": "store_sale_sync_progress",
+          "tableTo": "products",
+          "columnsFrom": ["product_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "store_sale_sync_progress_source_snapshot_id_idosi_statistics_snapshots_id_fk": {
+          "name": "store_sale_sync_progress_source_snapshot_id_idosi_statistics_snapshots_id_fk",
+          "tableFrom": "store_sale_sync_progress",
+          "tableTo": "idosi_statistics_snapshots",
+          "columnsFrom": ["source_snapshot_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "store_sale_sync_progress_period": {
+          "name": "store_sale_sync_progress_period",
+          "value": "\"store_sale_sync_progress\".\"period\" ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'"
+        },
+        "store_sale_sync_progress_type": {
+          "name": "store_sale_sync_progress_type",
+          "value": "\"store_sale_sync_progress\".\"sale_type\" IN ('sale_kg', 'sale_piece')"
+        },
+        "store_sale_sync_progress_nonnegative": {
+          "name": "store_sale_sync_progress_nonnegative",
+          "value": "\"store_sale_sync_progress\".\"baseline_grams\" >= 0 AND \"store_sale_sync_progress\".\"observed_grams\" >= 0 AND \"store_sale_sync_progress\".\"applied_grams\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.store_sorted_stocks": {
+      "name": "store_sorted_stocks",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "store_id": {
+          "name": "store_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "product_id": {
+          "name": "product_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "store_inventory_bag_id": {
+          "name": "store_inventory_bag_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sale_credited_weight_kg": {
+          "name": "sale_credited_weight_kg",
+          "type": "numeric(14, 3)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0.000'"
+        },
+        "sale_weight_kg": {
+          "name": "sale_weight_kg",
+          "type": "numeric(14, 3)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0.000'"
+        },
+        "charity_weight_kg": {
+          "name": "charity_weight_kg",
+          "type": "numeric(14, 3)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0.000'"
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "store_sorted_stocks_bag_uidx": {
+          "name": "store_sorted_stocks_bag_uidx",
+          "columns": [
+            {
+              "expression": "store_inventory_bag_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "store_sorted_stocks_store_product_idx": {
+          "name": "store_sorted_stocks_store_product_idx",
+          "columns": [
+            {
+              "expression": "store_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "product_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "store_sorted_stocks_store_id_stores_id_fk": {
+          "name": "store_sorted_stocks_store_id_stores_id_fk",
+          "tableFrom": "store_sorted_stocks",
+          "tableTo": "stores",
+          "columnsFrom": ["store_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "store_sorted_stocks_product_id_products_id_fk": {
+          "name": "store_sorted_stocks_product_id_products_id_fk",
+          "tableFrom": "store_sorted_stocks",
+          "tableTo": "products",
+          "columnsFrom": ["product_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "store_sorted_stocks_store_inventory_bag_id_store_inventory_bags_id_fk": {
+          "name": "store_sorted_stocks_store_inventory_bag_id_store_inventory_bags_id_fk",
+          "tableFrom": "store_sorted_stocks",
+          "tableTo": "store_inventory_bags",
+          "columnsFrom": ["store_inventory_bag_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "store_sorted_stocks_sale_nonnegative": {
+          "name": "store_sorted_stocks_sale_nonnegative",
+          "value": "\"store_sorted_stocks\".\"sale_weight_kg\" >= 0"
+        },
+        "store_sorted_stocks_sale_within_credited": {
+          "name": "store_sorted_stocks_sale_within_credited",
+          "value": "\"store_sorted_stocks\".\"sale_weight_kg\" <= \"store_sorted_stocks\".\"sale_credited_weight_kg\""
+        },
+        "store_sorted_stocks_charity_nonnegative": {
+          "name": "store_sorted_stocks_charity_nonnegative",
+          "value": "\"store_sorted_stocks\".\"charity_weight_kg\" >= 0"
+        },
+        "store_sorted_stocks_version_nonnegative": {
+          "name": "store_sorted_stocks_version_nonnegative",
+          "value": "\"store_sorted_stocks\".\"version\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.store_sorting_events": {
+      "name": "store_sorting_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "store_sorted_stock_id": {
+          "name": "store_sorted_stock_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "store_inventory_bag_id": {
+          "name": "store_inventory_bag_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "store_id": {
+          "name": "store_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "product_id": {
+          "name": "product_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "weight_kg": {
+          "name": "weight_kg",
+          "type": "numeric(14, 3)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "piece_count": {
+          "name": "piece_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_snapshot_id": {
+          "name": "source_snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "actor_user_id": {
+          "name": "actor_user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "store_sorting_events_store_occurred_idx": {
+          "name": "store_sorting_events_store_occurred_idx",
+          "columns": [
+            {
+              "expression": "store_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "store_sorting_events_store_sorted_stock_id_store_sorted_stocks_id_fk": {
+          "name": "store_sorting_events_store_sorted_stock_id_store_sorted_stocks_id_fk",
+          "tableFrom": "store_sorting_events",
+          "tableTo": "store_sorted_stocks",
+          "columnsFrom": ["store_sorted_stock_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "store_sorting_events_store_inventory_bag_id_store_inventory_bags_id_fk": {
+          "name": "store_sorting_events_store_inventory_bag_id_store_inventory_bags_id_fk",
+          "tableFrom": "store_sorting_events",
+          "tableTo": "store_inventory_bags",
+          "columnsFrom": ["store_inventory_bag_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "store_sorting_events_store_id_stores_id_fk": {
+          "name": "store_sorting_events_store_id_stores_id_fk",
+          "tableFrom": "store_sorting_events",
+          "tableTo": "stores",
+          "columnsFrom": ["store_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "store_sorting_events_product_id_products_id_fk": {
+          "name": "store_sorting_events_product_id_products_id_fk",
+          "tableFrom": "store_sorting_events",
+          "tableTo": "products",
+          "columnsFrom": ["product_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "store_sorting_events_source_snapshot_id_idosi_statistics_snapshots_id_fk": {
+          "name": "store_sorting_events_source_snapshot_id_idosi_statistics_snapshots_id_fk",
+          "tableFrom": "store_sorting_events",
+          "tableTo": "idosi_statistics_snapshots",
+          "columnsFrom": ["source_snapshot_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "store_sorting_events_actor_user_id_users_id_fk": {
+          "name": "store_sorting_events_actor_user_id_users_id_fk",
+          "tableFrom": "store_sorting_events",
+          "tableTo": "users",
+          "columnsFrom": ["actor_user_id"],
+          "columnsTo": ["id"],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "store_sorting_events_weight_positive": {
+          "name": "store_sorting_events_weight_positive",
+          "value": "\"store_sorting_events\".\"weight_kg\" > 0"
+        },
+        "store_sorting_events_action": {
+          "name": "store_sorting_events_action",
+          "value": "\"store_sorting_events\".\"action\" IN ('sort_sale', 'sort_charity', 'sort_cancel', 'charity_to_sale', 'charity_export', 'idosi_sale_kg', 'idosi_sale_piece', 'idosi_sale_correction')"
+        },
+        "store_sorting_events_piece_positive": {
+          "name": "store_sorting_events_piece_positive",
+          "value": "\"store_sorting_events\".\"piece_count\" IS NULL OR \"store_sorting_events\".\"piece_count\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.store_transfers": {
       "name": "store_transfers",
       "schema": "",
@@ -7977,6 +8477,13 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
+        },
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
         },
         "store_id": {
           "name": "store_id",

@@ -80,6 +80,10 @@ export type OrderSessionStatus = z.infer<typeof OrderSessionStatusSchema>;
 export const OrderSessionSchema = z
   .object({
     id: EntityIdSchema,
+    code: z
+      .string()
+      .regex(/^PDH-[0-9]{6}$/)
+      .optional(),
     businessDate: IsoDateSchema,
     status: OrderSessionStatusSchema,
     requestOpensAt: IsoDateTimeSchema,
@@ -189,6 +193,10 @@ const CreateStoreOrderRequestItemsSchema = z
 export const StoreOrderRequestSchema = z
   .object({
     id: EntityIdSchema,
+    code: z
+      .string()
+      .regex(/^PDT-[0-9]{6}$/)
+      .optional(),
     sessionId: EntityIdSchema,
     storeId: EntityIdSchema,
     requestSequence: RequestSequenceSchema,

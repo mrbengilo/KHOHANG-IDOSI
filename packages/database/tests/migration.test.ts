@@ -198,11 +198,11 @@ describe('initial migration invariants', () => {
 
   it('adds the new reasons and piece count while preserving historical rows', () => {
     const reasonsMigration = readFileSync(
-      new URL('../migrations/0015_store_outbound_reasons.sql', import.meta.url),
+      new URL('../migrations/0016_store_outbound_reasons.sql', import.meta.url),
       'utf8',
     );
     const pieceCountMigration = readFileSync(
-      new URL('../migrations/0016_store_outbound_piece_count.sql', import.meta.url),
+      new URL('../migrations/0017_store_outbound_piece_count.sql', import.meta.url),
       'utf8',
     );
     for (const reason of ['sale_kg', 'sale_piece', 'cancel']) {
@@ -228,7 +228,7 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(18);
+    expect(journal.entries).toHaveLength(19);
     expect(journal.entries[8]).toMatchObject({ tag: '0008_optional_supplier_weight' });
     expect(journal.entries[9]).toMatchObject({ tag: '0009_supported_allocation_policy' });
     expect(journal.entries[10]).toMatchObject({
@@ -253,9 +253,13 @@ describe('initial migration invariants', () => {
       tag: '0014_store_bag_display_codes',
       breakpoints: true,
     });
-    expect(journal.entries[15]).toMatchObject({ tag: '0015_store_outbound_reasons' });
-    expect(journal.entries[16]).toMatchObject({ tag: '0016_store_outbound_piece_count' });
-    expect(journal.entries[17]).toMatchObject({ tag: '0017_pink_jack_murdock' });
+    expect(journal.entries[15]).toMatchObject({
+      tag: '0015_sequential_document_codes',
+      breakpoints: true,
+    });
+    expect(journal.entries[16]).toMatchObject({ tag: '0016_store_outbound_reasons' });
+    expect(journal.entries[17]).toMatchObject({ tag: '0017_store_outbound_piece_count' });
+    expect(journal.entries[18]).toMatchObject({ tag: '0018_sorted_stock_idosi_sync' });
     expect(journal.entries[7]).toMatchObject({ tag: '0007_receipt_vat', breakpoints: true });
     expect(journal.entries[0]).toMatchObject({
       tag: '0000_initial',

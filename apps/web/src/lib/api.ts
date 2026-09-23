@@ -74,6 +74,7 @@ import {
 import { businessDate } from './business-time';
 import { shouldEnableMockMode } from './runtime-mode';
 import { reportUnauthorizedResponse } from './session-expiry';
+import { addTabSessionHeader } from './tab-session';
 import type { ProductConversion as CatalogProduct } from './types';
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
@@ -105,6 +106,7 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
   if (init?.body !== undefined && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
+  addTabSessionHeader(headers);
 
   let response: Response;
   try {

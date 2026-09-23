@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { tabApi } from './tab-api';
 
 test('Admin selects products and persists exactly the selected bags in the warehouse', async ({
   page,
@@ -85,12 +86,12 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   await expect(page.getByRole('status')).toContainText(`Đã nhập phiếu ${reference}`);
   await expect(page.getByRole('checkbox').first()).not.toBeChecked();
   const api = new URL(response.url()).origin;
-  const stored = await page.request.get(`${api}/api/v1/inbound-receipts/${receipt.id}`);
+  const stored = await tabApi(page).get(`${api}/api/v1/inbound-receipts/${receipt.id}`);
   expect(stored.status()).toBe(200);
   const storedReceipt = (await stored.json()).data;
   expect(storedReceipt.bags).toEqual(receipt.bags);
   expect(storedReceipt.vat).toEqual(receipt.vat);
-  const replay = await page.request.post(response.url(), {
+  const replay = await tabApi(page).post(response.url(), {
     data: response.request().postDataJSON(),
     headers: { 'idempotency-key': response.request().headers()['idempotency-key']! },
   });
@@ -101,7 +102,7 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   await historyRow.getByText('Cập nhật VAT · 8%', { exact: true }).click();
   // Refetch while a local edit exists must not silently adopt a newer version.
   await historyRow.getByLabel(`Số tiền VAT cho ${reference}`, { exact: true }).fill('999999');
-  const external = await page.request.patch(`${api}/api/v1/inbound-receipts/${receipt.id}/vat`, {
+  const external = await tabApi(page).patch(`${api}/api/v1/inbound-receipts/${receipt.id}/vat`, {
     headers: { 'idempotency-key': `external-vat-${receipt.id}` },
     data: {
       vat: { amountVnd: 1050000, ratePercent: 8 },
@@ -126,7 +127,7 @@ test('Admin selects products and persists exactly the selected bags in the wareh
     .fill('Điều chỉnh theo hóa đơn thuế');
   await historyRow.getByRole('button', { name: 'Lưu VAT', exact: true }).click();
   await expect(historyRow.getByRole('status')).toContainText('Đã lưu VAT 8%');
-  const corrected = await page.request.get(`${api}/api/v1/inbound-receipts/${receipt.id}`);
+  const corrected = await tabApi(page).get(`${api}/api/v1/inbound-receipts/${receipt.id}`);
   expect((await corrected.json()).data.vat).toEqual({ amountVnd: 1100000, ratePercent: 8 });
   await expect.poll(() => page.evaluate(() => document.body.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({
@@ -134,7 +135,7 @@ test('Admin selects products and persists exactly the selected bags in the wareh
     fullPage: true,
   });
   // The PostgreSQL DTO must distinguish unknown tax from an explicitly entered zero.
-  const deferred = await page.request.post(`${api}/api/v1/inbound-receipts`, {
+  const deferred = await tabApi(page).post(`${api}/api/v1/inbound-receipts`, {
     headers: { 'idempotency-key': `deferred-${receipt.id}` },
     data: {
       referenceCode: `DEFERRED-${reference}`,
@@ -147,7 +148,7 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   });
   expect(deferred.status()).toBe(201);
   const deferredReceipt = (await deferred.json()).data;
-  const confirmed = await page.request.post(
+  const confirmed = await tabApi(page).post(
     `${api}/api/v1/inbound-receipts/${deferredReceipt.id}/confirm-costs`,
     {
       headers: { 'idempotency-key': `confirm-deferred-${receipt.id}` },
@@ -165,7 +166,7 @@ test('Admin selects products and persists exactly the selected bags in the wareh
     vatAmountVnd: null,
     totalCostVnd: null,
   });
-  const zeroTax = await page.request.patch(
+  const zeroTax = await tabApi(page).patch(
     `${api}/api/v1/inbound-receipts/${deferredReceipt.id}/vat`,
     {
       headers: { 'idempotency-key': `zero-vat-${receipt.id}` },

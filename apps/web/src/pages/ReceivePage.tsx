@@ -632,7 +632,6 @@ function CreateReceiptForm({
                     </span>
                     <span className="receipt-source-card__meta">
                       <span>Đã giao {formatDateTime(source.dispatchedAt)}</span>
-                      <span>Mã: {source.id}</span>
                     </span>
                     <span className="receipt-source-card__lines">
                       {source.lines.map((line) => (
@@ -770,7 +769,7 @@ function ReceiptDetail({
           </div>
           <div>
             <dt>Lệnh xuất</dt>
-            <dd>{receipt.outboundRequestId}</dd>
+            <dd>{receipt.outboundRequestNumber ?? '—'}</dd>
           </div>
         </dl>
       </details>
@@ -1085,10 +1084,7 @@ function ReviewerReceiptForm({
             </label>
             {(weights[line.productId] ?? []).map((weight, index) => (
               <label key={`${line.productId}:bag:${index + 1}`}>
-                Khối lượng bao {index + 1} (kg){' '}
-                <span aria-hidden="true" style={{ color: '#dc2626' }}>
-                  *
-                </span>
+                <span className="field-label">Khối lượng bao {index + 1} (kg)</span>
                 <input
                   required
                   disabled={mutationPending}

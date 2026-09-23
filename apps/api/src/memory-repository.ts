@@ -309,6 +309,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   }
 
   private readonly now: () => Date;
+  private readonly documentCodeCounters = new Map<string, number>();
   private readonly accounts = new Map<string, MutableAccount>();
   private readonly htkdAssignments = new Map<string, HtkdAssignment>();
   private readonly sessions = new Map<string, StoredSession>();
@@ -371,6 +372,14 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
 
   private constructor(now: () => Date) {
     this.now = now;
+  }
+
+  private nextDocumentCode(prefix: string): string {
+    const number = (this.documentCodeCounters.get(prefix) ?? 0) + 1;
+    const digits = 9 - prefix.length;
+    if (number >= 10 ** digits) throw new Error(`Document code space exhausted for ${prefix}`);
+    this.documentCodeCounters.set(prefix, number);
+    return `${prefix}-${String(number).padStart(digits, '0')}`;
   }
 
   public static async create(
@@ -1010,6 +1019,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
           : {
               ...window,
               id: randomUUID(),
+              code: this.nextDocumentCode('PDH'),
               status: 'OPEN',
               policyVersion: settings.policyVersion,
               version: 0,
@@ -1092,6 +1102,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const now = this.now().toISOString();
     const created: OrderSession = {
       id: randomUUID(),
+      code: this.nextDocumentCode('PDH'),
       businessDate: input.businessDate,
       status: 'SCHEDULED',
       requestOpensAt: input.requestOpensAt,
@@ -2103,6 +2114,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const now = this.now().toISOString();
     const request: StoreOrderRequest = {
       id: randomUUID(),
+      code: this.nextDocumentCode('PDT'),
       sessionId: input.businessSessionId,
       storeId: input.storeId,
       requestSequence: existing.some((item) => item.requestSequence === 1) ? 2 : 1,
@@ -2512,7 +2524,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const now = this.now().toISOString();
     const receipt: Receipt = {
       id: randomUUID(),
-      receiptNumber: `SR-${input.outboundRequestId.slice(0, 8)}`,
+      receiptNumber: this.nextDocumentCode('PNH'),
+      outboundRequestNumber: outbound.requestNumber,
       storeId: input.storeId,
       outboundRequestId: input.outboundRequestId,
       declaredByAccountId: actor.accountId,
@@ -2822,6 +2835,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const now = this.now().toISOString();
     const created: StoreOutbound = {
       id: randomUUID(),
+      code: this.nextDocumentCode('PXL'),
       storeId: input.storeId,
       inventoryLotId: bag.id,
       weightKg: input.weightKg,
@@ -3365,7 +3379,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const now = this.now().toISOString();
     const transfer: StoreTransfer = {
       id: randomUUID(),
-      transferNumber: `TR-${now.slice(0, 10).replaceAll('-', '')}-${randomUUID().slice(0, 8).toUpperCase()}`,
+      transferNumber: this.nextDocumentCode('PDC'),
       sourceStoreId: input.sourceStoreId,
       destinationStoreId: input.destinationStoreId,
       sourceInventoryBagId: bag.id,
@@ -4171,6 +4185,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const allocationStart = new Date(`${sessionBusinessDate}T23:59:59.999+07:00`);
     this.orderSessions.set(MEMORY_SEED_IDS.orderSession, {
       id: MEMORY_SEED_IDS.orderSession,
+      code: this.nextDocumentCode('PDH'),
       businessDate: sessionBusinessDate,
       status: 'OPEN',
       requestOpensAt: sessionOpen.toISOString(),
@@ -4339,7 +4354,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     this.dispatchedOutbounds.set(MEMORY_SEED_IDS.outboundRequest, {
       id: MEMORY_SEED_IDS.outboundRequest,
       storeId: nvtId,
-      requestNumber: 'OUT-MEMORY-001',
+      requestNumber: this.nextDocumentCode('PXK'),
       orderSessionId: MEMORY_SEED_IDS.orderSession,
       allocationRunId: MEMORY_SEED_IDS.allocationRun,
       status: 'DISPATCHED',
@@ -4366,7 +4381,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     this.dispatchedOutbounds.set(MEMORY_SEED_IDS.secondOutboundRequest, {
       id: MEMORY_SEED_IDS.secondOutboundRequest,
       storeId: nvtId,
-      requestNumber: 'OUT-MEMORY-002',
+      requestNumber: this.nextDocumentCode('PXK'),
       orderSessionId: MEMORY_SEED_IDS.orderSession,
       allocationRunId: MEMORY_SEED_IDS.allocationRun,
       status: 'DISPATCHED',
@@ -4393,7 +4408,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     this.dispatchedOutbounds.set(MEMORY_SEED_IDS.reservedOutboundRequest, {
       id: MEMORY_SEED_IDS.reservedOutboundRequest,
       storeId: nvtId,
-      requestNumber: 'OUT-MEMORY-003',
+      requestNumber: this.nextDocumentCode('PXK'),
       orderSessionId: MEMORY_SEED_IDS.orderSession,
       allocationRunId: MEMORY_SEED_IDS.allocationRun,
       status: 'RESERVED',
@@ -4419,7 +4434,9 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     });
     this.receipts.set(MEMORY_SEED_IDS.storeReceipt, {
       id: MEMORY_SEED_IDS.storeReceipt,
-      receiptNumber: 'SR-MEMORY-001',
+      receiptNumber: this.nextDocumentCode('PNH'),
+      outboundRequestNumber: this.dispatchedOutbounds.get(MEMORY_SEED_IDS.outboundRequest)!
+        .requestNumber,
       storeId: nvtId,
       outboundRequestId: MEMORY_SEED_IDS.outboundRequest,
       declaredByAccountId: MEMORY_SEED_IDS.storeAccount,
@@ -4445,6 +4462,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     });
     this.waitTickets.set(MEMORY_SEED_IDS.waitTicket, {
       id: MEMORY_SEED_IDS.waitTicket,
+      code: this.nextDocumentCode('PC'),
       sessionId: MEMORY_SEED_IDS.orderSession,
       mergedOrderId: null,
       storeId: nvtId,
@@ -4459,6 +4477,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     });
     this.waitTickets.set(MEMORY_SEED_IDS.cancellableWaitTicket, {
       id: MEMORY_SEED_IDS.cancellableWaitTicket,
+      code: this.nextDocumentCode('PC'),
       sessionId: MEMORY_SEED_IDS.orderSession,
       mergedOrderId: null,
       storeId: nvtId,
@@ -4473,6 +4492,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     });
     this.priorityOffers.set(MEMORY_SEED_IDS.priorityOffer, {
       id: MEMORY_SEED_IDS.priorityOffer,
+      code: this.nextDocumentCode('PUT'),
       waitTicketId: MEMORY_SEED_IDS.waitTicket,
       storeId: nvtId,
       productId: firstProduct.id,

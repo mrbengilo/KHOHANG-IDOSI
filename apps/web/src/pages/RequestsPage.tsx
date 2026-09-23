@@ -450,6 +450,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
               >
                 {sessions.map((session) => (
                   <option key={session.id} value={session.id}>
+                    {session.code ? `${session.code} · ` : ''}
                     {session.businessDate} · đóng{' '}
                     {new Date(session.requestClosesAt).toLocaleString('vi-VN')}
                   </option>
@@ -482,6 +483,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
             >
               {sessions.map((session) => (
                 <option key={session.id} value={session.id}>
+                  {session.code ? `${session.code} · ` : ''}
                   {session.businessDate} · đóng{' '}
                   {new Date(session.requestClosesAt).toLocaleString('vi-VN')}
                 </option>
@@ -640,7 +642,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
           <article className="request-history-card" key={request.id}>
             <div className="request-history-card__summary">
               <div>
-                <strong>Phiếu {request.requestSequence}</strong>
+                <strong>Phiếu {request.code ?? request.requestSequence}</strong>
                 <span>
                   <Clock3 size={14} />{' '}
                   {request.lines

@@ -74,6 +74,7 @@ export interface WaitTicketListInput extends PageInput {
 
 export interface WaitTicketRecord {
   readonly id: string;
+  readonly code: string;
   readonly storeId: string;
   readonly productId: string;
   readonly sourceOrderRequestItemId: string;
@@ -106,6 +107,7 @@ export interface PriorityOfferListInput extends PageInput {
 
 export interface PriorityOfferRecord {
   readonly id: string;
+  readonly code: string;
   readonly businessDate: string;
   readonly storeId: string;
   readonly productId: string;
@@ -360,6 +362,7 @@ export async function listWaitTickets(
     database
       .select({
         id: waitTickets.id,
+        code: waitTickets.code,
         storeId: waitTickets.storeId,
         productId: waitTickets.productId,
         sourceOrderRequestItemId: waitTickets.sourceOrderRequestItemId,
@@ -433,6 +436,7 @@ export async function listPriorityOffers(
     database
       .select({
         id: dailyPriorityOffers.id,
+        code: dailyPriorityOffers.code,
         businessDate: dailyPriorityOffers.businessDate,
         storeId: dailyPriorityOffers.storeId,
         productId: dailyPriorityOffers.productId,
@@ -479,6 +483,7 @@ export async function getWaitTicketHistory(
   const [ticket] = await database
     .select({
       id: waitTickets.id,
+      code: waitTickets.code,
       storeId: waitTickets.storeId,
       productId: waitTickets.productId,
       sourceOrderRequestItemId: waitTickets.sourceOrderRequestItemId,
@@ -512,6 +517,7 @@ export async function getWaitTicketHistory(
   const offerRows = await database
     .select({
       id: dailyPriorityOffers.id,
+      code: dailyPriorityOffers.code,
       businessDate: dailyPriorityOffers.businessDate,
       storeId: dailyPriorityOffers.storeId,
       productId: dailyPriorityOffers.productId,

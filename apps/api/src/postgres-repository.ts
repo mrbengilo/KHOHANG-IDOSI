@@ -153,6 +153,7 @@ import {
   orderSessions,
   operationalSettingsVersions,
   outboundRequestLines,
+  outboundRequests,
   OrderRequestAuthorizationError,
   OrderSessionAuthorizationError,
   OrderSessionConflictError,
@@ -2144,6 +2145,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         onCreated: async (tx, created) => {
           const requestForAudit: StoreOrderRequest = {
             id: created.id,
+            code: created.code,
             sessionId: input.businessSessionId,
             storeId: input.storeId,
             requestSequence: created.requestNumber === 2 ? 2 : 1,
@@ -3449,6 +3451,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       .where(eq(orderRequestItems.orderRequestId, request.id));
     return {
       id: request.id,
+      code: request.code,
       sessionId: request.orderSessionId,
       storeId: request.storeId,
       requestSequence: request.requestNumber === 2 ? 2 : 1,
@@ -3597,6 +3600,13 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       .limit(1);
     if (!receipt) throw notFound('Không tìm thấy phiếu nhận hàng');
 
+    const [outbound] = await db
+      .select({ requestNumber: outboundRequests.requestNumber })
+      .from(outboundRequests)
+      .where(eq(outboundRequests.id, receipt.outboundRequestId))
+      .limit(1);
+    if (!outbound) throw new Error('Store receipt has no outbound request');
+
     const lines = await db
       .select()
       .from(storeReceiptLines)
@@ -3623,6 +3633,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     return {
       id: receipt.id,
       receiptNumber: receipt.receiptNumber,
+      outboundRequestNumber: outbound.requestNumber,
       storeId: receipt.storeId,
       outboundRequestId: receipt.outboundRequestId,
       declaredByAccountId: receipt.declaredByUserId,
@@ -3877,6 +3888,7 @@ function inventoryLedgerPage(
 function storeOutboundDto(row: typeof storeOutbounds.$inferSelect): StoreOutbound {
   return {
     id: row.id,
+    code: row.outboundNumber,
     storeId: row.storeId,
     inventoryLotId: row.storeInventoryBagId,
     weightKg: row.weightKg,
@@ -4278,6 +4290,7 @@ function orderSessionStatus(
 function orderSessionDto(row: typeof orderSessions.$inferSelect): OrderSession {
   return {
     id: row.id,
+    code: row.code,
     businessDate: row.businessDate,
     status: orderSessionStatus(row.status),
     requestOpensAt: (row.openedAt ?? row.createdAt).toISOString(),
@@ -4429,6 +4442,7 @@ function receiptStatus(status: typeof storeReceipts.$inferSelect.status): Receip
 function waitTicketDto(ticket: WaitTicketRecord): WaitTicket {
   return {
     id: ticket.id,
+    code: ticket.code,
     sessionId: ticket.orderSessionId,
     mergedOrderId: ticket.mergedOrderId,
     storeId: ticket.storeId,
@@ -4480,6 +4494,7 @@ function priorityOfferDto(offer: PriorityOfferRecord): PriorityOffer {
   const status = contractPriorityOfferStatus(offer.effectiveStatus);
   return {
     id: offer.id,
+    code: offer.code,
     waitTicketId: offer.waitTicketId,
     storeId: offer.storeId,
     productId: offer.productId,

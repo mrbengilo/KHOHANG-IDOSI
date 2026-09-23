@@ -525,6 +525,13 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
       ),
     [sessionsQuery.data, orderRequestsQuery.data, storesQuery.data],
   );
+  const sessionRowSpans = useMemo(() => {
+    const spans = new Map<string, number>();
+    for (const row of sessionRows) {
+      spans.set(row.session.id, (spans.get(row.session.id) ?? 0) + 1);
+    }
+    return spans;
+  }, [sessionRows]);
   const settingsQuery = useQuery({
     enabled: role === 'ADMIN',
     queryFn: () => getAdminOperationalSettings(1),
@@ -949,12 +956,18 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                                 <strong>
                                   {submitted.time} · {submitted.date}
                                 </strong>
-                                <small>Phiên {session.businessDate}</small>
+                                <small>
+                                  Phiên {session.code ? `${session.code} · ` : ''}
+                                  {session.businessDate}
+                                </small>
                               </>
                             ) : (
                               <>
                                 <strong>Chưa có yêu cầu</strong>
-                                <small>Phiên {session.businessDate}</small>
+                                <small>
+                                  Phiên {session.code ? `${session.code} · ` : ''}
+                                  {session.businessDate}
+                                </small>
                               </>
                             )}
                           </div>
@@ -1000,7 +1013,11 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                           </button>
                         </td>
                         {role === 'ADMIN' && firstOfSession ? (
-                          <td data-label="Thao tác">
+                          <td
+                            className="allocation-session-action-cell"
+                            data-label="Thao tác"
+                            rowSpan={sessionRowSpans.get(session.id) ?? 1}
+                          >
                             <div className="allocation-session-actions">
                               {transitions.includes('OPEN') ? (
                                 <button
@@ -1050,11 +1067,6 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                             </div>
                           </td>
                         ) : null}
-                        {role === 'ADMIN' && !firstOfSession ? (
-                          <td data-label="Thao tác">
-                            <small>Thao tác phiên ở dòng đầu của phiên này</small>
-                          </td>
-                        ) : null}
                       </tr>
                     );
                   },
@@ -1096,6 +1108,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
               <option value="">Tất cả phiên</option>
               {(sessionsQuery.data ?? []).map((session) => (
                 <option key={session.id} value={session.id}>
+                  {session.code ? `${session.code} · ` : ''}
                   {session.businessDate} · {sessionStatusCopy[session.status]}
                 </option>
               ))}

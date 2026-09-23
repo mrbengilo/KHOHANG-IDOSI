@@ -781,7 +781,7 @@ export async function materializeOutboundRequests(
   let affectedRows = 0;
   for (const [storeId, storeLines] of byStore) {
     const outboundRequestId = deterministicUuid(`outbound-shipment:${allocationRunId}:${storeId}`);
-    const requestNumber = `OUT-${session.businessDate.replaceAll('-', '')}-${outboundRequestId.replaceAll('-', '').toUpperCase()}`;
+    const requestNumber = ''; // Assigned by the database trigger.
     await tx.insert(outboundRequests).values({
       id: outboundRequestId,
       requestNumber,

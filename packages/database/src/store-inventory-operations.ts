@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import { and, asc, count, desc, eq, ilike, isNull, or, type SQL } from 'drizzle-orm';
 
 import type { Database } from './client.js';
@@ -433,7 +431,7 @@ export async function createStoreOutbound(
         const [created] = await tx
           .insert(storeOutbounds)
           .values({
-            outboundNumber: storeOutboundNumber(now),
+            outboundNumber: '',
             storeId: input.storeId,
             storeInventoryBagId: input.inventoryBagId,
             weightKg: input.weightKg,
@@ -565,9 +563,4 @@ function idempotentMutationResult<T>(
   responseStatus = 200,
 ): IdempotentOperationResult<T> {
   return { value, responseStatus, responseBody, resourceType, resourceId };
-}
-
-function storeOutboundNumber(now: Date): string {
-  const day = now.toISOString().slice(0, 10).replaceAll('-', '');
-  return `SO-${day}-${randomUUID().slice(0, 12).toUpperCase()}`;
 }

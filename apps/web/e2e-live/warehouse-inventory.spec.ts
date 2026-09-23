@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { tabApi } from './tab-api';
 
 test('admin warehouse inventory reconciles with PostgreSQL balances and remains responsive', async ({
   page,
@@ -18,7 +19,7 @@ test('admin warehouse inventory reconciles with PostgreSQL balances and remains 
   const response = await inventoryResponse;
   expect(response.ok()).toBe(true);
   const inventory = await response.json();
-  const balancesResponse = await page.request.get(
+  const balancesResponse = await tabApi(page).get(
     'http://127.0.0.1:3100/api/v1/warehouse-balances',
   );
   expect(balancesResponse.ok()).toBe(true);

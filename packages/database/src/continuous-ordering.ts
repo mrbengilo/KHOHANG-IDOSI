@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { nextOrderingWindow } from '@idosi/contracts';
 import { and, asc, desc, eq, gt, isNull } from 'drizzle-orm';
 import type { Database } from './client.js';
@@ -40,7 +39,7 @@ export async function ensureDailyOrderingSession(database: Database, now: Date) 
         : await tx
             .insert(orderSessions)
             .values({
-              code: `AUTO-${businessDate}-${randomUUID().slice(0, 8)}`,
+              code: '',
               businessDate,
               status: 'open',
               openedAt: new Date(`${businessDate}T00:00:00+07:00`),
@@ -142,7 +141,7 @@ export async function prepareOrderingContext(
             : await tx
                 .insert(orderSessions)
                 .values({
-                  code: `AUTO-${window.businessDate}-${randomUUID().slice(0, 8)}`,
+                  code: '',
                   businessDate: window.businessDate,
                   status: 'open',
                   openedAt: now,

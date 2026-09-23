@@ -441,6 +441,10 @@ export type StoreOutboundStatus = z.infer<typeof StoreOutboundStatusSchema>;
 export const StoreOutboundSchema = z
   .object({
     id: EntityIdSchema,
+    code: z
+      .string()
+      .regex(/^(PBL|PXL)-[0-9]{6}$/)
+      .optional(),
     storeId: EntityIdSchema,
     inventoryLotId: EntityIdSchema,
     weightKg: PositiveKilogramsDecimalSchema,

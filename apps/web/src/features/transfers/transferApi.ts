@@ -16,6 +16,7 @@ import {
   type StoreTransferStatus,
 } from '@idosi/contracts';
 import { reportUnauthorizedResponse } from '../../lib/session-expiry';
+import { addTabSessionHeader } from '../../lib/tab-session';
 
 import { ApiClientError } from '../../lib/api';
 
@@ -34,6 +35,7 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
   const headers = new Headers(init?.headers);
   headers.set('Accept', 'application/json');
   if (init?.body !== undefined) headers.set('Content-Type', 'application/json');
+  addTabSessionHeader(headers);
 
   let response: Response;
   try {

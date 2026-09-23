@@ -128,6 +128,8 @@ import {
 } from './security.js';
 
 const SESSION_COOKIE = 'idosi_session';
+const TAB_SESSION_HEADER = 'x-idosi-tab-id';
+const TAB_ID_PATTERN = /^[a-f0-9]{32}$/u;
 const DEFAULT_SESSION_TTL_MS = 12 * 60 * 60 * 1_000;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const DEFAULT_IDOSI_INTEGRATION_ENDPOINT =
@@ -266,6 +268,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.post('/api/v1/auth/login', async (request, reply) => {
     const input = LoginRequestSchema.parse(request.body);
+    const cookieName = sessionCookieName(request);
     const retryAfterMs = loginRateLimiter.retryAfterMs(request.ip);
     if (retryAfterMs > 0) {
       const retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMs / 1_000));
@@ -297,15 +300,19 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
       expiresAt,
       requestContext(request),
     );
-    reply.header('set-cookie', sessionCookie(token, expiresAt, options.secureCookies ?? false));
+    reply.header(
+      'set-cookie',
+      sessionCookie(token, expiresAt, options.secureCookies ?? false, cookieName),
+    );
     reply.header('cache-control', 'no-store');
     return { data: session };
   });
 
   app.post('/api/v1/auth/logout', async (request, reply) => {
-    const token = readCookie(request, SESSION_COOKIE);
+    const cookieName = sessionCookieName(request);
+    const token = readCookie(request, cookieName);
     if (token) await repository.revokeSession(token, 'user_logout');
-    reply.header('set-cookie', clearSessionCookie(options.secureCookies ?? false));
+    reply.header('set-cookie', clearSessionCookie(options.secureCookies ?? false, cookieName));
     reply.header('cache-control', 'no-store');
     return { data: { revoked: true } };
   });
@@ -1404,7 +1411,7 @@ async function authenticate(
   request: FastifyRequest,
   repository: WarehouseRepository,
 ): Promise<Session> {
-  const token = readCookie(request, SESSION_COOKIE);
+  const token = readCookie(request, sessionCookieName(request));
   if (!token) throw unauthenticated();
   return repository.resolveSession(token);
 }
@@ -1447,9 +1454,23 @@ function readCookie(request: FastifyRequest, name: string): string | null {
   return null;
 }
 
-function sessionCookie(token: string, expiresAt: Date, secure: boolean): string {
+function sessionCookieName(request: FastifyRequest): string {
+  const tabId = request.headers[TAB_SESSION_HEADER];
+  if (tabId === undefined) return SESSION_COOKIE;
+  if (typeof tabId !== 'string' || !TAB_ID_PATTERN.test(tabId)) {
+    throw new ApiError('VALIDATION_ERROR', 'Mã tab đăng nhập không hợp lệ', 400);
+  }
+  return `${SESSION_COOKIE}_${tabId}`;
+}
+
+function sessionCookie(
+  token: string,
+  expiresAt: Date,
+  secure: boolean,
+  cookieName: string,
+): string {
   return [
-    `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
+    `${cookieName}=${encodeURIComponent(token)}`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
@@ -1458,9 +1479,9 @@ function sessionCookie(token: string, expiresAt: Date, secure: boolean): string 
   ].join('; ');
 }
 
-function clearSessionCookie(secure: boolean): string {
+function clearSessionCookie(secure: boolean, cookieName: string): string {
   return [
-    `${SESSION_COOKIE}=`,
+    `${cookieName}=`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
@@ -1481,7 +1502,10 @@ function applyCors(
   reply.header('access-control-allow-origin', requestOrigin);
   reply.header('access-control-allow-credentials', 'true');
   reply.header('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-  reply.header('access-control-allow-headers', 'content-type,idempotency-key,x-request-id');
+  reply.header(
+    'access-control-allow-headers',
+    'content-type,idempotency-key,x-request-id,x-idosi-tab-id',
+  );
   reply.header('vary', 'Origin');
 }
 

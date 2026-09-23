@@ -250,14 +250,14 @@ function recentActivity(snapshot: DashboardSnapshot, stores: readonly Store[]): 
       detail: `${storeName(ticket.storeId)} • còn ${formatAmount(ticket.remaining)} • ${ticket.priority}`,
       id: `wait-${ticket.id}`,
       occurredAt: ticket.updatedAt,
-      title: `Phiếu chờ ${ticket.id.slice(0, 8)}`,
+      title: `Phiếu chờ ${ticket.code ?? ticket.id.slice(0, 8)}`,
       tone: ticket.status === 'FULFILLED' ? 'success' : 'warning',
     })),
     ...snapshot.priorityOffers.map((offer): ActivityItem => ({
       detail: `${storeName(offer.storeId)} • ${formatAmount(offer.offered)} • hết hạn ${new Date(offer.expiresAt).toLocaleString('vi-VN')}`,
       id: `offer-${offer.id}`,
       occurredAt: offer.offeredAt,
-      title: `Đề nghị ưu tiên ${offer.status}`,
+      title: `Phiếu ưu tiên ${offer.code ?? offer.status}`,
       tone:
         offer.status === 'PENDING'
           ? 'priority'
@@ -269,7 +269,7 @@ function recentActivity(snapshot: DashboardSnapshot, stores: readonly Store[]): 
       detail: `${storeName(request.storeId)} • ${request.lines.length} mặt hàng • ${request.status}`,
       id: `order-${request.id}`,
       occurredAt: request.submittedAt,
-      title: `Yêu cầu đặt hàng lần ${request.requestSequence}`,
+      title: `Phiếu đặt hàng ${request.code ?? request.requestSequence}`,
       tone: request.status === 'CANCELLED' ? 'danger' : 'info',
     })),
   ];

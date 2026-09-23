@@ -900,6 +900,7 @@ export function LegacyOutboundPage({ mode, role }: OutboundPageProps) {
     storesQuery.error ?? catalogQuery.error ?? bagsQuery.error ?? outboundsQuery.error;
   const pending = displayedOutbounds.filter((outbound) => outbound.status === 'PENDING').length;
   const approved = displayedOutbounds.filter((outbound) => outbound.status === 'APPROVED').length;
+  const reasonLabel = mode === 'SORTING' ? 'Loại hàng' : 'Lý do';
 
   return (
     <>
@@ -1055,7 +1056,7 @@ export function LegacyOutboundPage({ mode, role }: OutboundPageProps) {
                 ) : null}
                 {mode === 'SORTING' && isSale ? (
                   <label>
-                    <span className="field-label">Hình thức sale</span>
+                    <span className="field-label">{reasonLabel}</span>
                     <select
                       onChange={(event) => {
                         setReason(event.target.value as 'SALE_KG' | 'SALE_PIECE');
@@ -1098,8 +1099,8 @@ export function LegacyOutboundPage({ mode, role }: OutboundPageProps) {
               <div>
                 <strong>Chế độ duyệt</strong>
                 <p>
-                  Kiểm tra Mã bao, khối lượng và lý do trước khi duyệt. Duyệt sẽ trừ tồn và ghi sổ
-                  trong cùng giao dịch.
+                  Kiểm tra Mã bao, khối lượng và {reasonLabel.toLowerCase()} trước khi duyệt. Duyệt
+                  sẽ trừ tồn và ghi sổ trong cùng giao dịch.
                 </p>
               </div>
               <label>
@@ -1136,7 +1137,7 @@ export function LegacyOutboundPage({ mode, role }: OutboundPageProps) {
                     <tr>
                       <th>Thời gian</th>
                       <th>Mã bao</th>
-                      <th>Lý do</th>
+                      <th>{reasonLabel}</th>
                       <th>Khối lượng</th>
                       <th>Số cái</th>
                       <th>Doanh thu</th>
@@ -1154,13 +1155,14 @@ export function LegacyOutboundPage({ mode, role }: OutboundPageProps) {
                       return (
                         <tr key={outbound.id}>
                           <td data-label="Thời gian">
+                            {outbound.code ? <strong>{outbound.code} · </strong> : null}
                             {new Date(outbound.createdAt).toLocaleString('vi-VN')}
                           </td>
                           <td data-label="Mã bao">
                             <strong>{bag?.bagCode ?? outbound.inventoryLotId}</strong>
                             <small>{storeName(stores, outbound.storeId)}</small>
                           </td>
-                          <td data-label="Lý do">{reasonCopy[outbound.reason]}</td>
+                          <td data-label={reasonLabel}>{reasonCopy[outbound.reason]}</td>
                           <td data-label="Khối lượng">{formatKg(outbound.weightKg)}</td>
                           <td data-label="Số cái">{outbound.pieceCount ?? '—'}</td>
                           <td data-label="Doanh thu">
