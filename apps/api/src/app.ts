@@ -25,6 +25,7 @@ import {
   ConfirmReceiptCostsRequestSchema,
   FinalizeReceiptRequestSchema,
   fetchIdosiOrderStatistics,
+  IdosiOrderStatisticsPayloadSchema,
   GetIdosiStatisticsQuerySchema,
   GetOperationalSettingsQuerySchema,
   HtkdAssignmentParamsSchema,
@@ -1462,13 +1463,20 @@ function idosiStatisticsState(
   persisted: PersistedIdosiStatisticsState,
   integrationStatus: 'CONFIGURED' | 'NOT_CONFIGURED',
 ): IdosiStatisticsState {
+  const snapshot =
+    persisted.snapshot &&
+    IdosiOrderStatisticsPayloadSchema.safeParse(persisted.snapshot.payload).success
+      ? persisted.snapshot
+      : null;
   const freshness =
-    persisted.snapshot === null
-      ? 'EMPTY'
-      : persisted.latestAttempt?.status === 'FAILED'
-        ? 'STALE'
-        : 'CURRENT';
-  return { scope, integrationStatus, freshness, ...persisted };
+    persisted.snapshot && !snapshot
+      ? 'RESYNC_REQUIRED'
+      : snapshot === null
+        ? 'EMPTY'
+        : persisted.latestAttempt?.status === 'FAILED'
+          ? 'STALE'
+          : 'CURRENT';
+  return { scope, integrationStatus, freshness, latestAttempt: persisted.latestAttempt, snapshot };
 }
 
 function zodFieldErrors(error: ZodError): Record<string, string[]> {

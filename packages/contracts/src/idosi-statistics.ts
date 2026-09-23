@@ -118,6 +118,7 @@ const IdosiProductItemSchema = z
     quantity: NonNegativeNumberSchema,
     unit: z.enum(['PIECE', 'KG']),
     revenueType: z.enum(['NORMAL', 'SALE_KG', 'SALE_PIECE']),
+    classification: z.enum(['NORMAL', 'SALE_KG', 'SALE_PIECE', 'UNCLASSIFIED']),
     orders: NonNegativeIntegerSchema,
     weight: IdosiWeightSummarySchema,
   })
@@ -144,9 +145,15 @@ const IdosiTotalsSchema = z
     cashOrders: NonNegativeIntegerSchema,
     transferOrders: NonNegativeIntegerSchema,
     revenueByType: IdosiRevenueByTypeSchema,
+    unclassifiedRevenue: MoneyVndSchema,
+    unclassifiedOrders: NonNegativeIntegerSchema,
     weight: IdosiWeightSummarySchema,
   })
   .passthrough();
+
+const IdosiGroupSchema = IdosiTotalsSchema.extend({
+  key: z.string().trim().min(1).max(500),
+}).passthrough();
 
 export interface IdosiOrderStatisticsPayload {
   readonly ok: true;
@@ -167,6 +174,7 @@ export interface IdosiOrderStatisticsPayload {
   readonly totals: z.infer<typeof IdosiTotalsSchema>;
   readonly products: {
     readonly totalQuantity: number;
+    readonly salePieceQuantity: number;
     readonly totalWeightKg: number;
     readonly productTypes: number;
     readonly ordersWithItems: number;
@@ -177,9 +185,9 @@ export interface IdosiOrderStatisticsPayload {
     readonly [key: string]: unknown;
   };
   readonly groups: {
-    readonly shift: readonly Record<string, unknown>[];
-    readonly day: readonly Record<string, unknown>[];
-    readonly month: readonly Record<string, unknown>[];
+    readonly shift: readonly z.infer<typeof IdosiGroupSchema>[];
+    readonly day: readonly z.infer<typeof IdosiGroupSchema>[];
+    readonly month: readonly z.infer<typeof IdosiGroupSchema>[];
     readonly [key: string]: unknown;
   };
   readonly serverTime: string;
@@ -214,6 +222,7 @@ export const IdosiOrderStatisticsPayloadSchema: z.ZodType<IdosiOrderStatisticsPa
     products: z
       .object({
         totalQuantity: NonNegativeIntegerSchema,
+        salePieceQuantity: NonNegativeIntegerSchema,
         totalWeightKg: NonNegativeNumberSchema,
         productTypes: NonNegativeIntegerSchema,
         ordersWithItems: NonNegativeIntegerSchema,
@@ -225,9 +234,9 @@ export const IdosiOrderStatisticsPayloadSchema: z.ZodType<IdosiOrderStatisticsPa
       .passthrough(),
     groups: z
       .object({
-        shift: z.array(z.record(z.string(), z.unknown())),
-        day: z.array(z.record(z.string(), z.unknown())),
-        month: z.array(z.record(z.string(), z.unknown())),
+        shift: z.array(IdosiGroupSchema),
+        day: z.array(IdosiGroupSchema),
+        month: z.array(IdosiGroupSchema),
       })
       .passthrough(),
     serverTime: IsoDateTimeSchema,
@@ -236,12 +245,39 @@ export const IdosiOrderStatisticsPayloadSchema: z.ZodType<IdosiOrderStatisticsPa
   .passthrough()
   .superRefine((payload, context) => {
     const byType = payload.totals.revenueByType;
-    if (byType.NORMAL + byType.SALE_KG + byType.SALE_PIECE !== payload.totals.revenue) {
+    if (
+      payload.totals.unclassifiedRevenue > byType.NORMAL ||
+      payload.totals.unclassifiedOrders > payload.totals.orders
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['totals', 'revenue'],
-        message: 'Revenue must equal NORMAL + SALE_KG + SALE_PIECE',
+        path: ['totals', 'unclassifiedRevenue'],
+        message: 'Unclassified revenue and order count must fit within NORMAL and total orders',
       });
+    }
+    const salePieces = payload.products.items.reduce(
+      (sum, item) => sum + (item.revenueType === 'SALE_PIECE' ? item.quantity : 0),
+      0,
+    );
+    if (!Number.isSafeInteger(salePieces) || salePieces !== payload.products.salePieceQuantity) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['products', 'salePieceQuantity'],
+        message: 'Sale piece quantity must equal the aggregate product lines',
+      });
+    }
+    for (const [index, item] of payload.products.items.entries()) {
+      if (
+        (item.revenueType === 'SALE_KG') !== (item.unit === 'KG') ||
+        (item.classification !== item.revenueType &&
+          !(item.revenueType === 'NORMAL' && item.classification === 'UNCLASSIFIED'))
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['products', 'items', index],
+          message: 'Product sale type, classification and unit do not match',
+        });
+      }
     }
   });
 
@@ -290,7 +326,7 @@ export const IdosiStatisticsSnapshotSchema: z.ZodType<IdosiStatisticsSnapshot> =
 export interface IdosiStatisticsState {
   readonly scope: IdosiStatisticsScope;
   readonly integrationStatus: 'CONFIGURED' | 'NOT_CONFIGURED';
-  readonly freshness: 'CURRENT' | 'STALE' | 'EMPTY';
+  readonly freshness: 'CURRENT' | 'STALE' | 'EMPTY' | 'RESYNC_REQUIRED';
   readonly snapshot: IdosiStatisticsSnapshot | null;
   readonly latestAttempt: IdosiStatisticsAttempt | null;
 }
@@ -299,7 +335,7 @@ export const IdosiStatisticsStateSchema: z.ZodType<IdosiStatisticsState, z.ZodTy
   .object({
     scope: IdosiStatisticsScopeSchema,
     integrationStatus: z.enum(['CONFIGURED', 'NOT_CONFIGURED']),
-    freshness: z.enum(['CURRENT', 'STALE', 'EMPTY']),
+    freshness: z.enum(['CURRENT', 'STALE', 'EMPTY', 'RESYNC_REQUIRED']),
     snapshot: IdosiStatisticsSnapshotSchema.nullable(),
     latestAttempt: IdosiStatisticsAttemptSchema.nullable(),
   })
