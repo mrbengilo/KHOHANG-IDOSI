@@ -18,6 +18,7 @@ import {
   CreateCharityExportRequestSchema,
   CharityExportResponseSchema,
   CharityExportsResponseSchema,
+  ListStoreSortingHistoryResponseSchema,
   type CreateStoreOutboundRequest,
   type OpenStoreInventoryBagRequest,
   type OutboundReason,
@@ -34,6 +35,7 @@ import {
   type ProductCharityBalance,
   type CreateCharityExportRequest,
   type CharityExport,
+  type ListStoreSortingHistoryResponse,
 } from '@idosi/contracts';
 import { reportUnauthorizedResponse } from '../../lib/session-expiry';
 import { addTabSessionHeader } from '../../lib/tab-session';
@@ -252,6 +254,23 @@ export async function moveProductCharityToSale(
 export async function listCharityExports(storeId?: string): Promise<CharityExport[]> {
   const query = storeId ? `?${new URLSearchParams({ storeId })}` : '';
   return CharityExportsResponseSchema.parse(await request(`/store-charity-exports${query}`)).data;
+}
+
+export async function listStoreSortingHistory(filters: {
+  readonly storeId?: string;
+  readonly date?: string;
+  readonly page: number;
+  readonly pageSize: number;
+}): Promise<ListStoreSortingHistoryResponse> {
+  const query = new URLSearchParams({
+    page: String(filters.page),
+    pageSize: String(filters.pageSize),
+  });
+  if (filters.storeId) query.set('storeId', filters.storeId);
+  if (filters.date) query.set('date', filters.date);
+  return ListStoreSortingHistoryResponseSchema.parse(
+    await request(`/store-sorting-history?${query}`),
+  );
 }
 
 export async function createCharityExport(

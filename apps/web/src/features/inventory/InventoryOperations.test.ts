@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   formatKg,
+  formatSortingTime,
   gramsToKilograms,
   isOutboundWeightAllowed,
   kilogramsToGrams,
@@ -37,5 +38,12 @@ describe('inventory outbound mode filters', () => {
       'DIRTY',
       'OTHER',
     ]);
+  });
+});
+
+describe('sorting history time', () => {
+  it('shows day-first Vietnam time for UTC instants, including across midnight', () => {
+    expect(formatSortingTime('2026-09-23T07:05:09.000Z')).toBe('23/09/2026 14:05:09');
+    expect(formatSortingTime('2026-09-22T17:00:00.000Z')).toBe('23/09/2026 00:00:00');
   });
 });

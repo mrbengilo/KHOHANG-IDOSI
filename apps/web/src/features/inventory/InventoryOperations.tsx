@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   OutboundReason,
   NewOutboundReason,
@@ -7,6 +7,7 @@ import type {
   StoreInventoryBagStatus,
   StoreOutbound,
   StoreSortedStock,
+  StoreSortingHistoryAction,
 } from '@idosi/contracts';
 import {
   ArrowDownToLine,
@@ -41,6 +42,7 @@ import {
   listInventoryBags,
   listInventoryLedger,
   listStoreSortedStocks,
+  listStoreSortingHistory,
   listStoreOutbounds,
   moveProductCharityToSale,
   openInventoryBag,
@@ -102,6 +104,40 @@ const ledgerOperationCopy = {
   QUARANTINE: 'Cách ly',
   RELEASE: 'Gỡ cách ly',
 } as const;
+
+const sortingHistoryCopy: Record<
+  StoreSortingHistoryAction,
+  { readonly label: string; readonly tone: 'neutral' | 'info' | 'success' | 'warning' | 'danger' }
+> = {
+  SORT_SALE: { label: 'Lọc vào Sale', tone: 'info' },
+  SORT_CHARITY: { label: 'Lọc vào Từ thiện', tone: 'warning' },
+  SORT_CANCEL: { label: 'Hủy', tone: 'danger' },
+  CHARITY_TO_SALE: { label: 'Từ thiện → Sale', tone: 'success' },
+  CHARITY_EXPORT: { label: 'Xuất từ thiện', tone: 'neutral' },
+};
+
+const SORTING_HISTORY_PAGE_SIZE = 20;
+
+const vietnamDateTimeParts = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Ho_Chi_Minh',
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23',
+});
+
+/** Sorting history reads day-first in Vietnam time regardless of the device time zone. */
+export function formatSortingTime(isoDateTime: string): string {
+  const parts = new Map(
+    vietnamDateTimeParts
+      .formatToParts(new Date(isoDateTime))
+      .map((part) => [part.type, part.value] as const),
+  );
+  return `${parts.get('day')}/${parts.get('month')}/${parts.get('year')} ${parts.get('hour')}:${parts.get('minute')}:${parts.get('second')}`;
+}
 
 const kilogramsPattern = /^(?:0|[1-9]\d*)(?:\.\d{1,3})?$/;
 
@@ -1317,6 +1353,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
       queryClient.invalidateQueries({ queryKey: ['store-inventory-bags'] }),
       queryClient.invalidateQueries({ queryKey: ['store-inventory-ledger'] }),
       queryClient.invalidateQueries({ queryKey: ['store-charity-exports'] }),
+      queryClient.invalidateQueries({ queryKey: ['store-sorting-history'] }),
     ]);
   };
   const sortingMutation = useMutation({
@@ -1553,47 +1590,46 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
               </Button>
             </section>
           ) : null}
-          {mode === 'SALE' ? (
-            <section className="panel table-panel">
-              <div className="section-heading section-heading--compact">
-                <div>
-                  <h2>Hàng Sale còn lại</h2>
-                  <p>Kg đã lọc trừ kg bán trên IDOSI, theo từng cửa hàng và mặt hàng.</p>
-                </div>
+          <section className="panel table-panel">
+            <div className="section-heading section-heading--compact">
+              <div>
+                <h2>Hàng Sale còn lại</h2>
+                <p>Kg đã lọc trừ kg bán trên IDOSI, theo từng cửa hàng và mặt hàng.</p>
               </div>
-              {saleByProduct.length === 0 ? (
-                <EmptyState
-                  title="Chưa có hàng Sale"
-                  detail="Lưu khối lượng Sale sau lọc để bắt đầu đối soát."
-                />
-              ) : (
-                <div className="responsive-table">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Cửa hàng</th>
-                        <th>Mặt hàng</th>
-                        <th>Sale còn</th>
+            </div>
+            {saleByProduct.length === 0 ? (
+              <EmptyState
+                title="Chưa có hàng Sale"
+                detail="Lưu khối lượng Sale sau lọc để bắt đầu đối soát."
+              />
+            ) : (
+              <div className="responsive-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Cửa hàng</th>
+                      <th>Mặt hàng</th>
+                      <th>Sale còn</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {saleByProduct.map((item) => (
+                      <tr key={`${item.storeId}:${item.productId}`}>
+                        <td data-label="Cửa hàng">{storeName(stores, item.storeId)}</td>
+                        <td data-label="Mặt hàng">
+                          {productNames.get(item.productId) ?? item.productId}
+                        </td>
+                        <td data-label="Sale còn">
+                          <strong>{formatKgExact(gramsToKilograms(item.saleGrams))}</strong>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {saleByProduct.map((item) => (
-                        <tr key={`${item.storeId}:${item.productId}`}>
-                          <td data-label="Cửa hàng">{storeName(stores, item.storeId)}</td>
-                          <td data-label="Mặt hàng">
-                            {productNames.get(item.productId) ?? item.productId}
-                          </td>
-                          <td data-label="Sale còn">
-                            <strong>{formatKgExact(gramsToKilograms(item.saleGrams))}</strong>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
-          ) : (
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+          {mode === 'SORTING' ? (
             <>
               <section className="panel table-panel">
                 <div className="section-heading section-heading--compact">
@@ -1681,11 +1717,173 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
                   </div>
                 )}
               </section>
+              <SortingHistoryPanel
+                key={effectiveStoreId || 'all-stores'}
+                storeId={effectiveStoreId}
+                stores={stores}
+                productNames={productNames}
+                showStore={role !== 'STORE'}
+              />
             </>
-          )}
+          ) : null}
         </>
       )}
     </>
+  );
+}
+
+function SortingHistoryPanel({
+  storeId,
+  stores,
+  productNames,
+  showStore,
+}: {
+  readonly storeId: string;
+  readonly stores: readonly Store[];
+  readonly productNames: ReadonlyMap<string, string>;
+  readonly showStore: boolean;
+}) {
+  const [date, setDate] = useState('');
+  const [page, setPage] = useState(1);
+  const headingId = useId();
+  const historyQuery = useQuery({
+    queryKey: ['store-sorting-history', storeId, date, page],
+    queryFn: () =>
+      listStoreSortingHistory({
+        ...(storeId ? { storeId } : {}),
+        ...(date ? { date } : {}),
+        page,
+        pageSize: SORTING_HISTORY_PAGE_SIZE,
+      }),
+    placeholderData: keepPreviousData,
+    retry: false,
+  });
+  const rows = historyQuery.data?.data ?? [];
+  const meta = historyQuery.data?.pagination;
+  const lastPage = Math.max(1, meta?.totalPages ?? 1);
+  return (
+    <section className="panel table-panel sorting-history" aria-labelledby={headingId}>
+      <div className="section-heading section-heading--compact sorting-history__heading">
+        <div>
+          <h2 id={headingId}>Lịch sử lọc</h2>
+          <p>
+            Ngày giờ, Mã bao, mặt hàng và số kg của từng lần lọc, chuyển Sale hoặc xuất từ thiện.
+          </p>
+        </div>
+        <div className="sorting-history__filters">
+          <label>
+            <span className="field-label">Ngày</span>
+            <input
+              type="date"
+              value={date}
+              onChange={(event) => {
+                setDate(event.target.value);
+                setPage(1);
+              }}
+            />
+          </label>
+          {date ? (
+            <Button
+              tone="secondary"
+              onClick={() => {
+                setDate('');
+                setPage(1);
+              }}
+            >
+              Tất cả ngày
+            </Button>
+          ) : null}
+        </div>
+      </div>
+      {historyQuery.isError ? (
+        <div
+          className="operation-notice operation-notice--error sorting-history__error"
+          role="alert"
+        >
+          <span>Không thể tải lịch sử lọc: {errorMessage(historyQuery.error)}</span>
+          <Button tone="secondary" onClick={() => void historyQuery.refetch()}>
+            Thử lại
+          </Button>
+        </div>
+      ) : historyQuery.isPending ? (
+        <p className="sorting-history__status" role="status">
+          Đang tải lịch sử lọc…
+        </p>
+      ) : rows.length === 0 ? (
+        <EmptyState
+          title="Chưa có lịch sử lọc"
+          detail={
+            date
+              ? 'Không có lần lọc hoặc xử lý nào trong ngày đã chọn.'
+              : 'Mỗi lần lưu khối lượng đã lọc sẽ được ghi lại tại đây.'
+          }
+        />
+      ) : (
+        <>
+          <div className="responsive-table" aria-busy={historyQuery.isFetching}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Thời gian</th>
+                  {showStore ? <th>Cửa hàng</th> : null}
+                  <th>Mã bao</th>
+                  <th>Mặt hàng</th>
+                  <th>Xử lý</th>
+                  <th>Khối lượng</th>
+                  <th>Người thực hiện</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.id}>
+                    <td data-label="Thời gian">
+                      <time dateTime={row.occurredAt}>{formatSortingTime(row.occurredAt)}</time>
+                    </td>
+                    {showStore ? (
+                      <td data-label="Cửa hàng">{storeName(stores, row.storeId)}</td>
+                    ) : null}
+                    <td data-label="Mã bao">{row.bagCode ?? '—'}</td>
+                    <td data-label="Mặt hàng">
+                      {productNames.get(row.productId) ?? row.productId}
+                    </td>
+                    <td data-label="Xử lý">
+                      <Badge tone={sortingHistoryCopy[row.action].tone}>
+                        {sortingHistoryCopy[row.action].label}
+                      </Badge>
+                    </td>
+                    <td data-label="Khối lượng">
+                      <strong>{formatKgExact(row.weightKg)}</strong>
+                    </td>
+                    <td data-label="Người thực hiện">{row.actorDisplayName ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {lastPage > 1 ? (
+            <nav className="sorting-history__pagination" aria-label="Phân trang lịch sử lọc">
+              <Button
+                tone="secondary"
+                disabled={page <= 1 || historyQuery.isFetching}
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+              >
+                Trang trước
+              </Button>
+              <span>
+                Trang {page}/{lastPage} · {meta?.totalItems ?? 0} lần
+              </span>
+              <Button
+                tone="secondary"
+                disabled={page >= lastPage || historyQuery.isFetching}
+                onClick={() => setPage((current) => current + 1)}
+              >
+                Trang sau
+              </Button>
+            </nav>
+          ) : null}
+        </>
+      )}
+    </section>
   );
 }
 

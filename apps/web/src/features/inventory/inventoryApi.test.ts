@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createStoreOutbound,
   listInventoryBags,
+  listStoreSortingHistory,
   openInventoryBag,
   reviewStoreOutbound,
 } from './inventoryApi';
@@ -187,6 +188,50 @@ describe('inventory API client', () => {
       code: 'VERSION_CONFLICT',
       message: 'Bao tồn kho đã thay đổi',
       requestId: 'req-1',
+    });
+  });
+
+  it('requests one page of sorting history filtered by store and Vietnam day', async () => {
+    const entry = {
+      id: '80000000-0000-4000-8000-000000000001',
+      storeId: bag.storeId,
+      productId: bag.productId,
+      inventoryLotId: bag.id,
+      bagCode: 'MB-00001',
+      action: 'SORT_SALE',
+      weightKg: '4.000',
+      actorDisplayName: 'Cửa hàng thử nghiệm',
+      occurredAt: '2026-09-23T07:05:09.000Z',
+    } as const;
+    const fetchMock = vi.fn((_input: string | URL | Request, _init?: RequestInit) =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            data: [entry],
+            pagination: { page: 2, pageSize: 20, totalItems: 21, totalPages: 2 },
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await listStoreSortingHistory({
+      storeId: bag.storeId,
+      date: '2026-09-23',
+      page: 2,
+      pageSize: 20,
+    });
+
+    expect(result.data).toEqual([entry]);
+    expect(result.pagination.totalPages).toBe(2);
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]), 'http://localhost');
+    expect(url.pathname).toMatch(/\/store-sorting-history$/);
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      page: '2',
+      pageSize: '20',
+      storeId: bag.storeId,
+      date: '2026-09-23',
     });
   });
 });

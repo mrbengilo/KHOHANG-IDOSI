@@ -177,6 +177,25 @@ test('sorting credits Sale kilograms and transfers weighed bags per product', as
       });
       return respond({ data: transfer });
     }
+    if (url.pathname.endsWith('/store-sorting-history'))
+      return respond({
+        data: created
+          ? [
+              {
+                id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+                storeId,
+                productId,
+                inventoryLotId: bagId,
+                bagCode: 'MB-00001',
+                action: 'SORT_SALE',
+                weightKg: '1.250',
+                actorDisplayName: 'Cửa hàng thử nghiệm',
+                occurredAt: '2026-09-23T07:05:09.000Z',
+              },
+            ]
+          : [],
+        pagination: created ? { ...pagination, totalItems: 1, totalPages: 1 } : pagination,
+      });
     if (url.pathname.endsWith('/store-sortings') && route.request().method() === 'POST') {
       created = route.request().postDataJSON() as Record<string, unknown>;
       stocks = [
@@ -227,6 +246,17 @@ test('sorting credits Sale kilograms and transfers weighed bags per product', as
     'reason',
     'weightKg',
   ]);
+  await expect(page.getByText('Đã cộng 1.250 kg vào mục Sale.')).toBeVisible();
+  const saleList = page.locator('section', {
+    has: page.getByRole('heading', { name: 'Hàng Sale còn lại' }),
+  });
+  await expect(saleList.getByRole('cell', { name: 'Đồ nam' })).toBeVisible();
+  await expect(saleList.getByRole('cell', { name: '1,25 kg' })).toBeVisible();
+  const history = page.getByRole('region', { name: 'Lịch sử lọc' });
+  await expect(history.getByText('23/09/2026 14:05:09')).toBeVisible();
+  await expect(history.getByRole('cell', { name: 'MB-00001' })).toBeVisible();
+  await expect(history.getByText('Lọc vào Sale')).toBeVisible();
+  await expect(history.getByRole('cell', { name: '1,25 kg' })).toBeVisible();
   for (const width of [360, 390, 412, 768, 1366, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
