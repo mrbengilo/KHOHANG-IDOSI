@@ -92,10 +92,15 @@ export function WaitlistPanel({
   const principal = sessionQuery.data?.principal;
   const viewerAccountId = principal?.accountId ?? 'unverified';
   const canRespond =
-    role === 'STORE' &&
-    principal?.role === 'STORE' &&
-    typeof scopeStoreId === 'string' &&
-    principal.storeId === scopeStoreId;
+    (role === 'STORE' &&
+      principal?.role === 'STORE' &&
+      typeof scopeStoreId === 'string' &&
+      principal.storeId === scopeStoreId) ||
+    (role === 'HTKD' && principal?.role === 'HTKD') ||
+    (role === 'WHOLESALE' && principal?.role === 'WHOLESALE');
+  const canCancelTicket =
+    (role === 'STORE' && principal?.role === 'STORE' && principal.storeId === scopeStoreId) ||
+    (role === 'WHOLESALE' && principal?.role === 'WHOLESALE');
   const ticketFilters = scopeStoreId ? { storeId: scopeStoreId } : {};
   const scopeQueryKey = scopeStoreId ?? 'accessible';
   const ticketQueryKey = ['wait-tickets', viewerAccountId, scopeQueryKey] as const;
@@ -198,7 +203,7 @@ export function WaitlistPanel({
 
   const cancel = async () => {
     if (
-      !canRespond ||
+      !canCancelTicket ||
       !cancelTarget ||
       cancelReasonInvalid ||
       cancelInFlight.current ||
@@ -277,7 +282,7 @@ export function WaitlistPanel({
             <p>
               {canRespond
                 ? 'Xác nhận toàn bộ số lượng ưu tiên được đề nghị. Hàng được cấp sẽ giữ lại để giao chung với đơn thường kế tiếp, không chiếm lượt đặt thường.'
-                : 'Chế độ giám sát chỉ đọc; phản hồi ưu tiên chỉ xuất hiện cho đúng cửa hàng.'}
+                : 'Chế độ giám sát chỉ đọc.'}
             </p>
           </div>
           {!canRespond ? <Badge tone="info">Chỉ đọc</Badge> : null}
@@ -305,7 +310,7 @@ export function WaitlistPanel({
         ) : null}
         {!loading && !loadError
           ? tickets.map((ticket) => {
-              const canCancel = canRespond && cancellableStatuses.has(ticket.status);
+              const canCancel = canCancelTicket && cancellableStatuses.has(ticket.status);
               return (
                 <article key={ticket.id}>
                   <div>

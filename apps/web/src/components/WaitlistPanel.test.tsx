@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { sessionQueryKey } from '../lib/auth';
 import { WaitlistPanel } from './WaitlistPanel';
+import type { Role } from '../lib/types';
 
 const accountId = '50000000-0000-4000-8000-000000000001';
 const storeId = '20000000-0000-4000-8000-000000000001';
@@ -62,7 +63,7 @@ function priorityOffer(id: string, waitTicketId: string, targetStoreId = storeId
 
 function renderPanel(
   session: Session,
-  role: 'ADMIN' | 'HTKD' | 'STORE',
+  role: Role,
   tickets: WaitTicket[],
   offers: PriorityOffer[],
   scopeStoreId?: string,
@@ -133,4 +134,30 @@ describe('waitlist panel authorization projection', () => {
     expect(html).not.toContain('Hủy phiếu</button>');
     expect(html).toContain('Mở phiếu');
   });
+
+  it.each(['HTKD', 'WHOLESALE'] as const)(
+    'allows %s to respond to scoped priority offers',
+    (role) => {
+      const session: Session = {
+        ...storeSession(),
+        principal: {
+          ...storeSession().principal,
+          assignedStoreIds: [storeId],
+          role,
+          storeId: null,
+        },
+      };
+      const ticketId = '70000000-0000-4000-8000-000000000004';
+      const html = renderPanel(
+        session,
+        role,
+        [waitTicket(ticketId)],
+        [priorityOffer('71000000-0000-4000-8000-000000000004', ticketId)],
+        storeId,
+      );
+      expect(html).toContain('Nhận đủ');
+      expect(html).toContain('Từ chối');
+      expect(html.includes('Hủy phiếu</button>')).toBe(role === 'WHOLESALE');
+    },
+  );
 });

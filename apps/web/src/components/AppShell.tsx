@@ -24,6 +24,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { DashboardSkeleton } from './Skeleton';
+import { PriorityOfferNotice } from './PriorityOfferNotice';
 import { ApiClientError, getStoreKind, logout, mockModeEnabled } from '../lib/api';
 import { canAccessRoute, canShowNavigation } from '../lib/access';
 import { clearAuthenticatedSession, useSession } from '../lib/auth';
@@ -317,6 +318,7 @@ export function AppShell() {
         />
       ) : null}
       <main className="app-main" key={location.pathname}>
+        <PriorityOfferNotice role={role} />
         <Outlet context={{ role, storeKind }} />
       </main>
       <nav aria-label="Điều hướng mobile" className="mobile-bottom-nav">
