@@ -2918,7 +2918,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         requestId: context.requestId,
       });
       return {
-        data: StoreSortingResultSchema.parse(result.replayed ? result.responseBody : result.value),
+        data: storeSortingResultDto(result.replayed ? result.responseBody : result.value),
         replayed: result.replayed,
       };
     });
@@ -2983,7 +2983,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
           ? await moveDatabaseCharityToSale(db, command)
           : await exportDatabaseCharity(db, command);
       return {
-        data: StoreSortingResultSchema.parse(result.replayed ? result.responseBody : result.value),
+        data: storeSortingResultDto(result.replayed ? result.responseBody : result.value),
         replayed: result.replayed,
       };
     });
@@ -4021,6 +4021,25 @@ function inventoryLedgerDto(record: StoreInventoryLedgerRecord): StoreInventoryB
     actorAccountId: record.actorUserId,
     createdAt: record.occurredAt.toISOString(),
   };
+}
+
+/**
+ * The database layer names the source bag `inventoryBagId`, while the public contract calls it
+ * `inventoryLotId`. Idempotent replays return the body stored at first commit, which always has
+ * the database shape, so both live and replayed results go through this mapping.
+ */
+function storeSortingResultDto(body: unknown): StoreSortingResult {
+  const row = (body ?? {}) as {
+    readonly stockId?: unknown;
+    readonly inventoryBagId?: unknown;
+    readonly inventoryLotId?: unknown;
+    readonly inventoryVersion?: unknown;
+  };
+  return StoreSortingResultSchema.parse({
+    stockId: row.stockId ?? null,
+    inventoryLotId: row.inventoryLotId ?? row.inventoryBagId,
+    inventoryVersion: row.inventoryVersion,
+  });
 }
 
 function inventoryLedgerPage(
