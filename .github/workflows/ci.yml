@@ -108,6 +108,9 @@ jobs:
       - name: Run responsive browser smoke tests
         run: npm run e2e
 
+      - name: Run production sorting browser test
+        run: npm run e2e:production -w @idosi/web
+
       - name: Run live browser workflows against API and PostgreSQL
         env:
           LIVE_E2E_ADMIN_PASSWORD: ci-bootstrap-password-not-for-production

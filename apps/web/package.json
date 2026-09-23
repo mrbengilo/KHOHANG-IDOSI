@@ -8,6 +8,7 @@
     "build:e2e": "tsc --noEmit && vite build --mode e2e",
     "dev": "vite --host 0.0.0.0",
     "e2e": "playwright test",
+    "e2e:production": "playwright test --config playwright.production.config.ts",
     "e2e:live": "playwright test --config playwright.live.config.ts",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run src --pool=threads --maxWorkers=1 --no-file-parallelism --configLoader native",
