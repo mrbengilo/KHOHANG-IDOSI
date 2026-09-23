@@ -209,6 +209,7 @@ services:
         VITE_ENABLE_MOCK_FALLBACK: 'false'
     environment:
       NODE_ENV: production
+      WEB_ASSET_SOURCE: /app/release-assets
       WEB_HOST: 0.0.0.0
       WEB_PORT: 8080
       WEB_ROOT: /app/public
@@ -231,6 +232,8 @@ services:
     restart: unless-stopped
     stop_grace_period: 20s
     <<: *node-security
+    volumes:
+      - web-assets:/app/public/assets
     networks:
       - edge
 
@@ -309,3 +312,4 @@ volumes:
   caddy-config:
   caddy-data:
   postgres-data:
+  web-assets:

@@ -71,6 +71,35 @@ sudo ./infra/scripts/backup-db.sh \
 
 Lần triển khai đầu tiên chưa có database đang chạy thì bỏ qua bước backup.
 
+### Giữ asset của các tab đang mở
+
+Web dùng volume `khohang-idosi_web-assets` để giữ các file `/assets` có hash qua các lần
+thay container. Trước **lần đầu** nâng cấp từ phiên bản chưa có volume này, chuyển asset
+của container web đang chạy vào volume **trước khi** thay container:
+
+```bash
+set -euo pipefail
+env_file=/etc/khohang-idosi/production.env
+old_web="$(docker compose --env-file "$env_file" ps -q web)"
+test -n "$old_web"
+old_image="$(docker inspect --format '{{.Config.Image}}' "$old_web")"
+docker volume create khohang-idosi_web-assets >/dev/null
+docker cp "$old_web:/app/public/assets/." - | docker run --rm -i \
+  --network none --read-only --user 0:0 \
+  --mount type=volume,source=khohang-idosi_web-assets,target=/retained \
+  --entrypoint /bin/sh "$old_image" \
+  -c 'tar -xf - -C /retained && chown -R 1000:1000 /retained'
+docker run --rm --network none --read-only \
+  --mount type=volume,source=khohang-idosi_web-assets,target=/retained,readonly \
+  --entrypoint /bin/sh "$old_image" \
+  -c 'test -n "$(find /retained -type f -print -quit)"'
+```
+
+Không xóa volume này khi deploy hoặc rollback. Các tab tham chiếu tới asset đã bị xóa
+trước bước chuyển này cần tải lại trang một lần; những asset còn trong container cũ
+sẽ tiếp tục được phục vụ sau nâng cấp. Theo dõi dung lượng volume và chỉ dọn các
+asset cũ sau khi chắc chắn không còn tab nào dùng phiên bản tương ứng.
+
 ## Build và triển khai
 
 VPS build ảnh bất biến từ đúng checkout; `--pull never` ngăn Compose tìm registry khi dùng prefix
