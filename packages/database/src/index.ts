@@ -95,6 +95,7 @@ export type {
 } from './order-sessions.js';
 
 export {
+  dispatchWarehouseOutboundInTransaction,
   dispatchWarehouseOutboundRequest,
   getWarehouseOutboundRequest,
   listWarehouseOutboundRequests,
@@ -104,11 +105,13 @@ export {
   WarehouseOutboundValidationError,
 } from './outbound-requests.js';
 export type {
+  DispatchWarehouseOutboundInTransactionInput,
   DispatchWarehouseOutboundRequestInput,
   ListWarehouseOutboundRequestsInput,
   WarehouseOutboundDatabaseStatus,
   WarehouseOutboundRequestLineRecord,
   WarehouseOutboundRequestPage,
+  WarehouseOutboundDispatcher,
   WarehouseOutboundRequestRecord,
 } from './outbound-requests.js';
 

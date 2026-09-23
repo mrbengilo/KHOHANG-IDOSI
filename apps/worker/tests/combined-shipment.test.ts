@@ -9,6 +9,7 @@ import {
   dispatchWarehouseOutboundRequest,
   finalizeStoreReceipt,
   inventorySnapshots,
+  listStoreReceiptSources,
   listWarehouseOutboundRequests,
   mergedOrders,
   mergedOrderItems,
@@ -305,16 +306,35 @@ describePostgres('priority goods join the next ordinary shipment', () => {
           .from(reservations)
           .where(eq(reservations.outboundRequestLineId, outbound.lines[0]!.id));
         expect(linked.map((row) => row.allocationLineId).sort()).toEqual(sourceIds.sort());
-        const dispatch = {
-          outboundRequestId: outbound.id,
-          expectedVersion: 0,
-          dispatchedByUserId: admin.id,
-          dispatchedAt: now,
-          idempotencyKey: randomUUID(),
-          requestHash: randomUUID(),
-        };
-        await dispatchWarehouseOutboundRequest(db, dispatch);
-        expect((await dispatchWarehouseOutboundRequest(db, dispatch)).replayed).toBe(true);
+        // The grouped shipment is released by the run itself, once, even under a concurrent retry.
+        expect(outbound).toMatchObject({
+          status: 'dispatched',
+          version: 1,
+          dispatchedByUserId: null,
+        });
+        expect(outbound.lines[0]!.dispatchedQuantity).toBe(6);
+        await expect(
+          dispatchWarehouseOutboundRequest(db, {
+            outboundRequestId: outbound.id,
+            expectedVersion: 0,
+            dispatchedByUserId: admin.id,
+            dispatchedAt: now,
+            idempotencyKey: randomUUID(),
+            requestHash: randomUUID(),
+          }),
+        ).rejects.toThrow(/not ready for dispatch/);
+        const sources = await listStoreReceiptSources(db, {
+          page: 1,
+          pageSize: 20,
+          storeId: store!.id,
+        });
+        expect(sources.data.map((source) => source.id)).toEqual([outbound.id]);
+        const [heldBalance] = await db
+          .select()
+          .from(warehouseBalances)
+          .where(eq(warehouseBalances.productId, product!.id));
+        // Releasing the shipment does not move stock; only the finalized receipt does.
+        expect(heldBalance).toMatchObject({ onHandQuantity: 10, reservedQuantity: 6 });
         const receiptLines = [
           { productId: product!.id, approvedQuantity: 6, receivedQuantity: received },
         ];

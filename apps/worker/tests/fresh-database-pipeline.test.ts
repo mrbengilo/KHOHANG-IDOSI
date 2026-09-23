@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import {
   allocationLines,
   applyWarehouseMovement,
+  auditLogs,
   createDatabase,
   createOrderSession,
   dispatchWarehouseOutboundRequest,
@@ -16,6 +17,7 @@ import {
   submitOrderRequest,
   transitionOrderSession,
   users,
+  WarehouseOutboundConflictError,
 } from '@idosi/database';
 import { and, eq, isNull } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
@@ -25,7 +27,7 @@ import { PostgresAllocationJobRepository } from '../src/postgres-repository.js';
 const describePostgres = process.env.RUN_POSTGRES_TESTS === '1' ? describe : describe.skip;
 
 describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
-  it('creates a session, allocates an order, materializes and dispatches an outbound exactly once', async () => {
+  it('creates a session, allocates an order and releases one shipment to the store exactly once', async () => {
     const databaseUrl = process.env.DATABASE_URL;
     if (!databaseUrl) throw new Error('DATABASE_URL is required when RUN_POSTGRES_TESTS=1.');
     const client = createDatabase({
@@ -197,47 +199,84 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
         waitlistedQuantity: 0,
       });
 
+      // The allocation run releases its own shipment: without this the store never sees it.
       const outbounds = await listWarehouseOutboundRequests(client.db, {
         page: 1,
         pageSize: 20,
         storeIds: [store.id],
         allocationRunId: allocation.resourceId,
-        status: 'reserved',
       });
       expect(outbounds.data).toHaveLength(1);
       const outbound = outbounds.data[0]!;
+      expect(outbound).toMatchObject({
+        status: 'dispatched',
+        version: 1,
+        dispatchedByUserId: null,
+        dispatchedAt: processedAt,
+      });
       expect(outbound.lines).toHaveLength(1);
       expect(outbound.lines[0]).toMatchObject({
         productId: product.id,
         approvedQuantity: 3,
         reservedQuantity: 3,
-        dispatchedQuantity: 0,
+        dispatchedQuantity: 3,
+        receivedQuantity: 0,
       });
       const [linkedReservation] = await client.db
-        .select({ outboundRequestLineId: reservations.outboundRequestLineId })
+        .select({
+          outboundRequestLineId: reservations.outboundRequestLineId,
+          status: reservations.status,
+        })
         .from(reservations)
         .where(eq(reservations.allocationLineId, outbound.lines[0]!.allocationLineId))
         .limit(1);
-      expect(linkedReservation?.outboundRequestLineId).toBe(outbound.lines[0]!.id);
+      // Dispatch keeps the stock reserved; it only leaves on-hand when HTKD finalizes the receipt.
+      expect(linkedReservation).toEqual({
+        outboundRequestLineId: outbound.lines[0]!.id,
+        status: 'active',
+      });
+      const dispatchAudits = await client.db
+        .select({ actorUserId: auditLogs.actorUserId, metadata: auditLogs.metadata })
+        .from(auditLogs)
+        .where(
+          and(
+            eq(auditLogs.entityId, outbound.id),
+            eq(auditLogs.action, 'OUTBOUND_REQUEST_DISPATCHED'),
+          ),
+        );
+      expect(dispatchAudits).toEqual([
+        {
+          actorUserId: null,
+          metadata: { dispatchedBy: 'system', trigger: 'allocation-finalize' },
+        },
+      ]);
 
-      const dispatchInput = {
-        outboundRequestId: outbound.id,
-        expectedVersion: outbound.version,
-        dispatchedByUserId: administrator.id,
-        dispatchNote: 'Integration dispatch handoff',
-        dispatchedAt: new Date(processedAt.getTime() + 1_000),
-        idempotencyKey: `integration-dispatch-${runKey}`,
-        requestHash: `integration-dispatch-hash-${runKey}`,
-        requestId: `integration-dispatch-${runKey}`,
-      } as const;
-      const dispatched = await dispatchWarehouseOutboundRequest(client.db, dispatchInput);
-      const replay = await dispatchWarehouseOutboundRequest(client.db, dispatchInput);
-      expect(dispatched.replayed).toBe(false);
-      expect(replay.replayed).toBe(true);
-      if (dispatched.replayed) throw new Error('Fresh dispatch unexpectedly replayed.');
-      expect(dispatched.value.status).toBe('dispatched');
-      expect(dispatched.value.version).toBe(1);
-      expect(dispatched.value.lines[0]!.dispatchedQuantity).toBe(3);
+      // A replayed 09:00 job must not create or dispatch a second shipment.
+      const replayedAllocation = await workerRepository.expireOffersAndFinalizeAllocation(
+        scheduled,
+        processedAt,
+      );
+      expect(replayedAllocation.replayed).toBe(true);
+      expect(
+        (
+          await listWarehouseOutboundRequests(client.db, {
+            page: 1,
+            pageSize: 20,
+            storeIds: [store.id],
+          })
+        ).data,
+      ).toHaveLength(1);
+
+      // Manual dispatch still exists for legacy rows, but cannot release a shipment twice.
+      await expect(
+        dispatchWarehouseOutboundRequest(client.db, {
+          outboundRequestId: outbound.id,
+          expectedVersion: 0,
+          dispatchedByUserId: administrator.id,
+          idempotencyKey: `integration-dispatch-${runKey}`,
+          requestHash: `integration-dispatch-hash-${runKey}`,
+        }),
+      ).rejects.toBeInstanceOf(WarehouseOutboundConflictError);
 
       const sources = await listStoreReceiptSources(client.db, {
         page: 1,
