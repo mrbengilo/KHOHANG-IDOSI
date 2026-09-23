@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { tabApi } from './tab-api';
 
 const apiOrigin = 'http://127.0.0.1:3100';
 const adminUsername = process.env.LIVE_E2E_ADMIN_USERNAME ?? 'ci.admin';
@@ -36,11 +37,9 @@ function hoChiMinhBusinessDate(): string {
 
 async function ensureOpenOrderSession(page: Page): Promise<string> {
   const businessDate = hoChiMinhBusinessDate();
-  const existingResponse = await page
-    .context()
-    .request.get(
-      `${apiOrigin}/api/v1/order-sessions?dateFrom=${businessDate}&dateTo=${businessDate}&page=1&pageSize=20`,
-    );
+  const existingResponse = await tabApi(page).get(
+    `${apiOrigin}/api/v1/order-sessions?dateFrom=${businessDate}&dateTo=${businessDate}&page=1&pageSize=20`,
+  );
   expect(existingResponse.status()).toBe(200);
   const existing = (await existingResponse.json()) as {
     data: Array<{ id: string; status: string; version: number }>;
@@ -50,7 +49,7 @@ async function ensureOpenOrderSession(page: Page): Promise<string> {
 
   let targetSession = existing.data.find((session) => session.status === 'SCHEDULED');
   if (!targetSession) {
-    const createResponse = await page.context().request.post(`${apiOrigin}/api/v1/order-sessions`, {
+    const createResponse = await tabApi(page).post(`${apiOrigin}/api/v1/order-sessions`, {
       data: {
         allocationStartsAt: `${businessDate}T23:59:59+07:00`,
         businessDate,
@@ -67,12 +66,13 @@ async function ensureOpenOrderSession(page: Page): Promise<string> {
     targetSession = created.data;
   }
 
-  const openResponse = await page
-    .context()
-    .request.post(`${apiOrigin}/api/v1/order-sessions/${targetSession.id}/transition`, {
+  const openResponse = await tabApi(page).post(
+    `${apiOrigin}/api/v1/order-sessions/${targetSession.id}/transition`,
+    {
       data: { expectedVersion: targetSession.version, status: 'OPEN' },
       headers: { 'idempotency-key': `live-open-session-transition-${runSuffix}` },
-    });
+    },
+  );
   expect(openResponse.status()).toBe(200);
   const opened = (await openResponse.json()) as { data: { id: string; status: string } };
   expect(opened.data.status).toBe('OPEN');
@@ -195,11 +195,9 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   expect((await disableGroupResponse).status()).toBe(200);
   await expect(page.getByText(`Nhóm ${groupCode}: ngừng hoạt động.`)).toBeVisible();
 
-  const persistedGroupsResponse = await page
-    .context()
-    .request.get(
-      `${apiOrigin}/api/v1/store-groups?page=1&pageSize=20&search=${encodeURIComponent(groupCode)}`,
-    );
+  const persistedGroupsResponse = await tabApi(page).get(
+    `${apiOrigin}/api/v1/store-groups?page=1&pageSize=20&search=${encodeURIComponent(groupCode)}`,
+  );
   expect(persistedGroupsResponse.status()).toBe(200);
   const persistedGroups = (await persistedGroupsResponse.json()) as {
     data: Array<{ code: string; name: string; status: string; version: number }>;
@@ -212,11 +210,9 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
       version: 2,
     }),
   );
-  const persistedStoresResponse = await page
-    .context()
-    .request.get(
-      `${apiOrigin}/api/v1/stores?page=1&pageSize=20&search=${encodeURIComponent(storeCode)}`,
-    );
+  const persistedStoresResponse = await tabApi(page).get(
+    `${apiOrigin}/api/v1/stores?page=1&pageSize=20&search=${encodeURIComponent(storeCode)}`,
+  );
   expect(persistedStoresResponse.status()).toBe(200);
   const persistedStores = (await persistedStoresResponse.json()) as {
     data: Array<{ code: string; name: string; status: string; version: number }>;
@@ -312,11 +308,9 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   expect((await cancelResponsePromise).status()).toBe(200);
   await expect(sessionRow.getByText('Đã hủy')).toBeVisible();
 
-  const persistedSessions = await page
-    .context()
-    .request.get(
-      `${apiOrigin}/api/v1/order-sessions?dateFrom=${businessDate}&dateTo=${businessDate}&page=1&pageSize=20`,
-    );
+  const persistedSessions = await tabApi(page).get(
+    `${apiOrigin}/api/v1/order-sessions?dateFrom=${businessDate}&dateTo=${businessDate}&page=1&pageSize=20`,
+  );
   expect(persistedSessions.status()).toBe(200);
   const persistedPayload = (await persistedSessions.json()) as {
     data: Array<{ businessDate: string; status: string }>;
@@ -365,9 +359,9 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   expect((await assignResponsePromise).status()).toBe(200);
   await expect(page.getByText('Đã lưu 2 cửa hàng đang phụ trách.')).toBeVisible();
 
-  const persistedAssignments = await page
-    .context()
-    .request.get(`${apiOrigin}/api/v1/admin/accounts/${htkdAccount.data.id}/assignments`);
+  const persistedAssignments = await tabApi(page).get(
+    `${apiOrigin}/api/v1/admin/accounts/${htkdAccount.data.id}/assignments`,
+  );
   expect(persistedAssignments.status()).toBe(200);
   const persistedAssignmentPayload = (await persistedAssignments.json()) as {
     data: { assignments: Array<{ storeId: string }> };
@@ -388,11 +382,9 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
 
   const storeUsername = `live.store.${runSuffix}`.slice(0, 80);
   const storePassword = 'Live-store-password-2026!';
-  const existingAccountResponse = await page
-    .context()
-    .request.get(
-      `${apiOrigin}/api/v1/admin/accounts?search=${encodeURIComponent(storeUsername)}&page=1&pageSize=20`,
-    );
+  const existingAccountResponse = await tabApi(page).get(
+    `${apiOrigin}/api/v1/admin/accounts?search=${encodeURIComponent(storeUsername)}&page=1&pageSize=20`,
+  );
   expect(existingAccountResponse.status()).toBe(200);
   const existingAccountPayload = (await existingAccountResponse.json()) as {
     data: Array<{ username: string }>;
@@ -505,11 +497,9 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   await expect(orderCard.getByText('Đã hủy')).toBeVisible();
   await expect(page.getByText('Đã hủy yêu cầu đặt hàng.')).toBeVisible();
 
-  const persistedOrders = await page
-    .context()
-    .request.get(
-      `${apiOrigin}/api/v1/order-requests?storeId=${orderPayload.data.storeId}&sessionId=${openSessionId}&page=1&pageSize=20`,
-    );
+  const persistedOrders = await tabApi(page).get(
+    `${apiOrigin}/api/v1/order-requests?storeId=${orderPayload.data.storeId}&sessionId=${openSessionId}&page=1&pageSize=20`,
+  );
   expect(persistedOrders.status()).toBe(200);
   const persistedOrderPayload = (await persistedOrders.json()) as {
     data: Array<{
@@ -528,9 +518,9 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
     }),
   );
 
-  const forbiddenAdminApi = await page
-    .context()
-    .request.get(`${apiOrigin}/api/v1/admin/accounts?page=1&pageSize=20`);
+  const forbiddenAdminApi = await tabApi(page).get(
+    `${apiOrigin}/api/v1/admin/accounts?page=1&pageSize=20`,
+  );
   expect(forbiddenAdminApi.status()).toBe(403);
   const storeAllocationResponsePromise = page.waitForResponse(
     (response) =>
