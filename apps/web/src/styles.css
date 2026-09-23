@@ -3136,7 +3136,7 @@ label:has(:required) > .field-label::after {
   }
   /* Thu gọn box trên mobile: bớt padding và khoảng cách để bớt chiếm màn. */
   .page-header {
-    padding: 12px 14px;
+    padding: 12px 14px 12px 68px;
   }
   .panel,
   .filter-card,
