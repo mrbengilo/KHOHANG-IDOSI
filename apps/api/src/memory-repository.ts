@@ -82,7 +82,10 @@ import type {
   StorePartnerInbound,
   StoreOutbound,
   StoreSortedStock,
+  StoreSortingHistoryAction,
+  StoreSortingHistoryEntry,
   StoreSortingResult,
+  ListStoreSortingHistoryQuery,
   HeldAllocation,
   StoreReceiptSource,
   SubmitStoreReceiptRequest,
@@ -130,6 +133,7 @@ import type { MonthlyReportScope } from '@idosi/database';
 import { ApiError, conflict, forbidden, notFound, unauthenticated } from './errors.js';
 import { sanitizeAuditObject } from './audit-sanitization.js';
 import { monthlyOperationalReportDto } from './monthly-report.js';
+import { asiaHoChiMinhDateRange } from './time.js';
 import type {
   AccountCredentials,
   HtkdAssignmentsState,
@@ -357,6 +361,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly sortedSaleCredited = new Map<string, bigint>();
   private readonly sortedSaleTransferredOutWeight = new Map<string, bigint>();
   private readonly charityExports = new Map<string, CharityExport>();
+  private readonly sortingHistory: StoreSortingHistoryEntry[] = [];
   private readonly charityMutations = new Map<string, { hash: string; resourceId: string }>();
   private readonly productCharityMoves = new Map<
     string,
@@ -3055,6 +3060,19 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         this.settleMemorySaleProduct(bag.storeId, bag.productId);
       }
     }
+    this.recordSortingHistory(
+      actor,
+      bag.storeId,
+      bag.productId,
+      bag.id,
+      input.reason === 'SALE'
+        ? 'SORT_SALE'
+        : input.reason === 'CHARITY'
+          ? 'SORT_CHARITY'
+          : 'SORT_CANCEL',
+      grams,
+      now,
+    );
     const result = {
       stockId: input.reason === 'CANCEL' ? null : stock!.id,
       inventoryLotId: bag.id,
@@ -3158,6 +3176,15 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       this.sortedSaleCredited.set(stock.id, (this.sortedSaleCredited.get(stock.id) ?? 0n) + grams);
       this.settleMemorySaleProduct(stock.storeId, stock.productId);
     }
+    this.recordSortingHistory(
+      actor,
+      stock.storeId,
+      stock.productId,
+      stock.inventoryLotId,
+      destination === 'SALE' ? 'CHARITY_TO_SALE' : 'CHARITY_EXPORT',
+      grams,
+      this.now().toISOString(),
+    );
     const bag = this.requireInventoryBag(stock.inventoryLotId);
     const result = { stockId: stock.id, inventoryLotId: bag.id, inventoryVersion: bag.version };
     this.sortingMutations.set(scopedKey, { hash: requestHash, result });
@@ -3347,6 +3374,15 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         updatedAt: now,
       });
       this.sortedSaleCredited.set(lot.id, (this.sortedSaleCredited.get(lot.id) ?? 0n) + moved);
+      this.recordSortingHistory(
+        actor,
+        lot.storeId,
+        lot.productId,
+        lot.inventoryLotId,
+        'CHARITY_TO_SALE',
+        moved,
+        now,
+      );
     }
     const creditKey = `${input.storeId}:${input.productId}`;
     if (!this.sortedSaleFirstCreditPeriod.has(creditKey))
@@ -3380,6 +3416,53 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
       .slice(0, 500)
       .map((row) => structuredClone(row));
+  }
+
+  public async listStoreSortingHistory(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreSortingHistoryQuery,
+  ): Promise<Page<StoreSortingHistoryEntry>> {
+    this.assertRequestedStoreScope(actor, query.storeId);
+    const range = query.date === undefined ? null : asiaHoChiMinhDateRange(query.date, query.date);
+    const rows = this.sortingHistory
+      .filter((row) => canAccessStore(actor, row.storeId))
+      .filter((row) => query.storeId === undefined || row.storeId === query.storeId)
+      .filter((row) => {
+        if (!range) return true;
+        const at = new Date(row.occurredAt);
+        return at >= range.start && at < range.endExclusive;
+      })
+      .toSorted(
+        (left, right) =>
+          right.occurredAt.localeCompare(left.occurredAt) || right.id.localeCompare(left.id),
+      );
+    return {
+      data: slicePage(rows, query.page, query.pageSize).map((row) => structuredClone(row)),
+      pagination: pagination(query.page, query.pageSize, rows.length),
+    };
+  }
+
+  private recordSortingHistory(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+    productId: string,
+    inventoryLotId: string,
+    action: StoreSortingHistoryAction,
+    grams: bigint,
+    occurredAt: string,
+  ): void {
+    const bag = this.inventoryBags.get(inventoryLotId);
+    this.sortingHistory.push({
+      id: randomUUID(),
+      storeId,
+      productId,
+      inventoryLotId: bag ? bag.id : null,
+      bagCode: bag?.bagCode ?? null,
+      action,
+      weightKg: gramsToKilogramsExact(grams),
+      actorDisplayName: actor.displayName,
+      occurredAt,
+    });
   }
 
   public async createCharityExport(
@@ -3421,6 +3504,15 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         version: lot.version + 1,
         updatedAt: now,
       });
+      this.recordSortingHistory(
+        actor,
+        lot.storeId,
+        lot.productId,
+        lot.inventoryLotId,
+        'CHARITY_EXPORT',
+        grams,
+        now,
+      );
     }
     const created: CharityExport = {
       id: randomUUID(),

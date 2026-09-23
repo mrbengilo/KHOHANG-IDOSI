@@ -59,7 +59,9 @@ import type {
   StoreOrderRequest,
   StoreOutbound,
   StoreSortedStock,
+  StoreSortingHistoryEntry,
   StoreSortingResult,
+  ListStoreSortingHistoryQuery,
   HeldAllocation,
   StoreReceiptSource,
   StorePartnerInbound,
@@ -620,6 +622,10 @@ export interface WarehouseRepository {
     actor: AuthenticatedPrincipal,
     storeId: string | undefined,
   ): Promise<readonly CharityExport[]>;
+  listStoreSortingHistory(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreSortingHistoryQuery,
+  ): Promise<Page<StoreSortingHistoryEntry>>;
   createCharityExport(
     actor: AuthenticatedPrincipal,
     input: CreateCharityExportRequest,

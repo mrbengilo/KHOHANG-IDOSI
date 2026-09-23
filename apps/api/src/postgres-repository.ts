@@ -79,7 +79,9 @@ import type {
   StorePartnerInbound,
   StoreOutbound,
   StoreSortedStock,
+  StoreSortingHistoryEntry,
   StoreSortingResult,
+  ListStoreSortingHistoryQuery,
   HeldAllocation,
   StoreReceiptSource,
   SubmitStoreReceiptRequest,
@@ -133,6 +135,8 @@ import {
   exportCharity as exportDatabaseCharity,
   getStoreSortedStock as getDatabaseStoreSortedStock,
   listStoreSortedStocks as listDatabaseStoreSortedStocks,
+  listStoreSortingHistory as listDatabaseStoreSortingHistory,
+  type StoreSortingHistoryRecord,
   moveCharityToSale as moveDatabaseCharityToSale,
   createStorePartnerInbound as createDatabaseStorePartnerInbound,
   type DatabaseUserRole,
@@ -3022,6 +3026,26 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     return (await listDatabaseCharityExports(db, ids)).map(charityExportDto);
   }
 
+  public async listStoreSortingHistory(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreSortingHistoryQuery,
+  ): Promise<Page<StoreSortingHistoryEntry>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const storeIds =
+      query.storeId === undefined ? await this.retailScopeStoreIds(actor) : [query.storeId];
+    const range = query.date === undefined ? null : asiaHoChiMinhDateRange(query.date, query.date);
+    const result = await listDatabaseStoreSortingHistory(db, {
+      storeIds,
+      page: query.page,
+      pageSize: query.pageSize,
+      ...(range ? { occurredFrom: range.start, occurredBefore: range.endExclusive } : {}),
+    });
+    return {
+      data: result.data.map(storeSortingHistoryDto),
+      pagination: pagination(query.page, query.pageSize, result.totalItems),
+    };
+  }
+
   public async createCharityExport(
     actor: AuthenticatedPrincipal,
     input: CreateCharityExportRequest,
@@ -4040,6 +4064,20 @@ function storeSortingResultDto(body: unknown): StoreSortingResult {
     inventoryLotId: row.inventoryLotId ?? row.inventoryBagId,
     inventoryVersion: row.inventoryVersion,
   });
+}
+
+function storeSortingHistoryDto(record: StoreSortingHistoryRecord): StoreSortingHistoryEntry {
+  return {
+    id: record.id,
+    storeId: record.storeId,
+    productId: record.productId,
+    inventoryLotId: record.inventoryBagId,
+    bagCode: record.bagCode,
+    action: record.action.toUpperCase() as StoreSortingHistoryEntry['action'],
+    weightKg: record.weightKg,
+    actorDisplayName: record.actorDisplayName,
+    occurredAt: record.occurredAt.toISOString(),
+  };
 }
 
 function inventoryLedgerPage(

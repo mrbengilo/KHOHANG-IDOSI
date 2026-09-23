@@ -237,6 +237,7 @@ export {
   getStoreSortedStock,
   listCharityExports,
   listStoreSortedStocks,
+  listStoreSortingHistory,
   moveCharityToSale,
   moveProductCharityToSale,
 } from './store-sorting.js';
@@ -248,6 +249,9 @@ export type {
   ProductCharityBalanceRecord,
   SortedStockMutationInput,
   SortedStockRecord,
+  StoreSortingHistoryAction,
+  StoreSortingHistoryInput,
+  StoreSortingHistoryRecord,
   StoreSortingMutationResult,
 } from './store-sorting.js';
 

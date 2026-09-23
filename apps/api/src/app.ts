@@ -20,6 +20,7 @@ import {
   CreateStoreGroupRequestSchema,
   CreateStoreOutboundRequestSchema,
   CreateStoreSortingRequestSchema,
+  ListStoreSortingHistoryQuerySchema,
   CreateCharityExportRequestSchema,
   ExportCharityRequestSchema,
   ListCharityExportsQuerySchema,
@@ -1275,6 +1276,12 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     const session = await authenticate(request, repository);
     const query = ListCharityExportsQuerySchema.parse(request.query);
     return { data: await repository.listCharityExports(session.principal, query.storeId) };
+  });
+
+  app.get('/api/v1/store-sorting-history', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = ListStoreSortingHistoryQuerySchema.parse(request.query);
+    return repository.listStoreSortingHistory(session.principal, query);
   });
 
   app.post('/api/v1/store-charity-exports', async (request, reply) => {

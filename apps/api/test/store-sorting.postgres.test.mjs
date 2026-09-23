@@ -21,7 +21,7 @@ const describePostgres = process.env.RUN_POSTGRES_TESTS === '1' ? describe : des
 describePostgres('PostgreSQL store sorting repository', () => {
   after(async () => closeDatabase());
 
-  test('returns the contract result for committed and replayed sorting', async () => {
+  test('returns the contract result for committed and replayed sorting, then lists history', async () => {
     const token = randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase();
     const [group] = await db
       .insert(storeGroups)
@@ -122,5 +122,34 @@ describePostgres('PostgreSQL store sorting repository', () => {
     );
     assert.equal(cancelled.data.stockId, null);
     assert.equal(cancelled.data.inventoryLotId, bag.id);
+
+    const history = await repository.listStoreSortingHistory(actor, { page: 1, pageSize: 20 });
+    assert.deepEqual(
+      history.data.map((row) => [row.action, row.weightKg, row.bagCode]),
+      [
+        ['SORT_CANCEL', '1.500', bag.displayCode],
+        ['SORT_CHARITY', '4.000', bag.displayCode],
+      ],
+    );
+    assert.equal(history.pagination.totalItems, 2);
+    assert.equal(history.data[0].actorDisplayName, account.displayName);
+    assert.equal(history.data[0].productId, product.id);
+
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(
+      new Date(),
+    );
+    const todayHistory = await repository.listStoreSortingHistory(actor, {
+      page: 1,
+      pageSize: 1,
+      date: today,
+    });
+    assert.equal(todayHistory.data.length, 1);
+    assert.equal(todayHistory.pagination.totalPages, 2);
+    const otherDay = await repository.listStoreSortingHistory(actor, {
+      page: 1,
+      pageSize: 20,
+      date: '2020-01-01',
+    });
+    assert.equal(otherDay.data.length, 0);
   });
 });

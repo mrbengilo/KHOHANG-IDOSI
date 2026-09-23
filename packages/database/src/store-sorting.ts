@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNull, lt, type SQL } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
@@ -66,6 +66,84 @@ export interface StoreSortingMutationResult {
   readonly stockId: string | null;
   readonly inventoryBagId: string;
   readonly inventoryVersion: number;
+}
+
+/** Store-visible sorting actions; IDOSI reconciliation and Sale transfers have their own screens. */
+const SORTING_HISTORY_ACTIONS = [
+  'sort_sale',
+  'sort_charity',
+  'sort_cancel',
+  'charity_to_sale',
+  'charity_export',
+] as const;
+export type StoreSortingHistoryAction = (typeof SORTING_HISTORY_ACTIONS)[number];
+
+export interface StoreSortingHistoryInput {
+  readonly storeIds: readonly string[];
+  readonly page: number;
+  readonly pageSize: number;
+  readonly occurredFrom?: Date;
+  readonly occurredBefore?: Date;
+}
+
+export interface StoreSortingHistoryRecord {
+  readonly id: string;
+  readonly storeId: string;
+  readonly productId: string;
+  readonly inventoryBagId: string | null;
+  readonly bagCode: string | null;
+  readonly action: StoreSortingHistoryAction;
+  readonly weightKg: string;
+  readonly actorDisplayName: string | null;
+  readonly occurredAt: Date;
+}
+
+export async function listStoreSortingHistory(
+  database: Database,
+  input: StoreSortingHistoryInput,
+): Promise<{ readonly data: StoreSortingHistoryRecord[]; readonly totalItems: number }> {
+  if (input.storeIds.length === 0) return { data: [], totalItems: 0 };
+  const predicates: SQL[] = [
+    inArray(storeSortingEvents.storeId, [...input.storeIds]),
+    inArray(storeSortingEvents.action, [...SORTING_HISTORY_ACTIONS]),
+  ];
+  if (input.occurredFrom) predicates.push(gte(storeSortingEvents.occurredAt, input.occurredFrom));
+  if (input.occurredBefore)
+    predicates.push(lt(storeSortingEvents.occurredAt, input.occurredBefore));
+  const where = and(...predicates);
+  const [totals, rows] = await Promise.all([
+    database.select({ value: count() }).from(storeSortingEvents).where(where),
+    database
+      .select({
+        event: storeSortingEvents,
+        bagCode: storeInventoryBags.displayCode,
+        actorDisplayName: users.displayName,
+      })
+      .from(storeSortingEvents)
+      .leftJoin(
+        storeInventoryBags,
+        eq(storeSortingEvents.storeInventoryBagId, storeInventoryBags.id),
+      )
+      .leftJoin(users, eq(storeSortingEvents.actorUserId, users.id))
+      .where(where)
+      .orderBy(desc(storeSortingEvents.occurredAt), desc(storeSortingEvents.id))
+      .limit(input.pageSize)
+      .offset((input.page - 1) * input.pageSize),
+  ]);
+  return {
+    totalItems: totals[0]?.value ?? 0,
+    data: rows.map(({ event, bagCode, actorDisplayName }) => ({
+      id: event.id,
+      storeId: event.storeId,
+      productId: event.productId,
+      inventoryBagId: event.storeInventoryBagId,
+      bagCode: bagCode || null,
+      action: event.action as StoreSortingHistoryAction,
+      weightKg: event.weightKg,
+      actorDisplayName,
+      occurredAt: event.occurredAt,
+    })),
+  };
 }
 
 export async function listStoreSortedStocks(

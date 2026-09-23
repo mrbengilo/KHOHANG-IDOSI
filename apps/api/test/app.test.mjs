@@ -2441,6 +2441,80 @@ describe('KHOHANG-IDOSI API', () => {
       exportInput,
     );
     assert.equal(adminExport.statusCode, 403);
+
+    const history = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-sorting-history?page=1&pageSize=20',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(history.statusCode, 200, history.body);
+    assert.deepEqual(
+      history.json().data.map((row) => [row.action, row.weightKg]),
+      [
+        ['CHARITY_EXPORT', '2.500'],
+        ['CHARITY_TO_SALE', '1.000'],
+        ['SORT_CHARITY', '4.000'],
+      ],
+    );
+    assert.equal(history.json().pagination.totalItems, 3);
+    const sortedRow = history.json().data[2];
+    assert.equal(sortedRow.inventoryLotId, MEMORY_SEED_IDS.inventoryBag);
+    assert.equal(sortedRow.productId, productId);
+    assert.match(sortedRow.bagCode, /^MB-/);
+    assert.ok(sortedRow.actorDisplayName);
+    assert.ok(!Number.isNaN(Date.parse(sortedRow.occurredAt)));
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(now);
+    const todayHistory = await app.inject({
+      method: 'GET',
+      url: `/api/v1/store-sorting-history?date=${today}`,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(todayHistory.json().pagination.totalItems, 3);
+    const otherDay = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-sorting-history?date=2020-01-01',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(otherDay.statusCode, 200);
+    assert.equal(otherDay.json().data.length, 0);
+    const invalidDate = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-sorting-history?date=2026-02-30',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(invalidDate.statusCode, 400);
+    const adminHistory = await app.inject({
+      method: 'GET',
+      url: `/api/v1/store-sorting-history?storeId=${MEMORY_SEED_IDS.nvtStore}`,
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(adminHistory.json().pagination.totalItems, 3);
+    const otherStoreAccount = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/accounts',
+      headers: { cookie: adminCookie },
+      payload: {
+        username: 'ds_bd',
+        displayName: 'Cửa hàng DS BD',
+        password: PASSWORD,
+        role: 'STORE',
+        storeId: MEMORY_SEED_IDS.bdStore,
+      },
+    });
+    assert.equal(otherStoreAccount.statusCode, 201, otherStoreAccount.body);
+    const otherStoreCookie = cookieOf(await login('ds_bd'));
+    const foreignHistory = await app.inject({
+      method: 'GET',
+      url: `/api/v1/store-sorting-history?storeId=${MEMORY_SEED_IDS.nvtStore}`,
+      headers: { cookie: otherStoreCookie },
+    });
+    assert.equal(foreignHistory.statusCode, 403);
+    const ownHistory = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-sorting-history',
+      headers: { cookie: otherStoreCookie },
+    });
+    assert.equal(ownHistory.json().data.length, 0);
   });
 
   test('lists and filters store-scoped wait tickets, offers and history', async () => {

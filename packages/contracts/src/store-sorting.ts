@@ -3,8 +3,11 @@ import { z } from 'zod';
 import {
   BagWeightsKgSchema,
   EntityIdSchema,
+  IsoDateSchema,
   IsoDateTimeSchema,
   KilogramsDecimalSchema,
+  PaginationMetaSchema,
+  PaginationQuerySchema,
   PositiveKilogramsDecimalSchema,
   PositiveUnitQuantitySchema,
 } from './common.js';
@@ -133,3 +136,40 @@ export const CharityExportResponseSchema = z.object({ data: CharityExportSchema 
 export const CharityExportsResponseSchema = z
   .object({ data: z.array(CharityExportSchema) })
   .strict();
+
+/** What one sorting-page action did with the weight, in the order a store performs them. */
+export const StoreSortingHistoryActionSchema = z.enum([
+  'SORT_SALE',
+  'SORT_CHARITY',
+  'SORT_CANCEL',
+  'CHARITY_TO_SALE',
+  'CHARITY_EXPORT',
+]);
+export type StoreSortingHistoryAction = z.infer<typeof StoreSortingHistoryActionSchema>;
+
+export const StoreSortingHistoryEntrySchema = z
+  .object({
+    id: EntityIdSchema,
+    storeId: EntityIdSchema,
+    productId: EntityIdSchema,
+    inventoryLotId: EntityIdSchema.nullable(),
+    bagCode: z.string().nullable(),
+    action: StoreSortingHistoryActionSchema,
+    weightKg: PositiveKilogramsDecimalSchema,
+    actorDisplayName: z.string().nullable(),
+    occurredAt: IsoDateTimeSchema,
+  })
+  .strict();
+export type StoreSortingHistoryEntry = z.infer<typeof StoreSortingHistoryEntrySchema>;
+
+/** `date` is a calendar day in Asia/Ho_Chi_Minh; omitted means every day, newest first. */
+export const ListStoreSortingHistoryQuerySchema = PaginationQuerySchema.extend({
+  storeId: EntityIdSchema.optional(),
+  date: IsoDateSchema.optional(),
+}).strict();
+export type ListStoreSortingHistoryQuery = z.infer<typeof ListStoreSortingHistoryQuerySchema>;
+
+export const ListStoreSortingHistoryResponseSchema = z
+  .object({ data: z.array(StoreSortingHistoryEntrySchema), pagination: PaginationMetaSchema })
+  .strict();
+export type ListStoreSortingHistoryResponse = z.infer<typeof ListStoreSortingHistoryResponseSchema>;
