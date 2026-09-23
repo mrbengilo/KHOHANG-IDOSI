@@ -482,7 +482,7 @@ export function IdosiStatisticsPanel({ storeId, period: sharedPeriod }: IdosiSta
                   </thead>
                   <tbody>
                     {payload.products.items.map((item) => (
-                      <tr key={`${item.productId}:${item.revenueType}:${item.unit}`}>
+                      <tr key={`${item.productId}:${item.classification}:${item.unit}`}>
                         <td data-label="Sản phẩm">
                           <strong>{item.productName}</strong>
                           <small>{item.productCode ?? item.productId}</small>
