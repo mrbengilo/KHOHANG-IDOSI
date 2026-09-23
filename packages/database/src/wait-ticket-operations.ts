@@ -803,6 +803,7 @@ export async function cancelWaitTicketInTransaction(
                 ...priorityOfferAuditSnapshot(offer),
                 status: 'cancelled',
                 acceptedQuantity: 0,
+                stockHeldQuantity: 0,
                 respondedAt: now.toISOString(),
                 waitTicketId: ticket.id,
               },
@@ -981,6 +982,7 @@ export async function respondPriorityOfferInTransaction(
             ...priorityOfferAuditSnapshot(offer),
             status: transition.status,
             acceptedQuantity: transition.acceptedQuantity,
+            stockHeldQuantity: transition.status === 'accepted' ? offer.stockHeldQuantity : 0,
             respondedAt: respondedAt.toISOString(),
           },
           metadata: {
@@ -1296,6 +1298,7 @@ function priorityOfferAuditSnapshot(offer: typeof dailyPriorityOffers.$inferSele
     waitTicketId: offer.waitTicketId,
     status: offer.status,
     offeredQuantity: offer.offeredQuantity,
+    stockHeldQuantity: offer.stockHeldQuantity,
     acceptedQuantity: offer.acceptedQuantity,
     responseDeadlineAt: offer.responseDeadlineAt.toISOString(),
     respondedAt: offer.respondedAt?.toISOString() ?? null,
