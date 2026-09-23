@@ -5,7 +5,7 @@ import { useMemo, useRef, useState } from 'react';
 import { Button } from '../../components/Button';
 import { EmptyState } from '../../components/EmptyState';
 import { ApiClientError } from '../../lib/api';
-import { formatKg } from '../../lib/format';
+import { formatKgExact } from '../../lib/format';
 import type { Role } from '../../lib/types';
 import { listStoreSortedStocks } from '../inventory/inventoryApi';
 import {
@@ -139,7 +139,7 @@ export function SortedSaleTransferWorkspace({
     onSuccess: async (transfer) => {
       setNotice({
         tone: 'success',
-        text: `Đã điều chuyển ${transfer.bagQuantity} bao (${formatKg(transfer.weightKg)}) theo phiếu ${transfer.transferNumber}.`,
+        text: `Đã điều chuyển ${transfer.bagQuantity} bao (${formatKgExact(transfer.weightKg)}) theo phiếu ${transfer.transferNumber}.`,
       });
       setQuantity('');
       setWeightKg('');
@@ -226,7 +226,7 @@ export function SortedSaleTransferWorkspace({
                 {sourceStocks.map((stock) => (
                   <option key={stock.id} value={stock.id}>
                     {productNames.get(stock.productId) ?? stock.productId} · {stock.bagCode} ·{' '}
-                    {stock.bagQuantity} bao · {formatKg(stock.saleWeightKg)}
+                    {stock.bagQuantity} bao · {formatKgExact(stock.saleWeightKg)}
                   </option>
                 ))}
               </select>
@@ -256,7 +256,7 @@ export function SortedSaleTransferWorkspace({
               />
               <small>
                 {selectedStock
-                  ? `Tồn Sale: ${formatKg(selectedStock.saleWeightKg)}`
+                  ? `Tồn Sale: ${formatKgExact(selectedStock.saleWeightKg)}`
                   : 'Chọn mặt hàng trước'}
               </small>
             </label>
@@ -301,7 +301,7 @@ export function SortedSaleTransferWorkspace({
                 <strong>{storeName(stock.storeId)}</strong>
                 <p>{productNames.get(stock.productId) ?? stock.productId}</p>
                 <p>
-                  {stock.bagQuantity} bao · {formatKg(stock.saleWeightKg)} · v{stock.version}
+                  {stock.bagQuantity} bao · {formatKgExact(stock.saleWeightKg)} · v{stock.version}
                 </p>
               </article>
             ))}
@@ -333,7 +333,7 @@ export function SortedSaleTransferWorkspace({
                 </p>
                 <p>
                   {productNames.get(transfer.productId) ?? transfer.productId} ·{' '}
-                  {transfer.bagQuantity} bao · {formatKg(transfer.weightKg)}
+                  {transfer.bagQuantity} bao · {formatKgExact(transfer.weightKg)}
                 </p>
                 {transfer.enteredWeightKg === null ? (
                   <small>Kg tính theo tỷ lệ số bao</small>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatKg } from './format';
+import { formatKg, formatKgExact } from './format';
 
 describe('Vietnamese kilogram display', () => {
   it.each([
@@ -22,5 +22,10 @@ describe('Vietnamese kilogram display', () => {
     expect(formatKg(2)).toBe('2 kg');
     expect(formatKg(2.33)).toBe('2,33 kg');
     expect(formatKg(7.0974)).toBe('7,1 kg');
+  });
+  it('preserves every recorded gram for Sale balances and transfers', () => {
+    expect(formatKgExact('0.625')).toBe('0,625 kg');
+    expect(formatKgExact('1.250')).toBe('1,25 kg');
+    expect(formatKgExact('9007199254740993.007')).toBe('9.007.199.254.740.993,007 kg');
   });
 });

@@ -19,6 +19,17 @@ export function formatKg(value: number | string): string {
   return `${sign && grams > 0n ? '-' : ''}${new Intl.NumberFormat('vi-VN').format(grams / 100n)}${decimals ? `,${decimals}` : ''} kg`;
 }
 
+/** Show the exact decimal weight recorded in Sale inventory and transfer documents. */
+export function formatKgExact(value: string): string {
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(value);
+  if (!match) return '—';
+  const [, sign, whole = '0', fraction = ''] = match;
+  const integer = BigInt(whole);
+  const decimals = fraction.replace(/0+$/, '');
+  const negative = sign && (integer > 0n || /[1-9]/.test(decimals));
+  return `${negative ? '-' : ''}${new Intl.NumberFormat('vi-VN').format(integer)}${decimals ? `,${decimals}` : ''} kg`;
+}
+
 export const formatVnd = (value: number | null): string =>
   value === null
     ? 'Không áp dụng'
