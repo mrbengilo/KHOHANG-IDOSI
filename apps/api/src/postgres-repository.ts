@@ -420,6 +420,37 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     if (!store || store.kind !== 'wholesale' || !store.isActive) throw forbidden();
   }
 
+  /**
+   * Partner goods become retail floor stock. A store account records them for its own
+   * active retail store; HTKD records them for an active retail store it is assigned to.
+   * The database write re-checks the assignment inside its transaction, so a revoked
+   * assignment cannot slip through on a stale session.
+   */
+  private async authorizePartnerInboundOperation(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+  ): Promise<void> {
+    if (actor.role === 'STORE') {
+      await this.authorizeRetailStoreOperation(actor);
+      if (actor.storeId !== storeId) throw forbidden();
+      return;
+    }
+    if (actor.role !== 'HTKD' || !canAccessStore(actor, storeId)) throw forbidden();
+    const [store] = await db
+      .select({ kind: stores.kind, isActive: stores.isActive })
+      .from(stores)
+      .where(and(eq(stores.id, storeId), isNull(stores.deletedAt)))
+      .limit(1);
+    assertActiveRetailStore(
+      store
+        ? {
+            kind: store.kind === 'retail' ? 'RETAIL' : 'WHOLESALE',
+            status: store.isActive ? 'ACTIVE' : 'INACTIVE',
+          }
+        : null,
+    );
+  }
+
   public async listAccounts(
     actor: AuthenticatedPrincipal,
     query: ListAccountsQuery,
@@ -2362,8 +2393,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<StorePartnerInbound>> {
-    await this.authorizeRetailStoreOperation(actor);
-    if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
+    await this.authorizePartnerInboundOperation(actor, input.storeId);
     try {
       const result = await createDatabaseStorePartnerInbound(db, {
         storeId: input.storeId,

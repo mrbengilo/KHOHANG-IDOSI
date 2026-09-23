@@ -5,6 +5,7 @@ import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
 import {
   auditLogs,
+  htkdAssignments,
   products,
   storeInventoryBags,
   storeInventoryLedgerEntries,
@@ -249,8 +250,9 @@ export async function createStorePartnerInboundInTransaction(
 
 /**
  * Partner stock lands in the retail floor's inventory, so only an active account of that
- * active retail store may record it. Wholesale stores hold allocation stock rather than
- * floor stock, which is why their kind is refused here.
+ * active retail store, or an active HTKD account currently assigned to it, may record it.
+ * Wholesale stores hold allocation stock rather than floor stock, which is why their kind
+ * is refused here.
  */
 async function assertStoreAccountMayRecord(
   tx: Transaction,
@@ -276,6 +278,20 @@ async function assertStoreAccountMayRecord(
   }
   if (user.role === 'admin') return;
   if (user.role === 'store' && user.storeId === storeId) return;
+  if (user.role === 'htkd') {
+    const [assignment] = await tx
+      .select({ id: htkdAssignments.id })
+      .from(htkdAssignments)
+      .where(
+        and(
+          eq(htkdAssignments.userId, userId),
+          eq(htkdAssignments.storeId, storeId),
+          isNull(htkdAssignments.revokedAt),
+        ),
+      )
+      .limit(1);
+    if (assignment) return;
+  }
   throw new StorePartnerInboundAuthorizationError();
 }
 

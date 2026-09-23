@@ -1100,9 +1100,10 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.post('/api/v1/store-partner-inbounds', async (request, reply) => {
     const session = await authenticate(request, repository);
-    // Partner goods land in the retail floor's own stock, so only a store account records
-    // them; the repository checks the store itself.
-    requireRole(session.principal, ['STORE']);
+    // Partner goods land in a retail floor's own stock: a store account records them for its
+    // own store and HTKD for a retail store it is assigned to. The repository checks the
+    // store and the assignment itself.
+    requireRole(session.principal, ['STORE', 'HTKD']);
     const headers = IdempotencyHeadersSchema.parse(request.headers);
     const input = CreateStorePartnerInboundRequestSchema.parse(request.body);
     const result = await repository.createStorePartnerInbound(
@@ -1675,7 +1676,10 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: {
-            '201': { description: 'Recorded or replayed partner inbound (STORE only)' },
+            '201': {
+              description:
+                'Recorded or replayed partner inbound (STORE for its own store, HTKD for an assigned retail store)',
+            },
             '403': { description: 'The account may not record stock for this store' },
           },
         },

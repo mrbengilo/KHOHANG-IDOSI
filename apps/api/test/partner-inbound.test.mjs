@@ -78,21 +78,45 @@ describe('partner inbound', () => {
     const storeCookie = cookieOf(await login(app, 'ds_nvt'));
     const productId = await firstProductId(app, storeCookie);
 
-    for (const username of ['admin', 'htkd']) {
-      const response = await recordSlip(
-        app,
-        cookieOf(await login(app, username)),
-        `partner-${username}`,
-        slipPayload(productId),
-      );
-      assert.equal(response.statusCode, 403, `${username}: ${response.body}`);
-    }
+    const adminResponse = await recordSlip(
+      app,
+      cookieOf(await login(app, 'admin')),
+      'partner-admin',
+      slipPayload(productId),
+    );
+    assert.equal(adminResponse.statusCode, 403, adminResponse.body);
 
     const otherStore = await recordSlip(app, storeCookie, 'partner-other-store', {
       ...slipPayload(productId),
       storeId: MEMORY_SEED_IDS.bdStore,
     });
     assert.equal(otherStore.statusCode, 403, otherStore.body);
+  });
+
+  test('lets HTKD record partner goods only for retail stores it is assigned to', async () => {
+    const htkdCookie = cookieOf(await login(app, 'htkd'));
+    const productId = await firstProductId(app, htkdCookie);
+
+    // The seeded HTKD account is assigned to NVT, so the slip lands in NVT's stock.
+    const assigned = await recordSlip(app, htkdCookie, 'partner-htkd-nvt', slipPayload(productId));
+    assert.equal(assigned.statusCode, 201, assigned.body);
+    assert.equal(assigned.json().data.storeId, MEMORY_SEED_IDS.nvtStore);
+
+    const storeCookie = cookieOf(await login(app, 'ds_nvt'));
+    const listed = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-partner-inbounds',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(listed.statusCode, 200, listed.body);
+    assert.equal(listed.json().data.length, 1);
+
+    // CT is outside the assignment, so HTKD may not write stock there.
+    const unassigned = await recordSlip(app, htkdCookie, 'partner-htkd-ct', {
+      ...slipPayload(productId),
+      storeId: MEMORY_SEED_IDS.ctStore,
+    });
+    assert.equal(unassigned.statusCode, 403, unassigned.body);
   });
 });
 
