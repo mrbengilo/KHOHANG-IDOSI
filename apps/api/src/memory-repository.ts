@@ -2386,7 +2386,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     // Partner goods become ordinary store stock so the floor can open and sell them like
     // warehouse stock. Cost stays zero: nothing here came through a warehouse invoice.
     for (const line of slip.lines) {
-      for (const [index, weightKg] of line.bagWeightsKg.entries()) {
+      for (const weightKg of line.bagWeightsKg) {
         const bagId = randomUUID();
         // The memory store has no partner bag table; a distinct id still records that this
         // stock came from a partner rather than from a receipt or a transfer.
@@ -2400,7 +2400,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
           sourceTransferId: null,
           sourceInventoryBagId: null,
           sourcePartnerInboundBagId: partnerBagId,
-          bagCode: `PIB-${slip.referenceCode}-${index + 1}-${bagId.slice(0, 8).toUpperCase()}`,
+          bagCode: this.nextInventoryBagDisplayCode(slip.storeId),
           originalWeightKg: weightKg,
           receivedWeightKg: weightKg,
           remainingWeightKg: weightKg,
@@ -3151,7 +3151,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       outboundOrderId: null,
       sourceTransferId: current.id,
       sourceInventoryBagId: current.sourceInventoryBagId,
-      bagCode: `TR-${current.transferNumber}-${destinationBagId.slice(0, 8).toUpperCase()}`,
+      bagCode: this.nextInventoryBagDisplayCode(current.destinationStoreId),
       originalWeightKg: current.weightKg,
       receivedWeightKg: current.weightKg,
       remainingWeightKg: current.weightKg,
@@ -3550,6 +3550,15 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       requestHash,
       response: structuredClone(receipt),
     });
+  }
+
+  private nextInventoryBagDisplayCode(storeId: string): string {
+    const lastNumber = [...this.inventoryBags.values()].reduce((maximum, bag) => {
+      if (bag.storeId !== storeId) return maximum;
+      const match = /^MB-(\d+)$/.exec(bag.bagCode);
+      return match ? Math.max(maximum, Number(match[1])) : maximum;
+    }, 0);
+    return `MB-${String(lastNumber + 1).padStart(5, '0')}`;
   }
 
   private requireInventoryBag(bagId: string): StoreInventoryBag {
@@ -4197,7 +4206,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       outboundOrderId: MEMORY_SEED_IDS.outboundRequest,
       sourceTransferId: null,
       sourceInventoryBagId: null,
-      bagCode: 'BAG-MEMORY-001',
+      bagCode: 'MB-00001',
       originalWeightKg: '25.000',
       receivedWeightKg: '24.500',
       remainingWeightKg: '24.500',

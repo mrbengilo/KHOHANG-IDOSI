@@ -99,6 +99,13 @@
       "when": 1790100200000,
       "tag": "0013_replace_inactive_store_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790100300000,
+      "tag": "0014_store_bag_display_codes",
+      "breakpoints": true
     }
   ]
 }

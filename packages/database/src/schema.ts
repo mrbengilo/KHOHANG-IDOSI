@@ -1515,6 +1515,7 @@ export const storeInventoryBags = pgTable(
   {
     id: uuid('id').defaultRandom().primaryKey(),
     bagCode: text('bag_code').notNull().unique(),
+    displayCode: text('display_code').notNull().default(''),
     storeId: uuid('store_id')
       .notNull()
       .references(() => stores.id, { onDelete: 'restrict' }),
@@ -1563,9 +1564,14 @@ export const storeInventoryBags = pgTable(
     index('store_inventory_bags_outbound_line_idx').on(table.outboundRequestLineId),
     index('store_inventory_bags_source_transfer_idx').on(table.sourceTransferId),
     index('store_inventory_bags_source_inventory_bag_idx').on(table.sourceInventoryBagId),
+    uniqueIndex('store_inventory_bags_store_display_code_uidx').on(
+      table.storeId,
+      table.displayCode,
+    ),
     uniqueIndex('store_inventory_bags_store_receipt_bag_uidx').on(table.sourceStoreReceiptBagId),
     uniqueIndex('store_inventory_bags_source_transfer_uidx').on(table.sourceTransferId),
     check('store_inventory_bags_code_not_blank', sql`length(btrim(${table.bagCode})) > 0`),
+    check('store_inventory_bags_display_code_format', sql`${table.displayCode} ~ '^MB-[0-9]{5,}$'`),
     check('store_inventory_bags_initial_weight_positive', sql`${table.initialWeightKg} > 0`),
     check('store_inventory_bags_current_weight_nonnegative', sql`${table.currentWeightKg} >= 0`),
     check('store_inventory_bags_cost_nonnegative', sql`${table.costVnd} >= 0`),
