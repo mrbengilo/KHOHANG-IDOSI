@@ -22,6 +22,9 @@ import type {
   CreateStorePartnerInboundRequest,
   CreateStoreGroupRequest,
   CreateStoreOutboundRequest,
+  CreateStoreSortingRequest,
+  MoveCharityToSaleRequest,
+  ExportCharityRequest,
   CreateStoreRequest,
   CreateAccountRequest,
   CreateInboundReceiptRequest,
@@ -75,6 +78,8 @@ import type {
   StoreOrderRequest,
   StorePartnerInbound,
   StoreOutbound,
+  StoreSortedStock,
+  StoreSortingResult,
   HeldAllocation,
   StoreReceiptSource,
   SubmitStoreReceiptRequest,
@@ -97,7 +102,7 @@ import type {
   CancelStoreTransferRequest,
   WarehouseBalancesResponse,
 } from '@idosi/contracts';
-import { StoreGroupSchema, StoreSchema } from '@idosi/contracts';
+import { StoreGroupSchema, StoreSchema, StoreSortingResultSchema } from '@idosi/contracts';
 import {
   ActiveWaitTicketExistsError,
   auditLogs,
@@ -107,6 +112,11 @@ import {
   createOrderSession as createDatabaseOrderSession,
   confirmSupplierInboundCosts as confirmDatabaseSupplierInboundCosts,
   createStoreOutbound as createDatabaseStoreOutbound,
+  createStoreSorting as createDatabaseStoreSorting,
+  exportCharity as exportDatabaseCharity,
+  getStoreSortedStock as getDatabaseStoreSortedStock,
+  listStoreSortedStocks as listDatabaseStoreSortedStocks,
+  moveCharityToSale as moveDatabaseCharityToSale,
   createStorePartnerInbound as createDatabaseStorePartnerInbound,
   type DatabaseUserRole,
   getStorePartnerInbound as getDatabaseStorePartnerInbound,
@@ -2850,6 +2860,113 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       const resourceId = result.replayed ? result.resourceId : result.value.outboundId;
       if (!resourceId) throw new Error('Idempotent store outbound review has no resource id');
       return { data: await this.storeOutboundDto(resourceId), replayed: result.replayed };
+    });
+  }
+
+  public async listStoreSortedStocks(
+    actor: AuthenticatedPrincipal,
+    storeId?: string,
+  ): Promise<readonly StoreSortedStock[]> {
+    if (storeId && !canAccessStore(actor, storeId)) throw forbidden();
+    const rows = await listDatabaseStoreSortedStocks(db, storeId);
+    return rows
+      .filter((row) => canAccessStore(actor, row.storeId))
+      .map((row) => ({
+        ...row,
+        updatedAt: row.updatedAt.toISOString(),
+      }));
+  }
+
+  public async createStoreSorting(
+    actor: AuthenticatedPrincipal,
+    input: CreateStoreSortingRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreSortingResult>> {
+    await this.authorizeRetailStoreOperation(actor);
+    if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
+    return withStoreInventoryErrors(async () => {
+      const result = await createDatabaseStoreSorting(db, {
+        storeId: input.storeId,
+        inventoryBagId: input.inventoryLotId,
+        expectedInventoryVersion: input.expectedInventoryVersion,
+        reason: input.reason,
+        weightKg: input.weightKg,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      return {
+        data: StoreSortingResultSchema.parse(result.replayed ? result.responseBody : result.value),
+        replayed: result.replayed,
+      };
+    });
+  }
+
+  public async moveCharityToSale(
+    actor: AuthenticatedPrincipal,
+    stockId: string,
+    input: MoveCharityToSaleRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreSortingResult>> {
+    return this.mutateCharity(actor, stockId, input, idempotencyKey, requestHash, context, 'SALE');
+  }
+
+  public async exportCharity(
+    actor: AuthenticatedPrincipal,
+    stockId: string,
+    input: ExportCharityRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreSortingResult>> {
+    return this.mutateCharity(
+      actor,
+      stockId,
+      input,
+      idempotencyKey,
+      requestHash,
+      context,
+      'CHARITY',
+    );
+  }
+
+  private async mutateCharity(
+    actor: AuthenticatedPrincipal,
+    stockId: string,
+    input: MoveCharityToSaleRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+    destination: 'SALE' | 'CHARITY',
+  ): Promise<IdempotentResource<StoreSortingResult>> {
+    await this.authorizeRetailStoreOperation(actor);
+    const current = await getDatabaseStoreSortedStock(db, stockId);
+    if (!current) throw notFound('Không tìm thấy hàng đã lọc');
+    if (actor.role !== 'STORE' || actor.storeId !== current.storeId) throw forbidden();
+    return withStoreInventoryErrors(async () => {
+      const command = {
+        stockId,
+        storeId: current.storeId,
+        expectedVersion: input.expectedVersion,
+        weightKg: input.weightKg,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      };
+      const result =
+        destination === 'SALE'
+          ? await moveDatabaseCharityToSale(db, command)
+          : await exportDatabaseCharity(db, command);
+      return {
+        data: StoreSortingResultSchema.parse(result.replayed ? result.responseBody : result.value),
+        replayed: result.replayed,
+      };
     });
   }
 

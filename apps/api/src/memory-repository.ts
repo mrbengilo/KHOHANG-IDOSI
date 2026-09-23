@@ -20,6 +20,9 @@ import type {
   CreateStorePartnerInboundRequest,
   CreateStoreGroupRequest,
   CreateStoreOutboundRequest,
+  CreateStoreSortingRequest,
+  MoveCharityToSaleRequest,
+  ExportCharityRequest,
   CreateStoreRequest,
   CreateAccountRequest,
   CreateInboundReceiptRequest,
@@ -74,6 +77,8 @@ import type {
   StoreOrderRequest,
   StorePartnerInbound,
   StoreOutbound,
+  StoreSortedStock,
+  StoreSortingResult,
   HeldAllocation,
   StoreReceiptSource,
   SubmitStoreReceiptRequest,
@@ -107,6 +112,7 @@ import {
   allocateTransferCostVnd,
   calculateWeightedCostVnd,
   gramsToKilogramsExact,
+  idosiProductSaleGrams,
   idosiStatisticsScopeKey,
   isRequestDeadlineClosed,
   kilogramsToGramsExact,
@@ -339,6 +345,17 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly inventoryBagCosts = new Map<string, bigint>();
   private readonly inventoryLedger = new Map<string, StoreInventoryBagLedgerEntry>();
   private readonly storeOutbounds = new Map<string, StoreOutbound>();
+  private readonly sortedStocks = new Map<string, StoreSortedStock>();
+  private readonly sortedSaleCredited = new Map<string, bigint>();
+  private readonly sortedSaleFirstCreditPeriod = new Map<string, string>();
+  private readonly sortingMutations = new Map<
+    string,
+    { hash: string; result: StoreSortingResult }
+  >();
+  private readonly saleSyncProgress = new Map<
+    string,
+    { baseline: bigint; observed: bigint; applied: bigint }
+  >();
   private readonly storeTransfers = new Map<string, StoreTransfer>();
   private readonly transferMutationIdempotency = new Map<
     string,
@@ -869,6 +886,9 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       this.idosiStatisticsSnapshots.set(key, snapshot);
     }
     if (!snapshot) throw new Error('IDOSI memory snapshot was not created');
+    if (scope.date === null && scope.shiftId === null && scope.paymentMethod === null) {
+      this.applyMemoryIdosiSaleSnapshot(scope.storeId, scope.period, snapshot.id, snapshot.payload);
+    }
     const attempt: IdosiStatisticsAttempt = Object.freeze({
       id: randomUUID(),
       source: 'MANUAL',
@@ -2906,6 +2926,351 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       updated,
     );
     return { data: structuredClone(updated), replayed: false };
+  }
+
+  public async listStoreSortedStocks(
+    actor: AuthenticatedPrincipal,
+    storeId?: string,
+  ): Promise<readonly StoreSortedStock[]> {
+    this.assertRequestedStoreScope(actor, storeId);
+    return [...this.sortedStocks.values()]
+      .filter(
+        (stock) => canAccessStore(actor, stock.storeId) && (!storeId || stock.storeId === storeId),
+      )
+      .sort((left, right) => left.bagCode.localeCompare(right.bagCode))
+      .map((stock) => structuredClone(stock));
+  }
+
+  public async createStoreSorting(
+    actor: AuthenticatedPrincipal,
+    input: CreateStoreSortingRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreSortingResult>> {
+    await this.authorizeRetailStoreOperation(actor);
+    if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
+    const scopedKey = `${actor.accountId}:sorting:create:${idempotencyKey}`;
+    const replay = this.replaySortingMutation(scopedKey, requestHash);
+    if (replay) return { data: replay, replayed: true };
+    const bag = this.requireInventoryBag(input.inventoryLotId);
+    if (bag.storeId !== input.storeId) throw forbidden();
+    if (
+      bag.version !== input.expectedInventoryVersion ||
+      !['AVAILABLE', 'OPEN'].includes(bag.status)
+    ) {
+      throw versionConflict('Bao tồn kho đã thay đổi trước khi lọc');
+    }
+    const grams = kilogramsToGramsExact(input.weightKg);
+    const before = kilogramsToGramsExact(bag.remainingWeightKg);
+    if (grams <= 0n || grams > before) throw insufficientStock();
+    if (input.reason === 'SALE' && !this.hasMemorySaleBalance(bag.storeId, bag.productId)) {
+      this.initializeMemorySaleBaseline(bag.storeId, bag.productId);
+    }
+    const now = this.now().toISOString();
+    this.inventoryBags.set(bag.id, {
+      ...bag,
+      remainingWeightKg: gramsToKilogramsExact(before - grams),
+      status: grams === before ? 'EMPTY' : 'OPEN',
+      version: bag.version + 1,
+      updatedAt: now,
+    });
+    const ledgerId = randomUUID();
+    this.inventoryLedger.set(ledgerId, {
+      id: ledgerId,
+      bagId: bag.id,
+      operation: input.reason === 'CANCEL' ? 'CONSUME' : 'ADJUST',
+      beforeWeightKg: bag.remainingWeightKg,
+      afterWeightKg: gramsToKilogramsExact(before - grams),
+      reason: `Lọc hàng: ${input.reason}`,
+      actorAccountId: actor.accountId,
+      createdAt: now,
+    });
+    let stock = [...this.sortedStocks.values()].find((row) => row.inventoryLotId === bag.id);
+    if (input.reason !== 'CANCEL') {
+      stock = {
+        id: stock?.id ?? randomUUID(),
+        storeId: bag.storeId,
+        productId: bag.productId,
+        inventoryLotId: bag.id,
+        bagCode: bag.bagCode,
+        saleWeightKg: gramsToKilogramsExact(
+          (stock ? kilogramsToGramsExact(stock.saleWeightKg) : 0n) +
+            (input.reason === 'SALE' ? grams : 0n),
+        ),
+        charityWeightKg: gramsToKilogramsExact(
+          (stock ? kilogramsToGramsExact(stock.charityWeightKg) : 0n) +
+            (input.reason === 'CHARITY' ? grams : 0n),
+        ),
+        version: stock ? stock.version + 1 : 0,
+        updatedAt: now,
+      };
+      this.sortedStocks.set(stock.id, stock);
+      if (input.reason === 'SALE') {
+        const creditKey = `${bag.storeId}:${bag.productId}`;
+        if (!this.sortedSaleFirstCreditPeriod.has(creditKey)) {
+          this.sortedSaleFirstCreditPeriod.set(
+            creditKey,
+            new Date(this.now().getTime() + 7 * 3600000).toISOString().slice(0, 7),
+          );
+        }
+        this.sortedSaleCredited.set(
+          stock.id,
+          (this.sortedSaleCredited.get(stock.id) ?? 0n) + grams,
+        );
+        this.settleMemorySaleProduct(bag.storeId, bag.productId);
+      }
+    }
+    const result = {
+      stockId: input.reason === 'CANCEL' ? null : stock!.id,
+      inventoryLotId: bag.id,
+      inventoryVersion: bag.version + 1,
+    };
+    this.sortingMutations.set(scopedKey, { hash: requestHash, result });
+    this.appendAudit(
+      actor,
+      context,
+      'STORE_SORTING_RECORDED',
+      'store_inventory_bag',
+      bag.id,
+      bag,
+      result,
+    );
+    return { data: result, replayed: false };
+  }
+
+  public async moveCharityToSale(
+    actor: AuthenticatedPrincipal,
+    stockId: string,
+    input: MoveCharityToSaleRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreSortingResult>> {
+    return this.mutateMemoryCharity(
+      actor,
+      stockId,
+      input,
+      idempotencyKey,
+      requestHash,
+      context,
+      'SALE',
+    );
+  }
+
+  public async exportCharity(
+    actor: AuthenticatedPrincipal,
+    stockId: string,
+    input: ExportCharityRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreSortingResult>> {
+    return this.mutateMemoryCharity(
+      actor,
+      stockId,
+      input,
+      idempotencyKey,
+      requestHash,
+      context,
+      'CHARITY',
+    );
+  }
+
+  private async mutateMemoryCharity(
+    actor: AuthenticatedPrincipal,
+    stockId: string,
+    input: MoveCharityToSaleRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+    destination: 'SALE' | 'CHARITY',
+  ): Promise<IdempotentResource<StoreSortingResult>> {
+    await this.authorizeRetailStoreOperation(actor);
+    const stock = this.sortedStocks.get(stockId);
+    if (!stock) throw notFound('Không tìm thấy hàng đã lọc');
+    if (actor.role !== 'STORE' || actor.storeId !== stock.storeId) throw forbidden();
+    const scopedKey = `${actor.accountId}:sorting:${destination}:${stockId}:${idempotencyKey}`;
+    const replay = this.replaySortingMutation(scopedKey, requestHash);
+    if (replay) return { data: replay, replayed: true };
+    if (input.expectedVersion !== stock.version)
+      throw versionConflict('Số dư từ thiện đã thay đổi');
+    const grams = kilogramsToGramsExact(input.weightKg);
+    const balance = kilogramsToGramsExact(stock.charityWeightKg);
+    if (grams <= 0n || grams > balance) throw insufficientStock();
+    if (destination === 'CHARITY' && grams !== balance) {
+      throw new ApiError('VALIDATION_ERROR', 'Cần xác nhận toàn bộ số kg từ thiện còn lại', 400);
+    }
+    if (destination === 'SALE' && !this.hasMemorySaleBalance(stock.storeId, stock.productId)) {
+      this.initializeMemorySaleBaseline(stock.storeId, stock.productId);
+    }
+    this.sortedStocks.set(stock.id, {
+      ...stock,
+      charityWeightKg: gramsToKilogramsExact(balance - grams),
+      saleWeightKg: gramsToKilogramsExact(
+        kilogramsToGramsExact(stock.saleWeightKg) + (destination === 'SALE' ? grams : 0n),
+      ),
+      version: stock.version + 1,
+      updatedAt: this.now().toISOString(),
+    });
+    if (destination === 'SALE') {
+      const creditKey = `${stock.storeId}:${stock.productId}`;
+      if (!this.sortedSaleFirstCreditPeriod.has(creditKey)) {
+        this.sortedSaleFirstCreditPeriod.set(
+          creditKey,
+          new Date(this.now().getTime() + 7 * 3600000).toISOString().slice(0, 7),
+        );
+      }
+      this.sortedSaleCredited.set(stock.id, (this.sortedSaleCredited.get(stock.id) ?? 0n) + grams);
+      this.settleMemorySaleProduct(stock.storeId, stock.productId);
+    }
+    const bag = this.requireInventoryBag(stock.inventoryLotId);
+    const result = { stockId: stock.id, inventoryLotId: bag.id, inventoryVersion: bag.version };
+    this.sortingMutations.set(scopedKey, { hash: requestHash, result });
+    this.appendAudit(
+      actor,
+      context,
+      destination === 'SALE' ? 'STORE_CHARITY_MOVED_TO_SALE' : 'STORE_CHARITY_EXPORTED',
+      'store_sorted_stock',
+      stock.id,
+      stock,
+      result,
+    );
+    return { data: result, replayed: false };
+  }
+
+  private replaySortingMutation(key: string, hash: string): StoreSortingResult | null {
+    const previous = this.sortingMutations.get(key);
+    if (!previous) return null;
+    if (previous.hash !== hash)
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'Khóa idempotency đã được dùng cho nội dung khác',
+        409,
+      );
+    return structuredClone(previous.result);
+  }
+
+  private hasMemorySaleBalance(storeId: string, productId: string): boolean {
+    return [...this.sortedStocks.values()].some(
+      (stock) =>
+        stock.storeId === storeId &&
+        stock.productId === productId &&
+        kilogramsToGramsExact(stock.saleWeightKg) > 0n,
+    );
+  }
+
+  private initializeMemorySaleBaseline(storeId: string, productId: string): void {
+    const period = new Date(this.now().getTime() + 7 * 3600000).toISOString().slice(0, 7);
+    const snapshot = this.idosiStatisticsSnapshots.get(
+      memoryIdosiScopeKey({ storeId, period, date: null, shiftId: null, paymentMethod: null }),
+    );
+    if (!snapshot)
+      throw new ApiError(
+        'VALIDATION_ERROR',
+        'Cần đồng bộ IDOSI tháng hiện tại trước khi lưu Sale lần đầu.',
+        400,
+      );
+    const name = this.products.get(productId)?.name;
+    if (!name) throw notFound('Không tìm thấy mặt hàng');
+    for (const type of ['sale_kg', 'sale_piece'] as const) {
+      const baseline = idosiProductSaleGrams(snapshot.payload, name, type);
+      if (baseline === null)
+        throw new ApiError('VALIDATION_ERROR', 'IDOSI thiếu định mức kg cho Sale theo cái.', 400);
+      const key = `${storeId}:${productId}:${period}:${type}`;
+      if (!this.saleSyncProgress.has(key))
+        this.saleSyncProgress.set(key, { baseline, observed: baseline, applied: 0n });
+    }
+  }
+
+  private applyMemoryIdosiSaleSnapshot(
+    storeId: string,
+    period: string,
+    _snapshotId: string,
+    payload: IdosiOrderStatisticsPayload,
+  ): void {
+    const productIds = new Set(
+      [...this.sortedStocks.values()]
+        .filter(
+          (stock) =>
+            stock.storeId === storeId &&
+            (this.sortedSaleCredited.get(stock.id) ?? 0n) > 0n &&
+            (this.sortedSaleFirstCreditPeriod.get(`${storeId}:${stock.productId}`) ?? period) <=
+              period,
+        )
+        .map((stock) => stock.productId),
+    );
+    for (const productId of productIds) {
+      const name = this.products.get(productId)?.name;
+      if (!name) continue;
+      for (const type of ['sale_kg', 'sale_piece'] as const) {
+        const observed = idosiProductSaleGrams(payload, name, type);
+        if (observed === null) continue;
+        const key = `${storeId}:${productId}:${period}:${type}`;
+        const previous = this.saleSyncProgress.get(key);
+        this.saleSyncProgress.set(key, {
+          baseline: previous?.baseline ?? 0n,
+          observed,
+          applied: previous?.applied ?? 0n,
+        });
+      }
+      this.settleMemorySaleProduct(storeId, productId);
+    }
+  }
+
+  private settleMemorySaleProduct(storeId: string, productId: string): void {
+    const lots = [...this.sortedStocks.values()].filter(
+      (stock) => stock.storeId === storeId && stock.productId === productId,
+    );
+    const keys = [...this.saleSyncProgress.keys()]
+      .filter((key) => key.startsWith(`${storeId}:${productId}:`))
+      .sort();
+    for (const key of keys) {
+      const progress = this.saleSyncProgress.get(key)!;
+      const target =
+        progress.observed > progress.baseline ? progress.observed - progress.baseline : 0n;
+      let remaining = progress.applied > target ? progress.applied - target : 0n;
+      for (const lot of [...lots].reverse()) {
+        if (remaining === 0n) break;
+        const room =
+          (this.sortedSaleCredited.get(lot.id) ?? 0n) - kilogramsToGramsExact(lot.saleWeightKg);
+        const credit = room < remaining ? room : remaining;
+        if (credit <= 0n) continue;
+        const updated = {
+          ...lot,
+          saleWeightKg: gramsToKilogramsExact(kilogramsToGramsExact(lot.saleWeightKg) + credit),
+          version: lot.version + 1,
+          updatedAt: this.now().toISOString(),
+        };
+        this.sortedStocks.set(lot.id, updated);
+        Object.assign(lot, updated);
+        remaining -= credit;
+      }
+      if (remaining !== 0n) throw new Error('Cannot reverse IDOSI sale in memory.');
+      if (progress.applied > target) progress.applied = target;
+    }
+    for (const key of keys) {
+      const progress = this.saleSyncProgress.get(key)!;
+      const target =
+        progress.observed > progress.baseline ? progress.observed - progress.baseline : 0n;
+      let remaining = target > progress.applied ? target - progress.applied : 0n;
+      for (const lot of lots) {
+        if (remaining === 0n) break;
+        const balance = kilogramsToGramsExact(lot.saleWeightKg);
+        const debit = balance < remaining ? balance : remaining;
+        if (debit <= 0n) continue;
+        const updated = {
+          ...lot,
+          saleWeightKg: gramsToKilogramsExact(balance - debit),
+          version: lot.version + 1,
+          updatedAt: this.now().toISOString(),
+        };
+        this.sortedStocks.set(lot.id, updated);
+        Object.assign(lot, updated);
+        progress.applied += debit;
+        remaining -= debit;
+      }
+    }
   }
 
   public async listStoreTransfers(

@@ -40,7 +40,7 @@ describe('IDOSI workspace source isolation', () => {
         createElement(ProductionOutboundPage, { role: 'ADMIN', storeKind: null, mode: 'SALE' }),
       ),
     );
-    expect(html).toContain('Không thể tải dữ liệu vận hành');
+    expect(html).toContain('Không thể tải số dư đã lọc');
     expect(html).toContain('Doanh thu &amp; hàng đã bán');
     expect(html).toContain('Kỳ thống kê IDOSI');
     client.clear();

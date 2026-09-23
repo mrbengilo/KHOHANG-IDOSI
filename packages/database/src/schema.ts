@@ -1876,6 +1876,127 @@ export const storeOutbounds = pgTable(
   ],
 );
 
+/** Physical weight moved out of a bag by sorting, before sale or charity export. */
+export const storeSortedStocks = pgTable(
+  'store_sorted_stocks',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    storeInventoryBagId: uuid('store_inventory_bag_id')
+      .notNull()
+      .references(() => storeInventoryBags.id, { onDelete: 'restrict' }),
+    saleCreditedWeightKg: numeric('sale_credited_weight_kg', { precision: 14, scale: 3 })
+      .notNull()
+      .default('0.000'),
+    saleWeightKg: numeric('sale_weight_kg', { precision: 14, scale: 3 }).notNull().default('0.000'),
+    charityWeightKg: numeric('charity_weight_kg', { precision: 14, scale: 3 })
+      .notNull()
+      .default('0.000'),
+    version: integer('version').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('store_sorted_stocks_bag_uidx').on(table.storeInventoryBagId),
+    index('store_sorted_stocks_store_product_idx').on(table.storeId, table.productId),
+    check('store_sorted_stocks_sale_nonnegative', sql`${table.saleWeightKg} >= 0`),
+    check(
+      'store_sorted_stocks_sale_within_credited',
+      sql`${table.saleWeightKg} <= ${table.saleCreditedWeightKg}`,
+    ),
+    check('store_sorted_stocks_charity_nonnegative', sql`${table.charityWeightKg} >= 0`),
+    check('store_sorted_stocks_version_nonnegative', sql`${table.version} >= 0`),
+  ],
+);
+
+/** Immutable movements make sorting, charity and IDOSI sale reconciliation auditable. */
+export const storeSortingEvents = pgTable(
+  'store_sorting_events',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    storeSortedStockId: uuid('store_sorted_stock_id').references(() => storeSortedStocks.id, {
+      onDelete: 'restrict',
+    }),
+    storeInventoryBagId: uuid('store_inventory_bag_id')
+      .notNull()
+      .references(() => storeInventoryBags.id, { onDelete: 'restrict' }),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    action: text('action').notNull(),
+    weightKg: numeric('weight_kg', { precision: 14, scale: 3 }).notNull(),
+    pieceCount: integer('piece_count'),
+    sourceSnapshotId: uuid('source_snapshot_id').references(() => idosiStatisticsSnapshots.id, {
+      onDelete: 'restrict',
+    }),
+    actorUserId: uuid('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('store_sorting_events_store_occurred_idx').on(table.storeId, table.occurredAt),
+    check('store_sorting_events_weight_positive', sql`${table.weightKg} > 0`),
+    check(
+      'store_sorting_events_action',
+      sql`${table.action} IN ('sort_sale', 'sort_charity', 'sort_cancel', 'charity_to_sale', 'charity_export', 'idosi_sale_kg', 'idosi_sale_piece', 'idosi_sale_correction')`,
+    ),
+    check(
+      'store_sorting_events_piece_positive',
+      sql`${table.pieceCount} IS NULL OR ${table.pieceCount} > 0`,
+    ),
+  ],
+);
+
+/** Last cumulative IDOSI weight for one store/product/month/type; repeated syncs are no-ops. */
+export const storeSaleSyncProgress = pgTable(
+  'store_sale_sync_progress',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    period: text('period').notNull(),
+    saleType: text('sale_type').notNull(),
+    baselineGrams: bigint('baseline_grams', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    observedGrams: bigint('observed_grams', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    appliedGrams: bigint('applied_grams', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    sourceSnapshotId: uuid('source_snapshot_id').references(() => idosiStatisticsSnapshots.id, {
+      onDelete: 'restrict',
+    }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('store_sale_sync_progress_scope_uidx').on(
+      table.storeId,
+      table.productId,
+      table.period,
+      table.saleType,
+    ),
+    check('store_sale_sync_progress_period', sql`${table.period} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`),
+    check('store_sale_sync_progress_type', sql`${table.saleType} IN ('sale_kg', 'sale_piece')`),
+    check(
+      'store_sale_sync_progress_nonnegative',
+      sql`${table.baselineGrams} >= 0 AND ${table.observedGrams} >= 0 AND ${table.appliedGrams} >= 0`,
+    ),
+  ],
+);
+
 /** Append-only operational policy snapshots. The highest version is current. */
 export const operationalSettingsVersions = pgTable(
   'operational_settings_versions',
@@ -2113,5 +2234,7 @@ export type StoreInventoryBag = typeof storeInventoryBags.$inferSelect;
 export type StoreInventoryLedgerEntry = typeof storeInventoryLedgerEntries.$inferSelect;
 export type StoreOutbound = typeof storeOutbounds.$inferSelect;
 export type NewStoreOutbound = typeof storeOutbounds.$inferInsert;
+export type StoreSortedStock = typeof storeSortedStocks.$inferSelect;
+export type StoreSortingEvent = typeof storeSortingEvents.$inferSelect;
 export type StoreTransfer = typeof storeTransfers.$inferSelect;
 export type NewStoreTransfer = typeof storeTransfers.$inferInsert;

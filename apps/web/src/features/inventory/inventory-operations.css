@@ -280,6 +280,55 @@
   flex: 1 1 100%;
 }
 
+.sorted-charity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 1rem;
+}
+
+.sorted-charity-card {
+  display: grid;
+  gap: 0.75rem;
+  align-content: start;
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.8rem;
+}
+
+.sorted-charity-card h3,
+.sorted-charity-confirm p {
+  margin: 0;
+}
+
+.sorted-charity-card small {
+  color: var(--text-secondary);
+}
+
+.sorted-charity-card label {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.sorted-charity-card input {
+  width: 100%;
+  min-width: 0;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.sorted-charity-confirm {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--brand);
+  border-radius: 0.65rem;
+}
+
 @media (max-width: 960px) {
   .inventory-master-detail {
     grid-template-columns: 1fr;

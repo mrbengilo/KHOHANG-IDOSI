@@ -10,6 +10,11 @@ import {
   ReviewStoreOutboundRequestSchema,
   StoreInventoryBagResponseSchema,
   StoreOutboundResponseSchema,
+  ListStoreSortedStocksResponseSchema,
+  StoreSortingResultResponseSchema,
+  CreateStoreSortingRequestSchema,
+  MoveCharityToSaleRequestSchema,
+  ExportCharityRequestSchema,
   type CreateStoreOutboundRequest,
   type OpenStoreInventoryBagRequest,
   type OutboundReason,
@@ -19,6 +24,11 @@ import {
   type StoreInventoryBagStatus,
   type StoreOutbound,
   type StoreOutboundStatus,
+  type StoreSortedStock,
+  type StoreSortingResult,
+  type CreateStoreSortingRequest,
+  type MoveCharityToSaleRequest,
+  type ExportCharityRequest,
 } from '@idosi/contracts';
 import { reportUnauthorizedResponse } from '../../lib/session-expiry';
 
@@ -196,4 +206,54 @@ export async function reviewStoreOutbound(
     body: JSON.stringify(parsed),
   });
   return StoreOutboundResponseSchema.parse(payload).data;
+}
+
+export async function listStoreSortedStocks(storeId?: string): Promise<StoreSortedStock[]> {
+  const query = storeId ? `?${new URLSearchParams({ storeId })}` : '';
+  return ListStoreSortedStocksResponseSchema.parse(await request(`/store-sorted-stocks${query}`))
+    .data;
+}
+
+export async function createStoreSorting(
+  input: CreateStoreSortingRequest,
+  idempotencyKey: string,
+): Promise<StoreSortingResult> {
+  const parsed = CreateStoreSortingRequestSchema.parse(input);
+  return StoreSortingResultResponseSchema.parse(
+    await request('/store-sortings', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(parsed),
+    }),
+  ).data;
+}
+
+export async function moveCharityToSale(
+  stockId: string,
+  input: MoveCharityToSaleRequest,
+  idempotencyKey: string,
+): Promise<StoreSortingResult> {
+  const parsed = MoveCharityToSaleRequestSchema.parse(input);
+  return StoreSortingResultResponseSchema.parse(
+    await request(`/store-sorted-stocks/${encodeURIComponent(stockId)}/move-to-sale`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(parsed),
+    }),
+  ).data;
+}
+
+export async function exportCharity(
+  stockId: string,
+  input: ExportCharityRequest,
+  idempotencyKey: string,
+): Promise<StoreSortingResult> {
+  const parsed = ExportCharityRequestSchema.parse(input);
+  return StoreSortingResultResponseSchema.parse(
+    await request(`/store-sorted-stocks/${encodeURIComponent(stockId)}/export-charity`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(parsed),
+    }),
+  ).data;
 }

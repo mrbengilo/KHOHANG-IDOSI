@@ -228,7 +228,7 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(17);
+    expect(journal.entries).toHaveLength(18);
     expect(journal.entries[8]).toMatchObject({ tag: '0008_optional_supplier_weight' });
     expect(journal.entries[9]).toMatchObject({ tag: '0009_supported_allocation_policy' });
     expect(journal.entries[10]).toMatchObject({
@@ -255,6 +255,7 @@ describe('initial migration invariants', () => {
     });
     expect(journal.entries[15]).toMatchObject({ tag: '0015_store_outbound_reasons' });
     expect(journal.entries[16]).toMatchObject({ tag: '0016_store_outbound_piece_count' });
+    expect(journal.entries[17]).toMatchObject({ tag: '0017_pink_jack_murdock' });
     expect(journal.entries[7]).toMatchObject({ tag: '0007_receipt_vat', breakpoints: true });
     expect(journal.entries[0]).toMatchObject({
       tag: '0000_initial',

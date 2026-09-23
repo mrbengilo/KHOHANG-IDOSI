@@ -58,6 +58,8 @@ import type {
   StoreInventoryBagLedgerEntry,
   StoreOrderRequest,
   StoreOutbound,
+  StoreSortedStock,
+  StoreSortingResult,
   HeldAllocation,
   StoreReceiptSource,
   StorePartnerInbound,
@@ -83,6 +85,9 @@ import type {
   WarehouseOutboundRequest,
   OpenStoreInventoryBagRequest,
   CreateStoreOutboundRequest,
+  CreateStoreSortingRequest,
+  MoveCharityToSaleRequest,
+  ExportCharityRequest,
   ReviewStoreOutboundRequest,
   StoreTransfer,
   ListStoreTransfersQuery,
@@ -570,6 +575,33 @@ export interface WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<StoreOutbound>>;
+  listStoreSortedStocks(
+    actor: AuthenticatedPrincipal,
+    storeId?: string,
+  ): Promise<readonly StoreSortedStock[]>;
+  createStoreSorting(
+    actor: AuthenticatedPrincipal,
+    input: CreateStoreSortingRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreSortingResult>>;
+  moveCharityToSale(
+    actor: AuthenticatedPrincipal,
+    stockId: string,
+    input: MoveCharityToSaleRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreSortingResult>>;
+  exportCharity(
+    actor: AuthenticatedPrincipal,
+    stockId: string,
+    input: ExportCharityRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<StoreSortingResult>>;
 
   listStoreTransfers(
     actor: AuthenticatedPrincipal,

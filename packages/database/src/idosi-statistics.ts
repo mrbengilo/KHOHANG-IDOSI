@@ -17,6 +17,7 @@ import {
   type JsonObject,
 } from './schema.js';
 import { withAdvisoryLock } from './transaction.js';
+import { reconcileStoreSaleSnapshot } from './store-sale-sync.js';
 
 export interface IdosiStatisticsTarget {
   readonly storeId: string;
@@ -230,6 +231,24 @@ export async function recordIdosiStatisticsSuccess(
           })
           .returning({ id: idosiStatisticsSyncAttempts.id });
         if (!attempt) throw new Error('IDOSI success attempt insert did not return a row');
+
+        if (
+          (!existing || sourceGeneratedAt >= existing.sourceGeneratedAt) &&
+          input.scope.date === null &&
+          input.scope.shiftId === null &&
+          input.scope.paymentMethod === null
+        ) {
+          await withAdvisoryLock(tx, 'store-sorting', input.scope.storeId, () =>
+            reconcileStoreSaleSnapshot(
+              tx,
+              input.scope.storeId,
+              input.scope.period,
+              snapshotId,
+              input.payload,
+              input.completedAt,
+            ),
+          );
+        }
 
         await tx.insert(auditLogs).values({
           requestId: input.context.requestId,

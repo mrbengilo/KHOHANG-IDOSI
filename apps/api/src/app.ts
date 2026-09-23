@@ -19,6 +19,11 @@ import {
   CreateStorePartnerInboundRequestSchema,
   CreateStoreGroupRequestSchema,
   CreateStoreOutboundRequestSchema,
+  CreateStoreSortingRequestSchema,
+  ExportCharityRequestSchema,
+  ListStoreSortedStocksQuerySchema,
+  MoveCharityToSaleRequestSchema,
+  StoreSortedStockParamsSchema,
   CreateStoreRequestSchema,
   DeclareStoreReceiptRequestSchema,
   DispatchWarehouseOutboundRequestSchema,
@@ -1181,6 +1186,64 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return reply.send({ data: result.data });
   });
 
+  app.get('/api/v1/store-sorted-stocks', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = ListStoreSortedStocksQuerySchema.parse(request.query);
+    return { data: await repository.listStoreSortedStocks(session.principal, query.storeId) };
+  });
+
+  app.post('/api/v1/store-sortings', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = CreateStoreSortingRequestSchema.parse(request.body);
+    const result = await repository.createStoreSorting(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CREATE_STORE_SORTING', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
+  });
+
+  app.post('/api/v1/store-sorted-stocks/:stockId/move-to-sale', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { stockId } = StoreSortedStockParamsSchema.parse(request.params);
+    const input = MoveCharityToSaleRequestSchema.parse(request.body);
+    const result = await repository.moveCharityToSale(
+      session.principal,
+      stockId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'MOVE_CHARITY_TO_SALE', stockId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.post('/api/v1/store-sorted-stocks/:stockId/export-charity', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { stockId } = StoreSortedStockParamsSchema.parse(request.params);
+    const input = ExportCharityRequestSchema.parse(request.body);
+    const result = await repository.exportCharity(
+      session.principal,
+      stockId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'EXPORT_CHARITY', stockId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
   app.get('/api/v1/store-transfers', async (request) => {
     const session = await authenticate(request, repository);
     const query = ListStoreTransfersQuerySchema.parse(request.query);
@@ -2026,6 +2089,41 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: { '200': { description: 'Approved, rejected or replayed store outbound' } },
+        },
+      },
+      '/api/v1/store-sorted-stocks': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'Sale and charity balances by store, product and source bag' },
+          },
+        },
+      },
+      '/api/v1/store-sortings': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '201': { description: 'Recorded sorting to Sale, Charity or Cancel' } },
+        },
+      },
+      '/api/v1/store-sorted-stocks/{stockId}/move-to-sale': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Moved Charity kilograms into the Sale balance' } },
+        },
+      },
+      '/api/v1/store-sorted-stocks/{stockId}/export-charity': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Exported the remaining Charity balance' } },
         },
       },
       '/api/v1/store-transfers': {
