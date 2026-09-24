@@ -118,7 +118,7 @@ code → kiểm thử → commit/push branch → mở PR → CI/review đạt �
 
 - Không cần người dùng nhắc lại hoặc xác nhận riêng cho commit, push, mở PR, merge và deploy thông thường trong phạm vi task đã giao.
 - Nếu task mới yêu cầu chỉ phân tích, chỉ làm bản nháp, không merge hoặc không deploy thì tuân theo giới hạn đó.
-- Đây là phạm vi được giao cho agent; không có nghĩa GitHub Actions đã được cấu hình tự deploy. Agent phải thực hiện quy trình triển khai hiện có và xác minh kết quả.
+- Bước deploy do watcher trên VPS tự thực hiện sau khi merge commit có CI xanh (xem Bước 7); agent không deploy tay mà theo dõi trạng thái watcher và xác minh kết quả.
 - Deploy production theo `docs/deployment-khoidosi.io.vn.md`, chỉ từ merged commit SHA; vẫn phải đáp ứng đầy đủ quality gate, backup, migration, health check và smoke test bên dưới.
 - Không dừng ở commit/PR khi còn có thể tiếp tục đến deploy. Khi thiếu quyền GitHub/SSH, cấu hình VPS, secret hoặc có gate thất bại, báo chính xác bước bị chặn và thông tin cần bổ sung; không báo task đã hoàn tất.
 - Quyền triển khai thông thường không bao gồm xóa dữ liệu production, restore đè database, xóa volume hoặc bỏ qua branch protection/quality gate.
