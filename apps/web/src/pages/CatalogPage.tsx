@@ -54,8 +54,6 @@ interface RetireDraft {
   reason: string;
 }
 
-const today = businessDate();
-
 function roundDivide(numerator: bigint, denominator: bigint): bigint {
   return (numerator * 2n + denominator) / (denominator * 2n);
 }
@@ -88,12 +86,12 @@ export function formatConversionRatios(conversion: ProductConversion | null): {
 
 function addOneDay(value: string): string {
   const [year, month, day] = value.split('-').map(Number);
-  if (!year || !month || !day) return today;
+  if (!year || !month || !day) return businessDate();
   const next = new Date(Date.UTC(year, month - 1, day + 1));
   return next.toISOString().slice(0, 10);
 }
 
-export function nextConversionDate(effectiveFrom: string, currentDate = today): string {
+export function nextConversionDate(effectiveFrom: string, currentDate = businessDate()): string {
   const minimum = addOneDay(effectiveFrom);
   return minimum > currentDate ? minimum : currentDate;
 }
@@ -181,6 +179,8 @@ function errorMessage(cause: unknown): string {
 
 export function CatalogPage() {
   const { role } = useOutletContext<AppOutletContext>();
+  // Read on every render: a page left open past midnight must not keep yesterday's date.
+  const today = businessDate();
   const [effectiveAt, setEffectiveAt] = useState(today);
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<StatusFilter>('ACTIVE');

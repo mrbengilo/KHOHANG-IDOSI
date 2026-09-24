@@ -33,6 +33,7 @@ import { StatCard } from '../../components/StatCard';
 import { ApiClientError, listAccessibleStores, listCatalog } from '../../lib/api';
 import { useSession } from '../../lib/auth';
 import { checkBagWeights } from '../../lib/bag-weights';
+import { businessDate } from '../../lib/business-time';
 import { formatKg, formatKgExact, formatVnd } from '../../lib/format';
 import { IdosiSalesWorkspace } from '../idosi/IdosiSalesWorkspace';
 import { isOpenBagSelectionCurrent, OpenBagConfirmation } from './OpenBagConfirmation';
@@ -213,7 +214,7 @@ function downloadInventoryCsv(
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = `doi-soat-ton-kho-${new Date().toISOString().slice(0, 10)}.csv`;
+  anchor.download = `doi-soat-ton-kho-${businessDate()}.csv`;
   anchor.click();
   URL.revokeObjectURL(url);
 }
