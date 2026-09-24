@@ -262,6 +262,31 @@ describe('initial migration invariants', () => {
     );
   });
 
+  it('adds allocation and sorting integrity structures without rewriting existing rows', () => {
+    const sql = readFileSync(
+      new URL('../migrations/0024_allocation_sorting_integrity.sql', import.meta.url),
+      'utf8',
+    );
+    const previous = JSON.parse(
+      readFileSync(new URL('../migrations/meta/0023_snapshot.json', import.meta.url), 'utf8'),
+    ) as { id: string };
+    const current = JSON.parse(
+      readFileSync(new URL('../migrations/meta/0024_snapshot.json', import.meta.url), 'utf8'),
+    ) as { prevId: string; tables: Record<string, unknown> };
+    expect(current.prevId).toBe(previous.id);
+    for (const table of [
+      'warehouse_shortage_checks',
+      'store_normal_sale_progress',
+      'idosi_product_links',
+    ]) {
+      expect(sql).toContain(`CREATE TABLE "${table}"`);
+      expect(current.tables).toHaveProperty(`public.${table}`);
+    }
+    // A cancelled request gives its slot back.
+    expect(sql).toMatch(/order_requests_session_store_slot_uidx".*WHERE .*<> 'cancelled'/);
+    expect(sql).not.toMatch(/UPDATE \w+ SET|DELETE FROM|DROP TABLE/i);
+  });
+
   it.each(requiredTables)('creates %s', (tableName) => {
     expect(migration).toMatch(new RegExp(`CREATE TABLE "?${tableName}"?\\s*\\(`));
   });
@@ -276,7 +301,7 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(24);
+    expect(journal.entries).toHaveLength(25);
     expect(journal.entries[8]).toMatchObject({ tag: '0008_optional_supplier_weight' });
     expect(journal.entries[9]).toMatchObject({ tag: '0009_supported_allocation_policy' });
     expect(journal.entries[10]).toMatchObject({
@@ -313,6 +338,7 @@ describe('initial migration invariants', () => {
     expect(journal.entries[21]).toMatchObject({ tag: '0021_receipt_unexpected_items' });
     expect(journal.entries[22]).toMatchObject({ tag: '0022_auto_priority_receipt_shortage' });
     expect(journal.entries[23]).toMatchObject({ tag: '0023_priority_offer_stock_holds' });
+    expect(journal.entries[24]).toMatchObject({ tag: '0024_allocation_sorting_integrity' });
     expect(journal.entries[7]).toMatchObject({ tag: '0007_receipt_vat', breakpoints: true });
     expect(journal.entries[0]).toMatchObject({
       tag: '0000_initial',

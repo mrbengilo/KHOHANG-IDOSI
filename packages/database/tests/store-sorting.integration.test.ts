@@ -20,6 +20,7 @@ import {
   receiveSortedSaleTransfer,
   storeGroups,
   storeInventoryBags,
+  storeNormalSaleProgress,
   storeSaleSyncProgress,
   storeSortingEvents,
   stores,
@@ -68,6 +69,33 @@ function saleItem(name: string, type: 'SALE_KG' | 'SALE_PIECE', quantity: number
       },
     },
   };
+}
+
+/** Regular-price lines are sold by the piece; IDOSI converts them to kg with its norms. */
+function normalItem(name: string, kg: number, idosiProductId = name) {
+  const bucket = { ...emptyBucket, estimatedKg: kg, knownKg: kg, totalKg: kg };
+  return {
+    productId: idosiProductId,
+    productName: name,
+    quantity: kg * 3,
+    unit: 'PIECE' as const,
+    revenueType: 'NORMAL' as const,
+    classification: 'NORMAL' as const,
+    orders: 1,
+    weight: {
+      ...emptyWeight,
+      ...bucket,
+      byRevenueType: { NORMAL: bucket, SALE_KG: emptyBucket, SALE_PIECE: emptyBucket },
+    },
+  };
+}
+
+function normalPayload(period: string, at: Date, items: ReturnType<typeof normalItem>[]) {
+  const base = payload(period, at, 0, 0);
+  return IdosiOrderStatisticsPayloadSchema.parse({
+    ...base,
+    products: { ...base.products, items, productTypes: items.length },
+  });
 }
 
 function payload(period: string, at: Date, malePieces: number, dressKg: number) {
@@ -320,6 +348,116 @@ describePostgres('sorted sale and charity stock with IDOSI reconciliation', () =
     expect(
       afterHistorySync.find((stock) => stock.inventoryLotId === maleBag.id)?.saleWeightKg,
     ).toBe('24.000');
+  });
+
+  it('takes regular-price IDOSI sales out of the store bags from the first tracked month', async () => {
+    const token = randomUUID().replaceAll('-', '');
+    const [group] = await db
+      .insert(storeGroups)
+      .values({ code: `N${token}`, name: 'Normal sale integration' })
+      .returning();
+    const [store] = await db
+      .insert(stores)
+      .values({ groupId: group!.id, code: `N${token}`, name: 'Normal sale store' })
+      .returning();
+    const [admin] = await db
+      .select({ passwordHash: users.passwordHash })
+      .from(users)
+      .where(eq(users.role, 'admin'))
+      .limit(1);
+    const [actor] = await db
+      .insert(users)
+      .values({
+        email: `normal.${token}@example.invalid`,
+        displayName: 'Normal sale test',
+        role: 'store',
+        status: 'active',
+        storeId: store!.id,
+        passwordHash: admin?.passwordHash ?? 'test-hash-placeholder-long-enough',
+      })
+      .returning();
+    const [dress] = await db.select().from(products).where(eq(products.sku, 'DAM')).limit(1);
+    const now = new Date();
+    const period = new Date(now.getTime() + 7 * 3600000).toISOString().slice(0, 7);
+    const save = async (
+      dressKg: number | null,
+      offsetSeconds: number,
+      snapshotPeriod = period,
+      idosiName = dress!.name,
+    ) => {
+      const at = new Date(now.getTime() + offsetSeconds * 1000);
+      await recordIdosiStatisticsSuccess(db, {
+        target: { storeId: store!.id, storeCode: store!.code, storeName: store!.name },
+        scope: {
+          storeId: store!.id,
+          period: snapshotPeriod,
+          date: null,
+          shiftId: null,
+          paymentMethod: null,
+        },
+        payload: normalPayload(
+          snapshotPeriod,
+          at,
+          dressKg === null ? [] : [normalItem(idosiName, dressKg, `IDOSI-${token}`)],
+        ),
+        source: 'MANUAL',
+        startedAt: at,
+        completedAt: at,
+        context: {
+          actor: { userId: null, role: null, storeId: null },
+          requestId: randomUUID(),
+          ipAddress: null,
+          userAgent: null,
+        },
+      });
+    };
+    const inbound = await createStorePartnerInbound(db, {
+      storeId: store!.id,
+      partnerName: 'Normal sale partner',
+      note: null,
+      receivedAt: now,
+      lines: [{ productId: dress!.id, quantity: 2, bagWeightsKg: ['4.000', '10.000'] }],
+      createdByUserId: actor!.id,
+      requestId: randomUUID(),
+      idempotencyKey: randomUUID(),
+      requestHash: randomUUID(),
+    });
+    if (inbound.replayed) throw new Error('Unexpected inbound replay');
+    // Both bags arrive at the same instant, so only the total left is deterministic.
+    const weights = async () =>
+      (
+        await db.select().from(storeInventoryBags).where(eq(storeInventoryBags.storeId, store!.id))
+      ).reduce((total, bag) => total + Math.round(Number(bag.currentWeightKg) * 1000), 0);
+
+    // 3 kg sold before tracking started is the baseline, not a deduction.
+    await save(3, 0);
+    expect(await weights()).toBe(14_000);
+    // 7 kg more leaves the bags; a bag that runs empty is marked depleted.
+    await save(10, 1);
+    expect(await weights()).toBe(7_000);
+    await save(10, 2);
+    expect(await weights()).toBe(7_000);
+    // IDOSI corrects the month down by 2 kg: the weight goes back to the bags.
+    await save(8, 3);
+    expect(await weights()).toBe(9_000);
+    // IDOSI renames the product; its IDOSI id still points at the same bags.
+    await save(9, 4, period, 'Đầm dáng dài');
+    expect(await weights()).toBe(8_000);
+    // An older month opened for inspection is never charged to today's bags.
+    const olderPeriod = new Date(
+      Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 3, 1),
+    )
+      .toISOString()
+      .slice(0, 7);
+    await save(50, 5, olderPeriod);
+    expect(await weights()).toBe(8_000);
+    const progress = await db
+      .select()
+      .from(storeNormalSaleProgress)
+      .where(eq(storeNormalSaleProgress.storeId, store!.id));
+    expect(progress.map((row) => [row.period, row.baselineGrams, row.appliedGrams])).toEqual([
+      [period, 3_000n, 6_000n],
+    ]);
   });
 
   it('transfers sorted bags once and caps later IDOSI corrections at the source', async () => {

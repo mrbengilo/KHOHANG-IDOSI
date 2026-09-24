@@ -13,6 +13,8 @@ import {
   submitOrderRequest,
   prepareOrderingContext,
   ensureDailyOrderingSession,
+  transitionOrderSession,
+  OrderSessionConflictError,
 } from '../src/index.js';
 import {
   countOrderingQuota,
@@ -195,6 +197,102 @@ describePostgres('24/7 ordering and allocation-completion quota', () => {
       .set({ completedAt: new Date() })
       .where(eq(orderSessions.id, replacement.id));
     expect(await db.transaction((tx) => countOrderingQuota(tx, store.id, next.id))).toBe(1);
+  });
+
+  it('gives a cancelled request slot back to the store', async () => {
+    const { admin, store, product } = await createFixture();
+    const [session] = await db
+      .insert(orderSessions)
+      .values({
+        code: `FREE-SLOT-${randomUUID()}`,
+        businessDate: new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10),
+        status: 'open',
+        openedAt: new Date(Date.now() - 3600000),
+        inventorySnapshotDueAt: new Date(Date.now() + 3600000),
+        requestDeadlineAt: new Date(Date.now() + 7200000),
+        policyVersion: 'idosi-round-robin-p0a-p3-v1',
+      })
+      .returning();
+    sessionIds.add(session!.id);
+    const submit = () =>
+      submitOrderRequest(db, {
+        orderSessionId: session!.id,
+        storeId: store.id,
+        requestedByUserId: admin.id,
+        items: [{ productId: product.id, quantity: 1 }],
+        idempotencyKey: randomUUID(),
+        requestHash: randomUUID(),
+      });
+    const created = (result: Awaited<ReturnType<typeof submit>>) => {
+      if (result.replayed) throw new Error('A fresh key must not replay.');
+      return result.value;
+    };
+    const first = created(await submit());
+    await submit();
+    await expect(submit()).rejects.toBeInstanceOf(RequestLimitExceededError);
+    await db
+      .update(orderRequests)
+      .set({ status: 'cancelled', cancelledAt: new Date(), cancellationReason: 'Nhập nhầm' })
+      .where(eq(orderRequests.id, first.id));
+    expect(await db.transaction((tx) => countOrderingQuota(tx, store.id, session!.id))).toBe(1);
+    const replacement = created(await submit());
+    expect(replacement.requestNumber).toBe(first.requestNumber);
+    await expect(submit()).rejects.toBeInstanceOf(RequestLimitExceededError);
+  });
+
+  it('cancels pending requests with their session and refuses to cancel after the snapshot', async () => {
+    const { admin, store, product } = await createFixture();
+    const makeOpenSession = async (snapshotOffsetMs: number) => {
+      const [session] = await db
+        .insert(orderSessions)
+        .values({
+          code: `CANCEL-${randomUUID()}`,
+          businessDate: new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10),
+          status: 'open',
+          openedAt: new Date(Date.now() - 7200000),
+          inventorySnapshotDueAt: new Date(Date.now() + snapshotOffsetMs),
+          requestDeadlineAt: new Date(Date.now() + snapshotOffsetMs + 3600000),
+          policyVersion: 'idosi-round-robin-p0a-p3-v1',
+        })
+        .returning();
+      sessionIds.add(session!.id);
+      return session!;
+    };
+    const cancel = (session: { id: string; version: number }) =>
+      transitionOrderSession(db, {
+        orderSessionId: session.id,
+        targetStatus: 'cancelled',
+        expectedVersion: session.version,
+        reason: 'Đổi lịch vận hành',
+        actorUserId: admin.id,
+        idempotencyKey: randomUUID(),
+        requestHash: randomUUID(),
+      });
+
+    const beforeSnapshot = await makeOpenSession(3600000);
+    await submitOrderRequest(db, {
+      orderSessionId: beforeSnapshot.id,
+      storeId: store.id,
+      requestedByUserId: admin.id,
+      items: [{ productId: product.id, quantity: 1 }],
+      idempotencyKey: randomUUID(),
+      requestHash: randomUUID(),
+    });
+    await cancel(beforeSnapshot);
+    const requests = await db
+      .select()
+      .from(orderRequests)
+      .where(eq(orderRequests.orderSessionId, beforeSnapshot.id));
+    expect(requests.map((request) => request.status)).toEqual(['cancelled']);
+    expect(requests[0]?.cancelledAt).not.toBeNull();
+
+    const afterSnapshot = await makeOpenSession(-60000);
+    await expect(cancel(afterSnapshot)).rejects.toBeInstanceOf(OrderSessionConflictError);
+    const [unchanged] = await db
+      .select()
+      .from(orderSessions)
+      .where(eq(orderSessions.id, afterSnapshot.id));
+    expect(unchanged?.status).toBe('open');
   });
 });
 

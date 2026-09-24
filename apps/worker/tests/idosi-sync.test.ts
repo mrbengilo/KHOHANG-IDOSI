@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   businessMonthAt,
+  idosiSyncPeriods,
   IdosiStatisticsSyncWorker,
   type ScheduledIdosiSyncRepository,
 } from '../src/idosi-sync.js';
@@ -55,6 +56,19 @@ describe('scheduled IDOSI statistics sync', () => {
     expect(businessMonthAt(new Date('2026-08-31T18:00:00.000Z'), 'Asia/Ho_Chi_Minh')).toBe(
       '2026-09',
     );
+  });
+
+  it('keeps re-syncing the previous month for the first days of a new month', () => {
+    const zone = 'Asia/Ho_Chi_Minh';
+    expect(idosiSyncPeriods(new Date('2026-09-02T03:00:00.000Z'), zone)).toEqual([
+      '2026-09',
+      '2026-08',
+    ]);
+    expect(idosiSyncPeriods(new Date('2027-01-01T01:00:00.000Z'), zone)).toEqual([
+      '2027-01',
+      '2026-12',
+    ]);
+    expect(idosiSyncPeriods(new Date('2026-09-04T03:00:00.000Z'), zone)).toEqual(['2026-09']);
   });
 
   it('continues other stores, records safe failure state and never sends the secret in the URL', async () => {

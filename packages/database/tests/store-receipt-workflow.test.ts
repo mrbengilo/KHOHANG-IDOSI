@@ -58,6 +58,12 @@ describe('store receipt declaration validation', () => {
         { productId: 'product-c', quantity: 0 },
       ]),
     ).toThrow(StoreOperationValidationError);
+    // Extra bags on top of a line received in full are accepted as excess goods.
+    expect(() =>
+      validateStoreReceiptDeclaration(lines, dispatched, 'Dư một bao váy', [
+        { productId: 'product-b', quantity: 1 },
+      ]),
+    ).not.toThrow();
   });
 
   it('rejects missing, duplicate, wrong, and excess lines', () => {

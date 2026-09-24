@@ -1134,7 +1134,7 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(keyConflict.json().error.code, 'IDEMPOTENCY_CONFLICT');
   });
 
-  test('persists line notes and cancels a request without reopening its quota slot', async () => {
+  test('persists line notes and gives the quota slot back when a request is cancelled', async () => {
     const storeCookie = cookieOf(await login('ds_nvt'));
     const adminCookie = cookieOf(await login('admin'));
     const productId = await firstProductId(storeCookie);
@@ -1172,14 +1172,21 @@ describe('KHOHANG-IDOSI API', () => {
       orderPayload(productId, 1),
     );
     assert.equal(second.statusCode, 201);
-    assert.equal(second.json().data.requestSequence, 2);
+    assert.equal(second.json().data.requestSequence, 1);
     const third = await submitOrder(
       storeCookie,
       'third-slot-after-cancel',
       orderPayload(productId, 1),
     );
-    assert.equal(third.statusCode, 409);
-    assert.equal(third.json().error.code, 'REQUEST_LIMIT_REACHED');
+    assert.equal(third.statusCode, 201);
+    assert.equal(third.json().data.requestSequence, 2);
+    const fourth = await submitOrder(
+      storeCookie,
+      'fourth-slot-after-cancel',
+      orderPayload(productId, 1),
+    );
+    assert.equal(fourth.statusCode, 409);
+    assert.equal(fourth.json().error.code, 'REQUEST_LIMIT_REACHED');
 
     const audit = await app.inject({
       method: 'GET',
@@ -1805,6 +1812,13 @@ describe('KHOHANG-IDOSI API', () => {
           pricePerKgVnd: 20_001,
         },
       ],
+      unexpectedItems: [
+        {
+          productId: extraProduct.id,
+          bagWeightsKg: ['2.000', '2.500', '3.000'],
+          pricePerKgVnd: 10_000,
+        },
+      ],
       freightVnd: 10_000,
       handlingVnd: 5_000,
       expectedVersion: 1,
@@ -1859,9 +1873,27 @@ describe('KHOHANG-IDOSI API', () => {
     );
     assert.equal(finalized.statusCode, 200);
     assert.equal(finalized.json().data.status, 'FINALIZED');
-    assert.deepEqual(finalized.json().data.unexpectedItems, declaration.unexpectedItems);
+    assert.deepEqual(finalized.json().data.unexpectedItems, [
+      { ...declaration.unexpectedItems[0], ...finalization.unexpectedItems[0] },
+    ]);
     assert.equal(finalized.json().data.version, 4);
-    assert.equal(finalized.json().data.totalCostVnd, 40_101);
+    // 1.255 kg × 20,001 + 7.5 kg of excess × 10,000 + freight 10,000 + handling 5,000
+    assert.equal(finalized.json().data.totalCostVnd, 115_101);
+
+    const shortageChecks = await app.inject({
+      method: 'GET',
+      url: '/api/v1/warehouse-shortage-checks?status=PENDING',
+      headers: { cookie: cookieOf(await login('admin')) },
+    });
+    assert.equal(shortageChecks.statusCode, 200);
+    const shortage = shortageChecks.json().data.find((check) => check.storeReceiptId === receiptId);
+    assert.equal(shortage?.quantity, 1);
+    const htkdDenied = await app.inject({
+      method: 'GET',
+      url: '/api/v1/warehouse-shortage-checks',
+      headers: { cookie: htkdCookie },
+    });
+    assert.equal(htkdDenied.statusCode, 403);
 
     const finalizeReplay = await mutateReceipt(
       htkdCookie,

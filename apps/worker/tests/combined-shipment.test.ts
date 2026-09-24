@@ -20,12 +20,14 @@ import {
   orderSessions,
   products,
   reservations,
+  resolveWarehouseShortageCheck,
   storeGroups,
   stores,
   submitStoreReceipt,
   users,
   waitTickets,
   warehouseBalances,
+  warehouseShortageChecks,
   withSerializableTransaction,
 } from '@idosi/database';
 import { and, eq } from 'drizzle-orm';
@@ -389,7 +391,32 @@ describePostgres('priority goods join the next ordinary shipment', () => {
           .select()
           .from(warehouseBalances)
           .where(eq(warehouseBalances.productId, product!.id));
-        expect(balance).toMatchObject({ onHandQuantity: 10 - received, reservedQuantity: 0 });
+        // A reported shortage stays held until the warehouse confirms where the bags are.
+        expect(balance).toMatchObject({
+          onHandQuantity: 10 - received,
+          reservedQuantity: 6 - received,
+        });
+        const checks = await db
+          .select()
+          .from(warehouseShortageChecks)
+          .where(eq(warehouseShortageChecks.storeReceiptId, declared.value.receiptId));
+        expect(checks.map((check) => check.quantity)).toEqual(received < 6 ? [6 - received] : []);
+        if (checks[0]) {
+          await resolveWarehouseShortageCheck(db, {
+            checkId: checks[0].id,
+            decision: 'returned_to_stock',
+            reason: 'Kiểm kệ còn đủ bao',
+            expectedVersion: 0,
+            actorUserId: admin.id,
+            idempotencyKey: randomUUID(),
+            requestHash: randomUUID(),
+          });
+          const [released] = await db
+            .select()
+            .from(warehouseBalances)
+            .where(eq(warehouseBalances.productId, product!.id));
+          expect(released).toMatchObject({ onHandQuantity: 10 - received, reservedQuantity: 0 });
+        }
         const waits = await db
           .select()
           .from(waitTickets)
