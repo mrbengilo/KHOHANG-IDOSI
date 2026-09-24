@@ -31,6 +31,9 @@ import { PageHeader } from '../components/PageHeader';
 import { DashboardSkeleton } from '../components/Skeleton';
 import { StatCard } from '../components/StatCard';
 import { HeldAllocationsPanel } from '../features/receipts/HeldAllocationsPanel';
+import { AdjustmentQueue } from '../features/receipts/adjustments/AdjustmentQueue';
+import { ReceiptAdjustmentsSection } from '../features/receipts/adjustments/ReceiptAdjustments';
+import { canUseAdjustments } from '../features/receipts/adjustments/adjustmentModel';
 import { listStoreReceiptSources } from '../features/receipts/receiptSourceApi';
 import '../features/receipts/receipt-source.css';
 import {
@@ -116,6 +119,7 @@ function ProductionReceivePage({ role }: AppOutletContext) {
   const [statusFilter, setStatusFilter] = useState<ReceiptStatus | 'ALL'>('ALL');
   const [storeFilter, setStoreFilter] = useState('');
   const [selectedReceiptId, setSelectedReceiptId] = useState('');
+  const [focusAdjustmentId, setFocusAdjustmentId] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
   const operationKeys = useRef(new Map<string, string>());
   const operationInFlight = useRef(false);
@@ -335,6 +339,20 @@ function ProductionReceivePage({ role }: AppOutletContext) {
         />
       ) : null}
 
+      {canUseAdjustments(role) ? (
+        <AdjustmentQueue
+          onOpen={(receiptId, adjustmentId) => {
+            // The queue can point at a receipt outside the current filter; clear the filter.
+            setStatusFilter('ALL');
+            setStoreFilter('');
+            setSelectedReceiptId(receiptId);
+            setFocusAdjustmentId(adjustmentId);
+          }}
+          role={role}
+          storeNameById={storeNameById}
+        />
+      ) : null}
+
       <section className="filter-card receipt-filters" aria-label="Bộ lọc phiếu nhận hàng">
         {role !== 'STORE' ? (
           <label>
@@ -423,7 +441,10 @@ function ProductionReceivePage({ role }: AppOutletContext) {
                   }
                   disabled={mutation.isPending}
                   key={receipt.id}
-                  onClick={() => setSelectedReceiptId(receipt.id)}
+                  onClick={() => {
+                    setSelectedReceiptId(receipt.id);
+                    setFocusAdjustmentId(null);
+                  }}
                   title={receipt.receiptNumber}
                   type="button"
                 >
@@ -449,6 +470,7 @@ function ProductionReceivePage({ role }: AppOutletContext) {
               <DashboardSkeleton />
             ) : (
               <ReceiptDetail
+                focusAdjustmentId={focusAdjustmentId}
                 key={`${selectedReceipt.id}:${selectedReceipt.version}`}
                 onFinalize={(input) =>
                   runOperation({
@@ -853,6 +875,7 @@ function CreateReceiptForm({
 }
 
 function ReceiptDetail({
+  focusAdjustmentId,
   onFinalize,
   onReturn,
   onSubmit,
@@ -863,6 +886,7 @@ function ReceiptDetail({
   role,
   storeName,
 }: {
+  readonly focusAdjustmentId: string | null;
   readonly onFinalize: (input: FinalizeReceiptRequest) => Promise<boolean>;
   readonly onReturn: (input: ReturnReceiptForCorrectionRequest) => Promise<boolean>;
   readonly onSubmit: (input: SubmitStoreReceiptRequest) => Promise<boolean>;
@@ -939,6 +963,16 @@ function ReceiptDetail({
           />
         </>
       )}
+      {receipt.status === 'FINALIZED' && canUseAdjustments(role) ? (
+        <ReceiptAdjustmentsSection
+          focusAdjustmentId={focusAdjustmentId}
+          key={focusAdjustmentId ?? 'none'}
+          productNameById={productNameById}
+          products={unexpectedProducts}
+          receiptId={receipt.id}
+          role={role}
+        />
+      ) : null}
     </>
   );
 }
@@ -1568,8 +1602,15 @@ function ReadonlyReceiptLines({
 function FinalizedSummary({ receipt }: { readonly receipt: Receipt }) {
   const costVnd = receipt.totalCostVnd === null ? null : BigInt(receipt.totalCostVnd);
   const vatVnd = receipt.vat ? BigInt(receipt.vat.amountVnd) : null;
+  const adjusted = (receipt.adjustmentSummary?.appliedCount ?? 0) > 0;
   return (
     <ReceiptTotalsSummary
+      {...(adjusted
+        ? {
+            caption:
+              'Số chốt gốc của phiếu. Phiếu đã có điều chỉnh sau khui bao – xem giá trị có hiệu lực ở mục Sai lệch sau khui bao.',
+          }
+        : {})}
       className="receipt-finalized-summary"
       totals={{
         goodsVnd:

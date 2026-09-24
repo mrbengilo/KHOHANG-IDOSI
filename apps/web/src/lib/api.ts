@@ -98,7 +98,8 @@ export class ApiClientError extends Error {
   }
 }
 
-async function request(path: string, init?: RequestInit): Promise<unknown> {
+/** JSON request with the session cookie, tab header and structured API errors. */
+export async function request(path: string, init?: RequestInit): Promise<unknown> {
   const headers = new Headers(init?.headers);
   if (!headers.has('Accept')) headers.set('Accept', 'application/json');
   if (init?.body !== undefined && !headers.has('Content-Type')) {
@@ -138,7 +139,7 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
   return payload;
 }
 
-interface ParsedPage<T> {
+export interface ParsedPage<T> {
   readonly data: T[];
   readonly pagination: { readonly totalPages: number };
 }
@@ -149,7 +150,7 @@ function paginatedQuery(filters: URLSearchParams, page: number): string {
   return query.toString();
 }
 
-async function listAllPages<T>(
+export async function listAllPages<T>(
   path: string,
   filters: URLSearchParams,
   parse: (payload: unknown) => ParsedPage<T>,
