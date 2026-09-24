@@ -8,6 +8,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 root_dir="${AUTODEPLOY_ROOT:-/opt/khohang-idosi}"
 remote_url="${AUTODEPLOY_REMOTE_URL:-https://github.com/mrbengilo/KHOHANG-IDOSI.git}"
 sbin_path=/usr/local/sbin/khohang-autodeploy
+backup_sbin_path=/usr/local/sbin/khohang-backup
 unit_dir=/etc/systemd/system
 mode=install
 
@@ -52,10 +53,18 @@ install_atomic() {
 install_atomic "$script_dir/khohang-autodeploy.sh" "$sbin_path" 0755
 install_atomic "$script_dir/khohang-autodeploy.service" "$unit_dir/khohang-autodeploy.service" 0644
 install_atomic "$script_dir/khohang-autodeploy.timer" "$unit_dir/khohang-autodeploy.timer" 0644
+
+# The nightly backup ships with the watcher: every deployment refreshes it, so
+# a VPS that only ever receives automatic deployments still gets daily backups.
+backup_source="$(cd -- "$script_dir/../backup" && pwd -P)"
+install_atomic "$backup_source/khohang-backup.sh" "$backup_sbin_path" 0755
+install_atomic "$backup_source/khohang-backup.service" "$unit_dir/khohang-backup.service" 0644
+install_atomic "$backup_source/khohang-backup.timer" "$unit_dir/khohang-backup.timer" 0644
 systemctl daemon-reload
+systemctl enable --now khohang-backup.timer >/dev/null
 
 if [[ "$mode" == refresh ]]; then
-  printf 'autodeploy watcher refreshed from %s\n' "$script_dir"
+  printf 'autodeploy watcher and nightly backup refreshed from %s\n' "$script_dir"
   exit 0
 fi
 
