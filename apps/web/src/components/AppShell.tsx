@@ -31,11 +31,20 @@ import { clearAuthenticatedSession, useSession } from '../lib/auth';
 import { onSessionExpired } from '../lib/session-expiry';
 import type { DemoMode, Role, StoreKind } from '../lib/types';
 
-interface NavEntry {
+export type NavGroup = 'operations' | 'administration';
+
+export interface NavEntry {
   to: string;
   label: string;
   icon: typeof LayoutDashboard;
+  /** Mặc định là nhóm vận hành; chỉ các màn hình quản trị hệ thống mới khai báo nhóm. */
+  group?: NavGroup;
 }
+
+const navGroupLabel: Record<NavGroup, string> = {
+  operations: 'Vận hành',
+  administration: 'Quản trị',
+};
 
 const navEntries: NavEntry[] = [
   { to: '/', label: 'Tổng quan', icon: LayoutDashboard },
@@ -86,13 +95,29 @@ const navEntries: NavEntry[] = [
     label: 'Điều chuyển',
     icon: Truck,
   },
-  { to: '/catalog', label: 'Danh mục & quy đổi', icon: ClipboardCheck },
   { to: '/reports', label: 'Báo cáo', icon: FileClock },
-  { to: '/stores', label: 'Cửa hàng & nhóm', icon: Building2 },
-  { to: '/users', label: 'Tài khoản', icon: Users },
-  { to: '/audit', label: 'Audit', icon: ShieldCheck },
-  { to: '/settings', label: 'Cấu hình', icon: Settings },
+  { to: '/stores', label: 'Cửa hàng & nhóm', icon: Building2, group: 'administration' },
+  { to: '/users', label: 'Tài khoản', icon: Users, group: 'administration' },
+  { to: '/catalog', label: 'Danh mục & quy đổi', icon: ClipboardCheck, group: 'administration' },
+  { to: '/settings', label: 'Cấu hình', icon: Settings, group: 'administration' },
+  { to: '/audit', label: 'Nhật ký hệ thống', icon: ShieldCheck, group: 'administration' },
 ];
+
+export interface NavSection {
+  readonly group: NavGroup;
+  readonly entries: readonly NavEntry[];
+}
+
+/** Các mục menu vai trò được thấy, gom theo nhóm và giữ nguyên thứ tự khai báo. */
+export function navigationSections(role: Role, storeKind: StoreKind | null): NavSection[] {
+  const byGroup = new Map<NavGroup, NavEntry[]>();
+  for (const entry of navEntries) {
+    if (!canShowNavigation(entry.to, role, storeKind)) continue;
+    const group = entry.group ?? 'operations';
+    byGroup.set(group, [...(byGroup.get(group) ?? []), entry]);
+  }
+  return [...byGroup].map(([group, grouped]) => ({ group, entries: grouped }));
+}
 
 const modeLabel: Record<DemoMode, string> = {
   ADMIN: 'Admin IDOSI',
@@ -158,10 +183,8 @@ export function AppShell() {
         ? 'WHOLESALE'
         : null
     : (storeKindQuery.data ?? null);
-  const links = useMemo(
-    () => navEntries.filter((entry) => canShowNavigation(entry.to, role, storeKind)),
-    [role, storeKind],
-  );
+  const navSections = useMemo(() => navigationSections(role, storeKind), [role, storeKind]);
+  const links = useMemo(() => navSections.flatMap((section) => section.entries), [navSections]);
 
   const updateMode = (value: DemoMode) => {
     window.localStorage.setItem(roleStorageKey, value);
@@ -265,19 +288,33 @@ export function AppShell() {
           </button>
         </div>
         <nav aria-label="Điều hướng chính" className="sidebar__nav">
-          {links.map(({ icon: Icon, label, to }) => (
-            <NavLink
-              className={({ isActive }) =>
-                clsx('sidebar__link', isActive && 'sidebar__link--active')
-              }
-              end={to === '/'}
-              key={to}
-              onClick={() => setOpen(false)}
-              to={to}
+          {navSections.map(({ group, entries }) => (
+            <div
+              aria-labelledby={navSections.length > 1 ? `sidebar-group-${group}` : undefined}
+              className="sidebar__group"
+              key={group}
+              role={navSections.length > 1 ? 'group' : undefined}
             >
-              <Icon aria-hidden="true" size={18} />
-              <span>{to === '/costs' && role === 'HTKD' ? 'Nhập kg & chi phí' : label}</span>
-            </NavLink>
+              {navSections.length > 1 ? (
+                <span className="sidebar__group-title" id={`sidebar-group-${group}`}>
+                  {navGroupLabel[group]}
+                </span>
+              ) : null}
+              {entries.map(({ icon: Icon, label, to }) => (
+                <NavLink
+                  className={({ isActive }) =>
+                    clsx('sidebar__link', isActive && 'sidebar__link--active')
+                  }
+                  end={to === '/'}
+                  key={to}
+                  onClick={() => setOpen(false)}
+                  to={to}
+                >
+                  <Icon aria-hidden="true" size={18} />
+                  <span>{to === '/costs' && role === 'HTKD' ? 'Nhập kg & chi phí' : label}</span>
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
         <div className="sidebar__profile">

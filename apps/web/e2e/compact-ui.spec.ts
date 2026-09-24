@@ -7,6 +7,9 @@ test('admin menu and branding match the warehouse role', async ({ page }) => {
     await expect(nav.getByRole('link', { name, exact: true })).toHaveCount(0);
   }
   await expect(nav.getByRole('link', { name: 'Nhập kho tổng' })).toHaveCount(1);
+  const adminGroup = nav.getByRole('group', { name: 'Quản trị' });
+  await expect(adminGroup.getByRole('link').last()).toHaveText('Nhật ký hệ thống');
+  await expect(nav.getByRole('link', { name: 'Audit', exact: true })).toHaveCount(0);
   const selected = nav.getByRole('link', { name: 'Tổng quan', exact: true });
   await expect(selected).toHaveAttribute('aria-current', 'page');
   const selectedStyle = await selected.evaluate((element) => {
