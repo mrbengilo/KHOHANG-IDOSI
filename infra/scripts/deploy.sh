@@ -164,6 +164,13 @@ trap on_error ERR
 log "deploying $release_sha (currently $previous_sha) to $app_domain"
 IMAGE_TAG="$release_sha" "${new_compose[@]}" config --quiet
 
+stage=prepare
+log 'normalizing tracked source permissions for non-root containers'
+# The watcher uses umask 077 to protect its state. Docker COPY preserves those
+# checkout modes, and Caddy bind-mounts its config as a non-root user. Normalize
+# only Git-tracked build inputs, including checkouts made by older watchers.
+python3 "$release_dir/infra/scripts/normalize-release-permissions.py"
+
 stage=backup
 log 'backing up the database'
 "$release_dir/infra/scripts/backup-db.sh" --env-file "$env_file" --output-dir "$backup_dir"

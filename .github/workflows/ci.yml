@@ -155,13 +155,29 @@ jobs:
           docker compose --file docker-compose.yml run --rm --no-deps caddy caddy version
           docker compose --file docker-compose.yml run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
-      - name: Build production container targets
+      - name: Build production containers from a restrictive deployment checkout
         env:
           APP_DOMAIN: localhost
           IMAGE_PREFIX: local/khohang-idosi
           IMAGE_TAG: 0000000000000000000000000000000000000000
           POSTGRES_PASSWORD: idosi_ci_password
-        run: docker compose --file docker-compose.yml build api migrate worker web
+        run: |
+          set -euo pipefail
+          build_context="$(mktemp -d)"
+          trap 'git worktree remove --force "$build_context"' EXIT
+          (
+            umask 077
+            git worktree add --detach "$build_context" HEAD
+          )
+          # Reproduce the root-owned 0600/0700 inputs created by the VPS watcher.
+          # Docker COPY owns these files as root even when CI runs as runner.
+          test "$(stat -c %a "$build_context/package.json")" = 600
+          test "$(stat -c %a "$build_context/packages/database")" = 700
+          python3 "$build_context/infra/scripts/normalize-release-permissions.py"
+          test "$(stat -c %a "$build_context/package.json")" = 644
+          test "$(stat -c %a "$build_context/Caddyfile")" = 644
+          test "$(stat -c %a "$build_context/packages/database")" = 755
+          docker compose --file "$build_context/docker-compose.yml" build api migrate worker web
 
       - name: Verify production migration, bootstrap, and healthy full stack
         env:
