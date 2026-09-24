@@ -12,7 +12,7 @@ và chốt chi phí được hiển thị đỏ. VAT lúc tạo phiếu vẫn t�
 không có `required`, vì yêu cầu là chọn ít nhất một mặt hàng, không phải chọn tất cả.
 
 Không sửa backend, schema, tồn kho, chính sách phân bổ hay quyền. Không cần migration.
-Giữ nhập kho không có ô kg; tiền VAT nhập trực tiếp, thuế suất 8%.
+Giữ nhập kho không có ô kg. (Cập nhật 24/09/2026: VAT đã chuyển sang bước HTKD chốt phiếu nhận hàng, xem `vat-store-receipt.md`.)
 
 ## Nguồn thiết kế
 
