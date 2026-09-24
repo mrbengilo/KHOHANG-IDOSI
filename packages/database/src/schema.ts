@@ -178,6 +178,36 @@ export const idempotencyStatusEnum = pgEnum('idempotency_status', [
   'completed',
   'failed',
 ]);
+export const receiptAdjustmentStatusEnum = pgEnum('receipt_adjustment_status', [
+  'pending_htkd',
+  'needs_info',
+  'pending_admin',
+  'applied',
+  'rejected',
+  'cancelled',
+]);
+export const receiptAdjustmentDispositionEnum = pgEnum('receipt_adjustment_disposition', [
+  'keep',
+  'return',
+]);
+export const receiptAdjustmentCauseEnum = pgEnum('receipt_adjustment_cause', [
+  'source_misclassification',
+  'warehouse_mispick',
+]);
+export const receiptAdjustmentHoldStateEnum = pgEnum('receipt_adjustment_hold_state', [
+  'none',
+  'held',
+  'released',
+  'returning',
+]);
+export const storeReceiptReturnStatusEnum = pgEnum('store_receipt_return_status', [
+  'pending_handover',
+  'in_transit',
+  'received',
+  'disputed',
+  'lost',
+  'cancelled',
+]);
 
 export const storeGroups = pgTable(
   'store_groups',
@@ -1582,6 +1612,14 @@ export const warehouseShortageChecks = pgTable(
     productId: uuid('product_id')
       .notNull()
       .references(() => products.id, { onDelete: 'restrict' }),
+    /**
+     * Set when a post-finalization adjustment found the warehouse picked the wrong SKU: the
+     * approved unit may still be on the shelf, so it is held here until someone checks.
+     */
+    storeReceiptAdjustmentLineId: uuid('store_receipt_adjustment_line_id').references(
+      () => storeReceiptAdjustmentLines.id,
+      { onDelete: 'restrict' },
+    ),
     quantity: integer('quantity').notNull(),
     status: warehouseShortageCheckStatusEnum('status').notNull().default('pending'),
     shortageReason: text('shortage_reason'),
@@ -1595,7 +1633,12 @@ export const warehouseShortageChecks = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex('warehouse_shortage_checks_receipt_line_uidx').on(table.storeReceiptLineId),
+    uniqueIndex('warehouse_shortage_checks_receipt_line_uidx')
+      .on(table.storeReceiptLineId)
+      .where(sql`${table.storeReceiptAdjustmentLineId} IS NULL`),
+    uniqueIndex('warehouse_shortage_checks_adjustment_line_uidx').on(
+      table.storeReceiptAdjustmentLineId,
+    ),
     index('warehouse_shortage_checks_status_created_idx').on(table.status, table.createdAt),
     index('warehouse_shortage_checks_store_idx').on(table.storeId),
     check('warehouse_shortage_checks_quantity_positive', sql`${table.quantity} > 0`),
@@ -1695,6 +1738,320 @@ export const storeInventoryBags = pgTable(
     check(
       'store_inventory_bags_transfer_parent',
       sql`${table.sourceTransferId} IS NULL OR ${table.sourceInventoryBagId} IS NOT NULL`,
+    ),
+  ],
+);
+
+/**
+ * A discrepancy found after a store receipt was finalized (for example a bag booked as one SKU
+ * that turns out to be another once opened). The finalized receipt, its bags and ledger stay
+ * untouched; effective values are the receipt plus the deltas of applied adjustments.
+ */
+export const storeReceiptAdjustments = pgTable(
+  'store_receipt_adjustments',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    code: text('code').notNull().default(''),
+    storeReceiptId: uuid('store_receipt_id')
+      .notNull()
+      .references(() => storeReceipts.id, { onDelete: 'restrict' }),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    status: receiptAdjustmentStatusEnum('status').notNull().default('pending_htkd'),
+    version: integer('version').notNull().default(0),
+    reason: text('reason').notNull(),
+    /** Where the photos/notes live; there is no attachment store in the system. */
+    evidenceNote: text('evidence_note'),
+    discoveredAt: timestamp('discovered_at', { withTimezone: true }).notNull(),
+    cause: receiptAdjustmentCauseEnum('cause'),
+    /** Applied adjustments on the receipt when this one was verified; apply re-checks it. */
+    baseAppliedCount: integer('base_applied_count').notNull().default(0),
+    appliedSequence: integer('applied_sequence'),
+    goodsDeltaVnd: bigint('goods_delta_vnd', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    freightDeltaVnd: bigint('freight_delta_vnd', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    handlingDeltaVnd: bigint('handling_delta_vnd', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    vatDeltaVnd: bigint('vat_delta_vnd', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    /** Server-computed before/after money and stock snapshot fixed at verification. */
+    verification: jsonb('verification').$type<JsonObject>(),
+    reportedByUserId: uuid('reported_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    reportedAt: timestamp('reported_at', { withTimezone: true }).notNull(),
+    verifiedByUserId: uuid('verified_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }),
+    verificationNote: text('verification_note'),
+    infoRequestNote: text('info_request_note'),
+    decidedByUserId: uuid('decided_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    decisionNote: text('decision_note'),
+    appliedAt: timestamp('applied_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('store_receipt_adjustments_code_uidx').on(table.code),
+    uniqueIndex('store_receipt_adjustments_receipt_sequence_uidx')
+      .on(table.storeReceiptId, table.appliedSequence)
+      .where(sql`${table.appliedSequence} IS NOT NULL`),
+    index('store_receipt_adjustments_receipt_idx').on(table.storeReceiptId, table.createdAt),
+    index('store_receipt_adjustments_store_status_idx').on(
+      table.storeId,
+      table.status,
+      table.createdAt,
+    ),
+    index('store_receipt_adjustments_status_created_idx').on(table.status, table.createdAt),
+    index('store_receipt_adjustments_applied_idx')
+      .on(table.appliedAt)
+      .where(sql`${table.status} = 'applied'`),
+    check('store_receipt_adjustments_code_format', sql`${table.code} ~ '^PSL-[0-9]{6}$'`),
+    check(
+      'store_receipt_adjustments_reason_length',
+      sql`length(btrim(${table.reason})) BETWEEN 3 AND 1000`,
+    ),
+    check('store_receipt_adjustments_version_nonnegative', sql`${table.version} >= 0`),
+    check(
+      'store_receipt_adjustments_base_nonnegative',
+      sql`${table.baseAppliedCount} >= 0 AND (${table.appliedSequence} IS NULL OR ${table.appliedSequence} > 0)`,
+    ),
+    check(
+      'store_receipt_adjustments_verified_state',
+      sql`${table.status} NOT IN ('pending_admin', 'applied') OR (${table.verifiedByUserId} IS NOT NULL AND ${table.verifiedAt} IS NOT NULL AND ${table.verification} IS NOT NULL AND ${table.cause} IS NOT NULL)`,
+    ),
+    check(
+      'store_receipt_adjustments_applied_state',
+      sql`(${table.status} = 'applied') = (${table.appliedSequence} IS NOT NULL AND ${table.appliedAt} IS NOT NULL) AND (${table.status} <> 'applied' OR ${table.decidedByUserId} IS NOT NULL)`,
+    ),
+    check(
+      'store_receipt_adjustments_closed_state',
+      sql`${table.status} NOT IN ('rejected', 'cancelled') OR (${table.decidedByUserId} IS NOT NULL AND ${table.decidedAt} IS NOT NULL AND length(btrim(coalesce(${table.decisionNote}, ''))) >= 3)`,
+    ),
+  ],
+);
+
+/** One physical bag of the receipt that the adjustment reclassifies. */
+export const storeReceiptAdjustmentLines = pgTable(
+  'store_receipt_adjustment_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    adjustmentId: uuid('adjustment_id')
+      .notNull()
+      .references(() => storeReceiptAdjustments.id, { onDelete: 'restrict' }),
+    storeReceiptLineId: uuid('store_receipt_line_id')
+      .notNull()
+      .references(() => storeReceiptLines.id, { onDelete: 'restrict' }),
+    storeReceiptBagId: uuid('store_receipt_bag_id')
+      .notNull()
+      .references(() => storeReceiptBags.id, { onDelete: 'restrict' }),
+    storeInventoryBagId: uuid('store_inventory_bag_id')
+      .notNull()
+      .references(() => storeInventoryBags.id, { onDelete: 'restrict' }),
+    /** SKU the warehouse approved and dispatched; NULL for booked excess goods. */
+    approvedProductId: uuid('approved_product_id').references(() => products.id, {
+      onDelete: 'restrict',
+    }),
+    recordedProductId: uuid('recorded_product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    actualProductId: uuid('actual_product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    disposition: receiptAdjustmentDispositionEnum('disposition').notNull(),
+    recordedWeightKg: numeric('recorded_weight_kg', { precision: 14, scale: 3 }).notNull(),
+    recordedPricePerKgVnd: bigint('recorded_price_per_kg_vnd', { mode: 'bigint' }).notNull(),
+    recordedCostVnd: bigint('recorded_cost_vnd', { mode: 'bigint' }).notNull(),
+    verifiedWeightKg: numeric('verified_weight_kg', { precision: 14, scale: 3 }),
+    verifiedPricePerKgVnd: bigint('verified_price_per_kg_vnd', { mode: 'bigint' }),
+    verifiedCostVnd: bigint('verified_cost_vnd', { mode: 'bigint' }),
+    weightChangeNote: text('weight_change_note'),
+    shortageQuantity: integer('shortage_quantity').notNull().default(0),
+    holdState: receiptAdjustmentHoldStateEnum('hold_state').notNull(),
+    holdPreviousStatus: storeInventoryBagStatusEnum('hold_previous_status'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('store_receipt_adjustment_lines_adjustment_bag_uidx').on(
+      table.adjustmentId,
+      table.storeReceiptBagId,
+    ),
+    // Only one document may hold a bag away from sales at a time.
+    uniqueIndex('store_receipt_adjustment_lines_one_hold_uidx')
+      .on(table.storeInventoryBagId)
+      .where(sql`${table.holdState} IN ('held', 'returning')`),
+    index('store_receipt_adjustment_lines_receipt_bag_idx').on(table.storeReceiptBagId),
+    check(
+      'store_receipt_adjustment_lines_sku_changes',
+      sql`${table.actualProductId} <> ${table.recordedProductId}`,
+    ),
+    check(
+      'store_receipt_adjustment_lines_shortage',
+      sql`${table.shortageQuantity} IN (0, 1) AND (${table.shortageQuantity} = 0 OR ${table.approvedProductId} IS NOT NULL)`,
+    ),
+    check(
+      'store_receipt_adjustment_lines_recorded_values',
+      sql`${table.recordedWeightKg} > 0 AND ${table.recordedPricePerKgVnd} >= 0 AND ${table.recordedCostVnd} >= 0`,
+    ),
+    check(
+      'store_receipt_adjustment_lines_verified_values',
+      sql`(${table.verifiedWeightKg} IS NULL AND ${table.verifiedPricePerKgVnd} IS NULL AND ${table.verifiedCostVnd} IS NULL) OR (${table.verifiedWeightKg} > 0 AND ${table.verifiedPricePerKgVnd} >= 0 AND ${table.verifiedCostVnd} >= 0)`,
+    ),
+    check(
+      'store_receipt_adjustment_lines_hold_previous',
+      sql`(${table.holdState} = 'none') = (${table.holdPreviousStatus} IS NULL)`,
+    ),
+  ],
+);
+
+/**
+ * The right to receive the approved SKU the store never got. Keyed by the physical receipt bag,
+ * so retries, re-verification or a second adjustment of the same bag can never grant it twice.
+ */
+export const receiptShortageEntitlements = pgTable(
+  'receipt_shortage_entitlements',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    adjustmentLineId: uuid('adjustment_line_id')
+      .notNull()
+      .references(() => storeReceiptAdjustmentLines.id, { onDelete: 'restrict' }),
+    storeReceiptBagId: uuid('store_receipt_bag_id')
+      .notNull()
+      .references(() => storeReceiptBags.id, { onDelete: 'restrict' }),
+    storeReceiptLineId: uuid('store_receipt_line_id')
+      .notNull()
+      .references(() => storeReceiptLines.id, { onDelete: 'restrict' }),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    quantity: integer('quantity').notNull(),
+    waitTicketId: uuid('wait_ticket_id')
+      .notNull()
+      .references(() => waitTickets.id, { onDelete: 'restrict' }),
+    /** 'created' opened a new wait; 'merged' added to the store's active wait for the SKU. */
+    waitMode: text('wait_mode').notNull(),
+    sourceOrderRequestItemId: uuid('source_order_request_item_id')
+      .notNull()
+      .references(() => orderRequestItems.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('receipt_shortage_entitlements_adjustment_line_uidx').on(table.adjustmentLineId),
+    uniqueIndex('receipt_shortage_entitlements_receipt_bag_uidx').on(table.storeReceiptBagId),
+    index('receipt_shortage_entitlements_wait_idx').on(table.waitTicketId),
+    index('receipt_shortage_entitlements_store_idx').on(table.storeId, table.createdAt),
+    check('receipt_shortage_entitlements_quantity', sql`${table.quantity} = 1`),
+    check(
+      'receipt_shortage_entitlements_wait_mode',
+      sql`${table.waitMode} IN ('created', 'merged')`,
+    ),
+  ],
+);
+
+/**
+ * Goods a store sends back to the central warehouse after an adjustment. The bag leaves store
+ * stock at handover; warehouse on-hand grows only when the warehouse confirms what arrived.
+ */
+export const storeReceiptReturns = pgTable(
+  'store_receipt_returns',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    code: text('code').notNull().default(''),
+    adjustmentLineId: uuid('adjustment_line_id')
+      .notNull()
+      .references(() => storeReceiptAdjustmentLines.id, { onDelete: 'restrict' }),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    storeInventoryBagId: uuid('store_inventory_bag_id')
+      .notNull()
+      .references(() => storeInventoryBags.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    quantity: integer('quantity').notNull().default(1),
+    weightKg: numeric('weight_kg', { precision: 14, scale: 3 }).notNull(),
+    costVnd: bigint('cost_vnd', { mode: 'bigint' }).notNull(),
+    status: storeReceiptReturnStatusEnum('status').notNull().default('pending_handover'),
+    version: integer('version').notNull().default(0),
+    reason: text('reason').notNull(),
+    createdByUserId: uuid('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    handedOverByUserId: uuid('handed_over_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    handedOverAt: timestamp('handed_over_at', { withTimezone: true }),
+    receivedByUserId: uuid('received_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    receivedAt: timestamp('received_at', { withTimezone: true }),
+    receivedQuantity: integer('received_quantity'),
+    receiveNote: text('receive_note'),
+    resolvedByUserId: uuid('resolved_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    resolutionNote: text('resolution_note'),
+    cancelledByUserId: uuid('cancelled_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    cancellationReason: text('cancellation_reason'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('store_receipt_returns_code_uidx').on(table.code),
+    uniqueIndex('store_receipt_returns_one_open_per_line_uidx')
+      .on(table.adjustmentLineId)
+      .where(sql`${table.status} <> 'cancelled'`),
+    index('store_receipt_returns_store_status_idx').on(
+      table.storeId,
+      table.status,
+      table.createdAt,
+    ),
+    index('store_receipt_returns_status_idx').on(table.status, table.createdAt),
+    index('store_receipt_returns_handed_over_idx').on(table.handedOverAt),
+    check('store_receipt_returns_code_format', sql`${table.code} ~ '^PTH-[0-9]{6}$'`),
+    check('store_receipt_returns_quantity', sql`${table.quantity} = 1`),
+    check(
+      'store_receipt_returns_values',
+      sql`${table.weightKg} > 0 AND ${table.costVnd} >= 0 AND ${table.version} >= 0`,
+    ),
+    check(
+      'store_receipt_returns_reason_length',
+      sql`length(btrim(${table.reason})) BETWEEN 3 AND 1000`,
+    ),
+    check(
+      'store_receipt_returns_handover_state',
+      sql`${table.status} IN ('pending_handover', 'cancelled') OR (${table.handedOverByUserId} IS NOT NULL AND ${table.handedOverAt} IS NOT NULL)`,
+    ),
+    check(
+      'store_receipt_returns_receive_state',
+      sql`${table.status} IN ('pending_handover', 'in_transit', 'cancelled') OR (${table.receivedByUserId} IS NOT NULL AND ${table.receivedAt} IS NOT NULL AND ${table.receivedQuantity} IS NOT NULL)`,
+    ),
+    check(
+      'store_receipt_returns_received_quantity',
+      sql`${table.receivedQuantity} IS NULL OR ${table.receivedQuantity} BETWEEN 0 AND ${table.quantity}`,
+    ),
+    check(
+      'store_receipt_returns_cancel_state',
+      sql`${table.status} <> 'cancelled' OR (${table.cancelledByUserId} IS NOT NULL AND ${table.cancelledAt} IS NOT NULL AND length(btrim(coalesce(${table.cancellationReason}, ''))) >= 3)`,
     ),
   ],
 );

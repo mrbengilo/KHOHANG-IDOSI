@@ -180,6 +180,39 @@ describe('initial migration invariants', () => {
     ) as { id: string };
     expect(snapshot.prevId).toBe(previous.id);
   });
+  it('adds receipt adjustments beside finalized receipts without rewriting them', () => {
+    const migration = readFileSync(
+      new URL('../migrations/0026_receipt_discrepancy_adjustments.sql', import.meta.url),
+      'utf8',
+    );
+    for (const table of [
+      'store_receipt_adjustments',
+      'store_receipt_adjustment_lines',
+      'receipt_shortage_entitlements',
+      'store_receipt_returns',
+    ]) {
+      expect(migration).toContain(`CREATE TABLE "${table}"`);
+    }
+    // Finalized receipts, their bags and ledgers are never updated or backfilled.
+    expect(migration).not.toMatch(/UPDATE\s+"?store_receipt/i);
+    expect(migration).not.toMatch(/DELETE\s+FROM/i);
+    // One right per physical bag, and at most one hold per stock bag.
+    expect(migration).toContain('"receipt_shortage_entitlements_receipt_bag_uidx"');
+    expect(migration).toContain('"store_receipt_adjustment_lines_one_hold_uidx"');
+    expect(migration).toContain("assign_document_code('code', 'PSL')");
+    expect(migration).toContain("assign_document_code('code', 'PTH')");
+    // The original shortage-check uniqueness still holds for receipt-time checks.
+    expect(migration).toMatch(
+      /"warehouse_shortage_checks_receipt_line_uidx"[^;]*WHERE "warehouse_shortage_checks"\."store_receipt_adjustment_line_id" IS NULL/,
+    );
+    const snapshot = JSON.parse(
+      readFileSync(new URL('../migrations/meta/0026_snapshot.json', import.meta.url), 'utf8'),
+    ) as { prevId: string };
+    const previous = JSON.parse(
+      readFileSync(new URL('../migrations/meta/0025_snapshot.json', import.meta.url), 'utf8'),
+    ) as { id: string };
+    expect(snapshot.prevId).toBe(previous.id);
+  });
   it('adds the wholesale role without using it in the same transaction', () => {
     const roleMigration = readFileSync(
       new URL('../migrations/0011_wholesale_account_role.sql', import.meta.url),
@@ -322,7 +355,7 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(26);
+    expect(journal.entries).toHaveLength(27);
     expect(journal.entries[8]).toMatchObject({ tag: '0008_optional_supplier_weight' });
     expect(journal.entries[9]).toMatchObject({ tag: '0009_supported_allocation_policy' });
     expect(journal.entries[10]).toMatchObject({
@@ -362,6 +395,10 @@ describe('initial migration invariants', () => {
     expect(journal.entries[24]).toMatchObject({ tag: '0024_allocation_sorting_integrity' });
     expect(journal.entries[25]).toMatchObject({
       tag: '0025_store_receipt_vat',
+      breakpoints: true,
+    });
+    expect(journal.entries[26]).toMatchObject({
+      tag: '0026_receipt_discrepancy_adjustments',
       breakpoints: true,
     });
     expect(journal.entries[7]).toMatchObject({ tag: '0007_receipt_vat', breakpoints: true });

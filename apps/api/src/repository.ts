@@ -1,4 +1,14 @@
 import type {
+  CreateReceiptAdjustmentRequest,
+  CreateReceiptReturnRequest,
+  ListReceiptAdjustmentsQuery,
+  ListReceiptReturnsQuery,
+  ReceiptAdjustment,
+  ReceiptAdjustmentActionRequest,
+  ReceiptAdjustmentContext,
+  ReceiptAdjustmentListItem,
+  ReceiptReturn,
+  ReceiptReturnActionRequest,
   WarehouseInventoryQuery,
   WarehouseInventoryResponse,
   OrderingContext,
@@ -554,6 +564,56 @@ export interface WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<Receipt>>;
+
+  /** Bags of a finalized receipt with their effective state, dependencies and adjustments. */
+  getReceiptAdjustmentContext(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+  ): Promise<ReceiptAdjustmentContext>;
+  listReceiptAdjustments(
+    actor: AuthenticatedPrincipal,
+    query: ListReceiptAdjustmentsQuery,
+  ): Promise<Page<ReceiptAdjustmentListItem>>;
+  getReceiptAdjustment(
+    actor: AuthenticatedPrincipal,
+    adjustmentId: string,
+  ): Promise<ReceiptAdjustment>;
+  createReceiptAdjustment(
+    actor: AuthenticatedPrincipal,
+    input: CreateReceiptAdjustmentRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ReceiptAdjustment>>;
+  actOnReceiptAdjustment(
+    actor: AuthenticatedPrincipal,
+    adjustmentId: string,
+    input: ReceiptAdjustmentActionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ReceiptAdjustment>>;
+  createReceiptReturn(
+    actor: AuthenticatedPrincipal,
+    adjustmentId: string,
+    lineId: string,
+    input: CreateReceiptReturnRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ReceiptReturn>>;
+  listReceiptReturns(
+    actor: AuthenticatedPrincipal,
+    query: ListReceiptReturnsQuery,
+  ): Promise<Page<ReceiptReturn>>;
+  actOnReceiptReturn(
+    actor: AuthenticatedPrincipal,
+    returnId: string,
+    input: ReceiptReturnActionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ReceiptReturn>>;
 
   listStoreInventoryBags(
     actor: AuthenticatedPrincipal,

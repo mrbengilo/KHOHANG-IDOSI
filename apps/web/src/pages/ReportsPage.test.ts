@@ -103,6 +103,36 @@ describe('monthly report UI helpers', () => {
     expect(csv).toContain(`STORE:${storeId}`);
   });
 
+  it('exports adjustment deltas as signed numbers dated by application', () => {
+    const csv = buildMonthlyReportCsv({
+      ...report,
+      adjustments: {
+        appliedCount: 1,
+        goodsDeltaVnd: '-200000',
+        freightDeltaVnd: '0',
+        handlingDeltaVnd: '0',
+        vatDeltaVnd: '0',
+        costDeltaVnd: '-200000',
+        totalDeltaVnd: '-200000',
+        adjustedLandedInboundCostVnd: '2800000',
+        adjustedVatCostVnd: null,
+        returnsHandedOverCount: 1,
+        returnsHandedOverValueVnd: '800000',
+      },
+      products: [
+        {
+          ...report.products[0]!,
+          adjustmentWeightDeltaGrams: '-20000',
+          adjustmentGoodsDeltaVnd: '-1000000',
+        },
+      ],
+    });
+    expect(csv).toContain('"Chênh lệch tiền hàng","-200000","VND"');
+    expect(csv).toContain('"Giá vốn nhập sau điều chỉnh","2800000","VND"');
+    expect(csv).toContain('"-20000","-1000000"');
+    expect(csv).not.toContain("'-200000");
+  });
+
   it('neutralizes spreadsheet formulas from product fields', () => {
     const csv = buildMonthlyReportCsv({
       ...report,

@@ -12,6 +12,9 @@ import {
   storeOutbounds,
   storeReceiptBags,
   storeReceiptLines,
+  storeReceiptAdjustmentLines,
+  storeReceiptAdjustments,
+  storeReceiptReturns,
   storeReceipts,
   stores,
   waitTickets,
@@ -98,6 +101,32 @@ export interface MonthlyStoreReceiptVatRow {
   readonly vatAmountVnd: bigint | null;
 }
 
+/** An adjustment applied in the period; reported on its applied date, never on the receipt's. */
+export interface MonthlyReceiptAdjustmentRow {
+  readonly adjustmentId: string;
+  readonly goodsDeltaVnd: bigint;
+  readonly freightDeltaVnd: bigint;
+  readonly handlingDeltaVnd: bigint;
+  readonly vatDeltaVnd: bigint;
+  /** Whether the adjusted receipt ever captured VAT; unknown VAT stays unknown. */
+  readonly receiptVatCaptured: boolean;
+}
+
+/** One reclassified bag: weight and goods value leave one SKU and enter another. */
+export interface MonthlyReceiptAdjustmentProductRow {
+  readonly productId: string;
+  readonly sku: string;
+  readonly productName: string;
+  readonly weightDeltaGrams: bigint;
+  readonly goodsDeltaVnd: bigint;
+}
+
+/** A store return handed over in the period, valued at the bag cost it left the store with. */
+export interface MonthlyReceiptReturnRow {
+  readonly returnId: string;
+  readonly costVnd: bigint;
+}
+
 export interface MonthlyReportRows {
   readonly inboundSource: Extract<ReportMetricSource, 'WAREHOUSE_RECEIPTS' | 'STORE_RECEIPTS'>;
   readonly inboundHeaders: readonly MonthlyInboundHeaderRow[];
@@ -108,6 +137,29 @@ export interface MonthlyReportRows {
   readonly outboundOrderIds: readonly string[];
   readonly allocationRunIds: readonly string[];
   readonly waitTicketIds: readonly string[];
+  readonly receiptAdjustments?: readonly MonthlyReceiptAdjustmentRow[];
+  readonly receiptAdjustmentProducts?: readonly MonthlyReceiptAdjustmentProductRow[];
+  readonly receiptReturns?: readonly MonthlyReceiptReturnRow[];
+}
+
+export interface MonthlyReceiptAdjustmentsReport {
+  readonly appliedCount: number;
+  readonly goodsDeltaVnd: bigint;
+  readonly freightDeltaVnd: bigint;
+  readonly handlingDeltaVnd: bigint;
+  readonly vatDeltaVnd: bigint;
+  readonly costDeltaVnd: bigint;
+  readonly totalDeltaVnd: bigint;
+  /**
+   * Store-receipt landed cost of the period plus adjustments applied in it. Null for the
+   * all-store scope, whose inbound cost comes from supplier receipts that adjustments of store
+   * receipts do not change.
+   */
+  readonly adjustedLandedInboundCostVnd: bigint | null;
+  /** Null while any VAT in the period (original or adjusted receipt) was never captured. */
+  readonly adjustedVatCostVnd: bigint | null;
+  readonly returnsHandedOverCount: number;
+  readonly returnsHandedOverValueVnd: bigint;
 }
 
 export interface MonthlyProductOperationalReport {
@@ -118,6 +170,9 @@ export interface MonthlyProductOperationalReport {
   readonly inboundGoodsCostVnd: ReportMetric<bigint>;
   readonly soldWeightGrams: ReportMetric<bigint>;
   readonly revenueVnd: ReportMetric<bigint>;
+  /** Signed: reclassified bags applied in the period (original receipts are not rewritten). */
+  readonly adjustmentWeightDeltaGrams: bigint;
+  readonly adjustmentGoodsDeltaVnd: bigint;
 }
 
 export interface MonthlyOperationalReport {
@@ -149,6 +204,7 @@ export interface MonthlyOperationalReport {
     readonly effectiveCostPerSoldKgVnd: ReportMetric<bigint>;
     readonly grossMarginBasisPoints: ReportMetric<number>;
   };
+  readonly adjustments: MonthlyReceiptAdjustmentsReport;
   readonly products: readonly MonthlyProductOperationalReport[];
 }
 
@@ -314,6 +370,8 @@ export function summarizeMonthlyReport(
       soldWeightGrams: bigint;
       revenueVnd: bigint;
       revenueComplete: boolean;
+      adjustmentWeightDeltaGrams: bigint;
+      adjustmentGoodsDeltaVnd: bigint;
     }
   >();
 
@@ -330,6 +388,24 @@ export function summarizeMonthlyReport(
     if (row.revenueVnd === null) product.revenueComplete = false;
     else product.revenueVnd += row.revenueVnd;
   }
+  for (const row of rows.receiptAdjustmentProducts ?? []) {
+    const product = productAccumulator(productsById, row);
+    product.adjustmentWeightDeltaGrams += row.weightDeltaGrams;
+    product.adjustmentGoodsDeltaVnd += row.goodsDeltaVnd;
+  }
+  const adjustmentRows = rows.receiptAdjustments ?? [];
+  const adjustmentDelta = {
+    goodsDeltaVnd: sum(adjustmentRows, (row) => row.goodsDeltaVnd),
+    freightDeltaVnd: sum(adjustmentRows, (row) => row.freightDeltaVnd),
+    handlingDeltaVnd: sum(adjustmentRows, (row) => row.handlingDeltaVnd),
+    vatDeltaVnd: sum(adjustmentRows, (row) => row.vatDeltaVnd),
+  };
+  const costDeltaVnd =
+    adjustmentDelta.goodsDeltaVnd +
+    adjustmentDelta.freightDeltaVnd +
+    adjustmentDelta.handlingDeltaVnd;
+  const adjustmentVatComplete =
+    vatComplete && adjustmentRows.every((row) => row.receiptVatCaptured);
 
   return {
     period,
@@ -377,6 +453,17 @@ export function summarizeMonthlyReport(
       effectiveCostPerSoldKgVnd: unavailable('COGS_NOT_RECORDED_PER_SALE', 'NOT_AVAILABLE'),
       grossMarginBasisPoints: unavailable('COGS_NOT_RECORDED_PER_SALE', 'NOT_AVAILABLE'),
     },
+    adjustments: {
+      appliedCount: uniqueCount(adjustmentRows.map((row) => row.adjustmentId)),
+      ...adjustmentDelta,
+      costDeltaVnd,
+      totalDeltaVnd: costDeltaVnd + adjustmentDelta.vatDeltaVnd,
+      adjustedLandedInboundCostVnd:
+        rows.inboundSource === 'STORE_RECEIPTS' ? landedInboundCostVnd + costDeltaVnd : null,
+      adjustedVatCostVnd: adjustmentVatComplete ? vatCostVnd + adjustmentDelta.vatDeltaVnd : null,
+      returnsHandedOverCount: uniqueCount((rows.receiptReturns ?? []).map((row) => row.returnId)),
+      returnsHandedOverValueVnd: sum(rows.receiptReturns ?? [], (row) => row.costVnd),
+    },
     products: [...productsById.values()]
       .sort((left, right) => left.sku.localeCompare(right.sku))
       .map((product) => ({
@@ -393,6 +480,8 @@ export function summarizeMonthlyReport(
         revenueVnd: product.revenueComplete
           ? available(product.revenueVnd, 'STORE_OUTBOUNDS')
           : unavailable('MISSING_SALE_REVENUE', 'STORE_OUTBOUNDS'),
+        adjustmentWeightDeltaGrams: product.adjustmentWeightDeltaGrams,
+        adjustmentGoodsDeltaVnd: product.adjustmentGoodsDeltaVnd,
       })),
   };
 }
@@ -410,11 +499,12 @@ export async function loadMonthlyOperationalReport(
   const period = monthWindowInHoChiMinh(input.year, input.month);
   const scopeFilter = storeScopeFilter(input.scope);
 
-  const [inbound, storeReceiptVat] = await Promise.all([
+  const [inbound, storeReceiptVat, adjustmentRows] = await Promise.all([
     input.scope.kind === 'ALL'
       ? loadWarehouseInbound(database, period)
       : loadStoreInbound(database, period, scopeFilter),
     loadStoreReceiptVat(database, period, scopeFilter),
+    loadReceiptAdjustmentRows(database, period, scopeFilter),
   ]);
 
   const [sales, receivedOrders, completedAllocationRows, queuedWaitRows] = await Promise.all([
@@ -505,9 +595,106 @@ export async function loadMonthlyOperationalReport(
       outboundOrderIds: receivedOrders.map((row) => row.id),
       allocationRunIds: completedAllocationRows.map((row) => row.id),
       waitTicketIds: queuedWaitRows.map((row) => row.id),
+      ...adjustmentRows,
     },
     generatedAt,
   );
+}
+
+/** Adjustments by applied date and returns by handover date, in the report's store scope. */
+async function loadReceiptAdjustmentRows(
+  database: Database,
+  period: MonthWindow,
+  scopeFilter: SQL | undefined,
+): Promise<
+  Pick<MonthlyReportRows, 'receiptAdjustments' | 'receiptAdjustmentProducts' | 'receiptReturns'>
+> {
+  const appliedInPeriod = and(
+    eq(storeReceiptAdjustments.status, 'applied'),
+    gte(storeReceiptAdjustments.appliedAt, period.start),
+    lt(storeReceiptAdjustments.appliedAt, period.endExclusive),
+    scopeFilter,
+  );
+  const [headers, lines, returns] = await Promise.all([
+    database
+      .select({
+        adjustmentId: storeReceiptAdjustments.id,
+        goodsDeltaVnd: storeReceiptAdjustments.goodsDeltaVnd,
+        freightDeltaVnd: storeReceiptAdjustments.freightDeltaVnd,
+        handlingDeltaVnd: storeReceiptAdjustments.handlingDeltaVnd,
+        vatDeltaVnd: storeReceiptAdjustments.vatDeltaVnd,
+        receiptVatCaptured: sql<boolean>`${storeReceipts.vatAmountVnd} IS NOT NULL`,
+      })
+      .from(storeReceiptAdjustments)
+      .innerJoin(storeReceipts, eq(storeReceipts.id, storeReceiptAdjustments.storeReceiptId))
+      .innerJoin(stores, eq(storeReceiptAdjustments.storeId, stores.id))
+      .where(appliedInPeriod),
+    database
+      .select({
+        recordedProductId: storeReceiptAdjustmentLines.recordedProductId,
+        actualProductId: storeReceiptAdjustmentLines.actualProductId,
+        recordedWeightKg: storeReceiptAdjustmentLines.recordedWeightKg,
+        verifiedWeightKg: storeReceiptAdjustmentLines.verifiedWeightKg,
+        recordedCostVnd: storeReceiptAdjustmentLines.recordedCostVnd,
+        verifiedCostVnd: storeReceiptAdjustmentLines.verifiedCostVnd,
+      })
+      .from(storeReceiptAdjustmentLines)
+      .innerJoin(
+        storeReceiptAdjustments,
+        eq(storeReceiptAdjustments.id, storeReceiptAdjustmentLines.adjustmentId),
+      )
+      .innerJoin(stores, eq(storeReceiptAdjustments.storeId, stores.id))
+      .where(appliedInPeriod),
+    database
+      .select({ returnId: storeReceiptReturns.id, costVnd: storeReceiptReturns.costVnd })
+      .from(storeReceiptReturns)
+      .innerJoin(stores, eq(storeReceiptReturns.storeId, stores.id))
+      .where(
+        and(
+          gte(storeReceiptReturns.handedOverAt, period.start),
+          lt(storeReceiptReturns.handedOverAt, period.endExclusive),
+          scopeFilter,
+        ),
+      ),
+  ]);
+  const productIds = [
+    ...new Set(lines.flatMap((line) => [line.recordedProductId, line.actualProductId])),
+  ];
+  const productRows =
+    productIds.length === 0
+      ? []
+      : await database
+          .select({ id: products.id, sku: products.sku, name: products.name })
+          .from(products)
+          .where(inArray(products.id, productIds));
+  const productById = new Map(productRows.map((row) => [row.id, row]));
+  const productLine = (productId: string, weightDeltaGrams: bigint, goodsDeltaVnd: bigint) => {
+    const product = productById.get(productId);
+    if (!product) throw new Error('Adjusted product is missing.');
+    return {
+      productId,
+      sku: product.sku,
+      productName: product.name,
+      weightDeltaGrams,
+      goodsDeltaVnd,
+    };
+  };
+  return {
+    receiptAdjustments: headers,
+    receiptAdjustmentProducts: lines.flatMap((line) => [
+      productLine(
+        line.recordedProductId,
+        -kilogramsToGramsForReport(line.recordedWeightKg),
+        -line.recordedCostVnd,
+      ),
+      productLine(
+        line.actualProductId,
+        kilogramsToGramsForReport(line.verifiedWeightKg ?? line.recordedWeightKg),
+        line.verifiedCostVnd ?? line.recordedCostVnd,
+      ),
+    ]),
+    receiptReturns: returns,
+  };
 }
 
 async function loadWarehouseInbound(database: Database, period: MonthWindow) {
@@ -692,6 +879,8 @@ function productAccumulator(
       soldWeightGrams: bigint;
       revenueVnd: bigint;
       revenueComplete: boolean;
+      adjustmentWeightDeltaGrams: bigint;
+      adjustmentGoodsDeltaVnd: bigint;
     }
   >,
   row: { readonly productId: string; readonly sku: string; readonly productName: string },
@@ -709,6 +898,8 @@ function productAccumulator(
     soldWeightGrams: 0n,
     revenueVnd: 0n,
     revenueComplete: true,
+    adjustmentWeightDeltaGrams: 0n,
+    adjustmentGoodsDeltaVnd: 0n,
   };
   productsById.set(row.productId, created);
   return created;

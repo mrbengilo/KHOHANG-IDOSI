@@ -14,6 +14,7 @@ import {
   safeIntegerToBigIntForRefinement,
   sumRefinementValues,
 } from './refinement-values.js';
+import { ReceiptAdjustmentSummarySchema } from './receipt-adjustments.js';
 
 export const InboundReceiptStatusSchema = z.enum([
   'RECEIVED',
@@ -349,6 +350,11 @@ export const ReceiptSchema = z
     totalAmountVnd: MoneyVndSchema.nullable().optional(),
     reviewedByAccountId: EntityIdSchema.nullable(),
     reviewNote: z.string().trim().min(3).max(500).nullable(),
+    /**
+     * Post-finalization adjustments: the finalized values above never change; effective values
+     * are original + applied deltas. Present only for finalized receipts.
+     */
+    adjustmentSummary: ReceiptAdjustmentSummarySchema.optional(),
     version: z.number().int().nonnegative(),
     createdAt: IsoDateTimeSchema,
     updatedAt: IsoDateTimeSchema,

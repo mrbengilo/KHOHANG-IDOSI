@@ -265,6 +265,13 @@ export const MonthlyOperationalReportRatiosSchema = z
   .strict();
 export type MonthlyOperationalReportRatios = z.infer<typeof MonthlyOperationalReportRatiosSchema>;
 
+/** Signed exact integer: adjustment deltas can reduce a period's figures. */
+export const ReportSignedExactIntegerSchema = z
+  .string()
+  .min(1)
+  .max(41)
+  .regex(/^(0|-?[1-9]\d*)$/, 'Expected a canonical integer string');
+
 export const MonthlyProductOperationalReportSchema = z
   .object({
     productId: EntityIdSchema,
@@ -274,8 +281,33 @@ export const MonthlyProductOperationalReportSchema = z
     inboundGoodsCostVnd: ExactIntegerReportMetricSchema,
     soldWeightGrams: ExactIntegerReportMetricSchema,
     revenueVnd: ExactIntegerReportMetricSchema,
+    /** Reclassified bags applied in the period; original receipts are not rewritten. */
+    adjustmentWeightDeltaGrams: ReportSignedExactIntegerSchema.optional(),
+    adjustmentGoodsDeltaVnd: ReportSignedExactIntegerSchema.optional(),
   })
   .strict();
+
+/**
+ * Receipt adjustments applied in the period (by applied date, linked to receipts that may
+ * belong to an earlier month) and store returns handed over in the period. Totals above stay
+ * the original documents; adjusted figures are original + these deltas, never both.
+ */
+export const MonthlyReceiptAdjustmentsReportSchema = z
+  .object({
+    appliedCount: z.number().int().nonnegative().safe(),
+    goodsDeltaVnd: ReportSignedExactIntegerSchema,
+    freightDeltaVnd: ReportSignedExactIntegerSchema,
+    handlingDeltaVnd: ReportSignedExactIntegerSchema,
+    vatDeltaVnd: ReportSignedExactIntegerSchema,
+    costDeltaVnd: ReportSignedExactIntegerSchema,
+    totalDeltaVnd: ReportSignedExactIntegerSchema,
+    adjustedLandedInboundCostVnd: ReportSignedExactIntegerSchema.nullable(),
+    adjustedVatCostVnd: ReportSignedExactIntegerSchema.nullable(),
+    returnsHandedOverCount: z.number().int().nonnegative().safe(),
+    returnsHandedOverValueVnd: ReportExactIntegerSchema,
+  })
+  .strict();
+export type MonthlyReceiptAdjustmentsReport = z.infer<typeof MonthlyReceiptAdjustmentsReportSchema>;
 export type MonthlyProductOperationalReport = z.infer<typeof MonthlyProductOperationalReportSchema>;
 
 /**
@@ -292,6 +324,7 @@ export const MonthlyOperationalReportSchema = z
     counts: MonthlyOperationalReportCountsSchema,
     totals: MonthlyOperationalReportTotalsSchema,
     ratios: MonthlyOperationalReportRatiosSchema,
+    adjustments: MonthlyReceiptAdjustmentsReportSchema.optional(),
     products: z.array(MonthlyProductOperationalReportSchema),
   })
   .strict();
