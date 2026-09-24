@@ -308,6 +308,8 @@ Không rerun CI liên tục để tìm một lần xanh. Phải tìm nguyên nh�
 
 Chỉ deploy commit đã merge và xác định bằng SHA. Không build/deploy từ working tree chưa commit.
 
+Production tự deploy: sau khi merge vào `main` và CI của merge commit xanh, VPS tự deploy commit đó (xem mục “Deploy tự động từ `main`” trong `docs/deployment-khoidosi.io.vn.md`). Agent không deploy tay và không viết script deploy riêng; sau khi merge, theo dõi `/var/lib/khohang-autodeploy/status` cho tới khi `running` bằng SHA đã merge và `state` là `deployed` hoặc `up-to-date`, rồi mới làm các bước post-deploy. Nếu `state` là `failed` hoặc `ci-failed`, đọc log được ghi trong `detail`, tìm nguyên nhân gốc và sửa bằng commit mới. Chỉ deploy tay bằng `infra/scripts/deploy.sh` khi watcher không dùng được.
+
 Pre-deploy:
 
 1. Xác nhận đúng VPS, môi trường và domain.

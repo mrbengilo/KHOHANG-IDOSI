@@ -7,6 +7,15 @@ printf 'TAG=%q|ARGS=' "${IMAGE_TAG:-}" >>"$FAKE_DOCKER_LOG"
 printf '%q ' "$@" >>"$FAKE_DOCKER_LOG"
 printf '\n' >>"$FAKE_DOCKER_LOG"
 
+if [[ "${1:-}" == image && "${2:-}" == ls ]]; then
+  [[ -n "${FAKE_IMAGE_LIST:-}" ]] && printf '%s\n' $FAKE_IMAGE_LIST
+  exit 0
+fi
+
+if [[ "${1:-}" == image && "${2:-}" == rm ]] || [[ "${1:-}" == builder ]]; then
+  exit 0
+fi
+
 if [[ "${1:-}" == image && "${2:-}" == inspect ]]; then
   image="${*: -1}"
   if [[ -n "${FAKE_MISSING_IMAGE_PATTERN:-}" && "$image" == *"$FAKE_MISSING_IMAGE_PATTERN"* ]]; then
@@ -24,12 +33,16 @@ fi
 command_name=""
 for argument in "$@"; do
   case "$argument" in
-    version|ps|exec|config|pull|up)
+    version|ps|exec|config|pull|build|run|up)
       command_name="$argument"
       break
       ;;
   esac
 done
+
+if [[ -n "${FAKE_FAIL_COMMAND:-}" && "$command_name" == "$FAKE_FAIL_COMMAND" ]]; then
+  exit 1
+fi
 
 case "$command_name" in
   version)
@@ -52,10 +65,11 @@ case "$command_name" in
     ;;
   config)
     service="${*: -1}"
+    [[ "$service" == --quiet ]] && exit 0
     printf '%s-%s:%s\n' "${FAKE_IMAGE_PREFIX:-local/khohang-idosi}" "$service" "${IMAGE_TAG:?IMAGE_TAG is required}"
     exit 0
     ;;
-  pull)
+  pull|build|run)
     exit 0
     ;;
   up)

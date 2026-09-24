@@ -1,0 +1,14 @@
+[Unit]
+Description=KHOHANG-IDOSI automatic deployment of GitHub main
+Documentation=https://github.com/mrbengilo/KHOHANG-IDOSI/blob/main/docs/deployment-khoidosi.io.vn.md
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/khohang-autodeploy
+TimeoutStartSec=45min
+Nice=5
+StateDirectory=khohang-autodeploy
+StateDirectoryMode=0700

@@ -128,7 +128,11 @@ jobs:
           bash -n infra/scripts/backup-db.sh
           bash -n infra/scripts/restore-db.sh
           bash -n infra/scripts/rollback.sh
+          bash -n infra/scripts/deploy.sh
+          bash -n infra/autodeploy/khohang-autodeploy.sh
+          bash -n infra/autodeploy/install.sh
           bash infra/scripts/tests/deployment-scripts.test.sh
+          bash infra/scripts/tests/autodeploy.test.sh
           node --check infra/scripts/run-migrations.mjs
           node --check infra/web-server.mjs
           node --test infra/web-server.test.mjs
