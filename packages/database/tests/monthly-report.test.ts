@@ -342,3 +342,80 @@ describe('monthly operational summary', () => {
     });
   });
 });
+
+describe('receipt adjustments in the monthly report', () => {
+  const storeInput = { year: 2026, month: 10, scope: { kind: 'STORE' as const, id: 's1' } };
+
+  it('adds applied deltas on their own date without rewriting or double counting originals', () => {
+    const report = summarizeMonthlyReport(storeInput, {
+      ...emptyRows,
+      inboundSource: 'STORE_RECEIPTS',
+      // The adjusted receipt was finalized last month: no original header in this period.
+      receiptAdjustments: [
+        {
+          adjustmentId: 'a1',
+          goodsDeltaVnd: -200_000n,
+          freightDeltaVnd: 0n,
+          handlingDeltaVnd: 0n,
+          vatDeltaVnd: 0n,
+          receiptVatCaptured: true,
+        },
+      ],
+      receiptAdjustmentProducts: [
+        {
+          productId: 'dress',
+          sku: 'D',
+          productName: 'Đầm',
+          weightDeltaGrams: -20_000n,
+          goodsDeltaVnd: -1_000_000n,
+        },
+        {
+          productId: 'jeans',
+          sku: 'J',
+          productName: 'Jeans',
+          weightDeltaGrams: 20_000n,
+          goodsDeltaVnd: 800_000n,
+        },
+      ],
+      receiptReturns: [{ returnId: 'r1', costVnd: 800_000n }],
+    });
+    expect(report.totals.inboundGoodsCostVnd.value).toBe(0n);
+    expect(report.adjustments).toMatchObject({
+      appliedCount: 1,
+      goodsDeltaVnd: -200_000n,
+      totalDeltaVnd: -200_000n,
+      adjustedLandedInboundCostVnd: -200_000n,
+      adjustedVatCostVnd: 0n,
+      returnsHandedOverCount: 1,
+      returnsHandedOverValueVnd: 800_000n,
+    });
+    expect(report.products.map((row) => [row.sku, row.adjustmentWeightDeltaGrams])).toEqual([
+      ['D', -20_000n],
+      ['J', 20_000n],
+    ]);
+    // Ratios only use original documents, so a negative adjustment cannot break them.
+    expect(report.ratios.averageInboundCostPerKgVnd.unavailableReason).toBe('ZERO_INBOUND_WEIGHT');
+  });
+
+  it('keeps VAT unknown when an adjusted legacy receipt never captured it', () => {
+    const report = summarizeMonthlyReport(
+      { year: 2026, month: 10, scope: { kind: 'ALL' } },
+      {
+        ...emptyRows,
+        receiptAdjustments: [
+          {
+            adjustmentId: 'a1',
+            goodsDeltaVnd: -1n,
+            freightDeltaVnd: 0n,
+            handlingDeltaVnd: 0n,
+            vatDeltaVnd: 0n,
+            receiptVatCaptured: false,
+          },
+        ],
+      },
+    );
+    expect(report.adjustments.adjustedVatCostVnd).toBeNull();
+    // Supplier-receipt scope is not changed by store receipt adjustments.
+    expect(report.adjustments.adjustedLandedInboundCostVnd).toBeNull();
+  });
+});

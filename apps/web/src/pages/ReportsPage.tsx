@@ -89,6 +89,18 @@ function exactGramsAsKilograms(value: string): string {
   return `${whole},${decimals} kg`;
 }
 
+function signedExactVnd(value: string): string {
+  const amount = BigInt(value);
+  const formatted = exactVnd((amount < 0n ? -amount : amount).toString());
+  return amount < 0n ? `−${formatted}` : amount > 0n ? `+${formatted}` : formatted;
+}
+
+function signedGramsAsKilograms(value: string): string {
+  const grams = BigInt(value);
+  const formatted = exactGramsAsKilograms((grams < 0n ? -grams : grams).toString());
+  return grams < 0n ? `−${formatted}` : grams > 0n ? `+${formatted}` : formatted;
+}
+
 function basisPointsAsPercent(value: number): string {
   return `${new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 2 }).format(value / 100)}%`;
 }
@@ -112,7 +124,9 @@ function basisPointMetricValue(metric: BasisPointsReportMetric): string {
 
 function csvCell(value: string | number): string {
   const rawValue = String(value);
-  const safeValue = /^[\t\r ]*[=+\-@]/u.test(rawValue) ? `'${rawValue}` : rawValue;
+  // A plain signed integer (adjustment deltas) cannot be a formula, so keep it numeric.
+  const safeValue =
+    !/^-?\d+$/u.test(rawValue) && /^[\t\r ]*[=+\-@]/u.test(rawValue) ? `'${rawValue}` : rawValue;
   return `"${safeValue.replace(/"/g, '""')}"`;
 }
 
@@ -155,6 +169,24 @@ export function buildMonthlyReportCsv(report: MonthlyOperationalReport): string 
   addMetric('Doanh thu/kg nhập', report.ratios.revenuePerInboundKgVnd, 'VND/kg');
   addMetric('Giá vốn/kg bán', report.ratios.effectiveCostPerSoldKgVnd, 'VND/kg');
   addMetric('Biên lợi nhuận gộp', report.ratios.grossMarginBasisPoints, 'basis-point');
+  if (report.adjustments) {
+    // Adjustments are dated by application and never rewrite the original receipts above.
+    const adjustments = report.adjustments;
+    rows.push(
+      [],
+      ['Điều chỉnh sau chốt (theo ngày áp dụng)', 'Giá trị', 'Đơn vị'],
+      ['Số điều chỉnh đã áp dụng', adjustments.appliedCount, 'phiếu'],
+      ['Chênh lệch tiền hàng', adjustments.goodsDeltaVnd, 'VND'],
+      ['Chênh lệch vận chuyển', adjustments.freightDeltaVnd, 'VND'],
+      ['Chênh lệch bốc xếp', adjustments.handlingDeltaVnd, 'VND'],
+      ['Chênh lệch VAT', adjustments.vatDeltaVnd, 'VND'],
+      ['Chênh lệch tổng (gồm VAT)', adjustments.totalDeltaVnd, 'VND'],
+      ['Giá vốn nhập sau điều chỉnh', adjustments.adjustedLandedInboundCostVnd ?? '', 'VND'],
+      ['VAT đầu vào sau điều chỉnh', adjustments.adjustedVatCostVnd ?? '', 'VND'],
+      ['Phiếu trả kho đã bàn giao', adjustments.returnsHandedOverCount, 'phiếu'],
+      ['Giá trị hàng trả đã bàn giao', adjustments.returnsHandedOverValueVnd, 'VND'],
+    );
+  }
   rows.push(
     [],
     [
@@ -168,6 +200,8 @@ export function buildMonthlyReportCsv(report: MonthlyOperationalReport): string 
       'Lý do thiếu khối lượng bán',
       'Doanh thu (VND)',
       'Lý do thiếu doanh thu',
+      'Điều chỉnh khối lượng (gram)',
+      'Điều chỉnh tiền hàng (VND)',
     ],
     ...report.products.map((product) => [
       product.productName,
@@ -180,6 +214,8 @@ export function buildMonthlyReportCsv(report: MonthlyOperationalReport): string 
       product.soldWeightGrams.unavailableReason ?? '',
       product.revenueVnd.value ?? '',
       product.revenueVnd.unavailableReason ?? '',
+      product.adjustmentWeightDeltaGrams ?? '0',
+      product.adjustmentGoodsDeltaVnd ?? '0',
     ]),
   );
   return rows.map((row) => row.map(csvCell).join(',')).join('\r\n');
@@ -475,6 +511,11 @@ function MetricCell({
 }
 
 function ReportContent({ report }: { readonly report: MonthlyOperationalReport }) {
+  const hasProductAdjustments = report.products.some(
+    (product) =>
+      (product.adjustmentWeightDeltaGrams ?? '0') !== '0' ||
+      (product.adjustmentGoodsDeltaVnd ?? '0') !== '0',
+  );
   return (
     <>
       <section className="report-period-note">
@@ -566,6 +607,8 @@ function ReportContent({ report }: { readonly report: MonthlyOperationalReport }
         </section>
       </div>
 
+      {report.adjustments ? <AdjustmentsPanel adjustments={report.adjustments} /> : null}
+
       <section className="panel table-panel report-products">
         <div className="section-heading section-heading--compact">
           <div>
@@ -588,6 +631,7 @@ function ReportContent({ report }: { readonly report: MonthlyOperationalReport }
                   <th>Tiền hàng nhập</th>
                   <th>Đã bán</th>
                   <th>Doanh thu</th>
+                  {hasProductAdjustments ? <th>Điều chỉnh sau chốt</th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -615,6 +659,16 @@ function ReportContent({ report }: { readonly report: MonthlyOperationalReport }
                     <td data-label="Doanh thu">
                       <MetricCell formatter={exactVnd} metric={product.revenueVnd} />
                     </td>
+                    {hasProductAdjustments ? (
+                      <td data-label="Điều chỉnh sau chốt">
+                        <span>
+                          <strong>
+                            {signedGramsAsKilograms(product.adjustmentWeightDeltaGrams ?? '0')}
+                          </strong>
+                          <small>{signedExactVnd(product.adjustmentGoodsDeltaVnd ?? '0')}</small>
+                        </span>
+                      </td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>
@@ -623,6 +677,73 @@ function ReportContent({ report }: { readonly report: MonthlyOperationalReport }
         )}
       </section>
     </>
+  );
+}
+
+function AdjustmentsPanel({
+  adjustments,
+}: {
+  readonly adjustments: NonNullable<MonthlyOperationalReport['adjustments']>;
+}) {
+  return (
+    <section className="panel report-counts" aria-label="Điều chỉnh sau chốt và trả kho">
+      <div className="section-heading section-heading--compact">
+        <div>
+          <h2>Điều chỉnh sau chốt & trả kho</h2>
+          <p>
+            Ghi theo ngày áp dụng (có thể thuộc phiếu nhận tháng trước). Số liệu phía trên là chứng
+            từ gốc; số sau điều chỉnh = gốc + chênh lệch, không cộng hai lần.
+          </p>
+        </div>
+      </div>
+      <dl>
+        <div>
+          <dt>Điều chỉnh đã áp dụng</dt>
+          <dd>{adjustments.appliedCount}</dd>
+        </div>
+        <div>
+          <dt>Chênh lệch tiền hàng</dt>
+          <dd>{signedExactVnd(adjustments.goodsDeltaVnd)}</dd>
+        </div>
+        <div>
+          <dt>Chênh lệch phí (VC + bốc xếp)</dt>
+          <dd>
+            {signedExactVnd(
+              (
+                BigInt(adjustments.freightDeltaVnd) + BigInt(adjustments.handlingDeltaVnd)
+              ).toString(),
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>Chênh lệch VAT</dt>
+          <dd>{signedExactVnd(adjustments.vatDeltaVnd)}</dd>
+        </div>
+        <div>
+          <dt>Giá vốn nhập sau điều chỉnh</dt>
+          <dd>
+            {adjustments.adjustedLandedInboundCostVnd === null
+              ? 'Không áp dụng cho toàn hệ thống (nguồn phiếu nhập kho tổng)'
+              : exactVnd(adjustments.adjustedLandedInboundCostVnd)}
+          </dd>
+        </div>
+        <div>
+          <dt>VAT đầu vào sau điều chỉnh</dt>
+          <dd>
+            {adjustments.adjustedVatCostVnd === null
+              ? 'Có phiếu chưa ghi nhận VAT'
+              : exactVnd(adjustments.adjustedVatCostVnd)}
+          </dd>
+        </div>
+        <div>
+          <dt>Hàng trả đã bàn giao</dt>
+          <dd>
+            {adjustments.returnsHandedOverCount} phiếu ·{' '}
+            {exactVnd(adjustments.returnsHandedOverValueVnd)}
+          </dd>
+        </div>
+      </dl>
+    </section>
   );
 }
 
