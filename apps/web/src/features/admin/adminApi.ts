@@ -5,6 +5,8 @@ import {
   ErrorEnvelopeSchema,
   GetSessionResponseSchema,
   HtkdAssignmentsResponseSchema,
+  IdosiProductLinkResponseSchema,
+  IdosiProductMatchingResponseSchema,
   ListAccountsResponseSchema,
   ListAuditLogsResponseSchema,
   ListStoreGroupsResponseSchema,
@@ -16,6 +18,7 @@ import {
   UpdateAccountResponseSchema,
   UpdateStoreGroupRequestSchema,
   UpdateStoreRequestSchema,
+  SetIdosiProductLinkRequestSchema,
   WorkerStatusResponseSchema,
   type Account,
   type AdminAuditLog,
@@ -23,6 +26,8 @@ import {
   type CreateStoreGroupRequest,
   type CreateStoreRequest,
   type HtkdAssignmentsResponse,
+  type IdosiProductLink,
+  type IdosiProductMatching,
   type ListAccountsQuery,
   type ListAuditLogsQuery,
   type ListStoreGroupsQuery,
@@ -32,6 +37,7 @@ import {
   type ResetPasswordRequest,
   type ReplaceHtkdAssignmentsRequest,
   type Session,
+  type SetIdosiProductLinkRequest,
   type Store,
   type StoreGroup,
   type UpdateAccountRequest,
@@ -188,6 +194,23 @@ export async function getAdminOperationalSettings(
     `/admin/operational-settings?${queryString({ historyLimit })}`,
   );
   return OperationalSettingsOverviewResponseSchema.parse(payload).data;
+}
+
+/** IDOSI product links plus the IDOSI products of the month whose sales reach no stock yet. */
+export async function getIdosiProductMatching(period: string): Promise<IdosiProductMatching> {
+  const payload = await requestAdminApi(`/admin/idosi-product-links?${queryString({ period })}`);
+  return IdosiProductMatchingResponseSchema.parse(payload).data;
+}
+
+export async function setIdosiProductLink(
+  idosiProductId: string,
+  input: SetIdosiProductLinkRequest,
+): Promise<IdosiProductLink> {
+  const payload = await requestAdminApi(
+    `/admin/idosi-product-links/${encodeURIComponent(idosiProductId)}`,
+    { body: JSON.stringify(SetIdosiProductLinkRequestSchema.parse(input)), method: 'PUT' },
+  );
+  return IdosiProductLinkResponseSchema.parse(payload).data;
 }
 
 /** Last allocation worker heartbeat: why a scheduled 08:00/09:00 job did not finish. */

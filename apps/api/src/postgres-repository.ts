@@ -16,6 +16,9 @@ import type {
   WarehouseInventoryQuery,
   WarehouseInventoryResponse,
   WorkerStatus,
+  IdosiProductLink,
+  IdosiProductMatching,
+  SetIdosiProductLinkRequest,
   StoreNormalSalePending,
   OrderingContext,
   Account,
@@ -169,6 +172,9 @@ import {
   db,
   htkdAssignments,
   loadWorkerHeartbeats,
+  loadIdosiProductMatching,
+  setIdosiProductLink as setDatabaseIdosiProductLink,
+  IdosiProductLinkValidationError,
   listStoreNormalSalePending as listDatabaseStoreNormalSalePending,
   IdempotencyConflictError,
   IdempotencyInProgressError,
@@ -956,6 +962,53 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     const current = history[0];
     if (!current) throw new Error('Operational settings have not been initialized');
     return { current, history };
+  }
+
+  public async getIdosiProductMatching(
+    actor: AuthenticatedPrincipal,
+    period: string,
+  ): Promise<IdosiProductMatching> {
+    requirePostgresAdmin(actor);
+    const matching = await loadIdosiProductMatching(db, period);
+    return {
+      period: matching.period,
+      links: matching.links.map((link) => ({ ...link, createdAt: link.createdAt.toISOString() })),
+      unmatched: matching.unmatched.map((item) => ({
+        ...item,
+        candidateProductIds: [...item.candidateProductIds],
+      })),
+    };
+  }
+
+  public async setIdosiProductLink(
+    actor: AuthenticatedPrincipal,
+    idosiProductId: string,
+    input: SetIdosiProductLinkRequest,
+    context: RequestContext,
+  ): Promise<IdosiProductLink> {
+    requirePostgresAdmin(actor);
+    try {
+      const link = await setDatabaseIdosiProductLink(db, {
+        idosiProductId,
+        idosiProductName: input.idosiProductName,
+        productId: input.productId,
+        reason: input.reason,
+        actorUserId: actor.accountId,
+        requestId: context.requestId,
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+      });
+      return { ...link, createdAt: link.createdAt.toISOString() };
+    } catch (error) {
+      if (error instanceof IdosiProductLinkValidationError) {
+        throw new ApiError(
+          'VALIDATION_ERROR',
+          'Mặt hàng kho không tồn tại hoặc mã IDOSI không hợp lệ',
+          400,
+        );
+      }
+      throw error;
+    }
   }
 
   public async getAllocationWorkerStatus(actor: AuthenticatedPrincipal): Promise<WorkerStatus> {

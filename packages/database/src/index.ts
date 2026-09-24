@@ -243,6 +243,17 @@ export {
 } from './store-sorting.js';
 export { idosiProductSaleGrams } from './store-sale-sync.js';
 export { listStoreNormalSalePending } from './store-normal-sale-sync.js';
+export {
+  IdosiProductLinkValidationError,
+  loadIdosiProductMatching,
+  setIdosiProductLink,
+} from './idosi-product-links.js';
+export type {
+  IdosiProductLinkRecord,
+  IdosiProductMatchingRecord,
+  SetIdosiProductLinkInput,
+  UnmatchedIdosiProductRecord,
+} from './idosi-product-links.js';
 export type { StoreNormalSalePendingRecord } from './store-normal-sale-sync.js';
 export type {
   CreateCharityExportInput,

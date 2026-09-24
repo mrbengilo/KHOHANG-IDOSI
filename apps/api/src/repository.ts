@@ -12,6 +12,9 @@ import type {
   WarehouseInventoryQuery,
   WarehouseInventoryResponse,
   WorkerStatus,
+  IdosiProductLink,
+  IdosiProductMatching,
+  SetIdosiProductLinkRequest,
   StoreNormalSalePending,
   OrderingContext,
   Account,
@@ -298,6 +301,17 @@ export interface WarehouseRepository {
   ): Promise<OperationalSettingsVersion>;
   /** Last heartbeat of the allocation worker, for the Admin failure notice. */
   getAllocationWorkerStatus(actor: AuthenticatedPrincipal): Promise<WorkerStatus>;
+  /** IDOSI product links and the IDOSI products of a month that no link covers (ADMIN). */
+  getIdosiProductMatching(
+    actor: AuthenticatedPrincipal,
+    period: string,
+  ): Promise<IdosiProductMatching>;
+  setIdosiProductLink(
+    actor: AuthenticatedPrincipal,
+    idosiProductId: string,
+    input: SetIdosiProductLinkRequest,
+    context: RequestContext,
+  ): Promise<IdosiProductLink>;
 
   resolveIdosiStatisticsTarget(
     actor: AuthenticatedPrincipal,

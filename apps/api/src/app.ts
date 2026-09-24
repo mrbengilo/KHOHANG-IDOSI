@@ -34,6 +34,9 @@ import {
   ListCharityExportsQuerySchema,
   ListStoreSortedStocksQuerySchema,
   ListStoreNormalSalePendingQuerySchema,
+  IdosiProductLinkParamsSchema,
+  IdosiProductMatchingQuerySchema,
+  SetIdosiProductLinkRequestSchema,
   MoveCharityToSaleRequestSchema,
   MoveProductCharityToSaleRequestSchema,
   StoreSortedStockParamsSchema,
@@ -441,6 +444,30 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     const settings = await repository.getOperationalSettings(session.principal, 10);
     reply.header('cache-control', 'no-store');
     return { data: { ...settings, integration: idosiIntegration } };
+  });
+
+  app.get('/api/v1/admin/idosi-product-links', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const { period } = IdosiProductMatchingQuerySchema.parse(request.query);
+    reply.header('cache-control', 'no-store');
+    return { data: await repository.getIdosiProductMatching(session.principal, period) };
+  });
+
+  app.put('/api/v1/admin/idosi-product-links/:idosiProductId', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const { idosiProductId } = IdosiProductLinkParamsSchema.parse(request.params);
+    const input = SetIdosiProductLinkRequestSchema.parse(request.body);
+    reply.header('cache-control', 'no-store');
+    return {
+      data: await repository.setIdosiProductLink(
+        session.principal,
+        idosiProductId,
+        input,
+        requestContext(request),
+      ),
+    };
   });
 
   app.get('/api/v1/admin/worker-status', async (request, reply) => {
@@ -1932,6 +1959,22 @@ function openApiDocument(): Record<string, unknown> {
             '200': {
               description: 'IDOSI regular-price sales waiting for the next opened bag, in scope',
             },
+          },
+        },
+      },
+      '/api/v1/admin/idosi-product-links': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'IDOSI product links and unmatched IDOSI products (ADMIN only)' },
+          },
+        },
+      },
+      '/api/v1/admin/idosi-product-links/{idosiProductId}': {
+        put: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'Linked or re-linked an IDOSI product (ADMIN only, audited)' },
           },
         },
       },

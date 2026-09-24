@@ -11,6 +11,9 @@ import type {
   WarehouseInventoryQuery,
   WarehouseInventoryResponse,
   WorkerStatus,
+  IdosiProductLink,
+  IdosiProductMatching,
+  SetIdosiProductLinkRequest,
   StoreNormalSalePending,
   Account,
   AdminAuditLog,
@@ -803,6 +806,29 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       data: slicePage(values, query.page, query.pageSize),
       pagination: pagination(query.page, query.pageSize, values.length),
     };
+  }
+
+  public async getIdosiProductMatching(
+    actor: AuthenticatedPrincipal,
+    period: string,
+  ): Promise<IdosiProductMatching> {
+    requireMemoryAdmin(actor);
+    // The in-memory demo matches IDOSI lines by name and keeps no links.
+    return { period, links: [], unmatched: [] };
+  }
+
+  public async setIdosiProductLink(
+    actor: AuthenticatedPrincipal,
+    _idosiProductId: string,
+    _input: SetIdosiProductLinkRequest,
+    _context: RequestContext,
+  ): Promise<IdosiProductLink> {
+    requireMemoryAdmin(actor);
+    throw new ApiError(
+      'INVALID_STATE_TRANSITION',
+      'Bản chạy thử không lưu ghép mặt hàng IDOSI',
+      409,
+    );
   }
 
   public async getAllocationWorkerStatus(actor: AuthenticatedPrincipal): Promise<WorkerStatus> {

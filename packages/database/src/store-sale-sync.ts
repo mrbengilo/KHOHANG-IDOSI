@@ -3,7 +3,7 @@ import {
   IdosiOrderStatisticsPayloadSchema,
   type IdosiOrderStatisticsPayload,
 } from '@idosi/contracts';
-import { and, asc, eq, gt, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, isNull, sql } from 'drizzle-orm';
 
 import {
   auditLogs,
@@ -55,8 +55,10 @@ export function idosiItemKey(item: Pick<IdosiItem, 'productId' | 'canonicalProdu
 }
 
 /**
- * Lines belonging to one warehouse product: by learned IDOSI id first, by name only for
- * lines IDOSI has not linked yet. A rename on either side therefore keeps matching.
+ * Lines belonging to one warehouse product. With links (the database path) only lines whose
+ * IDOSI id is linked to this product count, so a rename on either side keeps matching and a
+ * line that is unmatched or ambiguous is never charged to a guessed product. Without links
+ * (the in-memory demo) the normalized name is compared directly.
  */
 export function idosiItemsForProduct(
   payload: IdosiOrderStatisticsPayload,
@@ -64,13 +66,35 @@ export function idosiItemsForProduct(
   match?: IdosiProductMatch,
 ): IdosiItem[] {
   return payload.products.items.filter((item) => {
-    const linked = match?.links.get(idosiItemKey(item));
-    if (linked !== undefined) return linked === match?.productId;
+    if (match) return match.links.get(idosiItemKey(item)) === match.productId;
     return productKey(item.productName) === productKey(name);
   });
 }
 
-/** Records the IDOSI id of every line whose name matches a warehouse product today. */
+export interface IdosiNameCandidate {
+  readonly id: string;
+  readonly name: string;
+  readonly isActive: boolean;
+}
+
+/**
+ * The single warehouse product an IDOSI name may be linked to automatically: the only active
+ * product with that normalized name, or else the only inactive one (stock of a retired item can
+ * still be sold). Deleted products never qualify. Two candidates at the same level are
+ * ambiguous and return null, so an Admin has to choose.
+ */
+export function uniqueProductForName(
+  candidates: readonly IdosiNameCandidate[],
+  idosiName: string,
+): string | null {
+  const key = productKey(idosiName);
+  const named = candidates.filter((candidate) => productKey(candidate.name) === key);
+  const active = named.filter((candidate) => candidate.isActive);
+  const pool = active.length > 0 ? active : named;
+  return pool.length === 1 ? pool[0]!.id : null;
+}
+
+/** Records the IDOSI id of every line whose name matches exactly one warehouse product today. */
 export async function linkIdosiProducts(
   tx: Transaction,
   payload: IdosiOrderStatisticsPayload,
@@ -79,11 +103,13 @@ export async function linkIdosiProducts(
   const links = new Map(existing.map((row) => [row.idosiProductId, row.productId]));
   const unlinked = payload.products.items.filter((item) => !links.has(idosiItemKey(item)));
   if (unlinked.length === 0) return links;
-  const catalog = await tx.select({ id: products.id, name: products.name }).from(products);
-  const byName = new Map(catalog.map((product) => [productKey(product.name), product.id]));
+  const catalog = await tx
+    .select({ id: products.id, name: products.name, isActive: products.isActive })
+    .from(products)
+    .where(isNull(products.deletedAt));
   for (const item of unlinked) {
     const key = idosiItemKey(item);
-    const productId = byName.get(productKey(item.productName));
+    const productId = uniqueProductForName(catalog, item.productName);
     if (!productId || links.has(key)) continue;
     await tx
       .insert(idosiProductLinks)
