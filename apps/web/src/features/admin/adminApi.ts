@@ -7,6 +7,8 @@ import {
   HtkdAssignmentsResponseSchema,
   IdosiProductLinkResponseSchema,
   IdosiProductMatchingResponseSchema,
+  IdosiStoreCodeResponseSchema,
+  ListIdosiStoreCodesResponseSchema,
   ListAccountsResponseSchema,
   ListAuditLogsResponseSchema,
   ListStoreGroupsResponseSchema,
@@ -19,6 +21,7 @@ import {
   UpdateStoreGroupRequestSchema,
   UpdateStoreRequestSchema,
   SetIdosiProductLinkRequestSchema,
+  SetIdosiStoreCodeRequestSchema,
   WorkerStatusResponseSchema,
   type Account,
   type AdminAuditLog,
@@ -28,6 +31,7 @@ import {
   type HtkdAssignmentsResponse,
   type IdosiProductLink,
   type IdosiProductMatching,
+  type IdosiStoreCode,
   type ListAccountsQuery,
   type ListAuditLogsQuery,
   type ListStoreGroupsQuery,
@@ -38,6 +42,7 @@ import {
   type ReplaceHtkdAssignmentsRequest,
   type Session,
   type SetIdosiProductLinkRequest,
+  type SetIdosiStoreCodeRequest,
   type Store,
   type StoreGroup,
   type UpdateAccountRequest,
@@ -194,6 +199,23 @@ export async function getAdminOperationalSettings(
     `/admin/operational-settings?${queryString({ historyLimit })}`,
   );
   return OperationalSettingsOverviewResponseSchema.parse(payload).data;
+}
+
+/** IDOSI id of each active retail store, with where it comes from. */
+export async function listIdosiStoreCodes(): Promise<IdosiStoreCode[]> {
+  return ListIdosiStoreCodesResponseSchema.parse(await requestAdminApi('/admin/idosi-store-codes'))
+    .data;
+}
+
+export async function setIdosiStoreCode(
+  storeId: string,
+  input: SetIdosiStoreCodeRequest,
+): Promise<IdosiStoreCode> {
+  const payload = await requestAdminApi(`/admin/idosi-store-codes/${encodeURIComponent(storeId)}`, {
+    body: JSON.stringify(SetIdosiStoreCodeRequestSchema.parse(input)),
+    method: 'PUT',
+  });
+  return IdosiStoreCodeResponseSchema.parse(payload).data;
 }
 
 /** IDOSI product links plus the IDOSI products of the month whose sales reach no stock yet. */

@@ -243,12 +243,24 @@ export const stores = pgTable(
     timezone: text('timezone').notNull().default('Asia/Ho_Chi_Minh'),
     displayOrder: integer('display_order').notNull().default(0),
     isActive: boolean('is_active').notNull().default(true),
+    /**
+     * The store's id on idosi.io.vn when it differs from `code`. Set by Admin in the app; takes
+     * precedence over the IDOSI_STORE_ID_MAP environment fallback.
+     */
+    idosiStoreCode: text('idosi_store_code'),
     version: integer('version').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
   },
   (table) => [
+    uniqueIndex('stores_idosi_store_code_uidx')
+      .on(table.idosiStoreCode)
+      .where(sql`${table.idosiStoreCode} IS NOT NULL`),
+    check(
+      'stores_idosi_store_code_not_blank',
+      sql`${table.idosiStoreCode} IS NULL OR length(btrim(${table.idosiStoreCode})) BETWEEN 1 AND 100`,
+    ),
     index('stores_group_active_idx').on(table.groupId, table.isActive, table.displayOrder),
     index('stores_kind_active_idx').on(table.kind, table.isActive, table.displayOrder),
     check('stores_code_not_blank', sql`length(btrim(${table.code})) > 0`),

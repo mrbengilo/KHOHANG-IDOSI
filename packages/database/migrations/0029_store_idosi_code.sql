@@ -1,0 +1,3 @@
+ALTER TABLE "stores" ADD COLUMN "idosi_store_code" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "stores_idosi_store_code_uidx" ON "stores" USING btree ("idosi_store_code") WHERE "stores"."idosi_store_code" IS NOT NULL;--> statement-breakpoint
+ALTER TABLE "stores" ADD CONSTRAINT "stores_idosi_store_code_not_blank" CHECK ("stores"."idosi_store_code" IS NULL OR length(btrim("stores"."idosi_store_code")) BETWEEN 1 AND 100);

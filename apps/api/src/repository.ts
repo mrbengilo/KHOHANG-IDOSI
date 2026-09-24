@@ -15,6 +15,7 @@ import type {
   IdosiProductLink,
   IdosiProductMatching,
   SetIdosiProductLinkRequest,
+  SetIdosiStoreCodeRequest,
   StoreNormalSalePending,
   OrderingContext,
   Account,
@@ -230,6 +231,14 @@ export interface IdosiStatisticsTarget {
   readonly storeId: string;
   readonly storeCode: string;
   readonly storeName: string;
+  readonly idosiStoreCode?: string | null;
+}
+
+export interface IdosiStoreCodeRecord {
+  readonly storeId: string;
+  readonly storeCode: string;
+  readonly storeName: string;
+  readonly idosiStoreCode: string | null;
 }
 
 export interface PersistedIdosiStatisticsState {
@@ -311,6 +320,14 @@ export interface WarehouseRepository {
   ): Promise<OperationalSettingsVersion>;
   /** Last heartbeat of the allocation worker, for the Admin failure notice. */
   getAllocationWorkerStatus(actor: AuthenticatedPrincipal): Promise<WorkerStatus>;
+  /** Active retail stores with the IDOSI id set on them in the app (ADMIN). */
+  listIdosiStoreCodes(actor: AuthenticatedPrincipal): Promise<readonly IdosiStoreCodeRecord[]>;
+  setIdosiStoreCode(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+    input: SetIdosiStoreCodeRequest,
+    context: RequestContext,
+  ): Promise<IdosiStoreCodeRecord>;
   /** IDOSI product links and the IDOSI products of a month that no link covers (ADMIN). */
   getIdosiProductMatching(
     actor: AuthenticatedPrincipal,

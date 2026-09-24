@@ -37,6 +37,7 @@ import {
   IdosiProductLinkParamsSchema,
   IdosiProductMatchingQuerySchema,
   SetIdosiProductLinkRequestSchema,
+  SetIdosiStoreCodeRequestSchema,
   MoveCharityToSaleRequestSchema,
   MoveProductCharityToSaleRequestSchema,
   StoreSortedStockParamsSchema,
@@ -46,6 +47,8 @@ import {
   ConfirmReceiptCostsRequestSchema,
   FinalizeReceiptRequestSchema,
   fetchIdosiOrderStatistics,
+  idosiFetchStore,
+  resolveIdosiStoreCode,
   IdosiOrderStatisticsPayloadSchema,
   GetIdosiStatisticsQuerySchema,
   GetOperationalSettingsQuerySchema,
@@ -122,6 +125,7 @@ import {
   type IdosiFetch,
   type IdosiStatisticsScope,
   type IdosiStatisticsState,
+  type IdosiStoreCode,
   type Session,
 } from '@idosi/contracts';
 import Fastify, {
@@ -137,6 +141,7 @@ import { MemoryWarehouseRepository } from './memory-repository.js';
 import { LoginRateLimiter, type LoginRateLimitOptions } from './rate-limit.js';
 import type {
   AccountCredentials,
+  IdosiStoreCodeRecord,
   PersistedIdosiStatisticsState,
   RequestContext,
   WarehouseRepository,
@@ -447,6 +452,29 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return { data: { ...settings, integration: idosiIntegration } };
   });
 
+  app.get('/api/v1/admin/idosi-store-codes', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const rows = await repository.listIdosiStoreCodes(session.principal);
+    reply.header('cache-control', 'no-store');
+    return { data: rows.map((row) => idosiStoreCodeDto(row, options.idosiStoreIdMap)) };
+  });
+
+  app.put('/api/v1/admin/idosi-store-codes/:storeId', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const { storeId } = StoreParamsSchema.parse(request.params);
+    const input = SetIdosiStoreCodeRequestSchema.parse(request.body);
+    const row = await repository.setIdosiStoreCode(
+      session.principal,
+      storeId,
+      input,
+      requestContext(request),
+    );
+    reply.header('cache-control', 'no-store');
+    return { data: idosiStoreCodeDto(row, options.idosiStoreIdMap) };
+  });
+
   app.get('/api/v1/admin/idosi-product-links', async (request, reply) => {
     const session = await authenticate(request, repository);
     requireRole(session.principal, ['ADMIN']);
@@ -541,8 +569,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
       const payload = await fetchIdosiOrderStatistics({
         endpoint: idosiIntegration.endpoint,
         secret: idosiIntegrationSecret,
-        storeCode: target.storeCode,
-        ...(options.idosiStoreIdMap ? { storeIdMap: options.idosiStoreIdMap } : {}),
+        ...idosiFetchStore(target, options.idosiStoreIdMap),
         scope: externalIdosiScope(scope),
         requestId: request.id,
         ...(options.idosiFetch ? { fetch: options.idosiFetch } : {}),
@@ -1883,6 +1910,21 @@ function integrationStatus(options: CreateApiOptions): {
   };
 }
 
+function idosiStoreCodeDto(
+  row: IdosiStoreCodeRecord,
+  storeIdMap: Readonly<Record<string, string>> | undefined,
+): IdosiStoreCode {
+  const resolved = resolveIdosiStoreCode(row, storeIdMap);
+  return {
+    storeId: row.storeId,
+    storeCode: row.storeCode,
+    storeName: row.storeName,
+    idosiStoreCode: row.idosiStoreCode,
+    effectiveIdosiStoreCode: resolved.code,
+    source: resolved.source,
+  };
+}
+
 function externalIdosiScope(scope: IdosiStatisticsScope): Omit<IdosiStatisticsScope, 'storeId'> {
   return {
     period: scope.period,
@@ -2018,6 +2060,23 @@ function openApiDocument(): Record<string, unknown> {
             '200': {
               description: 'IDOSI regular-price sales waiting for the next opened bag, in scope',
             },
+          },
+        },
+      },
+      '/api/v1/admin/idosi-store-codes': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'IDOSI id of each retail store and where it comes from (ADMIN)' },
+          },
+        },
+      },
+      '/api/v1/admin/idosi-store-codes/{storeId}': {
+        put: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'Set or cleared the IDOSI id of a store (ADMIN, audited)' },
+            '409': { description: 'Another store already uses that IDOSI id' },
           },
         },
       },

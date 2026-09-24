@@ -14,6 +14,7 @@ import type {
   IdosiProductLink,
   IdosiProductMatching,
   SetIdosiProductLinkRequest,
+  SetIdosiStoreCodeRequest,
   StoreNormalSalePending,
   Account,
   AdminAuditLog,
@@ -153,6 +154,7 @@ import type {
   AccountCredentials,
   HtkdAssignmentsState,
   IdosiStatisticsTarget,
+  IdosiStoreCodeRecord,
   OrderStatistics,
   IdempotentResource,
   Page,
@@ -341,6 +343,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly htkdAssignments = new Map<string, HtkdAssignment>();
   private readonly sessions = new Map<string, StoredSession>();
   private readonly stores = new Map<string, Store>();
+  /** IDOSI ids set on stores; kept beside Store because the Store contract has no such field. */
+  private readonly idosiStoreCodes = new Map<string, string>();
   private readonly orderSessions = new Map<string, OrderSession>();
   private readonly products = new Map<string, Product>();
   private readonly allocationResults = new Map<string, AllocationResult>();
@@ -825,6 +829,56 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     };
   }
 
+  public async listIdosiStoreCodes(
+    actor: AuthenticatedPrincipal,
+  ): Promise<readonly IdosiStoreCodeRecord[]> {
+    requireMemoryAdmin(actor);
+    return [...this.stores.values()]
+      .filter((store) => store.kind === 'RETAIL' && store.status === 'ACTIVE')
+      .sort((left, right) => left.code.localeCompare(right.code))
+      .map((store) => ({
+        storeId: store.id,
+        storeCode: store.code,
+        storeName: store.name,
+        idosiStoreCode: this.idosiStoreCodes.get(store.id) ?? null,
+      }));
+  }
+
+  public async setIdosiStoreCode(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+    input: SetIdosiStoreCodeRequest,
+    context: RequestContext,
+  ): Promise<IdosiStoreCodeRecord> {
+    requireMemoryAdmin(actor);
+    const store = this.stores.get(storeId);
+    if (!store) throw notFound('Không tìm thấy cửa hàng');
+    if (store.kind !== 'RETAIL') throw conflict('Chỉ cửa hàng bán lẻ mới có dữ liệu trên IDOSI');
+    const takenBy = [...this.idosiStoreCodes].find(
+      ([id, code]) => id !== storeId && code === input.idosiStoreCode,
+    );
+    if (takenBy) throw conflict('Mã IDOSI này đã được gán cho cửa hàng khác');
+    const before = this.idosiStoreCodes.get(storeId) ?? null;
+    if (input.idosiStoreCode === null) this.idosiStoreCodes.delete(storeId);
+    else this.idosiStoreCodes.set(storeId, input.idosiStoreCode);
+    this.appendAudit(
+      actor,
+      context,
+      'STORE_IDOSI_CODE_CHANGED',
+      'store',
+      storeId,
+      { idosiStoreCode: before },
+      { idosiStoreCode: input.idosiStoreCode },
+      { reason: input.reason },
+    );
+    return {
+      storeId,
+      storeCode: store.code,
+      storeName: store.name,
+      idosiStoreCode: input.idosiStoreCode,
+    };
+  }
+
   public async getIdosiProductMatching(
     actor: AuthenticatedPrincipal,
     period: string,
@@ -923,7 +977,12 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (store.kind !== 'RETAIL') {
       throw conflict('Đồng bộ doanh thu chỉ áp dụng cho cửa hàng bán lẻ');
     }
-    return { storeId: store.id, storeCode: store.code, storeName: store.name };
+    return {
+      storeId: store.id,
+      storeCode: store.code,
+      storeName: store.name,
+      idosiStoreCode: this.idosiStoreCodes.get(store.id) ?? null,
+    };
   }
 
   public async getIdosiStatisticsState(actor: AuthenticatedPrincipal, scope: IdosiStatisticsScope) {

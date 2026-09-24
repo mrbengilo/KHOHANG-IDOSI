@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   fetchIdosiOrderStatistics,
+  idosiFetchStore,
   IdosiGatewayError,
   type IdosiFetch,
   type IdosiOrderStatisticsPayload,
@@ -123,8 +124,7 @@ export class IdosiStatisticsSyncWorker {
         const payload = await fetchIdosiOrderStatistics({
           endpoint: this.#options.endpoint,
           secret: this.#options.secret,
-          storeCode: target.storeCode,
-          ...(this.#options.storeIdMap ? { storeIdMap: this.#options.storeIdMap } : {}),
+          ...idosiFetchStore(target, this.#options.storeIdMap),
           scope: {
             period: target.scope.period,
             date: target.scope.date,

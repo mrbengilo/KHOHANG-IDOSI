@@ -3816,6 +3816,50 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(response.json().error.requestId, 'web-request-123');
   });
 
+  test('lets Admin set the IDOSI id of a store, which then overrides the environment map', async () => {
+    await app.close();
+    repository = await MemoryWarehouseRepository.create({ bootstrapPassword: PASSWORD });
+    app = await createApi({
+      repository,
+      corsOrigin: 'http://localhost:5173',
+      idosiStoreIdMap: { DS_NVT: 'S01' },
+    });
+    const adminCookie = cookieOf(await login('admin'));
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const list = (cookie) =>
+      app.inject({ method: 'GET', url: '/api/v1/admin/idosi-store-codes', headers: { cookie } });
+    assert.equal((await list(storeCookie)).statusCode, 403);
+    const before = (await list(adminCookie)).json().data;
+    assert.deepEqual(
+      before.find((row) => row.storeCode === 'DS_NVT'),
+      {
+        storeId: MEMORY_SEED_IDS.nvtStore,
+        storeCode: 'DS_NVT',
+        storeName: before.find((row) => row.storeCode === 'DS_NVT').storeName,
+        idosiStoreCode: null,
+        effectiveIdosiStoreCode: 'S01',
+        source: 'ENVIRONMENT_MAP',
+      },
+    );
+    assert.equal(before.find((row) => row.storeCode === 'DS_BD').source, 'MISSING');
+
+    const set = (storeId, idosiStoreCode) =>
+      app.inject({
+        method: 'PUT',
+        url: `/api/v1/admin/idosi-store-codes/${storeId}`,
+        headers: { cookie: adminCookie },
+        payload: { idosiStoreCode, reason: 'Cửa hàng mới trên IDOSI' },
+      });
+    const saved = await set(MEMORY_SEED_IDS.bdStore, 'S02');
+    assert.equal(saved.statusCode, 200);
+    assert.equal(saved.json().data.source, 'STORE');
+    assert.equal(saved.json().data.effectiveIdosiStoreCode, 'S02');
+    const duplicate = await set(MEMORY_SEED_IDS.nvtStore, 'S02');
+    assert.equal(duplicate.statusCode, 409);
+    const cleared = await set(MEMORY_SEED_IDS.bdStore, null);
+    assert.equal(cleared.json().data.source, 'MISSING');
+  });
+
   test('reports the allocation worker heartbeat to administrators only', async () => {
     const adminCookie = cookieOf(await login('admin'));
     const storeCookie = cookieOf(await login('ds_nvt'));

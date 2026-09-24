@@ -24,6 +24,8 @@ export interface IdosiStatisticsTarget {
   readonly storeId: string;
   readonly storeCode: string;
   readonly storeName: string;
+  /** The store's IDOSI id set in the app, or null to fall back to the environment map. */
+  readonly idosiStoreCode?: string | null;
 }
 
 export interface IdosiStatisticsAuditActor {
@@ -382,7 +384,12 @@ export async function listDueIdosiStatisticsTargets(
   const scopeTemplate = { period, date: null, shiftId: null, paymentMethod: null } as const;
   const scopeKey = idosiStatisticsScopeKey(scopeTemplate);
   const activeStores = await database
-    .select({ id: stores.id, code: stores.code, name: stores.name })
+    .select({
+      id: stores.id,
+      code: stores.code,
+      name: stores.name,
+      idosiStoreCode: stores.idosiStoreCode,
+    })
     .from(stores)
     .where(and(eq(stores.isActive, true), eq(stores.kind, 'retail'), isNull(stores.deletedAt)))
     .orderBy(stores.code);
@@ -417,6 +424,7 @@ export async function listDueIdosiStatisticsTargets(
       storeId: store.id,
       storeCode: store.code,
       storeName: store.name,
+      idosiStoreCode: store.idosiStoreCode,
       scope: { storeId: store.id, ...scopeTemplate },
       intervalMinutes,
     }));
@@ -521,7 +529,12 @@ export async function listIdosiPeriodClosingTargets(
   const scopeTemplate = { period, date: null, shiftId: null, paymentMethod: null } as const;
   const scopeKey = idosiStatisticsScopeKey(scopeTemplate);
   const activeStores = await database
-    .select({ id: stores.id, code: stores.code, name: stores.name })
+    .select({
+      id: stores.id,
+      code: stores.code,
+      name: stores.name,
+      idosiStoreCode: stores.idosiStoreCode,
+    })
     .from(stores)
     .where(and(eq(stores.isActive, true), eq(stores.kind, 'retail'), isNull(stores.deletedAt)))
     .orderBy(stores.code);
@@ -573,6 +586,7 @@ export async function listIdosiPeriodClosingTargets(
       storeId: store.id,
       storeCode: store.code,
       storeName: store.name,
+      idosiStoreCode: store.idosiStoreCode,
       scope: { storeId: store.id, ...scopeTemplate },
       intervalMinutes,
     }));

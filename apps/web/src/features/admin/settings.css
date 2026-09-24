@@ -386,6 +386,7 @@
   min-width: 0;
 }
 
+.settings-link-actions input,
 .settings-link-actions select {
   min-width: 0;
   max-width: 260px;
@@ -416,6 +417,7 @@
     justify-content: stretch;
   }
 
+  .settings-link-actions input,
   .settings-link-actions select {
     flex: 1 1 100%;
     max-width: none;

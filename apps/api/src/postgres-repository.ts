@@ -19,6 +19,7 @@ import type {
   IdosiProductLink,
   IdosiProductMatching,
   SetIdosiProductLinkRequest,
+  SetIdosiStoreCodeRequest,
   StoreNormalSalePending,
   OrderingContext,
   Account,
@@ -319,6 +320,7 @@ import type {
   AccountCredentials,
   HtkdAssignmentsState,
   IdosiStatisticsTarget,
+  IdosiStoreCodeRecord,
   IdempotentResource,
   OrderStatistics,
   Page,
@@ -999,6 +1001,77 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     return { current, history };
   }
 
+  public async listIdosiStoreCodes(
+    actor: AuthenticatedPrincipal,
+  ): Promise<readonly IdosiStoreCodeRecord[]> {
+    requirePostgresAdmin(actor);
+    const rows = await db
+      .select({
+        storeId: stores.id,
+        storeCode: stores.code,
+        storeName: stores.name,
+        idosiStoreCode: stores.idosiStoreCode,
+      })
+      .from(stores)
+      .where(and(eq(stores.kind, 'retail'), eq(stores.isActive, true), isNull(stores.deletedAt)))
+      .orderBy(asc(stores.displayOrder), asc(stores.code));
+    return rows;
+  }
+
+  public async setIdosiStoreCode(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+    input: SetIdosiStoreCodeRequest,
+    context: RequestContext,
+  ): Promise<IdosiStoreCodeRecord> {
+    requirePostgresAdmin(actor);
+    try {
+      return await db.transaction(async (tx) => {
+        const [store] = await tx
+          .select()
+          .from(stores)
+          .where(and(eq(stores.id, storeId), isNull(stores.deletedAt)))
+          .for('update')
+          .limit(1);
+        if (!store) throw notFound('Không tìm thấy cửa hàng');
+        if (store.kind !== 'retail') {
+          throw conflict('Chỉ cửa hàng bán lẻ mới có dữ liệu trên IDOSI');
+        }
+        const [updated] = await tx
+          .update(stores)
+          .set({
+            idosiStoreCode: input.idosiStoreCode,
+            version: store.version + 1,
+            updatedAt: new Date(),
+          })
+          .where(eq(stores.id, store.id))
+          .returning();
+        if (!updated) throw new Error('Store IDOSI code update did not return a row');
+        await tx.insert(auditLogs).values({
+          ...auditValue(
+            actor,
+            context,
+            'STORE_IDOSI_CODE_CHANGED',
+            'store',
+            store.id,
+            { idosiStoreCode: store.idosiStoreCode },
+            { idosiStoreCode: updated.idosiStoreCode },
+          ),
+          metadata: { reason: input.reason },
+        });
+        return {
+          storeId: updated.id,
+          storeCode: updated.code,
+          storeName: updated.name,
+          idosiStoreCode: updated.idosiStoreCode,
+        };
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) throw conflict('Mã IDOSI này đã được gán cho cửa hàng khác');
+      throw error;
+    }
+  }
+
   public async getIdosiProductMatching(
     actor: AuthenticatedPrincipal,
     period: string,
@@ -1117,6 +1190,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         name: stores.name,
         kind: stores.kind,
         isActive: stores.isActive,
+        idosiStoreCode: stores.idosiStoreCode,
       })
       .from(stores)
       .where(and(eq(stores.id, storeId), isNull(stores.deletedAt)))
@@ -1128,7 +1202,12 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     if (store.kind !== 'retail') {
       throw conflict('Đồng bộ doanh thu chỉ áp dụng cho cửa hàng bán lẻ');
     }
-    return { storeId: store.id, storeCode: store.code, storeName: store.name };
+    return {
+      storeId: store.id,
+      storeCode: store.code,
+      storeName: store.name,
+      idosiStoreCode: store.idosiStoreCode,
+    };
   }
 
   public async getIdosiStatisticsState(actor: AuthenticatedPrincipal, scope: IdosiStatisticsScope) {

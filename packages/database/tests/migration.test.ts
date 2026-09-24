@@ -244,6 +244,24 @@ describe('initial migration invariants', () => {
     ) as { id: string };
     expect(snapshot.prevId).toBe(previous.id);
   });
+  it('adds an optional, unique IDOSI store code without touching existing stores', () => {
+    const migration = readFileSync(
+      new URL('../migrations/0029_store_idosi_code.sql', import.meta.url),
+      'utf8',
+    );
+    expect(migration).toContain('ADD COLUMN "idosi_store_code" text;');
+    expect(migration).toMatch(
+      /"stores_idosi_store_code_uidx"[^;]*WHERE "stores"\."idosi_store_code" IS NOT NULL/,
+    );
+    expect(migration).not.toMatch(/UPDATE\s|DELETE\s+FROM|DROP\s/i);
+    const snapshot = JSON.parse(
+      readFileSync(new URL('../migrations/meta/0029_snapshot.json', import.meta.url), 'utf8'),
+    ) as { prevId: string };
+    const previous = JSON.parse(
+      readFileSync(new URL('../migrations/meta/0028_snapshot.json', import.meta.url), 'utf8'),
+    ) as { id: string };
+    expect(snapshot.prevId).toBe(previous.id);
+  });
   it('adds the wholesale role without using it in the same transaction', () => {
     const roleMigration = readFileSync(
       new URL('../migrations/0011_wholesale_account_role.sql', import.meta.url),
@@ -386,7 +404,7 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(29);
+    expect(journal.entries).toHaveLength(30);
     expect(journal.entries[8]).toMatchObject({ tag: '0008_optional_supplier_weight' });
     expect(journal.entries[9]).toMatchObject({ tag: '0009_supported_allocation_policy' });
     expect(journal.entries[10]).toMatchObject({
@@ -438,6 +456,10 @@ describe('initial migration invariants', () => {
     });
     expect(journal.entries[28]).toMatchObject({
       tag: '0028_sale_baseline_pending',
+      breakpoints: true,
+    });
+    expect(journal.entries[29]).toMatchObject({
+      tag: '0029_store_idosi_code',
       breakpoints: true,
     });
     expect(journal.entries[7]).toMatchObject({ tag: '0007_receipt_vat', breakpoints: true });
