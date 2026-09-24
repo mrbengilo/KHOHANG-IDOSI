@@ -103,6 +103,32 @@ test('inbound history preserves product details, required markers and compact re
   await card.getByText('Cập nhật VAT · 8%', { exact: true }).click();
   await card.getByText('Chốt chi phí theo hóa đơn', { exact: true }).click();
   await expect(card.locator('.inbound-required')).toHaveCount(5);
+  // Money fields show thousands separators while the API still receives plain integers.
+  const invoiceCost = card.getByLabel('Tổng tiền hàng theo hóa đơn (VND)');
+  await invoiceCost.fill('1234567');
+  await expect(invoiceCost).toHaveValue('1,234,567');
+  await card.getByLabel('Phí vận chuyển (VND)').fill('2000');
+  await expect(card.getByLabel('Phí vận chuyển (VND)')).toHaveValue('2,000');
+  await expect(card.getByLabel('Phí bốc vác (VND)')).toHaveValue('0');
+  const vatAmount = card.getByLabel(`Số tiền VAT cho ${receipt.referenceCode}`, { exact: true });
+  await vatAmount.fill('1.000.000');
+  await expect(vatAmount).toHaveValue('1,000,000');
+  let submittedCosts: unknown = null;
+  await page.route('**/api/v1/inbound-receipts/*/confirm-costs', (route) => {
+    submittedCosts = route.request().postDataJSON();
+    return route.fulfill({
+      status: 409,
+      json: { error: { code: 'VERSION_CONFLICT', message: 'Kiểm thử định dạng tiền.' } },
+    });
+  });
+  await card.getByRole('button', { name: 'Xác nhận chi phí hóa đơn' }).click();
+  await expect
+    .poll(() => submittedCosts)
+    .toMatchObject({
+      invoiceGoodsCostVnd: 1234567,
+      transportationFeeVnd: 2000,
+      handlingFeeVnd: 0,
+    });
   for (const width of [360, 375, 390, 412, 768, 1366, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(

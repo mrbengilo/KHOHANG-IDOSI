@@ -8,6 +8,7 @@ import { useRef, useState, type FormEvent } from 'react';
 import { AdminAccess, adminSessionQueryKey } from '../features/admin/AdminAccess';
 import { getAdminSession } from '../features/admin/adminApi';
 import { Button } from '../components/Button';
+import { MoneyInput } from '../components/MoneyInput';
 import { PageHeader } from '../components/PageHeader';
 import { ProductBagPicker } from '../components/ProductBagPicker';
 import {
@@ -206,12 +207,11 @@ function WarehouseInboundContent() {
             <div className="form-grid">
               <label>
                 Số tiền VAT (VND)
-                <input
-                  inputMode="numeric"
-                  placeholder="Ví dụ: 1000000"
+                <MoneyInput
+                  placeholder="Ví dụ: 1,000,000"
                   value={vatAmount}
-                  onChange={(event) => {
-                    setVatAmount(event.target.value);
+                  onValueChange={(digits) => {
+                    setVatAmount(digits);
                     changed();
                   }}
                 />
@@ -424,12 +424,11 @@ function InvoiceCostEditor({ receipt }: { receipt: InboundReceipt }) {
                 *
               </span>
             </span>
-            <input
+            <MoneyInput
               required
               aria-label="Tổng tiền hàng theo hóa đơn (VND)"
-              inputMode="numeric"
               value={amount}
-              onChange={(event) => setAmount(event.target.value)}
+              onValueChange={setAmount}
             />
           </label>
           <label>
@@ -439,12 +438,11 @@ function InvoiceCostEditor({ receipt }: { receipt: InboundReceipt }) {
                 *
               </span>
             </span>
-            <input
+            <MoneyInput
               required
               aria-label="Phí vận chuyển (VND)"
-              inputMode="numeric"
               value={shipping}
-              onChange={(event) => setShipping(event.target.value)}
+              onValueChange={setShipping}
             />
           </label>
           <label>
@@ -454,12 +452,11 @@ function InvoiceCostEditor({ receipt }: { receipt: InboundReceipt }) {
                 *
               </span>
             </span>
-            <input
+            <MoneyInput
               required
               aria-label="Phí bốc vác (VND)"
-              inputMode="numeric"
               value={handling}
-              onChange={(event) => setHandling(event.target.value)}
+              onValueChange={setHandling}
             />
           </label>
           <Button type="submit" busy={busy} disabled={stale}>
@@ -556,11 +553,10 @@ function InboundVatEditor({ receipt }: { receipt: InboundReceipt }) {
                 *
               </span>
             </span>
-            <input
+            <MoneyInput
               aria-label={`Số tiền VAT cho ${receipt.referenceCode}`}
-              inputMode="numeric"
               value={amount}
-              onChange={(event) => setAmount(event.target.value)}
+              onValueChange={setAmount}
               required
             />
           </label>

@@ -26,6 +26,7 @@ import type { AppOutletContext } from '../components/AppShell';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { EmptyState } from '../components/EmptyState';
+import { MoneyInput } from '../components/MoneyInput';
 import { PageHeader } from '../components/PageHeader';
 import { DashboardSkeleton } from '../components/Skeleton';
 import { StatCard } from '../components/StatCard';
@@ -1293,16 +1294,13 @@ function ReviewerReceiptForm({
           <div className="receipt-review-line__fields">
             <label>
               <span className="field-label">Giá nhập / kg (VND)</span>
-              <input
+              <MoneyInput
                 required={line.receivedUnits > 0}
                 disabled={mutationPending || line.receivedUnits === 0}
-                inputMode="numeric"
-                min="0"
-                onChange={(event) =>
-                  setPrices((current) => ({ ...current, [line.productId]: event.target.value }))
+                onValueChange={(digits) =>
+                  setPrices((current) => ({ ...current, [line.productId]: digits }))
                 }
                 placeholder="0"
-                type="number"
                 value={prices[line.productId] ?? ''}
               />
             </label>
@@ -1338,25 +1336,19 @@ function ReviewerReceiptForm({
       <div className="receipt-fees">
         <label>
           <span className="field-label">Phí vận chuyển (VND)</span>
-          <input
+          <MoneyInput
             required
             disabled={mutationPending}
-            inputMode="numeric"
-            min="0"
-            onChange={(event) => setFreight(event.target.value)}
-            type="number"
+            onValueChange={setFreight}
             value={freight}
           />
         </label>
         <label>
           <span className="field-label">Phí bốc xếp (VND)</span>
-          <input
+          <MoneyInput
             required
             disabled={mutationPending}
-            inputMode="numeric"
-            min="0"
-            onChange={(event) => setHandling(event.target.value)}
-            type="number"
+            onValueChange={setHandling}
             value={handling}
           />
         </label>
