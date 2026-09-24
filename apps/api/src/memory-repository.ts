@@ -157,6 +157,7 @@ import type {
   IdempotentResource,
   Page,
   RequestContext,
+  SessionActivity,
   SubmittedOrderRequest,
   WarehouseRepository,
 } from './repository.js';
@@ -483,6 +484,22 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     }
     stored.lastSeenAt = now;
     return this.toSession(stored, account);
+  }
+
+  public async inspectSessions(
+    tokens: readonly string[],
+  ): Promise<ReadonlyMap<string, SessionActivity>> {
+    const now = this.now();
+    const activity = new Map<string, SessionActivity>();
+    for (const token of tokens) {
+      const stored = this.sessions.get(hashSessionToken(token));
+      if (!stored) continue;
+      activity.set(token, {
+        active: stored.revokedAt === null && stored.expiresAt > now,
+        lastSeenAt: stored.lastSeenAt,
+      });
+    }
+    return activity;
   }
 
   public async revokeSession(token: string, _reason: string): Promise<boolean> {

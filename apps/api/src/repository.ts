@@ -237,6 +237,11 @@ export interface PersistedIdosiStatisticsState {
   readonly latestAttempt: IdosiStatisticsAttempt | null;
 }
 
+export interface SessionActivity {
+  readonly active: boolean;
+  readonly lastSeenAt: Date;
+}
+
 export interface WarehouseRepository {
   ready(): Promise<boolean>;
   close(): Promise<void>;
@@ -250,6 +255,11 @@ export interface WarehouseRepository {
   ): Promise<Session>;
   resolveSession(token: string): Promise<Session>;
   revokeSession(token: string, reason: string): Promise<boolean>;
+  /**
+   * Activity of the sessions behind the given tokens, keyed by token. Unknown tokens are absent;
+   * revoked or expired ones are reported inactive. Used to clean up per-tab cookies.
+   */
+  inspectSessions(tokens: readonly string[]): Promise<ReadonlyMap<string, SessionActivity>>;
 
   /** Revalidates the STORE principal against the current store kind and status. */
   authorizeRetailStoreOperation(actor: AuthenticatedPrincipal): Promise<void>;

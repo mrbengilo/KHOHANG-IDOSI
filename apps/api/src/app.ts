@@ -321,10 +321,11 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
       expiresAt,
       requestContext(request),
     );
-    reply.header(
-      'set-cookie',
+    const staleTabCookies = await pruneTabSessionCookies(request, cookieName, repository);
+    reply.header('set-cookie', [
       sessionCookie(token, expiresAt, options.secureCookies ?? false, cookieName),
-    );
+      ...staleTabCookies.map((name) => clearSessionCookie(options.secureCookies ?? false, name)),
+    ]);
     reply.header('cache-control', 'no-store');
     return { data: session };
   });
@@ -1742,6 +1743,64 @@ function sessionCookieName(request: FastifyRequest): string {
     throw new ApiError('VALIDATION_ERROR', 'Mã tab đăng nhập không hợp lệ', 400);
   }
   return `${SESSION_COOKIE}_${tabId}`;
+}
+
+/** Tab cookies kept per browser; each closed tab otherwise leaves one behind for 12 hours. */
+export const MAX_TAB_SESSION_COOKIES = 12;
+
+/**
+ * Every tab has its own session cookie, and a closed tab cannot log itself out, so its cookie
+ * stays until it expires. On each login the browser's other tab cookies are checked: cookies of
+ * ended sessions are cleared, and beyond MAX_TAB_SESSION_COOKIES the least recently used tab
+ * sessions are revoked and cleared. This keeps the Cookie header (sent with every request)
+ * bounded instead of growing until the browser or the server rejects it.
+ */
+async function pruneTabSessionCookies(
+  request: FastifyRequest,
+  currentCookieName: string,
+  repository: WarehouseRepository,
+): Promise<string[]> {
+  const tabCookies = readTabSessionCookies(request).filter(
+    (cookie) => cookie.name !== currentCookieName,
+  );
+  if (tabCookies.length === 0) return [];
+  const activity = await repository.inspectSessions(tabCookies.map((cookie) => cookie.token));
+  const stale = tabCookies.filter((cookie) => !activity.get(cookie.token)?.active);
+  // Most recently used first; browsers list older cookies first, which breaks ties.
+  const live = tabCookies
+    .map((cookie, index) => ({ ...cookie, index }))
+    .filter((cookie) => activity.get(cookie.token)?.active)
+    .sort(
+      (left, right) =>
+        activity.get(right.token)!.lastSeenAt.getTime() -
+          activity.get(left.token)!.lastSeenAt.getTime() || right.index - left.index,
+    );
+  // The login being answered is one tab too.
+  const overflow = live.slice(Math.max(0, MAX_TAB_SESSION_COOKIES - 1));
+  for (const cookie of overflow) await repository.revokeSession(cookie.token, 'tab_cookie_limit');
+  return [...stale, ...overflow].map((cookie) => cookie.name);
+}
+
+function readTabSessionCookies(
+  request: FastifyRequest,
+): { readonly name: string; readonly token: string }[] {
+  const header = request.headers.cookie;
+  if (!header) return [];
+  const cookies: { name: string; token: string }[] = [];
+  for (const part of header.split(';')) {
+    const separator = part.indexOf('=');
+    if (separator < 0) continue;
+    const name = part.slice(0, separator).trim();
+    if (!name.startsWith(`${SESSION_COOKIE}_`)) continue;
+    if (!TAB_ID_PATTERN.test(name.slice(SESSION_COOKIE.length + 1))) continue;
+    try {
+      const token = decodeURIComponent(part.slice(separator + 1).trim());
+      if (token) cookies.push({ name, token });
+    } catch {
+      cookies.push({ name, token: '' });
+    }
+  }
+  return cookies;
 }
 
 function sessionCookie(

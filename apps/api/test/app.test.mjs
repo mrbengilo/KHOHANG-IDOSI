@@ -727,6 +727,48 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(invalid.json().error.code, 'VALIDATION_ERROR');
   });
 
+  test('bounds per-tab session cookies when a tab logs in', async () => {
+    const tabId = (index) => index.toString(16).padStart(32, '0');
+    const tabLogin = (id, cookie) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/login',
+        headers: { 'x-idosi-tab-id': id, ...(cookie ? { cookie } : {}) },
+        payload: { username: 'admin', password: PASSWORD },
+      });
+    // 13 earlier tabs, oldest first, plus a cookie whose session no longer exists.
+    const earlier = [];
+    for (let index = 1; index <= 13; index += 1)
+      earlier.push(cookieOf(await tabLogin(tabId(index))));
+    const unknown = `idosi_session_${tabId(99)}=not-a-session`;
+    const response = await tabLogin(tabId(100), [...earlier, unknown].join('; '));
+    assert.equal(response.statusCode, 200);
+    const setCookies = [response.headers['set-cookie']].flat().map(String);
+    assert.match(setCookies[0], new RegExp(`^idosi_session_${tabId(100)}=`));
+    const cleared = setCookies
+      .slice(1)
+      .map((cookie) => cookie.split('=')[0])
+      .sort();
+    // The unknown cookie goes, and the two least recently used tabs make room for this one.
+    assert.deepEqual(
+      cleared,
+      [
+        `idosi_session_${tabId(1)}`,
+        `idosi_session_${tabId(2)}`,
+        `idosi_session_${tabId(99)}`,
+      ].sort(),
+    );
+    for (const cookie of setCookies.slice(1)) assert.match(cookie, /Max-Age=0/u);
+    const sessionOf = (id, cookie) =>
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/session',
+        headers: { cookie, 'x-idosi-tab-id': id },
+      });
+    assert.equal((await sessionOf(tabId(1), earlier[0])).statusCode, 401);
+    assert.equal((await sessionOf(tabId(3), earlier[2])).statusCode, 200);
+  });
+
   test('enforces STORE and HTKD scopes on the server', async () => {
     const storeCookie = cookieOf(await login('ds_nvt'));
     const stores = await app.inject({

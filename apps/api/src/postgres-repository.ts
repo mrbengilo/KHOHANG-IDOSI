@@ -323,6 +323,7 @@ import type {
   OrderStatistics,
   Page,
   RequestContext,
+  SessionActivity,
   SubmittedOrderRequest,
   WarehouseRepository,
 } from './repository.js';
@@ -453,6 +454,32 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     }
     await db.update(sessions).set({ lastSeenAt: now }).where(eq(sessions.id, row.session.id));
     return sessionDto({ ...row.session, lastSeenAt: now }, credentials);
+  }
+
+  public async inspectSessions(
+    tokens: readonly string[],
+  ): Promise<ReadonlyMap<string, SessionActivity>> {
+    if (tokens.length === 0) return new Map();
+    const byHash = new Map(tokens.map((token) => [hashSessionToken(token), token] as const));
+    const rows = await db
+      .select({
+        tokenHash: sessions.tokenHash,
+        revokedAt: sessions.revokedAt,
+        expiresAt: sessions.expiresAt,
+        lastSeenAt: sessions.lastSeenAt,
+      })
+      .from(sessions)
+      .where(inArray(sessions.tokenHash, [...byHash.keys()]));
+    const now = Date.now();
+    return new Map(
+      rows.map((row) => [
+        byHash.get(row.tokenHash)!,
+        {
+          active: row.revokedAt === null && row.expiresAt.getTime() > now,
+          lastSeenAt: row.lastSeenAt,
+        },
+      ]),
+    );
   }
 
   public async revokeSession(token: string, reason: string): Promise<boolean> {
