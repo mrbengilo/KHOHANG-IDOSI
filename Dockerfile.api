@@ -66,5 +66,10 @@ ENV NODE_ENV=production \
 
 COPY --chown=node:node infra/scripts/run-migrations.mjs ./infra/scripts/run-migrations.mjs
 
+# Build-stage sources keep the checkout's file modes, which may be owner-only (umask 077).
+# The migrator runs as `node`, so make them readable without touching installed packages.
+RUN find /app -name node_modules -prune -o \( ! -perm -o=r -o \( -type d ! -perm -o=x \) \) \
+      -exec chmod a+rX {} +
+
 USER node
 CMD ["sh", "-ceu", "node infra/scripts/run-migrations.mjs && node packages/database/dist/seed.js"]

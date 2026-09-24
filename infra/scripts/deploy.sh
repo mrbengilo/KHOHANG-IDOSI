@@ -94,6 +94,11 @@ expected_release="$(cd -- "$root_dir/releases" && pwd -P)/${release_sha}"
   fail 'release checkout HEAD does not match --sha'
 [[ -z "$(git -C "$release_dir" status --porcelain)" ]] || fail 'release checkout has uncommitted changes'
 
+# The release is a checkout of the public repository and holds no secrets, but the watcher
+# creates it under umask 077. Image builds copy these files for the non-root `node` user and
+# Caddy (uid 65532) reads the bind-mounted Caddyfile, so both must be able to read them.
+chmod -R u+rwX,go+rX,go-w -- "$release_dir"
+
 previous_release="$(readlink -f -- "$root_dir/current")" || fail "missing symlink: $root_dir/current"
 previous_sha="$(basename -- "$previous_release")"
 [[ "$previous_sha" =~ $sha_pattern && -f "$previous_release/docker-compose.yml" ]] || \

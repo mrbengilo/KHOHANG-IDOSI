@@ -161,7 +161,14 @@ jobs:
           IMAGE_PREFIX: local/khohang-idosi
           IMAGE_TAG: 0000000000000000000000000000000000000000
           POSTGRES_PASSWORD: idosi_ci_password
-        run: docker compose --file docker-compose.yml build api migrate worker web
+        run: |
+          set -euo pipefail
+          # Build from owner-only files, as the production watcher checks releases out under
+          # umask 077, so the images must not depend on the checkout's permission bits.
+          chmod -R go-rwx .
+          docker compose --file docker-compose.yml build api migrate worker web
+          # deploy.sh restores read access before services start (Caddy reads a bind mount).
+          chmod -R u+rwX,go+rX,go-w .
 
       - name: Verify production migration, bootstrap, and healthy full stack
         env:

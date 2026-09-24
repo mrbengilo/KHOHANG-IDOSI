@@ -148,7 +148,8 @@ report deploying "log: ${log_file}"
   fi
   git --git-dir="$mirror_dir" fetch --quiet "$remote_url" "+refs/heads/${branch}:refs/heads/${branch}"
   if [[ ! -e "$release_dir" ]]; then
-    git --git-dir="$mirror_dir" worktree add --detach "$release_dir" "$target_sha"
+    # The checkout is public source that container users must read; only state stays private.
+    (umask 022 && git --git-dir="$mirror_dir" worktree add --detach "$release_dir" "$target_sha")
   fi
 } >>"$log_file" 2>&1 || {
   printf 'could not check out the release\n' >"$state_dir/failed/$target_sha"

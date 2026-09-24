@@ -98,12 +98,19 @@ image_tag() {
 # HTTPS and only then records the new release and removes stale images.
 sha_a="$(new_commit a)"
 git_quiet clone "$source_repo" "$root_dir/releases/$sha_a"
+# The watcher checks releases out under umask 077; deploy.sh must still leave them readable
+# for the non-root image user and for Caddy's bind-mounted Caddyfile.
+chmod -R go-rwx -- "$root_dir/releases/$sha_a"
 reset_production
 FAKE_IMAGE_LIST="local/khohang-idosi-api:2222222222222222222222222222222222222222 local/khohang-idosi-api:${old_sha}" \
   run_deploy "$sha_a" >/dev/null
 [[ "$(readlink -f -- "$root_dir/current")" == "$root_dir/releases/$sha_a" ]] || fail 'current was not switched'
 [[ "$(image_tag)" == "$sha_a" ]] || fail 'IMAGE_TAG was not updated after a verified deployment'
 [[ "$(stat -c %a -- "$env_file")" == 600 ]] || fail 'environment file permissions changed'
+[[ "$(stat -c %a -- "$root_dir/releases/$sha_a/docker-compose.yml")" == 644 ]] || \
+  fail 'release files are not readable by container users'
+[[ "$(stat -c %a -- "$root_dir/releases/$sha_a/infra/scripts")" == 755 ]] || \
+  fail 'release directories are not traversable by container users'
 tail -n 1 "$root_dir/deploy-history" | grep -q " ${sha_a}$" || fail 'deployment history was not recorded'
 grep -Eq "TAG=${sha_a}[|]ARGS=compose .* build --pull api migrate worker web" "$docker_log" || \
   fail 'application images were not built for the release SHA'
@@ -205,6 +212,8 @@ run_watcher || { cat "$state_dir/status" "$state_dir"/logs/*.log >&2; fail 'watc
 [[ "$(readlink -f -- "$root_dir/current")" == "$root_dir/releases/$sha_d" ]] || \
   fail 'watcher did not switch current to the tip of main'
 [[ "$(image_tag)" == "$sha_d" ]] || fail 'watcher deployment did not update IMAGE_TAG'
+[[ "$(stat -c %a -- "$root_dir/releases/$sha_d/docker-compose.yml")" == 644 ]] || \
+  fail 'watcher release checkout is not readable by container users'
 run_watcher
 [[ "$(watcher_state)" == up-to-date ]] || fail 'watcher did not report an up-to-date release'
 
