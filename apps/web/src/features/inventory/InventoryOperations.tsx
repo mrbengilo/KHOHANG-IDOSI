@@ -25,6 +25,7 @@ import { Badge } from '../../components/Badge';
 import { BagWeightsInput } from '../../components/BagWeightsInput';
 import { Button } from '../../components/Button';
 import { EmptyState } from '../../components/EmptyState';
+import { MoneyInput } from '../../components/MoneyInput';
 import { PageHeader } from '../../components/PageHeader';
 import { DashboardSkeleton } from '../../components/Skeleton';
 import { StatCard } from '../../components/StatCard';
@@ -1082,15 +1083,7 @@ export function LegacyOutboundPage({ mode, role }: OutboundPageProps) {
                 {isSale ? (
                   <label>
                     <span className="field-label">Doanh thu (VND)</span>
-                    <input
-                      required
-                      inputMode="numeric"
-                      min="0"
-                      onChange={(event) => setRevenueVnd(event.target.value)}
-                      step="1"
-                      type="number"
-                      value={revenueVnd}
-                    />
+                    <MoneyInput required onValueChange={setRevenueVnd} value={revenueVnd} />
                   </label>
                 ) : null}
                 {mode === 'SORTING' && isSale ? (

@@ -115,11 +115,11 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   await expect(historyRow.getByRole('button', { name: 'Tải bản VAT mới' })).toBeVisible();
   await expect(historyRow.getByRole('button', { name: 'Lưu VAT', exact: true })).toBeDisabled();
   await expect(historyRow.getByLabel(`Số tiền VAT cho ${reference}`, { exact: true })).toHaveValue(
-    '999999',
+    '999,999',
   );
   await historyRow.getByRole('button', { name: 'Tải bản VAT mới' }).click();
   await expect(historyRow.getByLabel(`Số tiền VAT cho ${reference}`, { exact: true })).toHaveValue(
-    '1050000',
+    '1,050,000',
   );
   await historyRow.getByLabel(`Số tiền VAT cho ${reference}`, { exact: true }).fill('1100000');
   await historyRow
