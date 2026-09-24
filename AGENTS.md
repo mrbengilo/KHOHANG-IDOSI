@@ -111,6 +111,18 @@ packages/
 
 ## 5. Quy trình xử lý một task
 
+### Phạm vi thực hiện mặc định
+
+Chủ repository đã yêu cầu mặc định hoàn thành mỗi task thay đổi code theo toàn bộ chuỗi:
+code → kiểm thử → commit/push branch → mở PR → CI/review đạt → merge `main` → deploy VPS → kiểm tra sau deploy.
+
+- Không cần người dùng nhắc lại hoặc xác nhận riêng cho commit, push, mở PR, merge và deploy thông thường trong phạm vi task đã giao.
+- Nếu task mới yêu cầu chỉ phân tích, chỉ làm bản nháp, không merge hoặc không deploy thì tuân theo giới hạn đó.
+- Đây là phạm vi được giao cho agent; không có nghĩa GitHub Actions đã được cấu hình tự deploy. Agent phải thực hiện quy trình triển khai hiện có và xác minh kết quả.
+- Deploy production theo `docs/deployment-khoidosi.io.vn.md`, chỉ từ merged commit SHA; vẫn phải đáp ứng đầy đủ quality gate, backup, migration, health check và smoke test bên dưới.
+- Không dừng ở commit/PR khi còn có thể tiếp tục đến deploy. Khi thiếu quyền GitHub/SSH, cấu hình VPS, secret hoặc có gate thất bại, báo chính xác bước bị chặn và thông tin cần bổ sung; không báo task đã hoàn tất.
+- Quyền triển khai thông thường không bao gồm xóa dữ liệu production, restore đè database, xóa volume hoặc bỏ qua branch protection/quality gate.
+
 ### Bước 1 — Đọc, phân tích và chia phạm vi
 
 Trước khi chỉnh sửa:
@@ -371,7 +383,7 @@ Một task chỉ hoàn thành khi:
 - Commit được chia hợp lý và push lên branch.
 - PR mô tả đầy đủ và CI GitHub xanh.
 - PR đã merge theo quyền hạn được giao.
-- Commit đã merge được deploy lên VPS nếu task yêu cầu production deployment.
+- Với task thay đổi code, commit đã merge được deploy lên VPS theo phạm vi mặc định, trừ khi người dùng yêu cầu không deploy.
 - Health check, smoke test và log sau deploy đạt.
 - SHA production, kết quả test và rủi ro còn lại được báo cáo rõ ràng.
 
