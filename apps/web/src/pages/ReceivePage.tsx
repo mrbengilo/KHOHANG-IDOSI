@@ -1460,10 +1460,31 @@ function ReviewerReceiptForm({
             value={vat}
           />
           <small id={`receipt-vat-hint-${receipt.id}`}>
-            Số tiền thuế trên phiếu nhận hàng thực tế; không cộng vào giá vốn.
+            Số tiền thuế trên phiếu nhận hàng thực tế; không cộng vào giá vốn, cộng vào tổng tiền
+            phiếu.
           </small>
         </label>
       </div>
+      <ReceiptTotalsSummary
+        caption="Tạm tính theo số đã nhập"
+        totals={receiptTotalsPreview({
+          priced: [
+            ...receipt.lines
+              .filter((line) => line.receivedUnits > 0)
+              .map((line) => ({
+                weightsKg: weights[line.productId] ?? [],
+                pricePerKgVnd: prices[line.productId] ?? '',
+              })),
+            ...(receipt.unexpectedItems ?? []).map((item) => ({
+              weightsKg: excessWeights[item.productId] ?? [],
+              pricePerKgVnd: excessPrices[item.productId] ?? '',
+            })),
+          ],
+          freightVnd: freight,
+          handlingVnd: handling,
+          vatVnd: vat,
+        })}
+      />
       <label>
         Lý do trả phiếu
         <textarea
@@ -1545,16 +1566,128 @@ function ReadonlyReceiptLines({
 }
 
 function FinalizedSummary({ receipt }: { readonly receipt: Receipt }) {
+  const costVnd = receipt.totalCostVnd === null ? null : BigInt(receipt.totalCostVnd);
+  const vatVnd = receipt.vat ? BigInt(receipt.vat.amountVnd) : null;
   return (
-    <div className="document-summary receipt-finalized-summary">
+    <ReceiptTotalsSummary
+      className="receipt-finalized-summary"
+      totals={{
+        goodsVnd:
+          costVnd === null
+            ? null
+            : costVnd - BigInt(receipt.freightVnd) - BigInt(receipt.handlingVnd),
+        freightVnd: BigInt(receipt.freightVnd),
+        handlingVnd: BigInt(receipt.handlingVnd),
+        costVnd,
+        vatVnd,
+        totalVnd:
+          receipt.totalAmountVnd != null
+            ? BigInt(receipt.totalAmountVnd)
+            : costVnd === null || vatVnd === null
+              ? null
+              : costVnd + vatVnd,
+      }}
+    />
+  );
+}
+
+export interface ReceiptTotals {
+  readonly goodsVnd: bigint | null;
+  readonly freightVnd: bigint | null;
+  readonly handlingVnd: bigint | null;
+  /** Landed cost of the receipt; VAT is not part of it. */
+  readonly costVnd: bigint | null;
+  readonly vatVnd: bigint | null;
+  /** What the receipt totals to: landed cost plus VAT. */
+  readonly totalVnd: bigint | null;
+}
+
+function parseVnd(value: string): bigint | null {
+  return isMoney(value) ? BigInt(value) : null;
+}
+
+function parseGrams(weightKg: string): bigint | null {
+  if (!isPositiveKilograms(weightKg)) return null;
+  const [whole = '0', fraction = ''] = weightKg.split('.');
+  return BigInt(whole) * 1000n + BigInt(fraction.padEnd(3, '0'));
+}
+
+/**
+ * Preview with the server's rounding: each bag costs round(grams × price / 1000) VND, half up.
+ * The server recomputes on finalize; this only helps HTKD check the delivery note.
+ */
+export function receiptTotalsPreview(input: {
+  readonly priced: readonly {
+    readonly weightsKg: readonly string[];
+    readonly pricePerKgVnd: string;
+  }[];
+  readonly freightVnd: string;
+  readonly handlingVnd: string;
+  readonly vatVnd: string;
+}): ReceiptTotals {
+  let goodsVnd: bigint | null = 0n;
+  for (const line of input.priced) {
+    const price = parseVnd(line.pricePerKgVnd);
+    for (const weight of line.weightsKg) {
+      const grams = parseGrams(weight);
+      if (goodsVnd === null || price === null || grams === null) {
+        goodsVnd = null;
+        break;
+      }
+      goodsVnd += (grams * price + 500n) / 1000n;
+    }
+  }
+  const freightVnd = parseVnd(input.freightVnd);
+  const handlingVnd = parseVnd(input.handlingVnd);
+  const vatVnd = parseVnd(input.vatVnd);
+  const costVnd =
+    goodsVnd === null || freightVnd === null || handlingVnd === null
+      ? null
+      : goodsVnd + freightVnd + handlingVnd;
+  return {
+    goodsVnd,
+    freightVnd,
+    handlingVnd,
+    costVnd,
+    vatVnd,
+    totalVnd: costVnd === null || vatVnd === null ? null : costVnd + vatVnd,
+  };
+}
+
+function formatVndExact(value: bigint | null, missing: string): string {
+  if (value === null) return missing;
+  return value <= BigInt(Number.MAX_SAFE_INTEGER) ? formatVnd(Number(value)) : 'Vượt giới hạn';
+}
+
+function ReceiptTotalsSummary({
+  caption,
+  className,
+  totals,
+}: {
+  readonly caption?: string;
+  readonly className?: string;
+  readonly totals: ReceiptTotals;
+}) {
+  return (
+    <div
+      aria-live={caption ? 'polite' : undefined}
+      className={['document-summary', 'receipt-totals', className].filter(Boolean).join(' ')}
+    >
+      {caption ? <p className="receipt-totals__caption">{caption}</p> : null}
+      <span>Tiền hàng</span>
+      <strong>{formatVndExact(totals.goodsVnd, 'Chưa đủ dữ liệu')}</strong>
       <span>Phí vận chuyển</span>
-      <strong>{formatVnd(receipt.freightVnd)}</strong>
+      <strong>{formatVndExact(totals.freightVnd, 'Chưa nhập')}</strong>
       <span>Phí bốc xếp</span>
-      <strong>{formatVnd(receipt.handlingVnd)}</strong>
+      <strong>{formatVndExact(totals.handlingVnd, 'Chưa nhập')}</strong>
+      <span>Giá vốn (không gồm VAT)</span>
+      <strong>{formatVndExact(totals.costVnd, 'Chưa đủ dữ liệu')}</strong>
       <span>VAT 8%</span>
-      <strong>{receipt.vat ? formatVnd(receipt.vat.amountVnd) : 'Chưa ghi nhận'}</strong>
-      <span>Tổng giá vốn (không gồm VAT)</span>
-      <strong>{receipt.totalCostVnd === null ? 'Chưa có' : formatVnd(receipt.totalCostVnd)}</strong>
+      <strong>{formatVndExact(totals.vatVnd, 'Chưa ghi nhận')}</strong>
+      <span className="receipt-totals__grand">Tổng tiền phiếu (gồm VAT)</span>
+      <strong className="receipt-totals__grand">
+        {formatVndExact(totals.totalVnd, 'Chưa đủ dữ liệu')}
+      </strong>
     </div>
   );
 }

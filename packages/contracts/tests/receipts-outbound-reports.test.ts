@@ -355,6 +355,13 @@ describe('receipt, outbound and report contracts', () => {
       ReceiptSchema.safeParse({ ...finalizedReceipt, vat: { amountVnd: 4_400, ratePercent: 8 } })
         .success,
     ).toBe(true);
+    const withVat = { ...finalizedReceipt, vat: { amountVnd: 4_400, ratePercent: 8 } };
+    expect(ReceiptSchema.safeParse({ ...withVat, totalAmountVnd: 74_400 }).success).toBe(true);
+    expect(ReceiptSchema.safeParse({ ...withVat, totalAmountVnd: 70_000 }).success).toBe(false);
+    expect(
+      ReceiptSchema.safeParse({ ...finalizedReceipt, vat: null, totalAmountVnd: 70_000 }).success,
+    ).toBe(false);
+    expect(ReceiptSchema.safeParse({ ...withVat, totalAmountVnd: null }).success).toBe(true);
     // Receipts finalized before VAT capture keep an unknown VAT.
     expect(ReceiptSchema.safeParse({ ...finalizedReceipt, vat: null }).success).toBe(true);
     expect(

@@ -2381,6 +2381,35 @@ body.dialog-open {
   flex-wrap: wrap;
 }
 
+.receipt-totals {
+  border: 1px solid var(--border);
+}
+
+.receipt-totals span {
+  font-size: 13px;
+}
+
+.receipt-totals strong {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.receipt-totals__caption {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.receipt-totals .receipt-totals__grand {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  color: inherit;
+  font-size: 15px;
+  font-weight: 700;
+}
+
 .receipt-finalized-summary {
   border: 1px solid var(--border);
   background: var(--success-soft);

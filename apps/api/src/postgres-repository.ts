@@ -3935,6 +3935,10 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
           ? null
           : { amountVnd: safeVnd(receipt.vatAmountVnd), ratePercent: 8 },
       totalCostVnd: receipt.status === 'finalized' ? safeVnd(receipt.totalCostVnd) : null,
+      totalAmountVnd:
+        receipt.status === 'finalized' && receipt.vatAmountVnd !== null
+          ? safeVnd(receipt.totalCostVnd + receipt.vatAmountVnd)
+          : null,
       reviewedByAccountId: receipt.reviewedByUserId,
       reviewNote: receipt.reviewNote,
       version: receipt.version,

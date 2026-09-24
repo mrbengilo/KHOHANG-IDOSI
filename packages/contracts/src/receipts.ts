@@ -345,6 +345,8 @@ export const ReceiptSchema = z
     vat: InboundVatSchema.nullable().optional(),
     /** Landed cost: goods + freight + handling. Deductible VAT is tracked separately. */
     totalCostVnd: MoneyVndSchema.nullable(),
+    /** Receipt total payable: landed cost + entered VAT; null until both are known. */
+    totalAmountVnd: MoneyVndSchema.nullable().optional(),
     reviewedByAccountId: EntityIdSchema.nullable(),
     reviewNote: z.string().trim().min(3).max(500).nullable(),
     version: z.number().int().nonnegative(),
@@ -360,6 +362,25 @@ export const ReceiptSchema = z
         path: ['lines'],
         message: 'A product may appear only once in a receipt',
       });
+    }
+    if (receipt.totalAmountVnd != null) {
+      const expected =
+        receipt.totalCostVnd === null || receipt.vat == null
+          ? null
+          : sumRefinementValues([
+              safeIntegerToBigIntForRefinement(receipt.totalCostVnd),
+              safeIntegerToBigIntForRefinement(receipt.vat.amountVnd),
+            ]);
+      if (
+        expected === null ||
+        expected !== safeIntegerToBigIntForRefinement(receipt.totalAmountVnd)
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['totalAmountVnd'],
+          message: 'Receipt total must equal landed cost plus VAT',
+        });
+      }
     }
     if (receipt.status === 'FINALIZED') {
       if (receipt.totalCostVnd === null || receipt.reviewedByAccountId === null) {

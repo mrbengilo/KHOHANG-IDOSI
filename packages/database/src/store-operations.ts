@@ -521,6 +521,11 @@ export async function finalizeStoreReceiptInTransaction(
 
       const totalCostVnd = goodsCostVnd + input.freightVnd + input.handlingVnd;
       assertVnd(totalCostVnd, 'receipt total cost');
+      // VAT stays out of the landed cost but is part of what the receipt totals to.
+      const totalAmountVnd = totalCostVnd + input.vat.amountVnd;
+      if (totalAmountVnd > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new StoreOperationValidationError('Receipt total including VAT is too large.');
+      }
 
       const [finalized] = await tx
         .update(storeReceipts)
@@ -584,6 +589,7 @@ export async function finalizeStoreReceiptInTransaction(
           totalCostVnd: totalCostVnd.toString(),
           vatAmountVnd: input.vat.amountVnd.toString(),
           vatRatePercent: input.vat.ratePercent,
+          totalAmountVnd: totalAmountVnd.toString(),
           inventoryBagIds,
         },
       });

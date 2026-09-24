@@ -1891,6 +1891,8 @@ describe('KHOHANG-IDOSI API', () => {
     // the delivery-note VAT is kept beside the landed cost, not added to it.
     assert.equal(finalized.json().data.totalCostVnd, 115_101);
     assert.deepEqual(finalized.json().data.vat, finalization.vat);
+    // The receipt total adds the entered VAT on top of the landed cost.
+    assert.equal(finalized.json().data.totalAmountVnd, 115_101 + 9_208);
 
     const shortageChecks = await app.inject({
       method: 'GET',

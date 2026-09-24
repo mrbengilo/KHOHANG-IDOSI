@@ -5,8 +5,54 @@ import {
   confirmReceiptDeclaration,
   receiptSourceDraftLines,
   removeDeclaredReceiptSource,
+  receiptTotalsPreview,
   receiptWeightTotal,
 } from './ReceivePage';
+
+describe('receipt totals with manually entered VAT', () => {
+  it('keeps VAT out of the landed cost but adds it to the receipt total', () => {
+    expect(
+      receiptTotalsPreview({
+        priced: [{ weightsKg: ['100', '150'], pricePerKgVnd: '20000' }],
+        freightVnd: '200000',
+        handlingVnd: '100000',
+        vatVnd: '500000',
+      }),
+    ).toEqual({
+      goodsVnd: 5_000_000n,
+      freightVnd: 200_000n,
+      handlingVnd: 100_000n,
+      costVnd: 5_300_000n,
+      vatVnd: 500_000n,
+      totalVnd: 5_800_000n,
+    });
+  });
+
+  it('rounds each bag like the server and waits for missing inputs', () => {
+    const preview = receiptTotalsPreview({
+      priced: [
+        { weightsKg: ['2.333'], pricePerKgVnd: '1001' },
+        { weightsKg: ['0.5'], pricePerKgVnd: '3' },
+      ],
+      freightVnd: '0',
+      handlingVnd: '0',
+      vatVnd: '',
+    });
+    // 2.333 kg × 1,001 = 2,335.333 → 2,335; 0.5 kg × 3 = 1.5 → 2 (half up).
+    expect(preview.goodsVnd).toBe(2_337n);
+    expect(preview.costVnd).toBe(2_337n);
+    expect(preview.vatVnd).toBeNull();
+    expect(preview.totalVnd).toBeNull();
+    expect(
+      receiptTotalsPreview({
+        priced: [{ weightsKg: ['30', ''], pricePerKgVnd: '1000' }],
+        freightVnd: '0',
+        handlingVnd: '0',
+        vatVnd: '0',
+      }),
+    ).toMatchObject({ goodsVnd: null, costVnd: null, totalVnd: null, vatVnd: 0n });
+  });
+});
 
 describe('actual received bag totals', () => {
   it('totals three received bags exactly without trailing decimals', () => {
