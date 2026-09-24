@@ -422,7 +422,9 @@ function AdminUsersContent() {
         <ShieldCheck aria-hidden="true" size={22} />
         <div>
           <strong>Không hiển thị mật khẩu hoặc token</strong>
-          <span>Mọi thay đổi trạng thái và mật khẩu đều thu hồi phiên, có version và audit.</span>
+          <span>
+            Mọi thay đổi trạng thái và mật khẩu đều thu hồi phiên, có version và được ghi nhật ký.
+          </span>
         </div>
       </section>
 

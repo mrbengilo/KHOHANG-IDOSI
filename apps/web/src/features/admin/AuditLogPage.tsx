@@ -213,7 +213,7 @@ function AuditLogContent() {
         {auditQuery.isError ? (
           <div className="admin-state admin-state--error" role="alert">
             <FileSearch aria-hidden="true" size={28} />
-            <strong>Không thể tải nhật ký audit</strong>
+            <strong>Không thể tải nhật ký hệ thống</strong>
             <p>{adminErrorMessage(auditQuery.error)}</p>
             <Button
               className="admin-clickable"
@@ -227,13 +227,13 @@ function AuditLogContent() {
         {auditQuery.isSuccess && rows.length === 0 ? (
           <EmptyState
             detail="Không có sự kiện phù hợp với phạm vi thời gian và điều kiện đã chọn."
-            title="Chưa có sự kiện audit"
+            title="Chưa có sự kiện trong nhật ký"
           />
         ) : null}
         {rows.length > 0 ? <AuditRows rows={rows} /> : null}
 
         {pagination && pagination.totalPages > 1 ? (
-          <nav aria-label="Phân trang audit" className="admin-pagination">
+          <nav aria-label="Phân trang nhật ký hệ thống" className="admin-pagination">
             <button
               className="admin-action"
               disabled={page <= 1 || auditQuery.isFetching}
@@ -321,7 +321,7 @@ function AuditLoading() {
   return (
     <div aria-live="polite" className="admin-state" role="status">
       <span aria-hidden="true" className="admin-spinner" />
-      <strong>Đang tải nhật ký audit…</strong>
+      <strong>Đang tải nhật ký hệ thống…</strong>
     </div>
   );
 }

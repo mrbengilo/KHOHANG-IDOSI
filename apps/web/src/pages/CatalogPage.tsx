@@ -897,7 +897,7 @@ function ConversionDialog({ busy, draft, onChange, onClose, onSubmit }: Conversi
         <div className="dialog__header">
           <div>
             <h2 id="catalog-dialog-title">{title}</h2>
-            <p>Phiên bản cũ được giữ nguyên trong lịch sử và audit.</p>
+            <p>Phiên bản cũ được giữ nguyên trong lịch sử và nhật ký hệ thống.</p>
           </div>
           <button aria-label="Đóng" disabled={busy} onClick={onClose} type="button">
             <X aria-hidden="true" size={20} />
