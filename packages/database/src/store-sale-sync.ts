@@ -1,6 +1,8 @@
 import {
-  canonicalIdosiProductName,
+  idosiProductNameKey,
   IdosiOrderStatisticsPayloadSchema,
+  uniqueProductForIdosiName,
+  type IdosiNameCandidate,
   type IdosiOrderStatisticsPayload,
 } from '@idosi/contracts';
 import { and, asc, eq, gt, isNull, sql } from 'drizzle-orm';
@@ -23,12 +25,8 @@ import type { Transaction } from './transaction.js';
 
 type SaleType = 'sale_kg' | 'sale_piece';
 
-export const productKey = (value: string) =>
-  canonicalIdosiProductName(value)
-    .normalize('NFC')
-    .trim()
-    .replace(/\s+/gu, ' ')
-    .toLocaleLowerCase('vi-VN');
+/** Shared with the web so both sides agree on which names link automatically. */
+export const productKey = idosiProductNameKey;
 
 function sourceGrams(value: number): bigint {
   if (!Number.isFinite(value) || value < 0 || !Number.isSafeInteger(Math.round(value * 1000))) {
@@ -71,28 +69,10 @@ export function idosiItemsForProduct(
   });
 }
 
-export interface IdosiNameCandidate {
-  readonly id: string;
-  readonly name: string;
-  readonly isActive: boolean;
-}
+export type { IdosiNameCandidate };
 
-/**
- * The single warehouse product an IDOSI name may be linked to automatically: the only active
- * product with that normalized name, or else the only inactive one (stock of a retired item can
- * still be sold). Deleted products never qualify. Two candidates at the same level are
- * ambiguous and return null, so an Admin has to choose.
- */
-export function uniqueProductForName(
-  candidates: readonly IdosiNameCandidate[],
-  idosiName: string,
-): string | null {
-  const key = productKey(idosiName);
-  const named = candidates.filter((candidate) => productKey(candidate.name) === key);
-  const active = named.filter((candidate) => candidate.isActive);
-  const pool = active.length > 0 ? active : named;
-  return pool.length === 1 ? pool[0]!.id : null;
-}
+/** See uniqueProductForIdosiName in @idosi/contracts; the sync and the Admin screen share it. */
+export const uniqueProductForName = uniqueProductForIdosiName;
 
 /** Records the IDOSI id of every line whose name matches exactly one warehouse product today. */
 export async function linkIdosiProducts(
