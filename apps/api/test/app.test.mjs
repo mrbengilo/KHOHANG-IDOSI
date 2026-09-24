@@ -344,6 +344,7 @@ describe('KHOHANG-IDOSI API', () => {
       idosiIntegrationSecret: 'warehouse-server-secret',
       idosiStoreIdMap: { DS_NVT: 'S01' },
       idosiFetch: remoteFetch,
+      manualIdosiSyncIntervalMs: 0,
     });
     const storeCookie = cookieOf(await login('ds_nvt'));
     const adminCookie = cookieOf(await login('admin'));
@@ -499,6 +500,45 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(deniedScope.statusCode, 403);
   });
 
+  test('answers a repeated manual sync of the same scope from the fresh snapshot', async () => {
+    await app.close();
+    let calls = 0;
+    app = await createApi({
+      repository,
+      corsOrigin: 'http://localhost:5173',
+      idosiIntegrationSecret: 'warehouse-server-secret',
+      idosiStoreIdMap: { DS_NVT: 'S01' },
+      idosiFetch: async () => {
+        calls += 1;
+        const payload = idosiStatisticsPayload(100_000 * calls);
+        return new Response(
+          JSON.stringify({ ...payload, storeId: 'S01', store: { ...payload.store, id: 'S01' } }),
+        );
+      },
+    });
+    const cookie = cookieOf(await login('ds_nvt'));
+    const sync = () =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/integrations/idosi/order-statistics/sync',
+        headers: { cookie },
+        payload: {
+          storeId: MEMORY_SEED_IDS.nvtStore,
+          period: '2026-09',
+          date: null,
+          shiftId: null,
+          paymentMethod: null,
+        },
+      });
+    const first = await sync();
+    const second = await sync();
+    assert.equal(first.statusCode, 200);
+    assert.equal(second.statusCode, 200);
+    assert.equal(second.headers['idosi-sync-skipped'], 'recent');
+    assert.equal(second.json().data.snapshot.payload.totals.revenue, 100_000);
+    assert.equal(calls, 1);
+  });
+
   test('fails closed before outbound sync when the server secret is absent', async () => {
     const storeCookie = cookieOf(await login('ds_nvt'));
     const response = await app.inject({
@@ -566,6 +606,13 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(blocked.json().error.code, 'RATE_LIMITED');
     assert.equal(blocked.headers['retry-after'], '60');
     assert.equal(blocked.json().error.details.retryAfterSeconds, 60);
+
+    // Another person behind the same address (a store's shared connection) is not locked out.
+    const colleague = await app.inject({
+      ...invalidLogin,
+      payload: { username: 'ds_nvt', password: PASSWORD },
+    });
+    assert.equal(colleague.statusCode, 200);
 
     // A public direct peer is not trusted to replace its address with X-Forwarded-For.
     const untrustedPeer = await app.inject({

@@ -64,3 +64,35 @@ export class LoginRateLimiter {
     if (oldestKey !== undefined) this.windows.delete(oldestKey);
   }
 }
+
+/**
+ * Spaces out an action per key: acquire() returns 0 and starts a new interval when the key is
+ * free, otherwise the milliseconds left. Bounded like the login limiter.
+ */
+export class ManualSyncThrottle {
+  private readonly lastStarted = new Map<string, number>();
+
+  public constructor(
+    private readonly intervalMs: number,
+    private readonly now: () => number = Date.now,
+  ) {
+    if (!Number.isSafeInteger(intervalMs) || intervalMs <= 0) {
+      throw new Error('sync throttle interval must be a positive safe integer');
+    }
+  }
+
+  public acquire(key: string): number {
+    const instant = this.now();
+    const previous = this.lastStarted.get(key);
+    if (previous !== undefined && instant >= previous && instant - previous < this.intervalMs) {
+      return this.intervalMs - (instant - previous);
+    }
+    if (this.lastStarted.size >= MAX_TRACKED_CLIENTS) {
+      const oldestKey = this.lastStarted.keys().next().value as string | undefined;
+      if (oldestKey !== undefined) this.lastStarted.delete(oldestKey);
+    }
+    this.lastStarted.delete(key);
+    this.lastStarted.set(key, instant);
+    return 0;
+  }
+}

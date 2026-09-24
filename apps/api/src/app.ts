@@ -138,7 +138,7 @@ import { z, ZodError } from 'zod';
 
 import { ApiError, forbidden, unauthenticated } from './errors.js';
 import { MemoryWarehouseRepository } from './memory-repository.js';
-import { LoginRateLimiter, type LoginRateLimitOptions } from './rate-limit.js';
+import { LoginRateLimiter, ManualSyncThrottle, type LoginRateLimitOptions } from './rate-limit.js';
 import type {
   AccountCredentials,
   IdosiStoreCodeRecord,
@@ -154,6 +154,10 @@ import {
 } from './security.js';
 
 const SESSION_COOKIE = 'idosi_session';
+/** Failures one client address may make across all usernames, relative to the per-user limit. */
+const ADDRESS_FAILURE_MULTIPLIER = 5;
+/** Minimum spacing of manual IDOSI syncs for the same store and scope. */
+const MANUAL_IDOSI_SYNC_INTERVAL_MS = 30_000;
 const TAB_SESSION_HEADER = 'x-idosi-tab-id';
 const TAB_ID_PATTERN = /^[a-f0-9]{32}$/u;
 const DEFAULT_SESSION_TTL_MS = 12 * 60 * 60 * 1_000;
@@ -186,6 +190,8 @@ export interface CreateApiOptions {
   readonly idosiIntegrationSecret?: string;
   readonly idosiStoreIdMap?: Readonly<Record<string, string>>;
   readonly idosiFetch?: IdosiFetch;
+  /** Minimum spacing of manual syncs per store and scope; 0 disables it (tests). */
+  readonly manualIdosiSyncIntervalMs?: number;
 }
 
 export async function createApi(options: CreateApiOptions = {}): Promise<FastifyInstance> {
@@ -195,7 +201,17 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     throw new Error('sessionTtlMs must be a positive safe integer');
   }
   const dummyPasswordHash = await hashPassword(randomUUID());
+  // Failures count per client address and username, so one person mistyping on a store's shared
+  // connection no longer locks everyone behind that address out. A wider per-address budget
+  // still stops one client from spraying guesses across many usernames.
   const loginRateLimiter = new LoginRateLimiter(options.loginRateLimit);
+  const addressRateLimiter = new LoginRateLimiter({
+    ...options.loginRateLimit,
+    maxFailures: (options.loginRateLimit?.maxFailures ?? 10) * ADDRESS_FAILURE_MULTIPLIER,
+  });
+  const manualSyncIntervalMs = options.manualIdosiSyncIntervalMs ?? MANUAL_IDOSI_SYNC_INTERVAL_MS;
+  const manualSyncThrottle =
+    manualSyncIntervalMs > 0 ? new ManualSyncThrottle(manualSyncIntervalMs) : null;
   const idosiIntegration = integrationStatus(options);
   const idosiIntegrationSecret = options.idosiIntegrationSecret?.trim() ?? '';
   const fastifyOptions: FastifyServerOptions = {
@@ -295,7 +311,11 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
   app.post('/api/v1/auth/login', async (request, reply) => {
     const input = LoginRequestSchema.parse(request.body);
     const cookieName = sessionCookieName(request);
-    const retryAfterMs = loginRateLimiter.retryAfterMs(request.ip);
+    const loginKey = `${request.ip}\u0000${input.username.trim().toLocaleLowerCase('en-US')}`;
+    const retryAfterMs = Math.max(
+      loginRateLimiter.retryAfterMs(loginKey),
+      addressRateLimiter.retryAfterMs(request.ip),
+    );
     if (retryAfterMs > 0) {
       const retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMs / 1_000));
       reply.header('retry-after', String(retryAfterSeconds));
@@ -312,10 +332,11 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
       account?.passwordHash ?? dummyPasswordHash,
     );
     if (!account || !passwordMatches) {
-      loginRateLimiter.recordFailure(request.ip);
+      loginRateLimiter.recordFailure(loginKey);
+      addressRateLimiter.recordFailure(request.ip);
       throw unauthenticated('Tên đăng nhập hoặc mật khẩu không đúng');
     }
-    loginRateLimiter.reset(request.ip);
+    loginRateLimiter.reset(loginKey);
     assertActiveAccount(account);
 
     const token = newOpaqueSessionToken();
@@ -564,6 +585,16 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
       );
     }
     const target = await repository.resolveIdosiStatisticsTarget(session.principal, scope.storeId);
+    // Every open dashboard can trigger this; one outbound IDOSI request per store and scope at a
+    // time is enough, the worker keeps the figures fresh on its own schedule.
+    // A sync for the same store and scope moments ago already brought the figures in: answer
+    // with them instead of asking IDOSI again.
+    if (manualSyncThrottle && manualSyncThrottle.acquire(JSON.stringify(scope)) > 0) {
+      const persisted = await repository.getIdosiStatisticsState(session.principal, scope);
+      reply.header('cache-control', 'no-store');
+      reply.header('idosi-sync-skipped', 'recent');
+      return { data: idosiStatisticsState(scope, persisted, idosiIntegration.status) };
+    }
     const startedAt = new Date();
     try {
       const payload = await fetchIdosiOrderStatistics({
