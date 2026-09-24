@@ -21,11 +21,13 @@ export const SortedSaleTransferSchema = z
     enteredWeightKg: PositiveKilogramsDecimalSchema.nullable(),
     /** Per-bag weights in bag order; empty for transfers created before bags were weighed. */
     bagWeightsKg: z.array(PositiveKilogramsDecimalSchema),
-    status: z.enum(['IN_TRANSIT', 'RECEIVED']),
+    status: z.enum(['IN_TRANSIT', 'RECEIVED', 'CANCELLED']),
     version: z.number().int().nonnegative(),
     note: z.string().nullable(),
     createdAt: IsoDateTimeSchema,
     receivedAt: IsoDateTimeSchema.nullable(),
+    cancelledAt: IsoDateTimeSchema.nullable().optional(),
+    cancellationReason: z.string().nullable().optional(),
   })
   .strict();
 export type SortedSaleTransfer = z.infer<typeof SortedSaleTransferSchema>;
@@ -57,6 +59,15 @@ export const ReceiveSortedSaleTransferRequestSchema = z
 export type ReceiveSortedSaleTransferRequest = z.infer<
   typeof ReceiveSortedSaleTransferRequestSchema
 >;
+
+/** The sending store calls back a transfer the destination has not received yet. */
+export const CancelSortedSaleTransferRequestSchema = z
+  .object({
+    expectedVersion: z.number().int().nonnegative(),
+    reason: z.string().trim().min(3).max(500),
+  })
+  .strict();
+export type CancelSortedSaleTransferRequest = z.infer<typeof CancelSortedSaleTransferRequestSchema>;
 
 export const SortedSaleTransferParamsSchema = z.object({ transferId: EntityIdSchema }).strict();
 export const SortedSaleTransferResponseSchema = z

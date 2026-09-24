@@ -268,6 +268,21 @@ export const DeclaredReceiptLineSchema = z
   });
 export type DeclaredReceiptLine = z.infer<typeof DeclaredReceiptLineSchema>;
 
+/**
+ * Excess goods: a product that was not dispatched, or extra bags of a dispatched product
+ * whose line was received in full. A short line cannot also carry extra bags.
+ */
+function hasExcessOnShortLine(
+  lines: readonly { productId: string; approvedUnits: number; receivedUnits: number }[],
+  unexpectedItems: readonly { productId: string }[] | undefined,
+): boolean {
+  return (unexpectedItems ?? []).some((item) =>
+    lines.some(
+      (line) => line.productId === item.productId && line.receivedUnits < line.approvedUnits,
+    ),
+  );
+}
+
 export const UnexpectedReceiptItemSchema = z
   .object({
     productId: EntityIdSchema,
@@ -282,6 +297,23 @@ const UnexpectedReceiptItemsSchema = z
     (items) => new Set(items.map((item) => item.productId)).size === items.length,
     'An unexpected product may appear only once',
   );
+
+/** Unexpected goods as shown on a receipt; weights and price exist once HTKD booked them. */
+export const ReceiptUnexpectedItemSchema = UnexpectedReceiptItemSchema.extend({
+  bagWeightsKg: z.array(PositiveKilogramsDecimalSchema).max(2_000).optional(),
+  pricePerKgVnd: MoneyVndSchema.nullable().optional(),
+}).strict();
+export type ReceiptUnexpectedItem = z.infer<typeof ReceiptUnexpectedItemSchema>;
+
+/** HTKD weighs every excess bag and prices it when finalizing; the declaration fixes the count. */
+export const FinalizeUnexpectedItemSchema = z
+  .object({
+    productId: EntityIdSchema,
+    bagWeightsKg: z.array(PositiveKilogramsDecimalSchema).min(1).max(2_000),
+    pricePerKgVnd: MoneyVndSchema,
+  })
+  .strict();
+export type FinalizeUnexpectedItem = z.infer<typeof FinalizeUnexpectedItemSchema>;
 
 export const ReceiptLineSchema = z
   .object({
@@ -319,7 +351,7 @@ export const ReceiptSchema = z
     outboundRequestId: EntityIdSchema,
     declaredByAccountId: EntityIdSchema.nullable(),
     lines: z.array(ReceiptLineSchema).min(1).max(500),
-    unexpectedItems: UnexpectedReceiptItemsSchema.optional(),
+    unexpectedItems: z.array(ReceiptUnexpectedItemSchema).max(500).optional(),
     discrepancyNote: z.string().trim().min(3).max(1_000).nullable(),
     status: ReceiptStatusSchema,
     freightVnd: MoneyVndSchema,
@@ -399,15 +431,11 @@ export const DeclareStoreReceiptRequestSchema = z
         message: 'A shortage declaration requires a discrepancy note',
       });
     }
-    if (
-      request.unexpectedItems?.some((item) =>
-        request.lines.some((line) => line.productId === item.productId),
-      )
-    ) {
+    if (hasExcessOnShortLine(request.lines, request.unexpectedItems)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['unexpectedItems'],
-        message: 'Unexpected goods must use a different product',
+        message: 'Extra bags of a dispatched product require that line to be received in full',
       });
     }
   });
@@ -433,15 +461,11 @@ export const SubmitStoreReceiptRequestSchema = z
         message: 'A shortage declaration requires a discrepancy note',
       });
     }
-    if (
-      request.unexpectedItems?.some((item) =>
-        request.lines.some((line) => line.productId === item.productId),
-      )
-    ) {
+    if (hasExcessOnShortLine(request.lines, request.unexpectedItems)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['unexpectedItems'],
-        message: 'Unexpected goods must use a different product',
+        message: 'Extra bags of a dispatched product require that line to be received in full',
       });
     }
   });
@@ -457,6 +481,14 @@ export const FinalizeReceiptRequestSchema = z
         (lines) => new Set(lines.map((line) => line.productId)).size === lines.length,
         'A product may appear only once in a receipt',
       ),
+    unexpectedItems: z
+      .array(FinalizeUnexpectedItemSchema)
+      .max(500)
+      .refine(
+        (items) => new Set(items.map((item) => item.productId)).size === items.length,
+        'An unexpected product may appear only once',
+      )
+      .optional(),
     freightVnd: MoneyVndSchema,
     handlingVnd: MoneyVndSchema,
     expectedVersion: z.number().int().nonnegative(),
