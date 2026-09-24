@@ -286,8 +286,9 @@ describePostgres('stranded allocation outbound backfill', () => {
       receiptId,
       expectedVersion: corrected.value.version,
       reviewedByUserId: admin.id,
-      freightVnd: 0n,
-      handlingVnd: 0n,
+      freightVnd: 20n,
+      handlingVnd: 5n,
+      vat: { amountVnd: 7n, ratePercent: 8 },
       lines: [
         {
           productId: fixture.productId,
@@ -299,6 +300,31 @@ describePostgres('stranded allocation outbound backfill', () => {
       requestHash: `finalize-${token}`,
     });
     expect(finalized.replayed).toBe(false);
+    // HTKD's delivery-note VAT is stored and audited beside the landed cost, never inside it.
+    expect(
+      (
+        await db
+          .select({
+            goodsCostVnd: storeReceipts.goodsCostVnd,
+            totalCostVnd: storeReceipts.totalCostVnd,
+            vatAmountVnd: storeReceipts.vatAmountVnd,
+            vatRatePercent: storeReceipts.vatRatePercent,
+          })
+          .from(storeReceipts)
+          .where(eq(storeReceipts.id, receiptId))
+      )[0],
+    ).toEqual({ goodsCostVnd: 40n, totalCostVnd: 65n, vatAmountVnd: 7n, vatRatePercent: 8 });
+    const [finalizeAudit] = await db
+      .select({ after: auditLogs.after })
+      .from(auditLogs)
+      .where(
+        and(eq(auditLogs.entityId, receiptId), eq(auditLogs.action, 'STORE_RECEIPT_FINALIZED')),
+      );
+    expect(finalizeAudit?.after).toMatchObject({
+      totalCostVnd: '65',
+      vatAmountVnd: '7',
+      vatRatePercent: 8,
+    });
     expect(
       (await db.select().from(waitTickets).where(eq(waitTickets.storeId, fixture.storeId)))[0],
     ).toMatchObject({ originalQuantity: 1, remainingQuantity: 1, fulfilledQuantity: 0 });
@@ -397,6 +423,7 @@ describePostgres('stranded allocation outbound backfill', () => {
       reviewedByUserId: admin.id,
       freightVnd: 0n,
       handlingVnd: 0n,
+      vat: { amountVnd: 0n, ratePercent: 8 },
       lines: [{ productId: fixture.productId, pricePerKgVnd: 10n, bagWeightsKg: ['1.000'] }],
       idempotencyKey: `legacy-finalize-${token}`,
       requestHash: `legacy-finalize-${token}`,

@@ -62,8 +62,10 @@ test('warehouse accepts three bags without a weight field and generates its rece
   expect((await confirmed.json()).data.cost).toMatchObject({
     productCosts: [],
     goodsCostVnd: 1234567,
-    totalCostVnd: null,
+    totalCostVnd: 1249567,
   });
   await expect(row).toContainText('Đã xác nhận chi phí');
-  await expect(row).toContainText('Chờ nhập VAT');
+  // VAT now comes from the store's delivery note, so the warehouse total no longer waits for it.
+  await expect(row).toContainText(/Tổng chi phí:\s*1\.249\.567/);
+  await expect(row).not.toContainText('VAT:');
 });

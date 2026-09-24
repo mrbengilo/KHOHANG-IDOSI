@@ -1,0 +1,3 @@
+ALTER TABLE "store_receipts" ADD COLUMN "vat_amount_vnd" bigint;--> statement-breakpoint
+ALTER TABLE "store_receipts" ADD COLUMN "vat_rate_percent" integer;--> statement-breakpoint
+ALTER TABLE "store_receipts" ADD CONSTRAINT "store_receipts_vat_valid" CHECK (("store_receipts"."vat_amount_vnd" IS NULL AND "store_receipts"."vat_rate_percent" IS NULL) OR ("store_receipts"."vat_amount_vnd" IS NOT NULL AND "store_receipts"."vat_rate_percent" IS NOT NULL AND "store_receipts"."vat_amount_vnd" BETWEEN 0 AND 9007199254740991 AND "store_receipts"."vat_rate_percent" = 8));

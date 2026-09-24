@@ -159,6 +159,27 @@ describe('initial migration invariants', () => {
     ) as { prevId: string };
     expect(vatSnapshot.prevId).toBe(storeGroupVersionSnapshot.id);
   });
+  it('adds nullable store-receipt VAT without backfilling or touching the cost total', () => {
+    const migration = readFileSync(
+      new URL('../migrations/0025_store_receipt_vat.sql', import.meta.url),
+      'utf8',
+    );
+    expect(migration).toContain('ALTER TABLE "store_receipts" ADD COLUMN "vat_amount_vnd" bigint;');
+    expect(migration).toContain(
+      'ALTER TABLE "store_receipts" ADD COLUMN "vat_rate_percent" integer;',
+    );
+    expect(migration).toContain('ADD CONSTRAINT "store_receipts_vat_valid"');
+    // Legacy receipts keep an unknown VAT, and the landed-cost check stays VAT-free.
+    expect(migration).not.toMatch(/UPDATE\s+"?store_receipts/i);
+    expect(migration).not.toContain('store_receipts_total_cost_consistent');
+    const snapshot = JSON.parse(
+      readFileSync(new URL('../migrations/meta/0025_snapshot.json', import.meta.url), 'utf8'),
+    ) as { prevId: string };
+    const previous = JSON.parse(
+      readFileSync(new URL('../migrations/meta/0024_snapshot.json', import.meta.url), 'utf8'),
+    ) as { id: string };
+    expect(snapshot.prevId).toBe(previous.id);
+  });
   it('adds the wholesale role without using it in the same transaction', () => {
     const roleMigration = readFileSync(
       new URL('../migrations/0011_wholesale_account_role.sql', import.meta.url),
@@ -301,7 +322,7 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(25);
+    expect(journal.entries).toHaveLength(26);
     expect(journal.entries[8]).toMatchObject({ tag: '0008_optional_supplier_weight' });
     expect(journal.entries[9]).toMatchObject({ tag: '0009_supported_allocation_policy' });
     expect(journal.entries[10]).toMatchObject({
@@ -339,6 +360,10 @@ describe('initial migration invariants', () => {
     expect(journal.entries[22]).toMatchObject({ tag: '0022_auto_priority_receipt_shortage' });
     expect(journal.entries[23]).toMatchObject({ tag: '0023_priority_offer_stock_holds' });
     expect(journal.entries[24]).toMatchObject({ tag: '0024_allocation_sorting_integrity' });
+    expect(journal.entries[25]).toMatchObject({
+      tag: '0025_store_receipt_vat',
+      breakpoints: true,
+    });
     expect(journal.entries[7]).toMatchObject({ tag: '0007_receipt_vat', breakpoints: true });
     expect(journal.entries[0]).toMatchObject({
       tag: '0000_initial',

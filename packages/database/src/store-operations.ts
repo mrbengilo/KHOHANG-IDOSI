@@ -48,6 +48,8 @@ export interface FinalizeStoreReceiptInput {
   readonly reviewedByUserId: string;
   readonly freightVnd: bigint;
   readonly handlingVnd: bigint;
+  /** Entered from the delivery note; kept out of totalCostVnd as deductible input VAT. */
+  readonly vat: { readonly amountVnd: bigint; readonly ratePercent: 8 };
   readonly lines: readonly FinalizeStoreReceiptLineInput[];
   readonly unexpectedItems?: readonly FinalizeStoreReceiptUnexpectedItemInput[];
   readonly reviewNote?: string | null;
@@ -528,6 +530,8 @@ export async function finalizeStoreReceiptInTransaction(
           freightVnd: input.freightVnd,
           handlingVnd: input.handlingVnd,
           totalCostVnd,
+          vatAmountVnd: input.vat.amountVnd,
+          vatRatePercent: input.vat.ratePercent,
           reviewedByUserId: input.reviewedByUserId,
           reviewNote: input.reviewNote ?? null,
           finalizedAt: now,
@@ -578,6 +582,8 @@ export async function finalizeStoreReceiptInTransaction(
           freightVnd: input.freightVnd.toString(),
           handlingVnd: input.handlingVnd.toString(),
           totalCostVnd: totalCostVnd.toString(),
+          vatAmountVnd: input.vat.amountVnd.toString(),
+          vatRatePercent: input.vat.ratePercent,
           inventoryBagIds,
         },
       });
@@ -1363,6 +1369,13 @@ function validateFinalizationInput(
   }
   assertVnd(input.freightVnd, 'freightVnd');
   assertVnd(input.handlingVnd, 'handlingVnd');
+  if (
+    input.vat.amountVnd < 0n ||
+    input.vat.amountVnd > BigInt(Number.MAX_SAFE_INTEGER) ||
+    input.vat.ratePercent !== 8
+  ) {
+    throw new StoreOperationValidationError('VAT must be a safe VND amount at the 8% rate.');
+  }
   if (input.lines.length === 0) {
     throw new StoreOperationValidationError('A receipt must contain at least one line.');
   }

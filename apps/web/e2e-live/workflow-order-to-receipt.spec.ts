@@ -169,6 +169,78 @@ test('an order approved by the 09:00 allocation reaches the store and can be rec
       .from(storeInventoryBags)
       .where(eq(storeInventoryBags.storeId, store.id));
     expect(storeBags).toHaveLength(0);
+
+    // 5. HTKD enters kg, costs and the VAT printed on the actual delivery note, then books it.
+    await page.context().clearCookies();
+    await page.goto('/login');
+    await page.getByLabel('Tên đăng nhập').fill(process.env.LIVE_E2E_ADMIN_USERNAME ?? 'ci.admin');
+    await page
+      .getByLabel('Mật khẩu', { exact: true })
+      .fill(process.env.LIVE_E2E_ADMIN_PASSWORD ?? 'ci-bootstrap-password-not-for-production');
+    await page.getByRole('button', { name: 'Đăng nhập' }).click();
+    await expect(page).not.toHaveURL(/\/login/);
+    await page.goto('/receive');
+    await page
+      .locator('.receipt-filters select')
+      .first()
+      .selectOption({ label: `UI_RCV_${token} · Cửa hàng nhận ${token}` });
+    const review = page.locator('.receipt-detail');
+    await expect(review.getByRole('button', { name: /Chốt giá & nhập kho/ })).toBeVisible();
+    await review.getByLabel('Giá nhập / kg (VND)').fill('20000');
+    await review.getByLabel('Khối lượng bao 1 (kg)').fill('30');
+    await review.getByLabel('Khối lượng bao 2 (kg)').fill('25,5');
+    await review.getByLabel('Phí vận chuyển (VND)').fill('10000');
+    await review.getByLabel('Phí bốc xếp (VND)').fill('5000');
+    const vat = review.getByLabel('VAT 8% theo phiếu (VND)');
+    await expect(vat).toHaveValue('');
+    await expect(vat).toHaveAttribute('required', '');
+    await review.getByRole('button', { name: /Chốt giá & nhập kho/ }).click();
+    await expect(review.getByRole('alert')).toContainText('Nhập VAT theo phiếu nhận hàng thực tế');
+    await vat.fill('44000');
+    await expect(vat).toHaveValue('44,000');
+    for (const width of [360, 390, 412, 768, 1366, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(vat).toBeVisible();
+      await expect
+        .poll(() => page.evaluate(() => document.body.scrollWidth <= innerWidth))
+        .toBe(true);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await review.locator('.receipt-fees').scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: testInfo.outputPath('htkd-receipt-vat-mobile.png'),
+      animations: 'disabled',
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.screenshot({
+      path: testInfo.outputPath('htkd-receipt-vat-desktop.png'),
+      animations: 'disabled',
+      fullPage: true,
+    });
+    const finalizeResponse = page.waitForResponse(
+      (response) =>
+        /\/store-receipts\/[^/]+\/finalize$/.test(new URL(response.url()).pathname) &&
+        response.request().method() === 'POST',
+    );
+    await review.getByRole('button', { name: /Chốt giá & nhập kho/ }).click();
+    const finalized = await finalizeResponse;
+    expect(finalized.status(), await finalized.text()).toBe(200);
+    expect(finalized.request().postDataJSON()).toMatchObject({
+      freightVnd: 10000,
+      handlingVnd: 5000,
+      vat: { amountVnd: 44000, ratePercent: 8 },
+    });
+    // 55.5 kg × 20,000 + freight + handling; VAT is recorded beside the landed cost.
+    expect((await finalized.json()).data).toMatchObject({
+      status: 'FINALIZED',
+      totalCostVnd: 1_125_000,
+      vat: { amountVnd: 44000, ratePercent: 8 },
+    });
+    const summary = review.locator('.receipt-finalized-summary');
+    await expect(summary).toContainText('VAT 8%');
+    await expect(summary).toContainText(/44\.000/);
+    await expect(summary).toContainText(/1\.125\.000/);
   } finally {
     await client.close();
   }

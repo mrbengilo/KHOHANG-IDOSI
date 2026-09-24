@@ -100,9 +100,12 @@ test('inbound history preserves product details, required markers and compact re
   await page.getByRole('button', { name: 'Giảm số bao Đầm' }).click();
   await expect(page.getByRole('spinbutton')).toHaveValue('1');
   await expect(page.getByRole('button', { name: 'Giảm số bao Đầm' })).toBeDisabled();
-  await card.getByText('Cập nhật VAT · 8%', { exact: true }).click();
+  // VAT moved to HTKD's store receipt review; the warehouse receipt has no VAT entry.
+  await expect(page.getByLabel(/VAT/)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /VAT/ })).toHaveCount(0);
+  await expect(card.getByText(/Cập nhật VAT/)).toHaveCount(0);
   await card.getByText('Chốt chi phí theo hóa đơn', { exact: true }).click();
-  await expect(card.locator('.inbound-required')).toHaveCount(5);
+  await expect(card.locator('.inbound-required')).toHaveCount(3);
   // Money fields show thousands separators while the API still receives plain integers.
   const invoiceCost = card.getByLabel('Tổng tiền hàng theo hóa đơn (VND)');
   await invoiceCost.fill('1234567');
@@ -110,9 +113,6 @@ test('inbound history preserves product details, required markers and compact re
   await card.getByLabel('Phí vận chuyển (VND)').fill('2000');
   await expect(card.getByLabel('Phí vận chuyển (VND)')).toHaveValue('2,000');
   await expect(card.getByLabel('Phí bốc vác (VND)')).toHaveValue('0');
-  const vatAmount = card.getByLabel(`Số tiền VAT cho ${receipt.referenceCode}`, { exact: true });
-  await vatAmount.fill('1.000.000');
-  await expect(vatAmount).toHaveValue('1,000,000');
   let submittedCosts: unknown = null;
   await page.route('**/api/v1/inbound-receipts/*/confirm-costs', (route) => {
     submittedCosts = route.request().postDataJSON();

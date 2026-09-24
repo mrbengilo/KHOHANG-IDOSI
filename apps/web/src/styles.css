@@ -2353,6 +2353,16 @@ body.dialog-open {
   gap: 10px;
 }
 
+.receipt-fees {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+}
+
+.receipt-fees small {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .receipt-review-line__fields > label {
   min-width: 0;
 }

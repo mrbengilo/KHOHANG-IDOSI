@@ -1411,6 +1411,12 @@ export const storeReceipts = pgTable(
     totalCostVnd: bigint('total_cost_vnd', { mode: 'bigint' })
       .notNull()
       .default(sql`0`),
+    /**
+     * VAT entered by HTKD from the actual delivery note. It is deductible input VAT, so it is
+     * kept out of total_cost_vnd. NULL means not captured (not yet finalized, or legacy rows).
+     */
+    vatAmountVnd: bigint('vat_amount_vnd', { mode: 'bigint' }),
+    vatRatePercent: integer('vat_rate_percent'),
     version: integer('version').notNull().default(0),
     declaredByUserId: uuid('declared_by_user_id').references(() => users.id, {
       onDelete: 'set null',
@@ -1443,6 +1449,10 @@ export const storeReceipts = pgTable(
     check(
       'store_receipts_total_cost_consistent',
       sql`${table.totalCostVnd} = ${table.goodsCostVnd} + ${table.freightVnd} + ${table.handlingVnd}`,
+    ),
+    check(
+      'store_receipts_vat_valid',
+      sql`(${table.vatAmountVnd} IS NULL AND ${table.vatRatePercent} IS NULL) OR (${table.vatAmountVnd} IS NOT NULL AND ${table.vatRatePercent} IS NOT NULL AND ${table.vatAmountVnd} BETWEEN 0 AND 9007199254740991 AND ${table.vatRatePercent} = 8)`,
     ),
     check('store_receipts_version_nonnegative', sql`${table.version} >= 0`),
     check(

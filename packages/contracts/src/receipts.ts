@@ -55,22 +55,16 @@ export const ReceiptCostConfirmationSchema = z
     productCosts: z.array(ReceiptProductCostSchema),
     transportationFeeVnd: MoneyVndSchema,
     handlingFeeVnd: MoneyVndSchema,
+    /** Legacy only: VAT is no longer entered on warehouse receipts, only on store receipts. */
     vatAmountVnd: MoneyVndSchema.nullish(),
     goodsCostVnd: MoneyVndSchema,
+    /** Nullable only for responses of older API versions that waited for warehouse VAT. */
     totalCostVnd: MoneyVndSchema.nullable(),
     confirmedByAccountId: EntityIdSchema,
     confirmedAt: IsoDateTimeSchema,
   })
   .strict()
   .superRefine((cost, context) => {
-    // Omitted VAT is accepted for pre-VAT clients; explicit null means unknown.
-    if ((cost.vatAmountVnd === null) !== (cost.totalCostVnd === null)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['totalCostVnd'],
-        message: 'Total cost must remain unknown until VAT is captured',
-      });
-    }
     const expectedTotal = sumRefinementValues([
       safeIntegerToBigIntForRefinement(cost.goodsCostVnd),
       safeIntegerToBigIntForRefinement(cost.transportationFeeVnd),
@@ -83,7 +77,7 @@ export const ReceiptCostConfirmationSchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['totalCostVnd'],
-        message: 'Total cost must equal goods, transportation, and handling costs',
+        message: 'Total cost must equal goods, transportation, handling and legacy VAT costs',
       });
     }
     if (
@@ -103,6 +97,7 @@ export const InboundReceiptSchema = z
     id: EntityIdSchema,
     referenceCode: z.string().trim().min(1).max(100),
     supplierName: z.string().trim().min(1).max(200),
+    /** Legacy only: VAT recorded on warehouse receipts before it moved to store receipts. */
     vat: InboundVatSchema.nullish(),
     status: InboundReceiptStatusSchema,
     bags: z.array(InboundReceiptBagSchema).min(1),
@@ -164,7 +159,6 @@ export const CreateInboundReceiptRequestSchema = z
   .object({
     referenceCode: z.string().trim().min(1).max(100).optional(),
     supplierName: z.string().trim().min(1).max(200),
-    vat: InboundVatSchema.optional(),
     receivedAt: IsoDateTimeSchema,
     bags: z
       .array(CreateInboundReceiptBagSchema)
@@ -222,15 +216,6 @@ export const CancelInboundReceiptRequestSchema = z
   })
   .strict();
 export type CancelInboundReceiptRequest = z.infer<typeof CancelInboundReceiptRequestSchema>;
-
-export const UpdateInboundVatRequestSchema = z
-  .object({
-    vat: InboundVatSchema,
-    expectedVersion: z.number().int().nonnegative(),
-    reason: AuditReasonSchema,
-  })
-  .strict();
-export type UpdateInboundVatRequest = z.infer<typeof UpdateInboundVatRequestSchema>;
 
 export const InboundReceiptParamsSchema = z.object({ receiptId: EntityIdSchema }).strict();
 export type InboundReceiptParams = z.infer<typeof InboundReceiptParamsSchema>;
@@ -356,6 +341,9 @@ export const ReceiptSchema = z
     status: ReceiptStatusSchema,
     freightVnd: MoneyVndSchema,
     handlingVnd: MoneyVndSchema,
+    /** VAT from the actual delivery note, entered by HTKD; null until finalized or legacy. */
+    vat: InboundVatSchema.nullable().optional(),
+    /** Landed cost: goods + freight + handling. Deductible VAT is tracked separately. */
     totalCostVnd: MoneyVndSchema.nullable(),
     reviewedByAccountId: EntityIdSchema.nullable(),
     reviewNote: z.string().trim().min(3).max(500).nullable(),
@@ -491,6 +479,8 @@ export const FinalizeReceiptRequestSchema = z
       .optional(),
     freightVnd: MoneyVndSchema,
     handlingVnd: MoneyVndSchema,
+    /** Entered amount from the delivery note; 0 when the note carries no VAT. */
+    vat: InboundVatSchema,
     expectedVersion: z.number().int().nonnegative(),
   })
   .strict()

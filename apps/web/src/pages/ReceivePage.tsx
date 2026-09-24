@@ -1235,6 +1235,8 @@ function ReviewerReceiptForm({
   );
   const [freight, setFreight] = useState(receipt.freightVnd.toString());
   const [handling, setHandling] = useState(receipt.handlingVnd.toString());
+  // Không điền sẵn 0: HTKD phải nhập VAT theo phiếu thực tế, kể cả khi phiếu không có VAT.
+  const [vat, setVat] = useState(receipt.vat?.amountVnd.toString() ?? '');
   const [returnReason, setReturnReason] = useState('');
   const [formError, setFormError] = useState('');
   const reviewable = receipt.status === 'PENDING_HTKD';
@@ -1266,11 +1268,16 @@ function ReviewerReceiptForm({
       setFormError('Giá và chi phí phải là số nguyên VND không âm.');
       return;
     }
+    if (!isMoney(vat)) {
+      setFormError('Nhập VAT theo phiếu nhận hàng thực tế (VND, nhập 0 nếu phiếu không có VAT).');
+      return;
+    }
     setFormError('');
     await onFinalize({
       expectedVersion: receipt.version,
       freightVnd: Number(freight),
       handlingVnd: Number(handling),
+      vat: { amountVnd: Number(vat), ratePercent: 8 },
       lines: receipt.lines.map((line) => ({
         approvedUnits: line.approvedUnits,
         bagWeightsKg: weights[line.productId] ?? [],
@@ -1442,6 +1449,20 @@ function ReviewerReceiptForm({
             value={handling}
           />
         </label>
+        <label>
+          <span className="field-label">VAT 8% theo phiếu (VND)</span>
+          <MoneyInput
+            required
+            aria-describedby={`receipt-vat-hint-${receipt.id}`}
+            disabled={mutationPending}
+            onValueChange={setVat}
+            placeholder="Nhập 0 nếu không có VAT"
+            value={vat}
+          />
+          <small id={`receipt-vat-hint-${receipt.id}`}>
+            Số tiền thuế trên phiếu nhận hàng thực tế; không cộng vào giá vốn.
+          </small>
+        </label>
       </div>
       <label>
         Lý do trả phiếu
@@ -1530,7 +1551,9 @@ function FinalizedSummary({ receipt }: { readonly receipt: Receipt }) {
       <strong>{formatVnd(receipt.freightVnd)}</strong>
       <span>Phí bốc xếp</span>
       <strong>{formatVnd(receipt.handlingVnd)}</strong>
-      <span>Tổng giá vốn</span>
+      <span>VAT 8%</span>
+      <strong>{receipt.vat ? formatVnd(receipt.vat.amountVnd) : 'Chưa ghi nhận'}</strong>
+      <span>Tổng giá vốn (không gồm VAT)</span>
       <strong>{receipt.totalCostVnd === null ? 'Chưa có' : formatVnd(receipt.totalCostVnd)}</strong>
     </div>
   );

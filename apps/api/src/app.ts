@@ -4,7 +4,6 @@ import { isRetryableTransactionError } from '@idosi/database';
 import {
   WarehouseInventoryQuerySchema,
   ListIdosiStatisticsQuerySchema,
-  UpdateInboundVatRequestSchema,
   AccountParamsSchema,
   PrepareOrderingRequestSchema,
   CancelInboundReceiptRequestSchema,
@@ -807,24 +806,6 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
           left.productId.localeCompare(right.productId),
         ),
       }),
-      requestContext(request),
-    );
-    reply.header('idempotency-replayed', String(result.replayed));
-    return reply.send({ data: result.data });
-  });
-
-  app.patch('/api/v1/inbound-receipts/:receiptId/vat', async (request, reply) => {
-    const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN']);
-    const headers = IdempotencyHeadersSchema.parse(request.headers);
-    const { receiptId } = InboundReceiptParamsSchema.parse(request.params);
-    const input = UpdateInboundVatRequestSchema.parse(request.body);
-    const result = await repository.updateSupplierInboundVat(
-      session.principal,
-      receiptId,
-      input,
-      headers['idempotency-key'],
-      hashCanonicalRequest({ action: 'UPDATE_INBOUND_VAT', receiptId, ...input }),
       requestContext(request),
     );
     reply.header('idempotency-replayed', String(result.replayed));
@@ -2120,27 +2101,6 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: { '200': { description: 'Confirmed exact supplier receipt costs' } },
-        },
-      },
-      '/api/v1/inbound-receipts/{receiptId}/vat': {
-        patch: {
-          summary:
-            'Admin records or corrects entered VAT with version, idempotency and audit reason',
-          security: cookieSecurity,
-          parameters: [
-            {
-              name: 'receiptId',
-              in: 'path',
-              required: true,
-              schema: { type: 'string', format: 'uuid' },
-            },
-            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
-          ],
-          responses: {
-            '200': { description: 'VAT updated; stock quantities unchanged' },
-            '403': { description: 'Admin required' },
-            '409': { description: 'Stale or cancelled receipt' },
-          },
         },
       },
       '/api/v1/inbound-receipts/{receiptId}/cancel': {

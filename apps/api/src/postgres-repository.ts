@@ -1,13 +1,11 @@
 import {
   loadIdosiStatisticsStates,
   prepareOrderingContext as prepareDatabaseOrdering,
-  updateSupplierInboundVat as updateDatabaseInboundVat,
 } from '@idosi/database';
 import type {
   WarehouseInventoryQuery,
   WarehouseInventoryResponse,
   OrderingContext,
-  UpdateInboundVatRequest,
   Account,
   AdminAuditLog,
   AllocationResult,
@@ -1333,9 +1331,6 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     return withSupplierInboundErrors(async () => {
       const result = await receiveDatabaseSupplierInbound(db, {
         referenceCode: input.referenceCode,
-        ...(input.vat
-          ? { vat: { amountVnd: BigInt(input.vat.amountVnd), ratePercent: input.vat.ratePercent } }
-          : {}),
         supplierName: input.supplierName,
         receivedAt: new Date(input.receivedAt),
         bags: input.bags,
@@ -1386,30 +1381,6 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       const resourceId = result.replayed ? result.resourceId : result.value.receiptId;
       if (!resourceId) throw new Error('Idempotent supplier cost confirmation has no resource id.');
       return { data: await this.inboundReceiptDto(resourceId), replayed: result.replayed };
-    });
-  }
-
-  public async updateSupplierInboundVat(
-    actor: AuthenticatedPrincipal,
-    receiptId: string,
-    input: UpdateInboundVatRequest,
-    idempotencyKey: string,
-    requestHash: string,
-    context: RequestContext,
-  ): Promise<IdempotentResource<InboundReceipt>> {
-    if (actor.role !== 'ADMIN') throw forbidden();
-    return withSupplierInboundErrors(async () => {
-      const result = await updateDatabaseInboundVat(db, {
-        receiptId,
-        expectedVersion: input.expectedVersion,
-        vat: { amountVnd: BigInt(input.vat.amountVnd), ratePercent: 8 },
-        reason: input.reason,
-        actorUserId: actor.accountId,
-        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
-        requestHash,
-        ...context,
-      });
-      return { data: await this.inboundReceiptDto(receiptId), replayed: result.replayed };
     });
   }
 
@@ -2777,6 +2748,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         reviewedByUserId: actor.accountId,
         freightVnd: BigInt(input.freightVnd),
         handlingVnd: BigInt(input.handlingVnd),
+        vat: { amountVnd: BigInt(input.vat.amountVnd), ratePercent: input.vat.ratePercent },
         lines: input.lines.map((line) => ({
           productId: line.productId,
           pricePerKgVnd: line.pricePerKgVnd === null ? null : BigInt(line.pricePerKgVnd),
@@ -3872,7 +3844,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
             handlingFeeVnd: safeVnd(receipt.totalHandlingCostVnd),
             vatAmountVnd: receipt.vatAmountVnd === null ? null : safeVnd(receipt.vatAmountVnd),
             goodsCostVnd: safeVnd(receipt.totalGoodsCostVnd),
-            totalCostVnd: receipt.vatAmountVnd === null ? null : safeVnd(totalCostVnd),
+            totalCostVnd: safeVnd(totalCostVnd),
             confirmedByAccountId: receipt.confirmedByUserId as string,
             confirmedAt: (receipt.confirmedAt as Date).toISOString(),
           }
@@ -3958,6 +3930,10 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       status: receiptStatus(receipt.status),
       freightVnd: safeVnd(receipt.freightVnd),
       handlingVnd: safeVnd(receipt.handlingVnd),
+      vat:
+        receipt.vatAmountVnd === null
+          ? null
+          : { amountVnd: safeVnd(receipt.vatAmountVnd), ratePercent: 8 },
       totalCostVnd: receipt.status === 'finalized' ? safeVnd(receipt.totalCostVnd) : null,
       reviewedByAccountId: receipt.reviewedByUserId,
       reviewNote: receipt.reviewNote,
