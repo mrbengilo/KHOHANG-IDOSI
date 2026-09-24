@@ -248,3 +248,25 @@ export const ListInventoryLotsResponseSchema = z
   .object({ data: z.array(InventoryLotSchema), pagination: PaginationMetaSchema })
   .strict();
 export type ListInventoryLotsResponse = z.infer<typeof ListInventoryLotsResponseSchema>;
+
+/**
+ * Regular-price (NORMAL) IDOSI sales that no opened bag could absorb yet. They are taken from the
+ * next bag of the product the store opens, so the store sees why an opened bag starts lighter.
+ */
+export const StoreNormalSalePendingSchema = z
+  .object({
+    storeId: EntityIdSchema,
+    productId: EntityIdSchema,
+    pendingWeightKg: KilogramsDecimalSchema,
+  })
+  .strict();
+export type StoreNormalSalePending = z.infer<typeof StoreNormalSalePendingSchema>;
+
+export const ListStoreNormalSalePendingQuerySchema = z
+  .object({ storeId: EntityIdSchema.optional() })
+  .strict();
+export type ListStoreNormalSalePendingQuery = z.infer<typeof ListStoreNormalSalePendingQuerySchema>;
+
+export const ListStoreNormalSalePendingResponseSchema = z
+  .object({ data: z.array(StoreNormalSalePendingSchema) })
+  .strict();

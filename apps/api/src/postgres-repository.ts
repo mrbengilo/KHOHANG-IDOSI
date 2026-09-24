@@ -16,6 +16,7 @@ import type {
   WarehouseInventoryQuery,
   WarehouseInventoryResponse,
   WorkerStatus,
+  StoreNormalSalePending,
   OrderingContext,
   Account,
   AdminAuditLog,
@@ -168,6 +169,7 @@ import {
   db,
   htkdAssignments,
   loadWorkerHeartbeats,
+  listStoreNormalSalePending as listDatabaseStoreNormalSalePending,
   IdempotencyConflictError,
   IdempotencyInProgressError,
   finalizeStoreReceipt as finalizeDatabaseStoreReceipt,
@@ -3060,6 +3062,18 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       if (!resourceId) throw new Error('Idempotent store outbound review has no resource id');
       return { data: await this.storeOutboundDto(resourceId), replayed: result.replayed };
     });
+  }
+
+  public async listStoreNormalSalePending(
+    actor: AuthenticatedPrincipal,
+    storeId?: string,
+  ): Promise<readonly StoreNormalSalePending[]> {
+    if (storeId && !canAccessStore(actor, storeId)) throw forbidden();
+    const scope = await this.retailScopeStoreIds(actor);
+    return listDatabaseStoreNormalSalePending(
+      db,
+      storeId ? scope.filter((id) => id === storeId) : scope,
+    );
   }
 
   public async listStoreSortedStocks(

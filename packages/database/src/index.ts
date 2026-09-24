@@ -242,6 +242,8 @@ export {
   moveProductCharityToSale,
 } from './store-sorting.js';
 export { idosiProductSaleGrams } from './store-sale-sync.js';
+export { listStoreNormalSalePending } from './store-normal-sale-sync.js';
+export type { StoreNormalSalePendingRecord } from './store-normal-sale-sync.js';
 export type {
   CreateCharityExportInput,
   CreateStoreSortingInput,

@@ -12,9 +12,11 @@ import {
   createSortedSaleTransfer,
   db,
   listCharityExports,
+  listStoreNormalSalePending,
   listStoreSortedStocks,
   listSortedSaleTransfers,
   moveProductCharityToSale,
+  openStoreInventoryBag,
   products,
   recordIdosiStatisticsSuccess,
   receiveSortedSaleTransfer,
@@ -411,33 +413,74 @@ describePostgres('sorted sale and charity stock with IDOSI reconciliation', () =
         },
       });
     };
-    const inbound = await createStorePartnerInbound(db, {
-      storeId: store!.id,
-      partnerName: 'Normal sale partner',
-      note: null,
-      receivedAt: now,
-      lines: [{ productId: dress!.id, quantity: 2, bagWeightsKg: ['4.000', '10.000'] }],
-      createdByUserId: actor!.id,
-      requestId: randomUUID(),
-      idempotencyKey: randomUUID(),
-      requestHash: randomUUID(),
-    });
-    if (inbound.replayed) throw new Error('Unexpected inbound replay');
-    // Both bags arrive at the same instant, so only the total left is deterministic.
-    const weights = async () =>
+    const receive = async (weights: string[]) => {
+      const inbound = await createStorePartnerInbound(db, {
+        storeId: store!.id,
+        partnerName: 'Normal sale partner',
+        note: null,
+        receivedAt: now,
+        lines: [{ productId: dress!.id, quantity: weights.length, bagWeightsKg: weights }],
+        createdByUserId: actor!.id,
+        requestId: randomUUID(),
+        idempotencyKey: randomUUID(),
+        requestHash: randomUUID(),
+      });
+      if (inbound.replayed) throw new Error('Unexpected inbound replay');
+    };
+    const bags = async () =>
       (
         await db.select().from(storeInventoryBags).where(eq(storeInventoryBags.storeId, store!.id))
-      ).reduce((total, bag) => total + Math.round(Number(bag.currentWeightKg) * 1000), 0);
+      ).toSorted((left, right) => left.displayCode.localeCompare(right.displayCode));
+    const weights = async () =>
+      (await bags()).reduce(
+        (total, bag) => total + Math.round(Number(bag.currentWeightKg) * 1000),
+        0,
+      );
+    const open = async (bagId: string) => {
+      const [bag] = await db
+        .select()
+        .from(storeInventoryBags)
+        .where(eq(storeInventoryBags.id, bagId))
+        .limit(1);
+      const opened = await openStoreInventoryBag(db, {
+        bagId,
+        storeId: store!.id,
+        expectedVersion: bag!.version,
+        actorUserId: actor!.id,
+        idempotencyKey: randomUUID(),
+        requestHash: randomUUID(),
+        requestId: randomUUID(),
+      });
+      if (opened.replayed) throw new Error('Unexpected open replay');
+      return opened.value;
+    };
+    const pending = async () =>
+      (await listStoreNormalSalePending(db, [store!.id])).map((row) => row.pendingWeightKg);
+
+    await receive(['4.000', '10.000']);
+    const [small, large] = (await bags()).toSorted(
+      (left, right) => Number(left.initialWeightKg) - Number(right.initialWeightKg),
+    );
 
     // 3 kg sold before tracking started is the baseline, not a deduction.
     await save(3, 0);
     expect(await weights()).toBe(14_000);
-    // 7 kg more leaves the bags; a bag that runs empty is marked depleted.
+    // 7 kg more are sold while both bags are still sealed: a sync never opens a bag, the
+    // sale waits for the store to open one.
     await save(10, 1);
+    expect(await weights()).toBe(14_000);
+    expect((await bags()).map((bag) => bag.status)).toEqual(['available', 'available']);
+    expect(await pending()).toEqual(['7.000']);
+    // Opening the 10 kg bag takes the waiting 7 kg at once; 3 kg are left to sell or sort.
+    const openedLarge = await open(large!.id);
+    expect(openedLarge).toMatchObject({ status: 'opened', normalSaleAppliedKg: '7.000' });
     expect(await weights()).toBe(7_000);
+    expect(await pending()).toEqual([]);
+    const sealed = (await bags()).find((bag) => bag.id === small!.id);
+    expect(sealed).toMatchObject({ status: 'available', currentWeightKg: '4.000' });
     await save(10, 2);
     expect(await weights()).toBe(7_000);
-    // IDOSI corrects the month down by 2 kg: the weight goes back to the bags.
+    // IDOSI corrects the month down by 2 kg: the weight goes back to the opened bag.
     await save(8, 3);
     expect(await weights()).toBe(9_000);
     // IDOSI renames the product; its IDOSI id still points at the same bags.
@@ -458,6 +501,115 @@ describePostgres('sorted sale and charity stock with IDOSI reconciliation', () =
     expect(progress.map((row) => [row.period, row.baselineGrams, row.appliedGrams])).toEqual([
       [period, 3_000n, 6_000n],
     ]);
+    // Selling more than the opened bag holds empties it; the rest waits, the sealed bag is kept.
+    await save(20, 6);
+    expect((await bags()).find((bag) => bag.id === large!.id)).toMatchObject({
+      status: 'depleted',
+      currentWeightKg: '0.000',
+    });
+    expect((await bags()).find((bag) => bag.id === small!.id)).toMatchObject({
+      status: 'available',
+      currentWeightKg: '4.000',
+    });
+    expect(await pending()).toEqual(['7.000']);
+    // Opening the 4 kg bag uses it up entirely and 3 kg still wait for the next bag.
+    const openedSmall = await open(small!.id);
+    expect(openedSmall).toMatchObject({ status: 'depleted', normalSaleAppliedKg: '4.000' });
+    expect(await pending()).toEqual(['3.000']);
+  });
+
+  it('takes regular-price sales only from opened bags and leaves the rest to sort', async () => {
+    // The store's example: 300 women's tops sold at regular price = 60 kg. Two opened bags
+    // hold 100 kg together, so 40 kg stay on the floor to sell or sort; a sealed bag is kept.
+    const token = randomUUID().replaceAll('-', '');
+    const [group] = await db
+      .insert(storeGroups)
+      .values({ code: `W${token}`, name: 'Opened bag example' })
+      .returning();
+    const [store] = await db
+      .insert(stores)
+      .values({ groupId: group!.id, code: `W${token}`, name: 'Opened bag store' })
+      .returning();
+    const [admin] = await db
+      .select({ passwordHash: users.passwordHash })
+      .from(users)
+      .where(eq(users.role, 'admin'))
+      .limit(1);
+    const [actor] = await db
+      .insert(users)
+      .values({
+        email: `opened.${token}@example.invalid`,
+        displayName: 'Opened bag test',
+        role: 'store',
+        status: 'active',
+        storeId: store!.id,
+        passwordHash: admin?.passwordHash ?? 'test-hash-placeholder-long-enough',
+      })
+      .returning();
+    const [dress] = await db.select().from(products).where(eq(products.sku, 'DAM')).limit(1);
+    const now = new Date();
+    const period = new Date(now.getTime() + 7 * 3600000).toISOString().slice(0, 7);
+    const save = async (kg: number, offsetSeconds: number) => {
+      const at = new Date(now.getTime() + offsetSeconds * 1000);
+      await recordIdosiStatisticsSuccess(db, {
+        target: { storeId: store!.id, storeCode: store!.code, storeName: store!.name },
+        scope: { storeId: store!.id, period, date: null, shiftId: null, paymentMethod: null },
+        payload: normalPayload(period, at, [normalItem(dress!.name, kg, `IDOSI-W-${token}`)]),
+        source: 'MANUAL',
+        startedAt: at,
+        completedAt: at,
+        context: {
+          actor: { userId: null, role: null, storeId: null },
+          requestId: randomUUID(),
+          ipAddress: null,
+          userAgent: null,
+        },
+      });
+    };
+    const inbound = await createStorePartnerInbound(db, {
+      storeId: store!.id,
+      partnerName: 'Opened bag partner',
+      note: null,
+      receivedAt: now,
+      lines: [{ productId: dress!.id, quantity: 3, bagWeightsKg: ['40.000', '60.000', '50.000'] }],
+      createdByUserId: actor!.id,
+      requestId: randomUUID(),
+      idempotencyKey: randomUUID(),
+      requestHash: randomUUID(),
+    });
+    if (inbound.replayed) throw new Error('Unexpected inbound replay');
+    const bags = async () =>
+      (
+        await db.select().from(storeInventoryBags).where(eq(storeInventoryBags.storeId, store!.id))
+      ).toSorted((left, right) => Number(left.initialWeightKg) - Number(right.initialWeightKg));
+    const [bag40, bag50, bag60] = await bags();
+    for (const bag of [bag40!, bag60!]) {
+      const opened = await openStoreInventoryBag(db, {
+        bagId: bag.id,
+        storeId: store!.id,
+        expectedVersion: bag.version,
+        actorUserId: actor!.id,
+        idempotencyKey: randomUUID(),
+        requestHash: randomUUID(),
+        requestId: randomUUID(),
+      });
+      if (opened.replayed) throw new Error('Unexpected open replay');
+    }
+
+    await save(1, 0); // tracking starts: 1 kg sold before is the baseline
+    await save(61, 1); // 60 kg sold since
+
+    const after = await bags();
+    const opened = after.filter((bag) => bag.id !== bag50!.id);
+    expect(
+      opened.reduce((total, bag) => total + Math.round(Number(bag.currentWeightKg) * 1000), 0),
+    ).toBe(40_000);
+    expect(after.find((bag) => bag.id === bag50!.id)).toMatchObject({
+      status: 'available',
+      currentWeightKg: '50.000',
+      normalSaleConsumedKg: '0.000',
+    });
+    expect(await listStoreNormalSalePending(db, [store!.id])).toEqual([]);
   });
 
   it('transfers sorted bags once and caps later IDOSI corrections at the source', async () => {

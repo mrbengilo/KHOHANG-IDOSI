@@ -11,6 +11,7 @@ import {
   StoreInventoryBagResponseSchema,
   StoreOutboundResponseSchema,
   ListStoreSortedStocksResponseSchema,
+  ListStoreNormalSalePendingResponseSchema,
   StoreSortingResultResponseSchema,
   CreateStoreSortingRequestSchema,
   MoveProductCharityToSaleRequestSchema,
@@ -34,6 +35,7 @@ import {
   type StoreOutbound,
   type StoreOutboundStatus,
   type StoreSortedStock,
+  type StoreNormalSalePending,
   type StoreSortingResult,
   type CreateStoreSortingRequest,
   type MoveProductCharityToSaleRequest,
@@ -249,6 +251,16 @@ export async function listStoreSortedStocks(storeId?: string): Promise<StoreSort
   const query = storeId ? `?${new URLSearchParams({ storeId })}` : '';
   return ListStoreSortedStocksResponseSchema.parse(await request(`/store-sorted-stocks${query}`))
     .data;
+}
+
+/** IDOSI regular-price sales still waiting for the next bag the store opens. */
+export async function listStoreNormalSalePending(
+  storeId?: string,
+): Promise<StoreNormalSalePending[]> {
+  const query = storeId ? `?${new URLSearchParams({ storeId })}` : '';
+  return ListStoreNormalSalePendingResponseSchema.parse(
+    await request(`/store-normal-sale-pending${query}`),
+  ).data;
 }
 
 export async function createStoreSorting(

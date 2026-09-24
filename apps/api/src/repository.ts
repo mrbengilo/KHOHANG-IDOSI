@@ -12,6 +12,7 @@ import type {
   WarehouseInventoryQuery,
   WarehouseInventoryResponse,
   WorkerStatus,
+  StoreNormalSalePending,
   OrderingContext,
   Account,
   AdminAuditLog,
@@ -658,6 +659,11 @@ export interface WarehouseRepository {
     actor: AuthenticatedPrincipal,
     storeId?: string,
   ): Promise<readonly StoreSortedStock[]>;
+  /** IDOSI regular-price sales still waiting for an opened bag, per store and product. */
+  listStoreNormalSalePending(
+    actor: AuthenticatedPrincipal,
+    storeId?: string,
+  ): Promise<readonly StoreNormalSalePending[]>;
   createStoreSorting(
     actor: AuthenticatedPrincipal,
     input: CreateStoreSortingRequest,

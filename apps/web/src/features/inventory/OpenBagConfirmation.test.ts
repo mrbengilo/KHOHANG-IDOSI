@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { ProductionOpenBagPage } from './InventoryOperations';
+import { normalSalePendingKg, openBagNotice, ProductionOpenBagPage } from './InventoryOperations';
 import { isOpenBagSelectionCurrent, OpenBagConfirmation } from './OpenBagConfirmation';
 
 const bag: StoreInventoryBag = {
@@ -94,5 +94,33 @@ describe('open bag confirmation', () => {
     expect(html).not.toContain('MB-00001');
     expect(html).not.toContain('Khui 1 bao');
     client.clear();
+  });
+});
+
+describe('IDOSI regular-price sales on opening', () => {
+  const women = '30000000-0000-4000-8000-000000000002';
+  const pending = [
+    { storeId: bag.storeId, productId: women, pendingWeightKg: '20.000' },
+    { storeId: '20000000-0000-4000-8000-000000000009', productId: women, pendingWeightKg: '5.000' },
+  ];
+
+  it('shows the pending weight of the selected product in the selected store only', () => {
+    expect(normalSalePendingKg(pending, women, bag.storeId)).toBe('20.000');
+    expect(normalSalePendingKg(pending, women)).toBe('25.000');
+    expect(normalSalePendingKg(pending, bag.productId, bag.storeId)).toBeNull();
+  });
+
+  it('says how much was taken on opening and what is left to sell or sort', () => {
+    const before = { ...bag, remainingWeightKg: '50.000' };
+    expect(openBagNotice(before, { ...before, status: 'OPEN' })).toContain(
+      'tồn đang bán tăng 1 bao',
+    );
+    const notice = openBagNotice(before, {
+      ...before,
+      status: 'OPEN',
+      remainingWeightKg: '30.000',
+    });
+    expect(notice).toContain('trừ 20 kg bán thường IDOSI');
+    expect(notice).toContain('còn 30 kg để bán hoặc lọc');
   });
 });

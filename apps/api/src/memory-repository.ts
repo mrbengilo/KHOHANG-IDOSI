@@ -11,6 +11,7 @@ import type {
   WarehouseInventoryQuery,
   WarehouseInventoryResponse,
   WorkerStatus,
+  StoreNormalSalePending,
   Account,
   AdminAuditLog,
   AllocationResult,
@@ -3146,6 +3147,15 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       updated,
     );
     return { data: structuredClone(updated), replayed: false };
+  }
+
+  public async listStoreNormalSalePending(
+    actor: AuthenticatedPrincipal,
+    storeId?: string,
+  ): Promise<readonly StoreNormalSalePending[]> {
+    this.assertRequestedStoreScope(actor, storeId);
+    // The in-memory API has no IDOSI regular-price sync.
+    return [];
   }
 
   public async listStoreSortedStocks(

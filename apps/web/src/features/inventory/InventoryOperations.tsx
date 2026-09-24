@@ -5,6 +5,7 @@ import type {
   Store,
   StoreInventoryBag,
   StoreInventoryBagStatus,
+  StoreNormalSalePending,
   StoreOutbound,
   StoreSortedStock,
   StoreSortingHistoryAction,
@@ -42,6 +43,7 @@ import {
   listCharityExports,
   listInventoryBags,
   listInventoryLedger,
+  listStoreNormalSalePending,
   listStoreSortedStocks,
   listStoreSortingHistory,
   listStoreOutbounds,
@@ -573,6 +575,28 @@ function StoreInventoryPage({
   );
 }
 
+/** Pending regular-price kg for one product (in one store, or across the scope), or null. */
+export function normalSalePendingKg(
+  pending: readonly StoreNormalSalePending[],
+  productId: string,
+  storeId?: string,
+): string | null {
+  const grams = pending
+    .filter((row) => row.productId === productId && (!storeId || row.storeId === storeId))
+    .reduce((sum, row) => sum + kilogramsToGrams(row.pendingWeightKg), 0n);
+  return grams > 0n ? gramsToKilograms(grams) : null;
+}
+
+/** Tells the store what opening did, including IDOSI regular-price sales taken on opening. */
+export function openBagNotice(before: StoreInventoryBag, after: StoreInventoryBag): string {
+  const taken =
+    kilogramsToGrams(before.remainingWeightKg) - kilogramsToGrams(after.remainingWeightKg);
+  if (taken <= 0n) {
+    return `Đã khui ${after.bagCode}. Tồn chưa khui giảm 1 bao; tồn đang bán tăng 1 bao.`;
+  }
+  return `Đã khui ${after.bagCode} và trừ ${formatKg(gramsToKilograms(taken))} bán thường IDOSI đang chờ; còn ${formatKg(after.remainingWeightKg)} để bán hoặc lọc.`;
+}
+
 export function ProductionOpenBagPage({ role }: AppOutletContext) {
   const queryClient = useQueryClient();
   const { catalogQuery, defaultStoreId, stores, storesQuery } = useInventorySources(role);
@@ -593,6 +617,12 @@ export function ProductionOpenBagPage({ role }: AppOutletContext) {
     queryKey: ['store-inventory-bags', effectiveStoreId, 'AVAILABLE'],
     retry: false,
   });
+  const pendingQuery = useQuery({
+    enabled: role !== 'STORE' || Boolean(effectiveStoreId),
+    queryFn: () => listStoreNormalSalePending(effectiveStoreId || undefined),
+    queryKey: ['store-normal-sale-pending', effectiveStoreId],
+    retry: false,
+  });
   const availableBags = bagsQuery.data ?? [];
   const products = (catalogQuery.data ?? []).filter((product) =>
     availableBags.some((bag) => bag.productId === product.id),
@@ -602,6 +632,11 @@ export function ProductionOpenBagPage({ role }: AppOutletContext) {
     .sort((left, right) => left.bagCode.localeCompare(right.bagCode));
   const currentBag = availableBags.find((bag) => bag.id === selectedBag?.id);
   const selectedProduct = products.find((product) => product.id === productId);
+  const pendingForProduct = normalSalePendingKg(
+    pendingQuery.data ?? [],
+    productId,
+    role === 'STORE' ? defaultStoreId : storeId || undefined,
+  );
   const mutation = useMutation({
     mutationFn: async (bag: StoreInventoryBag) => {
       const signature = `${bag.id}:${bag.version}`;
@@ -615,8 +650,11 @@ export function ProductionOpenBagPage({ role }: AppOutletContext) {
       setSelectedBag(null);
       setMutationError('');
       if (productBags.length === 1) setProductId('');
-      await queryClient.invalidateQueries({ queryKey: ['store-inventory-bags'] });
-      setNotice(`Đã khui ${bag.bagCode}. Tồn chưa khui giảm 1 bao; tồn đang bán tăng 1 bao.`);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['store-inventory-bags'] }),
+        queryClient.invalidateQueries({ queryKey: ['store-normal-sale-pending'] }),
+      ]);
+      setNotice(openBagNotice(submittedBag, bag));
     },
   });
 
@@ -763,6 +801,12 @@ export function ProductionOpenBagPage({ role }: AppOutletContext) {
                   ),
                 ),
               )}
+            </p>
+          ) : null}
+          {selectedProduct && pendingForProduct !== null ? (
+            <p className="open-bag-availability" role="status">
+              Bán thường IDOSI chưa trừ: {formatKg(pendingForProduct)}. Khi khui, hệ thống trừ phần
+              này vào bao trước; phần còn lại là tồn để bán hoặc lọc.
             </p>
           ) : null}
           {role === 'STORE' &&

@@ -33,6 +33,7 @@ import {
   ExportCharityRequestSchema,
   ListCharityExportsQuerySchema,
   ListStoreSortedStocksQuerySchema,
+  ListStoreNormalSalePendingQuerySchema,
   MoveCharityToSaleRequestSchema,
   MoveProductCharityToSaleRequestSchema,
   StoreSortedStockParamsSchema,
@@ -1355,6 +1356,14 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return { data: await repository.listStoreSortedStocks(session.principal, query.storeId) };
   });
 
+  app.get('/api/v1/store-normal-sale-pending', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = ListStoreNormalSalePendingQuerySchema.parse(request.query);
+    return {
+      data: await repository.listStoreNormalSalePending(session.principal, query.storeId),
+    };
+  });
+
   app.post('/api/v1/store-sortings', async (request, reply) => {
     const session = await authenticate(request, repository);
     requireRole(session.principal, ['STORE']);
@@ -1914,6 +1923,16 @@ function openApiDocument(): Record<string, unknown> {
         get: {
           security: cookieSecurity,
           responses: { '200': { description: 'Filtered immutable audit history (ADMIN only)' } },
+        },
+      },
+      '/api/v1/store-normal-sale-pending': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': {
+              description: 'IDOSI regular-price sales waiting for the next opened bag, in scope',
+            },
+          },
         },
       },
       '/api/v1/admin/worker-status': {
