@@ -2878,6 +2878,31 @@ export const idempotencyKeys = pgTable(
   ],
 );
 
+/**
+ * Last known state of each background worker loop, one row per loop. The worker upserts it after
+ * every tick so Admin screens can show why a scheduled 08:00/09:00 job did not complete; a job
+ * transaction that fails rolls back, so this row is the only durable trace of the failure.
+ */
+export const workerHeartbeats = pgTable(
+  'worker_heartbeats',
+  {
+    worker: text('worker').primaryKey(),
+    lastTickStartedAt: timestamp('last_tick_started_at', { withTimezone: true }),
+    lastTickCompletedAt: timestamp('last_tick_completed_at', { withTimezone: true }),
+    lastSuccessfulTickAt: timestamp('last_successful_tick_at', { withTimezone: true }),
+    lastError: text('last_error'),
+    failingJobs: jsonb('failing_jobs').$type<JsonValue>().notNull().default([]),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check('worker_heartbeats_worker_not_blank', sql`length(btrim(${table.worker})) > 0`),
+    check(
+      'worker_heartbeats_failing_jobs_array',
+      sql`jsonb_typeof(${table.failingJobs}) = 'array'`,
+    ),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Store = typeof stores.$inferSelect;

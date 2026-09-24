@@ -19,6 +19,7 @@ import {
   orderSessions,
   outboundRequestLines,
   outboundRequests,
+  recordWorkerHeartbeat,
   reservations,
   stores,
   warehouseBalances,
@@ -55,9 +56,12 @@ import type {
   DueSessionQuery,
   JobExecutionResult,
   ScheduledAllocationSession,
+  WorkerHeartbeat,
 } from './types.js';
 
 const LOCK_NAMESPACE = 'idosi-allocation-worker';
+/** Row key in worker_heartbeats; replicas share it because they run the same idempotent jobs. */
+export const ALLOCATION_WORKER_HEARTBEAT = 'allocation';
 const ACTIVE_SESSION_STATUSES = ['open', 'closed', 'allocating'] as const;
 
 type SnapshotRow = typeof inventorySnapshots.$inferSelect;
@@ -162,6 +166,25 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
 
   public async ping(): Promise<void> {
     await this.#database.execute(sql`select 1`);
+  }
+
+  public async recordHeartbeat(heartbeat: WorkerHeartbeat): Promise<void> {
+    const instant = (value: string | null) => (value === null ? null : new Date(value));
+    await recordWorkerHeartbeat(this.#database, {
+      worker: ALLOCATION_WORKER_HEARTBEAT,
+      lastTickStartedAt: instant(heartbeat.lastTickStartedAt),
+      lastTickCompletedAt: instant(heartbeat.lastTickCompletedAt),
+      lastSuccessfulTickAt: instant(heartbeat.lastSuccessfulTickAt),
+      lastError: heartbeat.lastError,
+      failingJobs: heartbeat.failingJobs.map((job) => ({
+        kind: job.kind,
+        sessionId: job.sessionId,
+        scheduledFor: job.scheduledFor,
+        status: job.status === 'blocked' ? 'blocked' : 'failed',
+        error: job.error ?? null,
+      })),
+      updatedAt: new Date(heartbeat.recordedAt),
+    });
   }
 
   public async close(): Promise<void> {

@@ -16,6 +16,7 @@ import {
   UpdateAccountResponseSchema,
   UpdateStoreGroupRequestSchema,
   UpdateStoreRequestSchema,
+  WorkerStatusResponseSchema,
   type Account,
   type AdminAuditLog,
   type CreateAccountRequest,
@@ -37,6 +38,7 @@ import {
   type UpdateOperationalSettingsRequest,
   type UpdateStoreGroupRequest,
   type UpdateStoreRequest,
+  type WorkerStatus,
 } from '@idosi/contracts';
 import { reportUnauthorizedResponse } from '../../lib/session-expiry';
 import { addTabSessionHeader } from '../../lib/tab-session';
@@ -186,6 +188,12 @@ export async function getAdminOperationalSettings(
     `/admin/operational-settings?${queryString({ historyLimit })}`,
   );
   return OperationalSettingsOverviewResponseSchema.parse(payload).data;
+}
+
+/** Last allocation worker heartbeat: why a scheduled 08:00/09:00 job did not finish. */
+export async function getAllocationWorkerStatus(): Promise<WorkerStatus> {
+  const payload = await requestAdminApi('/admin/worker-status');
+  return WorkerStatusResponseSchema.parse(payload).data;
 }
 
 export async function updateAdminOperationalSettings(

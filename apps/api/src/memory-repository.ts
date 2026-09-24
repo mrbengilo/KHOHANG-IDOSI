@@ -10,6 +10,7 @@ import type {
   ReceiptReturn,
   WarehouseInventoryQuery,
   WarehouseInventoryResponse,
+  WorkerStatus,
   Account,
   AdminAuditLog,
   AllocationResult,
@@ -140,6 +141,7 @@ import {
 import type { MonthlyReportScope } from '@idosi/database';
 
 import { ApiError, conflict, forbidden, notFound, unauthenticated } from './errors.js';
+import { workerStatusDto } from './worker-status.js';
 import { sanitizeAuditObject } from './audit-sanitization.js';
 import { monthlyOperationalReportDto } from './monthly-report.js';
 import { asiaHoChiMinhDateRange } from './time.js';
@@ -800,6 +802,12 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       data: slicePage(values, query.page, query.pageSize),
       pagination: pagination(query.page, query.pageSize, values.length),
     };
+  }
+
+  public async getAllocationWorkerStatus(actor: AuthenticatedPrincipal): Promise<WorkerStatus> {
+    requireMemoryAdmin(actor);
+    // The in-memory API has no worker process.
+    return workerStatusDto('allocation', null, new Date());
   }
 
   public async getOperationalSettings(

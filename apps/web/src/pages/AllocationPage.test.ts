@@ -1,3 +1,4 @@
+import type { WorkerStatus } from '@idosi/contracts';
 import { describe, expect, it } from 'vitest';
 import {
   allocationRoundText,
@@ -6,6 +7,7 @@ import {
   defaultOrderSessionDraft,
   orderSessionInputFromDraft,
   overdueAllocationSessions,
+  workerStatusNotice,
 } from './AllocationPage';
 
 const operationalSettings = {
@@ -133,5 +135,53 @@ describe('production allocation session helpers', () => {
     expect(
       allocationRoundText({ allocatedQuantity: 100000, rounds: [], roundsOmitted: true }),
     ).toBe('Chi tiết vòng vượt giới hạn danh sách; tổng đã cấp: 100000');
+  });
+});
+
+describe('allocation worker notice', () => {
+  const base: Omit<WorkerStatus, 'status'> = {
+    worker: 'allocation',
+    lastTickStartedAt: '2026-09-24T02:29:00.000Z',
+    lastTickCompletedAt: '2026-09-24T02:29:05.000Z',
+    lastSuccessfulTickAt: '2026-09-24T01:59:05.000Z',
+    lastError: null,
+    failingJobs: [],
+    updatedAt: '2026-09-24T02:29:05.000Z',
+  };
+
+  it('stays silent while the worker is healthy or has never reported', () => {
+    expect(workerStatusNotice(undefined)).toBeNull();
+    expect(workerStatusNotice({ ...base, status: 'HEALTHY' })).toBeNull();
+    expect(workerStatusNotice({ ...base, status: 'UNKNOWN' })).toBeNull();
+  });
+
+  it('names the failing job, its time and its error', () => {
+    const notice = workerStatusNotice({
+      ...base,
+      status: 'DEGRADED',
+      lastError: 'Opening snapshot is missing',
+      failingJobs: [
+        {
+          kind: 'snapshot-0800',
+          sessionId: 'session-1',
+          scheduledFor: '2026-09-24T01:00:00.000Z',
+          status: 'FAILED',
+          error: 'Opening snapshot is missing',
+        },
+        {
+          kind: 'finalize-0900',
+          sessionId: 'session-1',
+          scheduledFor: '2026-09-24T02:00:00.000Z',
+          status: 'BLOCKED',
+          error: null,
+        },
+      ],
+    });
+    expect(notice).toContain('Chụp tồn 08:00 lúc 08:00: Opening snapshot is missing');
+    expect(notice).toContain('Chốt phân bổ 09:00 lúc 09:00: chờ bước 08:00');
+  });
+
+  it('warns when the worker stopped reporting', () => {
+    expect(workerStatusNotice({ ...base, status: 'STALE' })).toContain('không phản hồi từ 09:29');
   });
 });

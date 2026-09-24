@@ -442,6 +442,13 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return { data: { ...settings, integration: idosiIntegration } };
   });
 
+  app.get('/api/v1/admin/worker-status', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    reply.header('cache-control', 'no-store');
+    return { data: await repository.getAllocationWorkerStatus(session.principal) };
+  });
+
   app.get('/api/v1/integrations/idosi/statistics-summary', async (request, reply) => {
     const session = await authenticate(request, repository);
     const query = ListIdosiStatisticsQuerySchema.parse(request.query);
@@ -1907,6 +1914,16 @@ function openApiDocument(): Record<string, unknown> {
         get: {
           security: cookieSecurity,
           responses: { '200': { description: 'Filtered immutable audit history (ADMIN only)' } },
+        },
+      },
+      '/api/v1/admin/worker-status': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': {
+              description: 'Last allocation worker heartbeat and failing jobs (ADMIN only)',
+            },
+          },
         },
       },
       '/api/v1/admin/operational-settings': {

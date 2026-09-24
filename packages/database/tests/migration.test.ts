@@ -213,6 +213,21 @@ describe('initial migration invariants', () => {
     ) as { id: string };
     expect(snapshot.prevId).toBe(previous.id);
   });
+  it('adds the worker heartbeat table without touching existing data', () => {
+    const migration = readFileSync(
+      new URL('../migrations/0027_worker_heartbeats.sql', import.meta.url),
+      'utf8',
+    );
+    expect(migration).toContain('CREATE TABLE "worker_heartbeats"');
+    expect(migration).not.toMatch(/UPDATE\s|DELETE\s+FROM|DROP\s|ALTER\s+TABLE/i);
+    const snapshot = JSON.parse(
+      readFileSync(new URL('../migrations/meta/0027_snapshot.json', import.meta.url), 'utf8'),
+    ) as { prevId: string };
+    const previous = JSON.parse(
+      readFileSync(new URL('../migrations/meta/0026_snapshot.json', import.meta.url), 'utf8'),
+    ) as { id: string };
+    expect(snapshot.prevId).toBe(previous.id);
+  });
   it('adds the wholesale role without using it in the same transaction', () => {
     const roleMigration = readFileSync(
       new URL('../migrations/0011_wholesale_account_role.sql', import.meta.url),
@@ -355,7 +370,7 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(27);
+    expect(journal.entries).toHaveLength(28);
     expect(journal.entries[8]).toMatchObject({ tag: '0008_optional_supplier_weight' });
     expect(journal.entries[9]).toMatchObject({ tag: '0009_supported_allocation_policy' });
     expect(journal.entries[10]).toMatchObject({
@@ -399,6 +414,10 @@ describe('initial migration invariants', () => {
     });
     expect(journal.entries[26]).toMatchObject({
       tag: '0026_receipt_discrepancy_adjustments',
+      breakpoints: true,
+    });
+    expect(journal.entries[27]).toMatchObject({
+      tag: '0027_worker_heartbeats',
       breakpoints: true,
     });
     expect(journal.entries[7]).toMatchObject({ tag: '0007_receipt_vat', breakpoints: true });

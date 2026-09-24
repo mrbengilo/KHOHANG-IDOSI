@@ -15,6 +15,7 @@ import type {
   ReceiptReturnActionRequest,
   WarehouseInventoryQuery,
   WarehouseInventoryResponse,
+  WorkerStatus,
   OrderingContext,
   Account,
   AdminAuditLog,
@@ -166,6 +167,7 @@ import {
   declareStoreReceipt as declareDatabaseStoreReceipt,
   db,
   htkdAssignments,
+  loadWorkerHeartbeats,
   IdempotencyConflictError,
   IdempotencyInProgressError,
   finalizeStoreReceipt as finalizeDatabaseStoreReceipt,
@@ -319,6 +321,7 @@ import type {
 import { assertActiveRetailStore, canAccessStore, pagination, slicePage } from './repository.js';
 import { hashPassword, hashSessionToken } from './security.js';
 import { asiaHoChiMinhDateRange } from './time.js';
+import { workerStatusDto } from './worker-status.js';
 
 export class PostgresWarehouseRepository implements WarehouseRepository {
   public async listWarehouseInventory(
@@ -951,6 +954,12 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     const current = history[0];
     if (!current) throw new Error('Operational settings have not been initialized');
     return { current, history };
+  }
+
+  public async getAllocationWorkerStatus(actor: AuthenticatedPrincipal): Promise<WorkerStatus> {
+    requirePostgresAdmin(actor);
+    const heartbeat = (await loadWorkerHeartbeats(db)).find((row) => row.worker === 'allocation');
+    return workerStatusDto('allocation', heartbeat ?? null, new Date());
   }
 
   public async updateOperationalSettings(

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
-import { OrderSessionSchema } from '@idosi/contracts';
+import { OrderSessionSchema, WorkerStatusResponseSchema } from '@idosi/contracts';
 
 import { createApi } from '../dist/app.js';
 import { sanitizeAuditObject } from '../dist/audit-sanitization.js';
@@ -8,8 +8,54 @@ import { MEMORY_SEED_IDS, MemoryWarehouseRepository } from '../dist/memory-repos
 import { RETAIL_STORE_OPERATION_FORBIDDEN_MESSAGE } from '../dist/repository.js';
 import { hashPassword, verifyPassword } from '../dist/security.js';
 import { asiaHoChiMinhDateRange } from '../dist/time.js';
+import { workerStatusDto } from '../dist/worker-status.js';
 
 const PASSWORD = 'IDOSI-test-password-2026!';
+
+describe('allocation worker status classification', () => {
+  const now = new Date('2026-09-24T02:30:00.000Z');
+  const heartbeat = (overrides) => ({
+    worker: 'allocation',
+    lastTickStartedAt: new Date('2026-09-24T02:29:00.000Z'),
+    lastTickCompletedAt: new Date('2026-09-24T02:29:05.000Z'),
+    lastSuccessfulTickAt: new Date('2026-09-24T02:29:05.000Z'),
+    lastError: null,
+    failingJobs: [],
+    updatedAt: new Date('2026-09-24T02:29:05.000Z'),
+    ...overrides,
+  });
+
+  test('separates healthy, degraded, stale and never-reported workers', () => {
+    assert.equal(workerStatusDto('allocation', null, now).status, 'UNKNOWN');
+    assert.equal(workerStatusDto('allocation', heartbeat({}), now).status, 'HEALTHY');
+    const degraded = workerStatusDto(
+      'allocation',
+      heartbeat({
+        lastError: 'Opening snapshot is missing',
+        failingJobs: [
+          {
+            kind: 'finalize-0900',
+            sessionId: 'session-1',
+            scheduledFor: '2026-09-24T02:00:00.000Z',
+            status: 'failed',
+            error: 'Opening snapshot is missing',
+          },
+        ],
+      }),
+      now,
+    );
+    assert.equal(degraded.status, 'DEGRADED');
+    assert.equal(degraded.failingJobs[0].status, 'FAILED');
+    assert.equal(
+      workerStatusDto(
+        'allocation',
+        heartbeat({ updatedAt: new Date('2026-09-24T02:15:00.000Z') }),
+        now,
+      ).status,
+      'STALE',
+    );
+  });
+});
 
 describe('KHOHANG-IDOSI API', () => {
   let repository;
@@ -3706,6 +3752,27 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(response.headers['x-request-id'], 'web-request-123');
     assert.equal(response.json().error.code, 'VALIDATION_ERROR');
     assert.equal(response.json().error.requestId, 'web-request-123');
+  });
+
+  test('reports the allocation worker heartbeat to administrators only', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const denied = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/worker-status',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(denied.statusCode, 403);
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/worker-status',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.headers['cache-control'], 'no-store');
+    const body = WorkerStatusResponseSchema.parse(response.json());
+    assert.equal(body.data.status, 'UNKNOWN');
+    assert.deepEqual(body.data.failingJobs, []);
   });
 
   async function login(username) {

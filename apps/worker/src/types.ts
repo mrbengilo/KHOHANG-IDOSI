@@ -32,6 +32,17 @@ export interface AllocationJobRepository {
   ): Promise<JobExecutionResult>;
   ping(): Promise<void>;
   close(): Promise<void>;
+  /** Optional durable trace of the last tick for Admin screens; failures here are only logged. */
+  recordHeartbeat?(heartbeat: WorkerHeartbeat): Promise<void>;
+}
+
+export interface WorkerHeartbeat {
+  readonly lastTickStartedAt: string | null;
+  readonly lastTickCompletedAt: string | null;
+  readonly lastSuccessfulTickAt: string | null;
+  readonly lastError: string | null;
+  readonly failingJobs: readonly JobReport[];
+  readonly recordedAt: string;
 }
 
 export interface WorkerLogger {
@@ -66,5 +77,8 @@ export interface WorkerRuntimeState {
   readonly lastTickStartedAt: string | null;
   readonly lastTickCompletedAt: string | null;
   readonly lastSuccessfulTickAt: string | null;
+  /** Last tick that listed due sessions and attempted every job, whatever the job outcomes. */
+  readonly lastOperationalTickAt: string | null;
   readonly lastError: string | null;
+  readonly failingJobs: readonly JobReport[];
 }

@@ -5,6 +5,7 @@ import type {
   DueSessionQuery,
   JobExecutionResult,
   ScheduledAllocationSession,
+  WorkerHeartbeat,
 } from '../src/types.js';
 import { AllocationWorker } from '../src/worker.js';
 
@@ -137,6 +138,34 @@ describe('AllocationWorker idempotency and catch-up', () => {
       `${YESTERDAY.id}:finalize-0900`,
       `${TODAY.id}:snapshot-0800`,
       `${TODAY.id}:finalize-0900`,
+    ]);
+  });
+
+  it('keeps processing other sessions when one fails and records a heartbeat', async () => {
+    const heartbeats: WorkerHeartbeat[] = [];
+    class OneBrokenSession extends FakeRepository {
+      public override captureSnapshotAndCreateOffers(session: ScheduledAllocationSession) {
+        if (session.id === YESTERDAY.id) return Promise.reject(new Error('broken yesterday'));
+        return super.captureSnapshotAndCreateOffers(session);
+      }
+
+      public async recordHeartbeat(heartbeat: WorkerHeartbeat): Promise<void> {
+        heartbeats.push(heartbeat);
+      }
+    }
+    const repository = new OneBrokenSession([YESTERDAY, TODAY]);
+    const allocationWorker = worker(repository, 1);
+
+    await expect(allocationWorker.runOnce(NOW)).rejects.toThrow('broken yesterday');
+
+    expect(repository.created.get(`final:${TODAY.id}`)).toBe(1);
+    expect(allocationWorker.isReady(NOW)).toBe(true);
+    expect(allocationWorker.isDegraded()).toBe(true);
+    expect(heartbeats).toHaveLength(1);
+    expect(heartbeats[0]!.lastError).toBe('broken yesterday');
+    expect(heartbeats[0]!.failingJobs.map((job) => `${job.sessionId}:${job.status}`)).toEqual([
+      `${YESTERDAY.id}:failed`,
+      `${YESTERDAY.id}:blocked`,
     ]);
   });
 });

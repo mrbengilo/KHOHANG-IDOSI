@@ -11,6 +11,7 @@ import type {
   ReceiptReturnActionRequest,
   WarehouseInventoryQuery,
   WarehouseInventoryResponse,
+  WorkerStatus,
   OrderingContext,
   Account,
   AdminAuditLog,
@@ -294,6 +295,8 @@ export interface WarehouseRepository {
     input: UpdateOperationalSettingsRequest,
     context: RequestContext,
   ): Promise<OperationalSettingsVersion>;
+  /** Last heartbeat of the allocation worker, for the Admin failure notice. */
+  getAllocationWorkerStatus(actor: AuthenticatedPrincipal): Promise<WorkerStatus>;
 
   resolveIdosiStatisticsTarget(
     actor: AuthenticatedPrincipal,

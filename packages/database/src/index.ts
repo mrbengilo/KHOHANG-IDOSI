@@ -288,6 +288,12 @@ export type {
 } from './store-inventory-operations.js';
 
 export * from './schema.js';
+export { loadWorkerHeartbeats, recordWorkerHeartbeat } from './worker-heartbeats.js';
+export type {
+  WorkerHeartbeatFailingJob,
+  WorkerHeartbeatInput,
+  WorkerHeartbeatRecord,
+} from './worker-heartbeats.js';
 export {
   PRODUCT_CONVERSION_SEEDS,
   PRODUCT_SEEDS,
