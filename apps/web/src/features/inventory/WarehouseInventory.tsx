@@ -1,13 +1,15 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState, type ReactNode } from 'react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/PageHeader';
 import { listAccessibleStores, listCatalog } from '../../lib/api';
 import { formatInteger } from '../../lib/format';
 import { loadWarehouseInventory, loadWarehouseOutboundHistory } from './inventoryApi';
+import { ShortageChecksPanel } from './ShortageChecksPanel';
 import './warehouse-inventory.css';
 
 export function WarehouseInventory({ navigation }: { readonly navigation?: ReactNode }) {
+  const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [historyPage, setHistoryPage] = useState(1);
   const [search, setSearch] = useState('');
@@ -49,6 +51,7 @@ export function WarehouseInventory({ navigation }: { readonly navigation?: React
               void Promise.all([
                 inventory.refetch(),
                 history.refetch(),
+                queryClient.invalidateQueries({ queryKey: ['warehouse-shortage-checks'] }),
                 catalog.refetch(),
                 stores.refetch(),
               ])
@@ -138,6 +141,7 @@ export function WarehouseInventory({ navigation }: { readonly navigation?: React
           </>
         )}
       </section>
+      <ShortageChecksPanel productNames={productNames} storeNames={storeNames} />
       <section className="panel warehouse-stock-panel" aria-label="Lịch sử phiếu xuất kho tổng">
         <h2>Phiếu chờ xuất & lịch sử xuất kho</h2>
         {catalog.isError || stores.isError ? (

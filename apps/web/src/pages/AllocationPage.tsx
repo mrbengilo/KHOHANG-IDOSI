@@ -460,11 +460,33 @@ export function orderSessionInputFromDraft(draft: OrderSessionDraft): {
   return { error: null, input: parsed.data };
 }
 
-export function availableSessionTransitions(status: OrderSessionStatus): AdminSessionTransition[] {
-  if (status === 'SCHEDULED') return ['OPEN', 'CANCELLED'];
-  if (status === 'OPEN') return ['CLOSED', 'CANCELLED'];
-  if (status === 'CLOSED') return ['CANCELLED'];
+/**
+ * From the stock snapshot on, priority stock is held and stores answer offers; only the
+ * scheduled allocation can settle that, so the server refuses a cancel and so does the UI.
+ */
+export function availableSessionTransitions(
+  status: OrderSessionStatus,
+  snapshotPassed = false,
+): AdminSessionTransition[] {
+  const cancel: AdminSessionTransition[] = snapshotPassed ? [] : ['CANCELLED'];
+  if (status === 'SCHEDULED') return ['OPEN', ...cancel];
+  if (status === 'OPEN') return ['CLOSED', ...cancel];
+  if (status === 'CLOSED') return cancel;
   return [];
+}
+
+/** How long past its allocation time a session may stay unfinished before admins are warned. */
+export const OVERDUE_ALLOCATION_GRACE_MS = 15 * 60_000;
+
+export function overdueAllocationSessions(
+  sessions: readonly OrderSession[],
+  now: number,
+): OrderSession[] {
+  return sessions.filter(
+    (session) =>
+      ['OPEN', 'CLOSED', 'ALLOCATING'].includes(session.status) &&
+      Date.parse(session.allocationStartsAt) + OVERDUE_ALLOCATION_GRACE_MS < now,
+  );
 }
 
 function sessionActionLabel(status: AdminSessionTransition): string {
@@ -509,6 +531,10 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
     queryKey: ['order-sessions', 'all'],
     retry: false,
   });
+  const overdueSessions = useMemo(
+    () => overdueAllocationSessions(sessionsQuery.data ?? [], Date.now()),
+    [sessionsQuery.data],
+  );
   // Each request becomes a row of the session table, so the reader sees when it was sent
   // and which store sent it. The server limits the list to the account's store scope.
   const orderRequestsQuery = useQuery({
@@ -770,6 +796,17 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
         title="Giám sát phân bổ hàng hóa"
       />
 
+      {role === 'ADMIN' && overdueSessions.length > 0 ? (
+        <p className="allocation-session-notice allocation-session-notice--error" role="alert">
+          Phân bổ chưa hoàn tất quá 15 phút sau giờ chốt:{' '}
+          {overdueSessions
+            .map((session) => `${session.code ?? session.businessDate} (${session.businessDate})`)
+            .join(', ')}
+          . Cửa hàng chưa có hàng và chưa được mở lại lượt đặt. Kiểm tra nhật ký Worker hoặc tồn kho
+          tổng rồi tải lại trang.
+        </p>
+      ) : null}
+
       {notice ? (
         <p
           aria-live={notice.kind === 'error' ? 'assertive' : 'polite'}
@@ -936,7 +973,10 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
               <tbody>
                 {sessionRows.map(
                   ({ dayLabel, firstOfDay, firstOfSession, key, request, session, store }) => {
-                    const transitions = availableSessionTransitions(session.status);
+                    const transitions = availableSessionTransitions(
+                      session.status,
+                      Date.parse(session.requestClosesAt) <= Date.now(),
+                    );
                     const openAllowedNow = canOpenSessionNow(session);
                     const submitted = request
                       ? formatRequestSubmittedAt(request.submittedAt)

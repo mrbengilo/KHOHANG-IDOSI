@@ -1,9 +1,11 @@
 import {
+  CancelSortedSaleTransferRequestSchema,
   CreateSortedSaleTransferRequestSchema,
   ErrorEnvelopeSchema,
   ReceiveSortedSaleTransferRequestSchema,
   SortedSaleTransferResponseSchema,
   SortedSaleTransfersResponseSchema,
+  type CancelSortedSaleTransferRequest,
   type CreateSortedSaleTransferRequest,
   type ReceiveSortedSaleTransferRequest,
 } from '@idosi/contracts';
@@ -70,6 +72,20 @@ export async function receiveSortedSaleTransfer(
     await post(
       `/sorted-sale-transfers/${encodeURIComponent(transferId)}/receive`,
       ReceiveSortedSaleTransferRequestSchema.parse(input),
+      key,
+    ),
+  ).data;
+}
+
+export async function cancelSortedSaleTransfer(
+  transferId: string,
+  input: CancelSortedSaleTransferRequest,
+  key: string,
+) {
+  return SortedSaleTransferResponseSchema.parse(
+    await post(
+      `/sorted-sale-transfers/${encodeURIComponent(transferId)}/cancel`,
+      CancelSortedSaleTransferRequestSchema.parse(input),
       key,
     ),
   ).data;

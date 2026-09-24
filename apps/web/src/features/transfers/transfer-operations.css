@@ -232,3 +232,18 @@
   color: var(--text-secondary);
   font-size: 0.85rem;
 }
+.transfer-card__cancel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.transfer-card__cancel input {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.transfer-card__cancel .button {
+  flex: 0 1 auto;
+  white-space: normal;
+  text-align: center;
+}
