@@ -331,7 +331,7 @@ import type {
 } from './repository.js';
 import { assertActiveRetailStore, canAccessStore, pagination, slicePage } from './repository.js';
 import { hashPassword, hashSessionToken } from './security.js';
-import { asiaHoChiMinhDateRange } from './time.js';
+import { asiaHoChiMinhDateRange, conversionRetirementDate } from './time.js';
 import { workerStatusDto } from './worker-status.js';
 
 /** lastSeenAt is refreshed at most this often per session. */
@@ -1960,7 +1960,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         const [updated] = await tx
           .update(productConversions)
           .set({
-            effectiveTo: retirementDate(current.effectiveFrom, new Date()),
+            effectiveTo: conversionRetirementDate(current.effectiveFrom, new Date()),
             retiredAt: new Date(),
             retiredByUserId: actor.accountId,
             retirementReason: input.reason,
@@ -5855,9 +5855,4 @@ function safeVnd(value: bigint): number {
   const converted = Number(value);
   if (!Number.isSafeInteger(converted)) throw new Error('Revenue exceeds safe VND response range');
   return converted;
-}
-
-function retirementDate(effectiveFrom: string, now: Date): string {
-  const today = now.toISOString().slice(0, 10);
-  return today > effectiveFrom ? today : effectiveFrom;
 }

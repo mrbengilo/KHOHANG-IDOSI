@@ -149,7 +149,7 @@ import { ApiError, conflict, forbidden, notFound, unauthenticated } from './erro
 import { workerStatusDto } from './worker-status.js';
 import { sanitizeAuditObject } from './audit-sanitization.js';
 import { monthlyOperationalReportDto } from './monthly-report.js';
-import { asiaHoChiMinhDateRange } from './time.js';
+import { asiaHoChiMinhDateRange, conversionRetirementDate } from './time.js';
 import type {
   AccountCredentials,
   HtkdAssignmentsState,
@@ -1994,7 +1994,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (current.retiredAt !== null) return current;
     const retired: ProductConversion = {
       ...current,
-      effectiveTo: retirementDate(current.effectiveFrom, this.now()),
+      effectiveTo: conversionRetirementDate(current.effectiveFrom, this.now()),
       retiredAt: this.now().toISOString(),
       retiredByAccountId: actor.accountId,
       retirementReason: input.reason,
@@ -5608,11 +5608,6 @@ function assertMemorySyncTimes(startedAt: Date, completedAt: Date): void {
 
 function boundedMemorySyncText(value: string, maximum: number, fallback: string): string {
   return (value.trim() || fallback).slice(0, maximum);
-}
-
-function retirementDate(effectiveFrom: string, now: Date): string {
-  const today = now.toISOString().slice(0, 10);
-  return today > effectiveFrom ? today : effectiveFrom;
 }
 
 function validateMemoryDeclaration(

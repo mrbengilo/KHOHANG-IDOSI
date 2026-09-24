@@ -7,7 +7,7 @@ import { sanitizeAuditObject } from '../dist/audit-sanitization.js';
 import { MEMORY_SEED_IDS, MemoryWarehouseRepository } from '../dist/memory-repository.js';
 import { RETAIL_STORE_OPERATION_FORBIDDEN_MESSAGE } from '../dist/repository.js';
 import { hashPassword, verifyPassword } from '../dist/security.js';
-import { asiaHoChiMinhDateRange } from '../dist/time.js';
+import { asiaHoChiMinhDateRange, conversionRetirementDate } from '../dist/time.js';
 import { workerStatusDto } from '../dist/worker-status.js';
 
 const PASSWORD = 'IDOSI-test-password-2026!';
@@ -589,6 +589,13 @@ describe('KHOHANG-IDOSI API', () => {
     const range = asiaHoChiMinhDateRange('2026-09-17', '2026-09-17');
     assert.equal(range.start.toISOString(), '2026-09-16T17:00:00.000Z');
     assert.equal(range.endExclusive.toISOString(), '2026-09-17T17:00:00.000Z');
+  });
+
+  test('retires a conversion on the Vietnam business date, not the UTC date', () => {
+    // 01:30 on 2026-09-18 in Vietnam is still 2026-09-17 in UTC.
+    const earlyMorning = new Date('2026-09-17T18:30:00.000Z');
+    assert.equal(conversionRetirementDate('2026-09-01', earlyMorning), '2026-09-18');
+    assert.equal(conversionRetirementDate('2026-09-20', earlyMorning), '2026-09-20');
   });
 
   test('redacts nested credentials at the audit response boundary', () => {
