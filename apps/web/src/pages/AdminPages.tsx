@@ -195,7 +195,7 @@ const events = [
 ];
 
 export function AuditPage() {
-  if (!mockModeEnabled) return <UnavailableFeature title="Audit & đối soát" />;
+  if (!mockModeEnabled) return <UnavailableFeature title="Nhật ký hệ thống" />;
   return (
     <>
       <PageHeader
@@ -205,7 +205,7 @@ export function AuditPage() {
           </Button>
         }
         description="Sự kiện bất biến; before/after đã loại bỏ secret và mật khẩu"
-        title="Audit & đối soát"
+        title="Nhật ký hệ thống"
       />
       <section className="panel timeline-list">
         {events.map(([time, actor, action, entity, detail, requestId]) => (

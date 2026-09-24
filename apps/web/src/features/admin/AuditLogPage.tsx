@@ -106,7 +106,7 @@ function AuditLogContent() {
     <>
       <PageHeader
         description="Nhật ký bất biến từ backend; chỉ đọc, có request ID và before/after đã lọc bí mật"
-        title="Audit & đối soát"
+        title="Nhật ký hệ thống"
       />
       <section className="admin-panel">
         <form className="admin-audit-filters" onSubmit={submitFilters}>
