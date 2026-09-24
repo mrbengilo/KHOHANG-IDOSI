@@ -17,6 +17,7 @@ import {
   type JsonObject,
 } from './schema.js';
 import { withAdvisoryLock } from './transaction.js';
+import { reconcileStoreNormalSaleSnapshot } from './store-normal-sale-sync.js';
 import { reconcileStoreSaleSnapshot } from './store-sale-sync.js';
 
 export interface IdosiStatisticsTarget {
@@ -238,16 +239,24 @@ export async function recordIdosiStatisticsSuccess(
           input.scope.shiftId === null &&
           input.scope.paymentMethod === null
         ) {
-          await withAdvisoryLock(tx, 'store-sorting', input.scope.storeId, () =>
-            reconcileStoreSaleSnapshot(
+          await withAdvisoryLock(tx, 'store-sorting', input.scope.storeId, async () => {
+            await reconcileStoreSaleSnapshot(
               tx,
               input.scope.storeId,
               input.scope.period,
               snapshotId,
               input.payload,
               input.completedAt,
-            ),
-          );
+            );
+            await reconcileStoreNormalSaleSnapshot(
+              tx,
+              input.scope.storeId,
+              input.scope.period,
+              snapshotId,
+              input.payload,
+              input.completedAt,
+            );
+          });
         }
 
         await tx.insert(auditLogs).values({

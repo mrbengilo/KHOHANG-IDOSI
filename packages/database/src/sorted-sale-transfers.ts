@@ -46,6 +46,12 @@ export interface ReceiveSortedSaleTransferInput extends CommandContext {
   readonly expectedVersion: number;
 }
 
+export interface CancelSortedSaleTransferInput extends CommandContext {
+  readonly transferId: string;
+  readonly expectedVersion: number;
+  readonly reason: string;
+}
+
 export async function listSortedSaleTransfers(
   database: Database,
   storeIds: readonly string[],
@@ -305,6 +311,104 @@ export async function receiveSortedSaleTransfer(
               destinationStockId: stock.id,
               bags: transfer.bagQuantity,
               weightKg: transfer.weightKg,
+            },
+          });
+          return result({ transferId: transfer.id }, transfer.id);
+        });
+      }),
+  );
+}
+
+/**
+ * A transfer the destination has not received yet can be called back by the sending store.
+ * The weight returns to the sender as a new Sale lot tied to the transfer, the same way the
+ * receiving store would have booked it, so outstanding IDOSI sales are settled against it.
+ */
+export async function cancelSortedSaleTransfer(
+  database: Database,
+  input: CancelSortedSaleTransferInput,
+): Promise<IdempotencyResult<{ transferId: string }>> {
+  const reason = input.reason.trim();
+  if (reason.length < 3)
+    throw new StoreOperationValidationError('Cần ghi lý do hủy phiếu tối thiểu 3 ký tự.');
+  return withIdempotency(
+    database,
+    {
+      scope: `sorted-sale.cancel:${input.transferId}`,
+      key: input.idempotencyKey,
+      requestHash: input.requestHash,
+    },
+    (tx) =>
+      withAdvisoryLock(tx, 'sorted-sale-transfer', input.transferId, async () => {
+        const [transfer] = await tx
+          .select()
+          .from(sortedSaleTransfers)
+          .where(eq(sortedSaleTransfers.id, input.transferId))
+          .for('update')
+          .limit(1);
+        if (!transfer)
+          throw new StoreOperationValidationError('Sorted Sale transfer was not found.');
+        await assertRetailStoreActor(tx, input.actorUserId, transfer.sourceStoreId);
+        if (transfer.status !== 'in_transit' || transfer.version !== input.expectedVersion)
+          throw new StoreOperationConflictError('Transfer was already received or changed.');
+        return withAdvisoryLock(tx, 'store-sorting', transfer.sourceStoreId, async () => {
+          const now = new Date();
+          const [stock] = await tx
+            .insert(storeSortedStocks)
+            .values({
+              storeId: transfer.sourceStoreId,
+              productId: transfer.productId,
+              sourceTransferId: transfer.id,
+              saleCreditedWeightKg: transfer.weightKg,
+              saleWeightKg: transfer.weightKg,
+              createdAt: now,
+              updatedAt: now,
+            })
+            .returning({ id: storeSortedStocks.id });
+          if (!stock) throw new Error('Returned Sale stock insert returned no row.');
+          const [updated] = await tx
+            .update(sortedSaleTransfers)
+            .set({
+              status: 'cancelled',
+              cancelledByUserId: input.actorUserId,
+              cancelledAt: now,
+              cancellationReason: reason,
+              version: transfer.version + 1,
+            })
+            .where(
+              and(
+                eq(sortedSaleTransfers.id, transfer.id),
+                eq(sortedSaleTransfers.version, transfer.version),
+                eq(sortedSaleTransfers.status, 'in_transit'),
+              ),
+            )
+            .returning({ id: sortedSaleTransfers.id });
+          if (!updated) throw new StoreOperationConflictError('Transfer changed during cancel.');
+          await tx.insert(storeSortingEvents).values({
+            storeSortedStockId: stock.id,
+            storeInventoryBagId: null,
+            storeId: transfer.sourceStoreId,
+            productId: transfer.productId,
+            action: 'sale_transfer_return',
+            weightKg: transfer.weightKg,
+            actorUserId: input.actorUserId,
+            occurredAt: now,
+          });
+          await settleProductSaleProgress(tx, transfer.sourceStoreId, transfer.productId, now);
+          await tx.insert(auditLogs).values({
+            requestId: input.requestId,
+            actorUserId: input.actorUserId,
+            actorRole: 'store',
+            actorStoreId: transfer.sourceStoreId,
+            action: 'SORTED_SALE_TRANSFER_CANCELLED',
+            entityType: 'sorted_sale_transfer',
+            entityId: transfer.id,
+            before: { status: 'in_transit' },
+            after: {
+              status: 'cancelled',
+              returnedStockId: stock.id,
+              weightKg: transfer.weightKg,
+              reason,
             },
           });
           return result({ transferId: transfer.id }, transfer.id);

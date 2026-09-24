@@ -165,6 +165,7 @@ export type {
   FinalizedStoreReceipt,
   FinalizeStoreReceiptInput,
   FinalizeStoreReceiptLineInput,
+  FinalizeStoreReceiptUnexpectedItemInput,
   ReviewedStoreOutbound,
   ReviewStoreOutboundInput,
   WaitQuantityState,
@@ -339,15 +340,30 @@ export {
   WaitTicketValidationError,
 } from './wait-ticket-operations.js';
 export {
+  cancelSortedSaleTransfer,
   createSortedSaleTransfer,
   getSortedSaleTransfer,
   listSortedSaleTransfers,
   receiveSortedSaleTransfer,
 } from './sorted-sale-transfers.js';
 export type {
+  CancelSortedSaleTransferInput,
   CreateSortedSaleTransferInput,
   ReceiveSortedSaleTransferInput,
 } from './sorted-sale-transfers.js';
+export {
+  getWarehouseShortageCheck,
+  listWarehouseShortageChecks,
+  resolveWarehouseShortageCheck,
+  WarehouseShortageCheckAuthorizationError,
+} from './warehouse-shortage-checks.js';
+export type {
+  ListWarehouseShortageChecksInput,
+  ResolveWarehouseShortageCheckInput,
+  WarehouseShortageCheckDecision,
+  WarehouseShortageCheckRecord,
+  WarehouseShortageCheckStatus,
+} from './warehouse-shortage-checks.js';
 export type {
   CancelledWaitTicket,
   CancelWaitTicketInput,
