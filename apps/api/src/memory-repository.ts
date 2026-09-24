@@ -4470,6 +4470,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         {
           inboundSource: scope.kind === 'ALL' ? 'WAREHOUSE_RECEIPTS' : 'STORE_RECEIPTS',
           inboundHeaders: [],
+          storeReceiptVat: [],
           inboundProducts: [],
           sales: [],
           outboundOrderIds: [],

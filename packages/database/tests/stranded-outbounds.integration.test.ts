@@ -14,6 +14,7 @@ import {
   dispatchStrandedAllocationOutbounds,
   finalizeStoreReceipt,
   inventorySnapshots,
+  loadMonthlyOperationalReport,
   listStoreReceiptSources,
   listStrandedAllocationOutbounds,
   mergedOrderItems,
@@ -325,6 +326,23 @@ describePostgres('stranded allocation outbound backfill', () => {
       vatAmountVnd: '7',
       vatRatePercent: 8,
     });
+    const now = new Date();
+    const monthParts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      month: 'numeric',
+      year: 'numeric',
+    }).formatToParts(now);
+    const report = await loadMonthlyOperationalReport(db, {
+      year: Number(monthParts.find((part) => part.type === 'year')!.value),
+      month: Number(monthParts.find((part) => part.type === 'month')!.value),
+      scope: { kind: 'STORE', id: fixture.storeId },
+    });
+    expect(report.totals.vatCostVnd).toEqual({
+      value: 7n,
+      unavailableReason: null,
+      source: 'STORE_RECEIPTS',
+    });
+    expect(report.totals.landedInboundCostVnd.value).toBe(65n);
     expect(
       (await db.select().from(waitTickets).where(eq(waitTickets.storeId, fixture.storeId)))[0],
     ).toMatchObject({ originalQuantity: 1, remainingQuantity: 1, fulfilledQuantity: 0 });
