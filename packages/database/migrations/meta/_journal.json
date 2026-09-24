@@ -183,6 +183,13 @@
       "when": 1790237331660,
       "tag": "0025_store_receipt_vat",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1790243670279,
+      "tag": "0026_receipt_discrepancy_adjustments",
+      "breakpoints": true
     }
   ]
 }
