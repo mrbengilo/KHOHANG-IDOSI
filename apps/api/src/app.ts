@@ -96,6 +96,10 @@ import {
   StoreTransferParamsSchema,
   CreateSortedSaleTransferRequestSchema,
   ReceiveSortedSaleTransferRequestSchema,
+  CancelSortedSaleTransferRequestSchema,
+  ListWarehouseShortageChecksQuerySchema,
+  ResolveWarehouseShortageCheckRequestSchema,
+  WarehouseShortageCheckParamsSchema,
   SortedSaleTransferParamsSchema,
   UpdateOperationalSettingsRequestSchema,
   UpdateStoreGroupRequestSchema,
@@ -719,6 +723,33 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     );
   });
 
+  app.get('/api/v1/warehouse-shortage-checks', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    return repository.listWarehouseShortageChecks(
+      session.principal,
+      ListWarehouseShortageChecksQuerySchema.parse(request.query),
+    );
+  });
+
+  app.post('/api/v1/warehouse-shortage-checks/:checkId/resolve', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { checkId } = WarehouseShortageCheckParamsSchema.parse(request.params);
+    const input = ResolveWarehouseShortageCheckRequestSchema.parse(request.body);
+    const result = await repository.resolveWarehouseShortageCheck(
+      session.principal,
+      checkId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'RESOLVE_WAREHOUSE_SHORTAGE_CHECK', checkId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
   app.get('/api/v1/inbound-receipts', async (request) => {
     const session = await authenticate(request, repository);
     requireRole(session.principal, ['ADMIN', 'HTKD']);
@@ -1333,6 +1364,24 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
       input,
       headers['idempotency-key'],
       hashCanonicalRequest({ action: 'RECEIVE_SORTED_SALE_TRANSFER', transferId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.post('/api/v1/sorted-sale-transfers/:transferId/cancel', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { transferId } = SortedSaleTransferParamsSchema.parse(request.params);
+    const input = CancelSortedSaleTransferRequestSchema.parse(request.body);
+    const result = await repository.cancelSortedSaleTransfer(
+      session.principal,
+      transferId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CANCEL_SORTED_SALE_TRANSFER', transferId, ...input }),
       requestContext(request),
     );
     reply.header('idempotency-replayed', String(result.replayed));
@@ -2275,6 +2324,36 @@ function openApiDocument(): Record<string, unknown> {
           ],
           responses: {
             '200': { description: 'Received transfer and credited destination Sale stock' },
+          },
+        },
+      },
+      '/api/v1/warehouse-shortage-checks': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'Store-reported shortages awaiting warehouse check' },
+          },
+        },
+      },
+      '/api/v1/warehouse-shortage-checks/{checkId}/resolve': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Shortage returned to allocatable stock or written off' },
+          },
+        },
+      },
+      '/api/v1/sorted-sale-transfers/{transferId}/cancel': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Cancelled in-transit transfer and returned Sale stock' },
           },
         },
       },

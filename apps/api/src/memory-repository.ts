@@ -104,6 +104,10 @@ import type {
   SortedSaleTransfer,
   CreateSortedSaleTransferRequest,
   ReceiveSortedSaleTransferRequest,
+  ListWarehouseShortageChecksQuery,
+  ResolveWarehouseShortageCheckRequest,
+  WarehouseShortageCheck,
+  CancelSortedSaleTransferRequest,
   ListStoreTransfersQuery,
   CreateStoreTransferRequest,
   DispatchStoreTransferRequest,
@@ -332,6 +336,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly orderRequests = new Map<string, StoreOrderRequest>();
   private readonly inboundReceipts = new Map<string, InboundReceipt>();
   private readonly receipts = new Map<string, Receipt>();
+  private readonly shortageChecks = new Map<string, WarehouseShortageCheck>();
+  private readonly shortageCheckMutations = new Map<string, { hash: string; checkId: string }>();
   private readonly waitTickets = new Map<string, WaitTicket>();
   private readonly priorityOffers = new Map<string, PriorityOffer>();
   private readonly dispatchedOutbounds = new Map<string, WarehouseOutboundRequest>();
@@ -999,6 +1005,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     return [...this.orderRequests.values()].filter(
       (request) =>
         request.storeId === storeId &&
+        request.status !== 'CANCELLED' &&
         (request.sessionId === sessionId || Date.parse(request.submittedAt) > lastCompletedAt),
     ).length;
   }
@@ -1179,6 +1186,17 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     }
     const now = this.now();
     if (
+      input.status === 'CANCELLED' &&
+      current.status !== 'CANCELLED' &&
+      now.getTime() >= Date.parse(current.requestClosesAt)
+    ) {
+      throw new ApiError(
+        'INVALID_STATE_TRANSITION',
+        'Không thể hủy phiên sau mốc chụp tồn: hàng ưu tiên đã được giữ và phiên sẽ tự chốt ở mốc phân bổ.',
+        409,
+      );
+    }
+    if (
       input.status === 'OPEN' &&
       (now.getTime() < Date.parse(current.requestOpensAt) ||
         now.getTime() >= Date.parse(current.requestClosesAt))
@@ -1200,6 +1218,19 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
           };
     this.orderSessions.set(updated.id, updated);
     this.rememberSessionMutation(scopedKey, requestHash, updated);
+    const cancelledOrderRequestIds: string[] = [];
+    if (updated !== current && input.status === 'CANCELLED') {
+      for (const request of this.orderRequests.values()) {
+        if (request.sessionId !== updated.id || request.status !== 'SUBMITTED') continue;
+        this.orderRequests.set(request.id, {
+          ...request,
+          status: 'CANCELLED',
+          cancelledAt: now.toISOString(),
+          cancellationReason: `Phiên đặt hàng bị hủy: ${input.reason?.trim() ?? ''}`.trim(),
+        });
+        cancelledOrderRequestIds.push(request.id);
+      }
+    }
     if (updated !== current) {
       this.appendAudit(
         actor,
@@ -1209,7 +1240,10 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         updated.id,
         current,
         updated,
-        input.reason ? { reason: input.reason } : {},
+        {
+          ...(input.reason ? { reason: input.reason } : {}),
+          ...(cancelledOrderRequestIds.length > 0 ? { cancelledOrderRequestIds } : {}),
+        },
       );
     }
     return { data: structuredClone(updated), replayed: false };
@@ -1243,6 +1277,71 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         }),
       asOf,
     };
+  }
+
+  public async listWarehouseShortageChecks(
+    actor: AuthenticatedPrincipal,
+    query: ListWarehouseShortageChecksQuery,
+  ): Promise<Page<WarehouseShortageCheck>> {
+    requireMemoryAdmin(actor);
+    const values = [...this.shortageChecks.values()]
+      .filter((check) => query.status === undefined || check.status === query.status)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return {
+      data: structuredClone(slicePage(values, query.page, query.pageSize)),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
+  }
+
+  public async resolveWarehouseShortageCheck(
+    actor: AuthenticatedPrincipal,
+    checkId: string,
+    input: ResolveWarehouseShortageCheckRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<WarehouseShortageCheck>> {
+    requireMemoryAdmin(actor);
+    const mutationKey = `${actor.accountId}:shortage-check:${checkId}:${idempotencyKey}`;
+    const previous = this.shortageCheckMutations.get(mutationKey);
+    if (previous) {
+      if (previous.hash !== requestHash)
+        throw conflict('Khóa idempotency đã dùng cho nội dung khác');
+      return { data: structuredClone(this.shortageChecks.get(checkId)!), replayed: true };
+    }
+    const current = this.shortageChecks.get(checkId);
+    if (!current) throw notFound('Không tìm thấy phiếu kiểm hàng thiếu');
+    if (current.status !== 'PENDING' || current.version !== input.expectedVersion)
+      throw versionConflict('Phiếu kiểm hàng thiếu đã được xử lý hoặc thay đổi');
+    const balance = this.warehouseBalances.get(current.productId);
+    if (balance && input.decision === 'LOST') {
+      this.warehouseBalances.set(current.productId, {
+        ...balance,
+        onHandQuantity: Math.max(0, balance.onHandQuantity - current.quantity),
+      });
+    }
+    const updated: WarehouseShortageCheck = {
+      ...current,
+      status: input.decision,
+      resolutionReason: input.reason,
+      resolvedByAccountId: actor.accountId,
+      resolvedAt: this.now().toISOString(),
+      version: current.version + 1,
+    };
+    this.shortageChecks.set(checkId, updated);
+    this.shortageCheckMutations.set(mutationKey, { hash: requestHash, checkId });
+    this.appendAudit(
+      actor,
+      context,
+      input.decision === 'LOST'
+        ? 'WAREHOUSE_SHORTAGE_CONFIRMED_LOST'
+        : 'WAREHOUSE_SHORTAGE_RETURNED_TO_STOCK',
+      'warehouse_shortage_check',
+      checkId,
+      current,
+      updated,
+    );
+    return { data: structuredClone(updated), replayed: false };
   }
 
   public async listInboundReceipts(
@@ -2050,6 +2149,34 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         { field: 'groupId' },
       );
     }
+    if (current.status === 'ACTIVE' && targetStatus === 'INACTIVE') {
+      const pending =
+        [...this.orderRequests.values()].some(
+          (request) => request.storeId === storeId && request.status === 'SUBMITTED',
+        ) ||
+        [...this.waitTickets.values()].some(
+          (ticket) =>
+            ticket.storeId === storeId &&
+            ['WAITING', 'OFFERED', 'PARTIALLY_FULFILLED'].includes(
+              this.effectiveWaitTicket(ticket).status,
+            ),
+        ) ||
+        [...this.receipts.values()].some(
+          (receipt) => receipt.storeId === storeId && receipt.status !== 'FINALIZED',
+        ) ||
+        [...this.sortedSaleTransfers.values()].some(
+          (transfer) =>
+            transfer.status === 'IN_TRANSIT' &&
+            (transfer.sourceStoreId === storeId || transfer.destinationStoreId === storeId),
+        );
+      if (pending) {
+        throw new ApiError(
+          'CONFLICT',
+          'Chưa thể ngừng hoạt động cửa hàng khi còn phiếu đặt, phiếu chờ, phiếu nhận hoặc phiếu điều chuyển đang xử lý.',
+          409,
+        );
+      }
+    }
     const updated: Store = {
       ...current,
       name: input.name ?? current.name,
@@ -2125,7 +2252,9 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     // No await occurs between counting and insertion: this is one atomic event-loop turn.
     const existing = [...this.orderRequests.values()].filter(
       (request) =>
-        request.sessionId === input.businessSessionId && request.storeId === input.storeId,
+        request.sessionId === input.businessSessionId &&
+        request.storeId === input.storeId &&
+        request.status !== 'CANCELLED',
     );
     if (existing.length >= 2 || this.orderingQuota(input.storeId, input.businessSessionId) >= 2) {
       throw new ApiError(
@@ -2693,7 +2822,10 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const current = this.requireMutableReceipt(actor, receiptId, ['PENDING_HTKD'], false);
     if (current.version !== input.expectedVersion) throw versionConflict();
     validateMemoryFinalization(input, current);
-    const goodsCostVnd = input.lines.reduce(
+    const goodsCostVnd = [
+      ...input.lines,
+      ...(input.unexpectedItems ?? []).map((item) => ({ ...item })),
+    ].reduce(
       (total, line) =>
         total +
         line.bagWeightsKg.reduce(
@@ -2712,6 +2844,14 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       freightVnd: input.freightVnd,
       handlingVnd: input.handlingVnd,
       lines: input.lines,
+      unexpectedItems: (current.unexpectedItems ?? []).map((item) => {
+        const booked = (input.unexpectedItems ?? []).find(
+          (entry) => entry.productId === item.productId,
+        );
+        return booked
+          ? { ...item, bagWeightsKg: booked.bagWeightsKg, pricePerKgVnd: booked.pricePerKgVnd }
+          : item;
+      }),
       reviewedByAccountId: actor.accountId,
       status: 'FINALIZED',
       totalCostVnd: Number(totalCostVnd),
@@ -2720,6 +2860,26 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     };
     this.receipts.set(receiptId, updated);
     this.rememberReceipt(scopedKey, requestHash, updated);
+    for (const line of input.lines) {
+      const shortage = line.approvedUnits - line.receivedUnits;
+      if (shortage <= 0) continue;
+      const check: WarehouseShortageCheck = {
+        id: randomUUID(),
+        storeReceiptId: receiptId,
+        receiptNumber: current.receiptNumber,
+        storeId: current.storeId,
+        productId: line.productId,
+        quantity: shortage,
+        status: 'PENDING',
+        shortageReason: current.discrepancyNote,
+        resolutionReason: null,
+        resolvedByAccountId: null,
+        resolvedAt: null,
+        version: 0,
+        createdAt: this.now().toISOString(),
+      };
+      this.shortageChecks.set(check.id, check);
+    }
     this.appendAudit(
       actor,
       context,
@@ -3728,6 +3888,65 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       transfer.id,
       transfer,
       updated,
+    );
+    return { data: structuredClone(updated), replayed: false };
+  }
+
+  public async cancelSortedSaleTransfer(
+    actor: AuthenticatedPrincipal,
+    transferId: string,
+    input: CancelSortedSaleTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<SortedSaleTransfer>> {
+    await this.authorizeRetailStoreOperation(actor);
+    const transfer = this.sortedSaleTransfers.get(transferId);
+    if (!transfer) throw notFound('Không tìm thấy phiếu điều chuyển Sale');
+    if (actor.role !== 'STORE' || actor.storeId !== transfer.sourceStoreId) throw forbidden();
+    const mutationKey = `${actor.accountId}:sale-transfer:cancel:${transferId}:${idempotencyKey}`;
+    const previous = this.sortedSaleTransferMutations.get(mutationKey);
+    if (previous) {
+      if (previous.hash !== requestHash)
+        throw conflict('Khóa idempotency đã dùng cho nội dung khác');
+      return { data: structuredClone(this.sortedSaleTransfers.get(transferId)!), replayed: true };
+    }
+    if (transfer.status !== 'IN_TRANSIT' || transfer.version !== input.expectedVersion)
+      throw versionConflict('Phiếu đã được nhận hoặc thay đổi');
+    const now = this.now().toISOString();
+    const stock: StoreSortedStock = {
+      id: randomUUID(),
+      storeId: transfer.sourceStoreId,
+      productId: transfer.productId,
+      inventoryLotId: transfer.id,
+      bagCode: transfer.transferNumber,
+      saleWeightKg: transfer.weightKg,
+      bagQuantity: 0,
+      charityWeightKg: '0.000',
+      version: 0,
+      updatedAt: now,
+    };
+    this.sortedStocks.set(stock.id, stock);
+    this.sortedSaleCredited.set(stock.id, kilogramsToGramsExact(transfer.weightKg));
+    this.settleMemorySaleProduct(transfer.sourceStoreId, transfer.productId);
+    const updated: SortedSaleTransfer = {
+      ...transfer,
+      status: 'CANCELLED',
+      version: transfer.version + 1,
+      cancelledAt: now,
+      cancellationReason: input.reason,
+    };
+    this.sortedSaleTransfers.set(transfer.id, updated);
+    this.sortedSaleTransferMutations.set(mutationKey, { hash: requestHash, transferId });
+    this.appendAudit(
+      actor,
+      context,
+      'SORTED_SALE_TRANSFER_CANCELLED',
+      'sorted_sale_transfer',
+      transfer.id,
+      transfer,
+      updated,
+      { reason: input.reason },
     );
     return { data: structuredClone(updated), replayed: false };
   }
@@ -5277,17 +5496,21 @@ function validateMemoryDeclaration(
     throw new ApiError('VALIDATION_ERROR', 'Phiếu nhận phải có đủ mặt hàng đã xuất', 400);
   }
   let hasShortage = false;
+  const shortProducts = new Set<string>();
   for (const line of lines) {
     const approvedUnits = dispatched.get(line.productId);
     if (approvedUnits === undefined || approvedUnits !== line.approvedUnits) {
       throw new ApiError('VALIDATION_ERROR', 'Số lượng duyệt không khớp phiếu xuất', 400);
     }
-    hasShortage ||= line.receivedUnits < approvedUnits;
+    if (line.receivedUnits < approvedUnits) {
+      hasShortage = true;
+      shortProducts.add(line.productId);
+    }
   }
   const unexpectedIds = new Set<string>();
   for (const item of unexpectedItems ?? []) {
     if (
-      dispatched.has(item.productId) ||
+      shortProducts.has(item.productId) ||
       unexpectedIds.has(item.productId) ||
       !Number.isSafeInteger(item.quantity) ||
       item.quantity <= 0
@@ -5302,6 +5525,21 @@ function validateMemoryDeclaration(
 }
 
 function validateMemoryFinalization(input: FinalizeReceiptRequest, current: Receipt): void {
+  const declaredExcess = new Map(
+    (current.unexpectedItems ?? []).map((item) => [item.productId, item.quantity] as const),
+  );
+  if (
+    (input.unexpectedItems ?? []).length !== declaredExcess.size ||
+    (input.unexpectedItems ?? []).some(
+      (item) => declaredExcess.get(item.productId) !== item.bagWeightsKg.length,
+    )
+  ) {
+    throw new ApiError(
+      'VALIDATION_ERROR',
+      'Số bao hàng dư được cân phải khớp số bao cửa hàng đã khai',
+      400,
+    );
+  }
   const currentLines = new Map(current.lines.map((line) => [line.productId, line] as const));
   if (input.lines.length !== currentLines.size) {
     throw new ApiError('VALIDATION_ERROR', 'Chi tiết giá vốn không khớp phiếu nhận', 400);
