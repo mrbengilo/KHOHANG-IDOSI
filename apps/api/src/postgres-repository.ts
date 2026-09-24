@@ -2260,6 +2260,8 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     if (query.status === 'SUBMITTED')
       conditions.push(inArray(orderRequests.status, ['draft', 'submitted']));
     if (query.status === 'CANCELLED') conditions.push(eq(orderRequests.status, 'cancelled'));
+    if (query.submittedFrom !== undefined)
+      conditions.push(gte(orderRequests.submittedAt, new Date(query.submittedFrom)));
     if (query.status === 'MERGED')
       conditions.push(
         inArray(orderRequests.status, ['merged', 'partially_allocated', 'allocated', 'waitlisted']),
@@ -2631,6 +2633,13 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     }
     if (query.status !== undefined) {
       conditions.push(eq(storeReceipts.status, databaseReceiptStatus(query.status)));
+    }
+    if (query.openOrCreatedFrom !== undefined) {
+      const recent = or(
+        ne(storeReceipts.status, databaseReceiptStatus('FINALIZED')),
+        gte(storeReceipts.createdAt, new Date(query.openOrCreatedFrom)),
+      );
+      if (recent) conditions.push(recent);
     }
 
     const where = and(...conditions);

@@ -2193,6 +2193,11 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       .filter((request) => query.storeId === undefined || request.storeId === query.storeId)
       .filter((request) => query.sessionId === undefined || request.sessionId === query.sessionId)
       .filter((request) => query.status === undefined || request.status === query.status)
+      .filter(
+        (request) =>
+          query.submittedFrom === undefined ||
+          Date.parse(request.submittedAt) >= Date.parse(query.submittedFrom),
+      )
       .sort((left, right) => right.submittedAt.localeCompare(left.submittedAt));
     return {
       data: slicePage(values, query.page, query.pageSize),
@@ -2627,6 +2632,12 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
           receipt.outboundRequestId === query.outboundRequestId,
       )
       .filter((receipt) => query.status === undefined || receipt.status === query.status)
+      .filter(
+        (receipt) =>
+          query.openOrCreatedFrom === undefined ||
+          receipt.status !== 'FINALIZED' ||
+          Date.parse(receipt.createdAt) >= Date.parse(query.openOrCreatedFrom),
+      )
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     return {
       data: slicePage(values, query.page, query.pageSize),

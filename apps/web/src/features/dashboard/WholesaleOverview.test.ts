@@ -1,6 +1,6 @@
 import type { Receipt, Store, StoreOrderRequest } from '@idosi/contracts';
 import { describe, expect, it } from 'vitest';
-import { wholesaleTotals } from './WholesaleOverview';
+import { periodStartInstant, wholesaleTotals } from './WholesaleOverview';
 
 const store = { id: 'store-a', kind: 'WHOLESALE' } as Store;
 const otherStore = { id: 'store-b', kind: 'WHOLESALE' } as Store;
@@ -44,5 +44,10 @@ describe('wholesale order and receipt totals', () => {
       { productId: 'dress', ordered: 3, received: 1 },
       { productId: 'shirt', ordered: 0, received: 3 },
     ]);
+  });
+
+  it('loads a month from its first Vietnam midnight', () => {
+    expect(periodStartInstant('2026-09')).toBe('2026-08-31T17:00:00.000Z');
+    expect(periodStartInstant('2027-01')).toBe('2026-12-31T17:00:00.000Z');
   });
 });

@@ -47,7 +47,7 @@ import {
 import { reportUnauthorizedResponse } from '../../lib/session-expiry';
 import { addTabSessionHeader } from '../../lib/tab-session';
 
-import { ApiClientError } from '../../lib/api';
+import { ApiClientError, mapWithConcurrency, PAGE_FETCH_CONCURRENCY } from '../../lib/api';
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
 const apiBaseUrl = (configuredBaseUrl || '/api/v1').replace(/\/$/, '');
@@ -164,10 +164,10 @@ async function listAllPages<T>(
   const first = parse(await request(`${path}?${pageQuery(filters, 1)}`));
   if (first.pagination.totalPages <= 1) return first.data;
 
-  const remaining = await Promise.all(
-    Array.from({ length: first.pagination.totalPages - 1 }, async (_, index) =>
-      parse(await request(`${path}?${pageQuery(filters, index + 2)}`)),
-    ),
+  const remaining = await mapWithConcurrency(
+    first.pagination.totalPages - 1,
+    PAGE_FETCH_CONCURRENCY,
+    async (index) => parse(await request(`${path}?${pageQuery(filters, index + 2)}`)),
   );
   return [first, ...remaining].flatMap((page) => page.data);
 }

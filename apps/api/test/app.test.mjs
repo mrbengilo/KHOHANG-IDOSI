@@ -1180,6 +1180,26 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(keyConflict.json().error.code, 'IDEMPOTENCY_CONFLICT');
   });
 
+  test('limits order request lists to a submitted-from window', async () => {
+    const cookie = cookieOf(await login('ds_nvt'));
+    const productId = await firstProductId(cookie);
+    const created = await submitOrder(cookie, 'window-request-key', orderPayload(productId, 1));
+    assert.equal(created.statusCode, 201);
+    const list = (submittedFrom) =>
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/order-requests?submittedFrom=${encodeURIComponent(submittedFrom)}`,
+        headers: { cookie },
+      });
+    const recent = await list(new Date(Date.now() - 60_000).toISOString());
+    assert.equal(recent.statusCode, 200);
+    assert.ok(recent.json().data.some((request) => request.id === created.json().data.id));
+    const future = await list(new Date(Date.now() + 60_000).toISOString());
+    assert.equal(future.json().pagination.totalItems, 0);
+    const invalid = await list('last month');
+    assert.equal(invalid.statusCode, 400);
+  });
+
   test('persists line notes and gives the quota slot back when a request is cancelled', async () => {
     const storeCookie = cookieOf(await login('ds_nvt'));
     const adminCookie = cookieOf(await login('admin'));

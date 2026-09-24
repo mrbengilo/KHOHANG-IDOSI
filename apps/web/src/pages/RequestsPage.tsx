@@ -11,6 +11,7 @@ import { WaitlistPanel } from '../components/WaitlistPanel';
 import {
   ApiClientError,
   cancelStoreOrderRequest,
+  daysAgo,
   listStoreOrderHistory,
   listAccessibleStores,
   listCatalog,
@@ -19,6 +20,9 @@ import {
   mockModeEnabled,
   submitStoreOrderRequest,
 } from '../lib/api';
+
+/** Order history is a working view, not an archive: the monthly report covers older months. */
+const ORDER_HISTORY_DAYS = 90;
 import { useSession } from '../lib/auth';
 import { formatKg } from '../lib/format';
 import { productConversions } from '../lib/data';
@@ -267,7 +271,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
   const isWholesale = role === 'WHOLESALE' || (role === 'STORE' && storeKind === 'WHOLESALE');
   const historyQuery = useQuery({
     enabled: Boolean(effectiveStoreId),
-    queryFn: () => listStoreOrderHistory(effectiveStoreId),
+    queryFn: () => listStoreOrderHistory(effectiveStoreId, daysAgo(ORDER_HISTORY_DAYS)),
     queryKey: ['order-request-history', effectiveStoreId],
     retry: false,
   });
@@ -643,7 +647,10 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
         <div className="section-heading section-heading--compact">
           <div>
             <h2>Lịch sử đặt hàng</h2>
-            <p>Tất cả phiếu đã gửi của cửa hàng, gồm các phiên trước.</p>
+            <p>
+              Phiếu đã gửi của cửa hàng trong {ORDER_HISTORY_DAYS} ngày gần nhất, gồm các phiên
+              trước.
+            </p>
           </div>
         </div>
         {historyNotice ? (

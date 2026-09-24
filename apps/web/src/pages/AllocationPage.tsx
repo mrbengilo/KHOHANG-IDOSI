@@ -43,6 +43,7 @@ import { HeldAllocationsPanel } from '../features/receipts/HeldAllocationsPanel'
 import {
   ApiClientError,
   createOrderSession,
+  daysAgo,
   listAccessibleOrderRequests,
   listAllocationResults,
   listAccessibleStores,
@@ -59,6 +60,9 @@ import {
 } from '../lib/session-request-rows';
 import { allocationRequests as seed } from '../lib/data';
 import type { AllocationRequest } from '../lib/types';
+
+/** The session table shows requests of this many recent days, so it stays fast as years pass. */
+const SESSION_TABLE_DAYS = 31;
 
 const statusText: Record<AllocationRequest['status'], string> = {
   WAITING: 'Phiếu chờ',
@@ -552,8 +556,8 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
     retry: false,
   });
   const sessionsQuery = useQuery({
-    queryFn: listOrderSessions,
-    queryKey: ['order-sessions', 'all'],
+    queryFn: () => listOrderSessions(businessDate(new Date(daysAgo(SESSION_TABLE_DAYS)))),
+    queryKey: ['order-sessions', 'recent', SESSION_TABLE_DAYS],
     retry: false,
   });
   const overdueSessions = useMemo(
@@ -563,8 +567,8 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
   // Each request becomes a row of the session table, so the reader sees when it was sent
   // and which store sent it. The server limits the list to the account's store scope.
   const orderRequestsQuery = useQuery({
-    queryFn: listAccessibleOrderRequests,
-    queryKey: ['order-requests', 'accessible'],
+    queryFn: () => listAccessibleOrderRequests(daysAgo(SESSION_TABLE_DAYS)),
+    queryKey: ['order-requests', 'accessible', SESSION_TABLE_DAYS],
     retry: false,
   });
   const sessionRows = useMemo(
@@ -716,12 +720,15 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
           ? await createOrderSession(operation.input, idempotencyKey)
           : await transitionOrderSession(operation.session.id, operation.input, idempotencyKey);
       operationKeys.current.delete(fingerprint);
-      queryClient.setQueryData<OrderSession[]>(['order-sessions', 'all'], (current = []) => {
-        const withoutUpdated = current.filter((session) => session.id !== updated.id);
-        return [updated, ...withoutUpdated].toSorted((left, right) =>
-          right.businessDate.localeCompare(left.businessDate),
-        );
-      });
+      queryClient.setQueryData<OrderSession[]>(
+        ['order-sessions', 'recent', SESSION_TABLE_DAYS],
+        (current = []) => {
+          const withoutUpdated = current.filter((session) => session.id !== updated.id);
+          return [updated, ...withoutUpdated].toSorted((left, right) =>
+            right.businessDate.localeCompare(left.businessDate),
+          );
+        },
+      );
       await queryClient.invalidateQueries({ queryKey: ['order-sessions'] });
       if (operation.kind === 'CREATE') {
         setShowCreateForm(false);
