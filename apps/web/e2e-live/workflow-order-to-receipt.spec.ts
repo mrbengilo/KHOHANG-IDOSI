@@ -198,6 +198,10 @@ test('an order approved by the 09:00 allocation reaches the store and can be rec
     await expect(review.getByRole('alert')).toContainText('Nhập VAT theo phiếu nhận hàng thực tế');
     await vat.fill('44000');
     await expect(vat).toHaveValue('44,000');
+    // Preview: landed cost excludes VAT, the receipt total adds it.
+    const preview = review.locator('.receipt-totals');
+    await expect(preview).toContainText(/Giá vốn \(không gồm VAT\)\s*1\.125\.000/);
+    await expect(preview).toContainText(/Tổng tiền phiếu \(gồm VAT\)\s*1\.169\.000/);
     for (const width of [360, 390, 412, 768, 1366, 1440]) {
       await page.setViewportSize({ width, height: 900 });
       await expect(vat).toBeVisible();
@@ -235,12 +239,14 @@ test('an order approved by the 09:00 allocation reaches the store and can be rec
     expect((await finalized.json()).data).toMatchObject({
       status: 'FINALIZED',
       totalCostVnd: 1_125_000,
+      totalAmountVnd: 1_169_000,
       vat: { amountVnd: 44000, ratePercent: 8 },
     });
     const summary = review.locator('.receipt-finalized-summary');
     await expect(summary).toContainText('VAT 8%');
     await expect(summary).toContainText(/44\.000/);
-    await expect(summary).toContainText(/1\.125\.000/);
+    await expect(summary).toContainText(/Giá vốn \(không gồm VAT\)\s*1\.125\.000/);
+    await expect(summary).toContainText(/Tổng tiền phiếu \(gồm VAT\)\s*1\.169\.000/);
   } finally {
     await client.close();
   }

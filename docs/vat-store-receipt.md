@@ -21,6 +21,12 @@
 - VAT là VAT đầu vào khấu trừ, **không** cộng vào `total_cost_vnd` (giá vốn = hàng + vận
   chuyển + bốc xếp, ràng buộc `store_receipts_total_cost_consistent` giữ nguyên). Audit
   `STORE_RECEIPT_FINALIZED` ghi `vatAmountVnd` và `vatRatePercent`.
+- **Tổng tiền phiếu** (`totalAmountVnd` trong API, ghi trong audit) = giá vốn + VAT, tức tiền
+  hàng + vận chuyển + bốc xếp + VAT. Ví dụ: tiền hàng 5.000.000 + vận chuyển 200.000 + bốc vác
+  100.000 = giá vốn 5.300.000; VAT 500.000 → tổng tiền phiếu 5.800.000. Giá trị được tính từ
+  cột đã lưu nên không cần migration; phiếu cũ chưa có VAT thì tổng tiền phiếu là null.
+- Form HTKD có bảng tạm tính theo đúng cách làm tròn của máy chủ (mỗi bao làm tròn nửa lên);
+  máy chủ vẫn tính lại khi chốt.
 - Phiếu gửi lại sau khi bị trả về reset VAT về null cùng các chi phí khác.
 
 ## Dữ liệu cũ

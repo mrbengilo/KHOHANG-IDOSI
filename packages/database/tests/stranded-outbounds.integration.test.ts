@@ -325,6 +325,7 @@ describePostgres('stranded allocation outbound backfill', () => {
       totalCostVnd: '65',
       vatAmountVnd: '7',
       vatRatePercent: 8,
+      totalAmountVnd: '72',
     });
     const now = new Date();
     const monthParts = new Intl.DateTimeFormat('en-GB', {

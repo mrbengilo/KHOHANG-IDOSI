@@ -2785,7 +2785,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       0n,
     );
     const totalCostVnd = goodsCostVnd + BigInt(input.freightVnd) + BigInt(input.handlingVnd);
-    if (totalCostVnd > BigInt(Number.MAX_SAFE_INTEGER)) {
+    const totalAmountVnd = totalCostVnd + BigInt(input.vat.amountVnd);
+    if (totalAmountVnd > BigInt(Number.MAX_SAFE_INTEGER)) {
       throw new ApiError('VALIDATION_ERROR', 'Tổng giá vốn vượt giới hạn an toàn', 400);
     }
     const updated: Receipt = {
@@ -2805,6 +2806,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       reviewedByAccountId: actor.accountId,
       status: 'FINALIZED',
       totalCostVnd: Number(totalCostVnd),
+      totalAmountVnd: Number(totalAmountVnd),
       updatedAt: this.now().toISOString(),
       version: current.version + 1,
     };
