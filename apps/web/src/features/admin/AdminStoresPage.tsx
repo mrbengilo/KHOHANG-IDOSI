@@ -460,7 +460,7 @@ function AdminStoresContent() {
           <strong>Chống ghi đè và thao tác lặp</strong>
           <span>
             Mỗi cập nhật gửi đúng version hiện tại; retry mạng giữ nguyên idempotency key và mọi
-            thay đổi đều có audit.
+            thay đổi đều được ghi nhật ký.
           </span>
         </div>
       </section>
@@ -826,7 +826,7 @@ function StoreEditor({
         description={
           store
             ? `Mã ${store.code} là bất biến; thay đổi dùng phiên bản ${store.version}.`
-            : 'Cửa hàng mới được kích hoạt và ghi audit sau khi backend xác nhận.'
+            : 'Cửa hàng mới được kích hoạt và ghi nhật ký sau khi backend xác nhận.'
         }
         onCancel={onCancel}
         title={store ? `Sửa cửa hàng ${store.code}` : 'Tạo cửa hàng'}

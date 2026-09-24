@@ -1300,7 +1300,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
         <form className="panel allocation-cancel-form" onSubmit={submitCancellation}>
           <div>
             <h2>Hủy phiên ngày {cancelTarget.businessDate}</h2>
-            <p>Thao tác được audit và không thể mở lại phiên đã hủy.</p>
+            <p>Thao tác được ghi nhật ký và không thể mở lại phiên đã hủy.</p>
           </div>
           <label>
             <span className="field-label">Lý do hủy</span>

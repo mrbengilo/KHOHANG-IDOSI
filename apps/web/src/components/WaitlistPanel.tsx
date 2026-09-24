@@ -429,7 +429,7 @@ function HistoryDialog({
         <div className="dialog__header">
           <div>
             <h2 id={titleId}>Lịch sử phiếu chờ</h2>
-            <p>Dữ liệu máy chủ và audit, không suy diễn trạng thái tại trình duyệt.</p>
+            <p>Dữ liệu máy chủ và nhật ký hệ thống, không suy diễn trạng thái tại trình duyệt.</p>
           </div>
           <button aria-label="Đóng lịch sử phiếu chờ" onClick={onClose} type="button">
             <X aria-hidden="true" size={20} />
@@ -471,8 +471,8 @@ function HistoryDialog({
               ))}
             </section>
             <section>
-              <h3>Audit</h3>
-              {history.audit.length === 0 ? <p>Chưa có sự kiện audit.</p> : null}
+              <h3>Nhật ký thao tác</h3>
+              {history.audit.length === 0 ? <p>Chưa có thao tác nào trong nhật ký.</p> : null}
               {history.audit.map((event) => (
                 <AuditRow event={event} key={event.id} />
               ))}
@@ -538,7 +538,7 @@ function CancelDialog({
         <div className="dialog__header">
           <div>
             <h2 id={titleId}>Hủy phiếu chờ</h2>
-            <p>{productName} • thao tác sẽ được ghi audit.</p>
+            <p>{productName} • thao tác sẽ được ghi vào nhật ký hệ thống.</p>
           </div>
           <button
             aria-label="Đóng hộp thoại hủy phiếu"
