@@ -72,8 +72,12 @@ reset_production() {
 source_repo="${temporary_dir}/source"
 mkdir -p -- "$source_repo/infra/scripts"
 git_quiet init "$source_repo"
-cp -- "${repository_dir}/docker-compose.yml" "$source_repo/"
-cp -- "${repository_dir}/infra/scripts/"{deploy.sh,backup-db.sh,rollback.sh} "$source_repo/infra/scripts/"
+cp -- "${repository_dir}/"{docker-compose.yml,Caddyfile} "$source_repo/"
+cp -- "${repository_dir}/infra/scripts/"{deploy.sh,backup-db.sh,rollback.sh,normalize-release-permissions.py} "$source_repo/infra/scripts/"
+printf '{"private":true}\n' >"$source_repo/package.json"
+printf '.env\n' >"$source_repo/.gitignore"
+printf 'tracked build input\n' >"$source_repo/infra/scripts/file with spaces.txt"
+ln -s -- "$env_file" "$source_repo/config-link"
 new_commit() {
   printf '%s\n' "$1" >"$source_repo/marker"
   git_quiet -C "$source_repo" add -A
@@ -97,13 +101,24 @@ image_tag() {
 # 1. A successful deployment builds, migrates, replaces services, verifies
 # HTTPS and only then records the new release and removes stale images.
 sha_a="$(new_commit a)"
-git_quiet clone "$source_repo" "$root_dir/releases/$sha_a"
+(
+  umask 077
+  git_quiet clone "$source_repo" "$root_dir/releases/$sha_a"
+  printf 'private placeholder\n' >"$root_dir/releases/$sha_a/.env"
+)
+[[ "$(stat -c %a -- "$root_dir/releases/$sha_a/package.json")" == 600 ]] || fail 'test checkout is not restrictive'
 reset_production
 FAKE_IMAGE_LIST="local/khohang-idosi-api:2222222222222222222222222222222222222222 local/khohang-idosi-api:${old_sha}" \
   run_deploy "$sha_a" >/dev/null
 [[ "$(readlink -f -- "$root_dir/current")" == "$root_dir/releases/$sha_a" ]] || fail 'current was not switched'
 [[ "$(image_tag)" == "$sha_a" ]] || fail 'IMAGE_TAG was not updated after a verified deployment'
 [[ "$(stat -c %a -- "$env_file")" == 600 ]] || fail 'environment file permissions changed'
+[[ "$(stat -c %a -- "$root_dir/releases/$sha_a/package.json")" == 644 ]] || fail 'existing restrictive checkout was not repaired'
+[[ "$(stat -c %a -- "$root_dir/releases/$sha_a/.env")" == 600 ]] || fail 'ignored environment file permissions changed'
+[[ "$(stat -c %a -- "$root_dir/releases/$sha_a/.git/config")" == 600 ]] || fail 'Git metadata permissions changed'
+[[ "$(stat -c %a -- "$root_dir/releases/$sha_a/infra/scripts/file with spaces.txt")" == 644 ]] || fail 'tracked filename containing spaces was not repaired'
+python3 "$root_dir/releases/$sha_a/infra/scripts/normalize-release-permissions.py"
+[[ -z "$(git -C "$root_dir/releases/$sha_a" status --porcelain)" ]] || fail 'permission repair changed tracked content or executable modes'
 tail -n 1 "$root_dir/deploy-history" | grep -q " ${sha_a}$" || fail 'deployment history was not recorded'
 grep -Eq "TAG=${sha_a}[|]ARGS=compose .* build --pull api migrate worker web" "$docker_log" || \
   fail 'application images were not built for the release SHA'
@@ -202,6 +217,20 @@ rm -f -- "${temporary_dir}/paused"
 
 run_watcher || { cat "$state_dir/status" "$state_dir"/logs/*.log >&2; fail 'watcher failed to deploy a commit with passing CI'; }
 [[ "$(watcher_state)" == deployed ]] || fail "watcher did not deploy (state: $(watcher_state))"
+[[ "$(stat -c %a -- "$root_dir/releases/$sha_d/package.json")" == 644 ]] || \
+  fail 'release package.json is not readable by the non-root migration user'
+[[ "$(stat -c %a -- "$root_dir/releases/$sha_d/Caddyfile")" == 644 ]] || \
+  fail 'Caddy configuration is not readable by its non-root container user'
+[[ "$(stat -c %a -- "$root_dir/releases/$sha_d/infra/scripts")" == 755 ]] || \
+  fail 'release source directories are not traversable by container users'
+[[ "$(stat -c %a -- "$root_dir/releases/$sha_d/infra/scripts/backup-db.sh")" == 755 ]] || \
+  fail 'tracked scripts lost their executable mode'
+[[ "$(stat -c %a -- "$env_file")" == 600 ]] || fail 'environment permissions changed through a tracked symlink'
+[[ "$(stat -c %a -- "$state_dir/status")" == 600 ]] || fail 'watcher status is no longer private'
+[[ "$(stat -c %a -- "$state_dir/logs/$sha_d.log")" == 600 ]] || fail 'deployment log is no longer private'
+while IFS= read -r -d '' backup; do
+  [[ "$(stat -c %a -- "$backup")" == 600 ]] || fail 'backup permissions are no longer private'
+done < <(find "${temporary_dir}/backups-watcher" -type f -print0)
 [[ "$(readlink -f -- "$root_dir/current")" == "$root_dir/releases/$sha_d" ]] || \
   fail 'watcher did not switch current to the tip of main'
 [[ "$(image_tag)" == "$sha_d" ]] || fail 'watcher deployment did not update IMAGE_TAG'

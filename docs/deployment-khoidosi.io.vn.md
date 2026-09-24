@@ -114,7 +114,7 @@ watcher `/usr/local/sbin/khohang-autodeploy`:
 
 1. Fetch commit vào mirror `/opt/khohang-idosi/repo.git` và tạo checkout
    `/opt/khohang-idosi/releases/<FULL_SHA>`.
-2. Chạy `infra/scripts/deploy.sh` của chính commit đó: backup database có checksum, build bốn ảnh
+2. Chạy `infra/scripts/deploy.sh` của chính commit đó: chuẩn hóa quyền mã nguồn, backup database có checksum, build bốn ảnh
    ứng dụng, chạy migration, thay `api`, `worker`, `web`, `caddy` rồi kiểm tra `/health`, `/ready`,
    `/openapi.json` và `/` qua HTTPS.
 3. Chỉ khi mọi kiểm tra đạt mới đổi `IMAGE_TAG` trong file môi trường và symlink `current`. Nếu lỗi
@@ -124,6 +124,15 @@ watcher `/usr/local/sbin/khohang-autodeploy`:
 VPS chỉ gọi ra GitHub qua HTTPS vì repository public; GitHub không cần khóa SSH hay secret. Commit
 có CI đỏ hoặc deploy lỗi không bị thử lại; merge một commit mới để deploy tiếp. Deploy dùng khóa
 `/run/lock/khohang-idosi-deploy.lock`, nên watcher và người vận hành không thể deploy chồng nhau.
+
+Watcher và các script vận hành giữ `umask 077` để bảo vệ cấu hình, log và backup. Trước khi build,
+`deploy.sh` chạy `normalize-release-permissions.py` trên checkout đã kiểm tra sạch và đúng SHA:
+file thường do Git quản lý có quyền `0644`, script có executable bit trong Git là `0755`, và thư
+mục chứa mã nguồn là `0755`. Không sửa nội dung, không đi theo symlink, không đổi quyền file bị
+ignore/untracked, metadata Git, file môi trường ngoài checkout hay backup. Bước này cũng sửa được
+checkout `0600/0700` do watcher cũ tạo, nên bản vá tự triển khai được mà không phải cập nhật watcher
+thủ công. Không đổi migration sang chạy root. CI build ảnh từ checkout tạo bằng `umask 077`, qua
+cùng bước chuẩn hóa, rồi chạy migration và kiểm tra toàn bộ stack bằng các user production.
 
 Cài lần đầu bằng root từ checkout đang chạy. Sau mỗi lần deploy thành công, watcher tự cập nhật từ
 release mới:
