@@ -57,6 +57,34 @@ export function canonicalIdosiProductName(value: string): string {
     : normalized;
 }
 
+/** The key IDOSI and warehouse product names are compared on (case, spacing and aliases ignored). */
+export function idosiProductNameKey(value: string): string {
+  return productNameKey(canonicalIdosiProductName(value));
+}
+
+export interface IdosiNameCandidate {
+  readonly id: string;
+  readonly name: string;
+  readonly isActive: boolean;
+}
+
+/**
+ * The single warehouse product an IDOSI name may be linked to automatically: the only active
+ * product with that normalized name, or else the only inactive one (stock of a retired item can
+ * still be sold). Deleted products never qualify. Two candidates at the same level are
+ * ambiguous and return null, so an Admin has to choose.
+ */
+export function uniqueProductForIdosiName(
+  candidates: readonly IdosiNameCandidate[],
+  idosiName: string,
+): string | null {
+  const key = idosiProductNameKey(idosiName);
+  const named = candidates.filter((candidate) => idosiProductNameKey(candidate.name) === key);
+  const active = named.filter((candidate) => candidate.isActive);
+  const pool = active.length > 0 ? active : named;
+  return pool.length === 1 ? pool[0]!.id : null;
+}
+
 const IdosiProductNameSchema = z
   .string()
   .trim()

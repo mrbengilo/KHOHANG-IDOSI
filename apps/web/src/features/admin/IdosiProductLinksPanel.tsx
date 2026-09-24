@@ -1,4 +1,9 @@
-import type { IdosiProductMatching, UnmatchedIdosiProduct } from '@idosi/contracts';
+import {
+  uniqueProductForIdosiName,
+  type IdosiProductLink,
+  type IdosiProductMatching,
+  type UnmatchedIdosiProduct,
+} from '@idosi/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link2 } from 'lucide-react';
 import { useState } from 'react';
@@ -31,6 +36,38 @@ export function productOptionsFor(
 /** Items an Admin has to act on: unmatched and not about to be linked by the next sync. */
 export function unmatchedNeedingAction(matching: IdosiProductMatching | undefined) {
   return (matching?.unmatched ?? []).filter((item) => item.reason !== 'PENDING_SYNC');
+}
+
+export interface ProductAwaitingFirstSale {
+  readonly product: CatalogProduct;
+  /**
+   * True when the first IDOSI sale under this product's name is linked to it automatically.
+   * False when another warehouse product shares the name, so an Admin must pick when it sells.
+   */
+  readonly linksByName: boolean;
+}
+
+/**
+ * Warehouse products no IDOSI id is linked to yet. IDOSI only reports products that sold, so a
+ * product without sales has no IDOSI id to link; it is matched by name at its first sale.
+ */
+export function productsAwaitingFirstSale(
+  catalog: readonly CatalogProduct[],
+  links: readonly Pick<IdosiProductLink, 'productId'>[],
+): ProductAwaitingFirstSale[] {
+  const linked = new Set(links.map((link) => link.productId));
+  const candidates = catalog.map((product) => ({
+    id: product.id,
+    name: product.name,
+    isActive: product.status === 'ACTIVE',
+  }));
+  return catalog
+    .filter((product) => !linked.has(product.id))
+    .toSorted((left, right) => left.name.trim().localeCompare(right.name.trim(), 'vi'))
+    .map((product) => ({
+      product,
+      linksByName: uniqueProductForIdosiName(candidates, product.name) === product.id,
+    }));
 }
 
 export function IdosiProductLinksPanel() {
@@ -90,6 +127,8 @@ export function IdosiProductLinksPanel() {
   );
 
   const needingAction = unmatchedNeedingAction(matchingQuery.data);
+  const linkedRows = matchingQuery.data?.links ?? [];
+  const awaiting = productsAwaitingFirstSale(catalog, linkedRows);
   return (
     <section className="settings-history" aria-labelledby="settings-idosi-links-heading">
       <div className="settings-section-heading">
@@ -154,9 +193,26 @@ export function IdosiProductLinksPanel() {
             </ol>
           )}
           <details className="settings-link-details">
-            <summary>Đã ghép ({matchingQuery.data?.links.length ?? 0})</summary>
+            <summary>Đã ghép ({linkedRows.length + awaiting.length})</summary>
             <ol className="settings-history-list">
-              {(matchingQuery.data?.links ?? []).map((linked) => (
+              {awaiting.map(({ product, linksByName }) => (
+                <li key={`awaiting-${product.id}`}>
+                  <div>
+                    <strong>
+                      {product.name}
+                      <Badge tone={linksByName ? 'neutral' : 'warning'}>
+                        {linksByName ? 'Ghép theo tên' : 'Trùng tên, cần chọn'}
+                      </Badge>
+                    </strong>
+                    <span>
+                      {linksByName
+                        ? `Tên IDOSI "${product.name}" → ${product.name}${product.sku ? ` (${product.sku})` : ''}. Chưa có doanh số trên IDOSI; mã IDOSI được ghi nhận tự động ở lần đồng bộ đầu tiên có bán.`
+                        : `Có mặt hàng kho khác cùng tên. Khi IDOSI có doanh số, mặt hàng sẽ hiện ở trên để chọn đúng mặt hàng kho.`}
+                    </span>
+                  </div>
+                </li>
+              ))}
+              {linkedRows.map((linked) => (
                 <li key={linked.idosiProductId}>
                   <div>
                     <strong>{linked.firstSeenName}</strong>

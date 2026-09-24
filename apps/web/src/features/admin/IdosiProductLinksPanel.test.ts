@@ -1,14 +1,22 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ProductConversion as CatalogProduct } from '../../lib/types';
-import { productOptionsFor, unmatchedNeedingAction } from './IdosiProductLinksPanel';
+import {
+  productOptionsFor,
+  productsAwaitingFirstSale,
+  unmatchedNeedingAction,
+} from './IdosiProductLinksPanel';
 
-const product = (id: string, name: string): CatalogProduct => ({
+const product = (
+  id: string,
+  name: string,
+  status: CatalogProduct['status'] = 'ACTIVE',
+): CatalogProduct => ({
   id,
   name,
   itemQuantity: null,
   weightKilograms: null,
-  status: 'ACTIVE',
+  status,
   effectiveDate: '2026-09-01',
 });
 
@@ -32,5 +40,22 @@ describe('IDOSI product link helpers', () => {
       }).map((item) => item.idosiProductId),
     ).toEqual(['1', '3']);
     expect(unmatchedNeedingAction(undefined)).toEqual([]);
+  });
+
+  it('shows products without IDOSI sales as linked by name until their first sale', () => {
+    const catalog = [
+      product('women', 'Áo nữ'),
+      product('winter', 'Đồ đông'),
+      product('big', 'Big size'),
+      product('twin-a', 'Gấu bông'),
+      product('twin-b', ' gấu  BÔNG'),
+      product('retired', 'Big size', 'INACTIVE'),
+    ];
+    const awaiting = productsAwaitingFirstSale(catalog, [{ productId: 'women' }]);
+    expect(
+      Object.fromEntries(awaiting.map(({ product: item, linksByName }) => [item.id, linksByName])),
+    ).toEqual({ big: true, retired: false, winter: true, 'twin-a': false, 'twin-b': false });
+    expect(awaiting[0]?.product.name).toBe('Big size');
+    expect(productsAwaitingFirstSale(catalog.slice(0, 1), [{ productId: 'women' }])).toEqual([]);
   });
 });

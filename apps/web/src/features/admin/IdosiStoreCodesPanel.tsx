@@ -63,7 +63,8 @@ export function IdosiStoreCodesPanel() {
           <h2 id="settings-idosi-stores-heading">Mã cửa hàng trên IDOSI</h2>
           <p>
             Mã đặt ở đây được ưu tiên hơn cấu hình máy chủ. Cửa hàng mới không cần sửa file cấu hình
-            hay khởi động lại hệ thống.
+            hay khởi động lại hệ thống. Cửa hàng sỉ chỉ nhập hàng, không có dữ liệu trên IDOSI nên
+            không nằm trong danh sách này và không được đồng bộ.
           </p>
         </div>
       </div>
