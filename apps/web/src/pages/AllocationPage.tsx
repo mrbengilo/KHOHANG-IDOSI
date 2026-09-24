@@ -8,6 +8,7 @@ import {
   type OrderSession,
   type OrderSessionStatus,
   type TransitionOrderSessionRequest,
+  type WorkerStatus,
 } from '@idosi/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -37,11 +38,12 @@ import { PageHeader } from '../components/PageHeader';
 import { PriorityOffer } from '../components/PriorityOffer';
 import { StatCard } from '../components/StatCard';
 import { WaitlistPanel } from '../components/WaitlistPanel';
-import { getAdminOperationalSettings } from '../features/admin/adminApi';
+import { getAdminOperationalSettings, getAllocationWorkerStatus } from '../features/admin/adminApi';
 import { HeldAllocationsPanel } from '../features/receipts/HeldAllocationsPanel';
 import {
   ApiClientError,
   createOrderSession,
+  daysAgo,
   listAccessibleOrderRequests,
   listAllocationResults,
   listAccessibleStores,
@@ -58,6 +60,9 @@ import {
 } from '../lib/session-request-rows';
 import { allocationRequests as seed } from '../lib/data';
 import type { AllocationRequest } from '../lib/types';
+
+/** The session table shows requests of this many recent days, so it stays fast as years pass. */
+const SESSION_TABLE_DAYS = 31;
 
 const statusText: Record<AllocationRequest['status'], string> = {
   WAITING: 'Phiếu chờ',
@@ -489,6 +494,30 @@ export function overdueAllocationSessions(
   );
 }
 
+const workerJobLabel: Record<string, string> = {
+  'snapshot-0800': 'Chụp tồn 08:00',
+  'finalize-0900': 'Chốt phân bổ 09:00',
+};
+
+/**
+ * One Admin-facing sentence for a worker that is not healthy, or null when nothing needs doing.
+ * The failing job's own error is shown because it is the only trace of a rolled-back job.
+ */
+export function workerStatusNotice(status: WorkerStatus | undefined): string | null {
+  if (!status || status.status === 'HEALTHY' || status.status === 'UNKNOWN') return null;
+  if (status.status === 'STALE') {
+    const since = status.updatedAt ? formatSessionTime(status.updatedAt) : 'không rõ';
+    return `Worker phân bổ không phản hồi từ ${since}. Phiên 08:00/09:00 sẽ không tự chạy cho tới khi Worker hoạt động lại.`;
+  }
+  const failures = status.failingJobs.map((job) => {
+    const label = workerJobLabel[job.kind] ?? job.kind;
+    const reason = job.status === 'BLOCKED' ? 'chờ bước 08:00' : (job.error ?? 'lỗi không rõ');
+    return `${label} lúc ${formatSessionTime(job.scheduledFor)}: ${reason}`;
+  });
+  if (failures.length === 0 && status.lastError) failures.push(status.lastError);
+  return `Worker phân bổ đang gặp lỗi và sẽ tự thử lại mỗi lượt. ${failures.join('; ')}.`;
+}
+
 function sessionActionLabel(status: AdminSessionTransition): string {
   if (status === 'OPEN') return 'Mở nhận đơn';
   if (status === 'CLOSED') return 'Đóng nhận đơn';
@@ -527,8 +556,8 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
     retry: false,
   });
   const sessionsQuery = useQuery({
-    queryFn: listOrderSessions,
-    queryKey: ['order-sessions', 'all'],
+    queryFn: () => listOrderSessions(businessDate(new Date(daysAgo(SESSION_TABLE_DAYS)))),
+    queryKey: ['order-sessions', 'recent', SESSION_TABLE_DAYS],
     retry: false,
   });
   const overdueSessions = useMemo(
@@ -538,8 +567,8 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
   // Each request becomes a row of the session table, so the reader sees when it was sent
   // and which store sent it. The server limits the list to the account's store scope.
   const orderRequestsQuery = useQuery({
-    queryFn: listAccessibleOrderRequests,
-    queryKey: ['order-requests', 'accessible'],
+    queryFn: () => listAccessibleOrderRequests(daysAgo(SESSION_TABLE_DAYS)),
+    queryKey: ['order-requests', 'accessible', SESSION_TABLE_DAYS],
     retry: false,
   });
   const sessionRows = useMemo(
@@ -558,6 +587,14 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
     }
     return spans;
   }, [sessionRows]);
+  const workerStatusQuery = useQuery({
+    enabled: role === 'ADMIN',
+    queryFn: getAllocationWorkerStatus,
+    queryKey: ['admin', 'worker-status'],
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  const workerNotice = workerStatusNotice(workerStatusQuery.data);
   const settingsQuery = useQuery({
     enabled: role === 'ADMIN',
     queryFn: () => getAdminOperationalSettings(1),
@@ -683,12 +720,15 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
           ? await createOrderSession(operation.input, idempotencyKey)
           : await transitionOrderSession(operation.session.id, operation.input, idempotencyKey);
       operationKeys.current.delete(fingerprint);
-      queryClient.setQueryData<OrderSession[]>(['order-sessions', 'all'], (current = []) => {
-        const withoutUpdated = current.filter((session) => session.id !== updated.id);
-        return [updated, ...withoutUpdated].toSorted((left, right) =>
-          right.businessDate.localeCompare(left.businessDate),
-        );
-      });
+      queryClient.setQueryData<OrderSession[]>(
+        ['order-sessions', 'recent', SESSION_TABLE_DAYS],
+        (current = []) => {
+          const withoutUpdated = current.filter((session) => session.id !== updated.id);
+          return [updated, ...withoutUpdated].toSorted((left, right) =>
+            right.businessDate.localeCompare(left.businessDate),
+          );
+        },
+      );
       await queryClient.invalidateQueries({ queryKey: ['order-sessions'] });
       if (operation.kind === 'CREATE') {
         setShowCreateForm(false);
@@ -804,6 +844,12 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
             .join(', ')}
           . Cửa hàng chưa có hàng và chưa được mở lại lượt đặt. Kiểm tra nhật ký Worker hoặc tồn kho
           tổng rồi tải lại trang.
+        </p>
+      ) : null}
+
+      {role === 'ADMIN' && workerNotice ? (
+        <p className="allocation-session-notice allocation-session-notice--error" role="alert">
+          {workerNotice}
         </p>
       ) : null}
 

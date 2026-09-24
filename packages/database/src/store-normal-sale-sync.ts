@@ -19,6 +19,7 @@ import {
   kilogramsToGramsExact,
   StoreOperationValidationError,
 } from './store-operations.js';
+import type { Database } from './client.js';
 import type { Transaction } from './transaction.js';
 
 type BagRow = typeof storeInventoryBags.$inferSelect;
@@ -52,8 +53,8 @@ export function idosiNormalSaleGrams(
 
 /**
  * Called with the store-sorting lock held, in the transaction that records a fresh full-month
- * IDOSI snapshot. Takes regular-price sales out of the store's inventory bags so the bag
- * balance keeps matching what is physically left to sell or sort.
+ * IDOSI snapshot. Takes regular-price sales out of the bags the store has opened, so what is
+ * left in them is the weight still on the floor to sell or sort. Sealed bags are never touched.
  */
 export async function reconcileStoreNormalSaleSnapshot(
   tx: Transaction,
@@ -126,7 +127,11 @@ export async function reconcileStoreNormalSaleSnapshot(
   }
 }
 
-/** Applies outstanding regular-price sales (or IDOSI corrections) to the product's bags. */
+/**
+ * Applies outstanding regular-price sales (or IDOSI corrections) to the product's opened bags.
+ * Sales beyond what the opened bags hold stay outstanding (applied < target) and are taken the
+ * moment the store opens its next bag of the product. Callers hold the store-sorting lock.
+ */
 export async function settleStoreNormalSaleProgress(
   tx: Transaction,
   storeId: string,
@@ -185,7 +190,13 @@ async function setApplied(
     .where(eq(storeNormalSaleProgress.id, checkpoint.id));
 }
 
-/** Goods are sold off the shelf first, so opened bags go before sealed ones, oldest first. */
+/**
+ * Regular-price goods are sold off the floor, i.e. out of bags the store has opened. Example:
+ * IDOSI reports 300 women's tops = 60 kg; the store opened two bags of 50 kg each; the older
+ * bag is emptied and 10 kg come out of the other, leaving 40 kg on the floor to sell or sort.
+ * A sealed bag is never opened by a sync: that stays a store decision (and keeps the receipt
+ * discrepancy flow available for it).
+ */
 async function consumeBags(
   tx: Transaction,
   storeId: string,
@@ -201,12 +212,11 @@ async function consumeBags(
       and(
         eq(storeInventoryBags.storeId, storeId),
         eq(storeInventoryBags.productId, productId),
-        inArray(storeInventoryBags.status, ['opened', 'available']),
+        eq(storeInventoryBags.status, 'opened'),
         gt(storeInventoryBags.currentWeightKg, '0.000'),
       ),
     )
     .orderBy(
-      sql`case when ${storeInventoryBags.status} = 'opened' then 0 else 1 end`,
       asc(sql`coalesce(${storeInventoryBags.openedAt}, ${storeInventoryBags.receivedAt})`),
       asc(storeInventoryBags.id),
     )
@@ -220,7 +230,7 @@ async function consumeBags(
     await moveBag(tx, bag, balance - take, take, 'consume', checkpoint, now);
     remaining -= take;
   }
-  // Sales IDOSI reports beyond what the bags hold stay outstanding for the next bags.
+  // Sales IDOSI reports beyond what the opened bags hold stay outstanding for the next opening.
   return grams - remaining;
 }
 
@@ -314,4 +324,46 @@ async function moveBag(
     actorUserId: null,
     occurredAt: now,
   });
+}
+
+export interface StoreNormalSalePendingRecord {
+  readonly storeId: string;
+  readonly productId: string;
+  /** IDOSI regular-price sales not yet taken from any opened bag, waiting for the next opening. */
+  readonly pendingWeightKg: string;
+}
+
+/** Outstanding regular-price sales per store and product; empty scope returns nothing. */
+export async function listStoreNormalSalePending(
+  database: Database,
+  storeIds: readonly string[],
+): Promise<StoreNormalSalePendingRecord[]> {
+  if (storeIds.length === 0) return [];
+  const rows = await database
+    .select({
+      storeId: storeNormalSaleProgress.storeId,
+      productId: storeNormalSaleProgress.productId,
+      observedGrams: storeNormalSaleProgress.observedGrams,
+      baselineGrams: storeNormalSaleProgress.baselineGrams,
+      appliedGrams: storeNormalSaleProgress.appliedGrams,
+    })
+    .from(storeNormalSaleProgress)
+    .where(inArray(storeNormalSaleProgress.storeId, [...storeIds]))
+    .orderBy(asc(storeNormalSaleProgress.storeId), asc(storeNormalSaleProgress.productId));
+  const pending = new Map<string, { storeId: string; productId: string; grams: bigint }>();
+  for (const row of rows) {
+    const target =
+      row.observedGrams > row.baselineGrams ? row.observedGrams - row.baselineGrams : 0n;
+    const outstanding = target > row.appliedGrams ? target - row.appliedGrams : 0n;
+    if (outstanding === 0n) continue;
+    const key = `${row.storeId}:${row.productId}`;
+    const current = pending.get(key);
+    if (current) current.grams += outstanding;
+    else pending.set(key, { storeId: row.storeId, productId: row.productId, grams: outstanding });
+  }
+  return [...pending.values()].map((entry) => ({
+    storeId: entry.storeId,
+    productId: entry.productId,
+    pendingWeightKg: gramsToKilogramsExact(entry.grams),
+  }));
 }

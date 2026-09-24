@@ -1,4 +1,4 @@
-import { createDatabase } from '@idosi/database';
+import { createDatabase, pruneOperationalHistory } from '@idosi/database';
 
 import { loadConfig } from './config.js';
 import { startHealthServer } from './health-server.js';
@@ -8,6 +8,7 @@ import {
   startIdosiSyncPolling,
 } from './idosi-sync.js';
 import { createLogger } from './logger.js';
+import { startMaintenancePolling } from './maintenance.js';
 import { PostgresAllocationJobRepository } from './postgres-repository.js';
 import { AllocationWorker, startPolling } from './worker.js';
 
@@ -43,6 +44,9 @@ const idosiSyncWorker = config.idosiIntegrationSecret
     })
   : null;
 const idosiPolling = idosiSyncWorker ? startIdosiSyncPolling(idosiSyncWorker, config.pollMs) : null;
+const maintenance = startMaintenancePolling((now) => pruneOperationalHistory(client.db, now), {
+  logger,
+});
 let shuttingDown: Promise<void> | null = null;
 
 logger.info(
@@ -74,7 +78,7 @@ const shutdown = (signal: NodeJS.Signals): Promise<void> => {
     timeout.unref();
     try {
       await health.close();
-      await Promise.all([polling.stop(), idosiPolling?.stop()]);
+      await Promise.all([polling.stop(), idosiPolling?.stop(), maintenance.stop()]);
       logger.info({ signal }, 'allocation worker stopped');
     } catch (error) {
       logger.error(

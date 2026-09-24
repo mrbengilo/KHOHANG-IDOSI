@@ -40,7 +40,16 @@ export async function startHealthServer(
       }
       const ready = database && worker.isReady();
       response.statusCode = ready ? 200 : 503;
-      response.end(JSON.stringify({ ok: ready, database, state: worker.state() }));
+      // Failed allocation jobs are reported, not turned into a 503: Docker and deployments must
+      // keep the loop running so it can retry and so a fix can be deployed.
+      response.end(
+        JSON.stringify({
+          ok: ready,
+          database,
+          degraded: worker.isDegraded(),
+          state: worker.state(),
+        }),
+      );
       return;
     }
     response.statusCode = 404;

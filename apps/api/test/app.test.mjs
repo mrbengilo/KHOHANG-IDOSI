@@ -1,15 +1,61 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
-import { OrderSessionSchema } from '@idosi/contracts';
+import { OrderSessionSchema, WorkerStatusResponseSchema } from '@idosi/contracts';
 
 import { createApi } from '../dist/app.js';
 import { sanitizeAuditObject } from '../dist/audit-sanitization.js';
 import { MEMORY_SEED_IDS, MemoryWarehouseRepository } from '../dist/memory-repository.js';
 import { RETAIL_STORE_OPERATION_FORBIDDEN_MESSAGE } from '../dist/repository.js';
 import { hashPassword, verifyPassword } from '../dist/security.js';
-import { asiaHoChiMinhDateRange } from '../dist/time.js';
+import { asiaHoChiMinhDateRange, conversionRetirementDate } from '../dist/time.js';
+import { workerStatusDto } from '../dist/worker-status.js';
 
 const PASSWORD = 'IDOSI-test-password-2026!';
+
+describe('allocation worker status classification', () => {
+  const now = new Date('2026-09-24T02:30:00.000Z');
+  const heartbeat = (overrides) => ({
+    worker: 'allocation',
+    lastTickStartedAt: new Date('2026-09-24T02:29:00.000Z'),
+    lastTickCompletedAt: new Date('2026-09-24T02:29:05.000Z'),
+    lastSuccessfulTickAt: new Date('2026-09-24T02:29:05.000Z'),
+    lastError: null,
+    failingJobs: [],
+    updatedAt: new Date('2026-09-24T02:29:05.000Z'),
+    ...overrides,
+  });
+
+  test('separates healthy, degraded, stale and never-reported workers', () => {
+    assert.equal(workerStatusDto('allocation', null, now).status, 'UNKNOWN');
+    assert.equal(workerStatusDto('allocation', heartbeat({}), now).status, 'HEALTHY');
+    const degraded = workerStatusDto(
+      'allocation',
+      heartbeat({
+        lastError: 'Opening snapshot is missing',
+        failingJobs: [
+          {
+            kind: 'finalize-0900',
+            sessionId: 'session-1',
+            scheduledFor: '2026-09-24T02:00:00.000Z',
+            status: 'failed',
+            error: 'Opening snapshot is missing',
+          },
+        ],
+      }),
+      now,
+    );
+    assert.equal(degraded.status, 'DEGRADED');
+    assert.equal(degraded.failingJobs[0].status, 'FAILED');
+    assert.equal(
+      workerStatusDto(
+        'allocation',
+        heartbeat({ updatedAt: new Date('2026-09-24T02:15:00.000Z') }),
+        now,
+      ).status,
+      'STALE',
+    );
+  });
+});
 
 describe('KHOHANG-IDOSI API', () => {
   let repository;
@@ -298,6 +344,7 @@ describe('KHOHANG-IDOSI API', () => {
       idosiIntegrationSecret: 'warehouse-server-secret',
       idosiStoreIdMap: { DS_NVT: 'S01' },
       idosiFetch: remoteFetch,
+      manualIdosiSyncIntervalMs: 0,
     });
     const storeCookie = cookieOf(await login('ds_nvt'));
     const adminCookie = cookieOf(await login('admin'));
@@ -453,6 +500,45 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(deniedScope.statusCode, 403);
   });
 
+  test('answers a repeated manual sync of the same scope from the fresh snapshot', async () => {
+    await app.close();
+    let calls = 0;
+    app = await createApi({
+      repository,
+      corsOrigin: 'http://localhost:5173',
+      idosiIntegrationSecret: 'warehouse-server-secret',
+      idosiStoreIdMap: { DS_NVT: 'S01' },
+      idosiFetch: async () => {
+        calls += 1;
+        const payload = idosiStatisticsPayload(100_000 * calls);
+        return new Response(
+          JSON.stringify({ ...payload, storeId: 'S01', store: { ...payload.store, id: 'S01' } }),
+        );
+      },
+    });
+    const cookie = cookieOf(await login('ds_nvt'));
+    const sync = () =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/integrations/idosi/order-statistics/sync',
+        headers: { cookie },
+        payload: {
+          storeId: MEMORY_SEED_IDS.nvtStore,
+          period: '2026-09',
+          date: null,
+          shiftId: null,
+          paymentMethod: null,
+        },
+      });
+    const first = await sync();
+    const second = await sync();
+    assert.equal(first.statusCode, 200);
+    assert.equal(second.statusCode, 200);
+    assert.equal(second.headers['idosi-sync-skipped'], 'recent');
+    assert.equal(second.json().data.snapshot.payload.totals.revenue, 100_000);
+    assert.equal(calls, 1);
+  });
+
   test('fails closed before outbound sync when the server secret is absent', async () => {
     const storeCookie = cookieOf(await login('ds_nvt'));
     const response = await app.inject({
@@ -521,6 +607,13 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(blocked.headers['retry-after'], '60');
     assert.equal(blocked.json().error.details.retryAfterSeconds, 60);
 
+    // Another person behind the same address (a store's shared connection) is not locked out.
+    const colleague = await app.inject({
+      ...invalidLogin,
+      payload: { username: 'ds_nvt', password: PASSWORD },
+    });
+    assert.equal(colleague.statusCode, 200);
+
     // A public direct peer is not trusted to replace its address with X-Forwarded-For.
     const untrustedPeer = await app.inject({
       ...invalidLogin,
@@ -543,6 +636,13 @@ describe('KHOHANG-IDOSI API', () => {
     const range = asiaHoChiMinhDateRange('2026-09-17', '2026-09-17');
     assert.equal(range.start.toISOString(), '2026-09-16T17:00:00.000Z');
     assert.equal(range.endExclusive.toISOString(), '2026-09-17T17:00:00.000Z');
+  });
+
+  test('retires a conversion on the Vietnam business date, not the UTC date', () => {
+    // 01:30 on 2026-09-18 in Vietnam is still 2026-09-17 in UTC.
+    const earlyMorning = new Date('2026-09-17T18:30:00.000Z');
+    assert.equal(conversionRetirementDate('2026-09-01', earlyMorning), '2026-09-18');
+    assert.equal(conversionRetirementDate('2026-09-20', earlyMorning), '2026-09-20');
   });
 
   test('redacts nested credentials at the audit response boundary', () => {
@@ -679,6 +779,48 @@ describe('KHOHANG-IDOSI API', () => {
     const invalid = await tabLogin('admin', 'invalid');
     assert.equal(invalid.statusCode, 400);
     assert.equal(invalid.json().error.code, 'VALIDATION_ERROR');
+  });
+
+  test('bounds per-tab session cookies when a tab logs in', async () => {
+    const tabId = (index) => index.toString(16).padStart(32, '0');
+    const tabLogin = (id, cookie) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/login',
+        headers: { 'x-idosi-tab-id': id, ...(cookie ? { cookie } : {}) },
+        payload: { username: 'admin', password: PASSWORD },
+      });
+    // 13 earlier tabs, oldest first, plus a cookie whose session no longer exists.
+    const earlier = [];
+    for (let index = 1; index <= 13; index += 1)
+      earlier.push(cookieOf(await tabLogin(tabId(index))));
+    const unknown = `idosi_session_${tabId(99)}=not-a-session`;
+    const response = await tabLogin(tabId(100), [...earlier, unknown].join('; '));
+    assert.equal(response.statusCode, 200);
+    const setCookies = [response.headers['set-cookie']].flat().map(String);
+    assert.match(setCookies[0], new RegExp(`^idosi_session_${tabId(100)}=`));
+    const cleared = setCookies
+      .slice(1)
+      .map((cookie) => cookie.split('=')[0])
+      .sort();
+    // The unknown cookie goes, and the two least recently used tabs make room for this one.
+    assert.deepEqual(
+      cleared,
+      [
+        `idosi_session_${tabId(1)}`,
+        `idosi_session_${tabId(2)}`,
+        `idosi_session_${tabId(99)}`,
+      ].sort(),
+    );
+    for (const cookie of setCookies.slice(1)) assert.match(cookie, /Max-Age=0/u);
+    const sessionOf = (id, cookie) =>
+      app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/session',
+        headers: { cookie, 'x-idosi-tab-id': id },
+      });
+    assert.equal((await sessionOf(tabId(1), earlier[0])).statusCode, 401);
+    assert.equal((await sessionOf(tabId(3), earlier[2])).statusCode, 200);
   });
 
   test('enforces STORE and HTKD scopes on the server', async () => {
@@ -1132,6 +1274,26 @@ describe('KHOHANG-IDOSI API', () => {
     const keyConflict = await submitOrder(cookie, 'same-request-key', orderPayload(productId, 3));
     assert.equal(keyConflict.statusCode, 409);
     assert.equal(keyConflict.json().error.code, 'IDEMPOTENCY_CONFLICT');
+  });
+
+  test('limits order request lists to a submitted-from window', async () => {
+    const cookie = cookieOf(await login('ds_nvt'));
+    const productId = await firstProductId(cookie);
+    const created = await submitOrder(cookie, 'window-request-key', orderPayload(productId, 1));
+    assert.equal(created.statusCode, 201);
+    const list = (submittedFrom) =>
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/order-requests?submittedFrom=${encodeURIComponent(submittedFrom)}`,
+        headers: { cookie },
+      });
+    const recent = await list(new Date(Date.now() - 60_000).toISOString());
+    assert.equal(recent.statusCode, 200);
+    assert.ok(recent.json().data.some((request) => request.id === created.json().data.id));
+    const future = await list(new Date(Date.now() + 60_000).toISOString());
+    assert.equal(future.json().pagination.totalItems, 0);
+    const invalid = await list('last month');
+    assert.equal(invalid.statusCode, 400);
   });
 
   test('persists line notes and gives the quota slot back when a request is cancelled', async () => {
@@ -3706,6 +3868,71 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(response.headers['x-request-id'], 'web-request-123');
     assert.equal(response.json().error.code, 'VALIDATION_ERROR');
     assert.equal(response.json().error.requestId, 'web-request-123');
+  });
+
+  test('lets Admin set the IDOSI id of a store, which then overrides the environment map', async () => {
+    await app.close();
+    repository = await MemoryWarehouseRepository.create({ bootstrapPassword: PASSWORD });
+    app = await createApi({
+      repository,
+      corsOrigin: 'http://localhost:5173',
+      idosiStoreIdMap: { DS_NVT: 'S01' },
+    });
+    const adminCookie = cookieOf(await login('admin'));
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const list = (cookie) =>
+      app.inject({ method: 'GET', url: '/api/v1/admin/idosi-store-codes', headers: { cookie } });
+    assert.equal((await list(storeCookie)).statusCode, 403);
+    const before = (await list(adminCookie)).json().data;
+    assert.deepEqual(
+      before.find((row) => row.storeCode === 'DS_NVT'),
+      {
+        storeId: MEMORY_SEED_IDS.nvtStore,
+        storeCode: 'DS_NVT',
+        storeName: before.find((row) => row.storeCode === 'DS_NVT').storeName,
+        idosiStoreCode: null,
+        effectiveIdosiStoreCode: 'S01',
+        source: 'ENVIRONMENT_MAP',
+      },
+    );
+    assert.equal(before.find((row) => row.storeCode === 'DS_BD').source, 'MISSING');
+
+    const set = (storeId, idosiStoreCode) =>
+      app.inject({
+        method: 'PUT',
+        url: `/api/v1/admin/idosi-store-codes/${storeId}`,
+        headers: { cookie: adminCookie },
+        payload: { idosiStoreCode, reason: 'Cửa hàng mới trên IDOSI' },
+      });
+    const saved = await set(MEMORY_SEED_IDS.bdStore, 'S02');
+    assert.equal(saved.statusCode, 200);
+    assert.equal(saved.json().data.source, 'STORE');
+    assert.equal(saved.json().data.effectiveIdosiStoreCode, 'S02');
+    const duplicate = await set(MEMORY_SEED_IDS.nvtStore, 'S02');
+    assert.equal(duplicate.statusCode, 409);
+    const cleared = await set(MEMORY_SEED_IDS.bdStore, null);
+    assert.equal(cleared.json().data.source, 'MISSING');
+  });
+
+  test('reports the allocation worker heartbeat to administrators only', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const denied = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/worker-status',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(denied.statusCode, 403);
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/worker-status',
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.headers['cache-control'], 'no-store');
+    const body = WorkerStatusResponseSchema.parse(response.json());
+    assert.equal(body.data.status, 'UNKNOWN');
+    assert.deepEqual(body.data.failingJobs, []);
   });
 
   async function login(username) {

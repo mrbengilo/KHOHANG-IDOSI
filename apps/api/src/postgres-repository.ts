@@ -15,6 +15,12 @@ import type {
   ReceiptReturnActionRequest,
   WarehouseInventoryQuery,
   WarehouseInventoryResponse,
+  WorkerStatus,
+  IdosiProductLink,
+  IdosiProductMatching,
+  SetIdosiProductLinkRequest,
+  SetIdosiStoreCodeRequest,
+  StoreNormalSalePending,
   OrderingContext,
   Account,
   AdminAuditLog,
@@ -166,6 +172,11 @@ import {
   declareStoreReceipt as declareDatabaseStoreReceipt,
   db,
   htkdAssignments,
+  loadWorkerHeartbeats,
+  loadIdosiProductMatching,
+  setIdosiProductLink as setDatabaseIdosiProductLink,
+  IdosiProductLinkValidationError,
+  listStoreNormalSalePending as listDatabaseStoreNormalSalePending,
   IdempotencyConflictError,
   IdempotencyInProgressError,
   finalizeStoreReceipt as finalizeDatabaseStoreReceipt,
@@ -309,16 +320,22 @@ import type {
   AccountCredentials,
   HtkdAssignmentsState,
   IdosiStatisticsTarget,
+  IdosiStoreCodeRecord,
   IdempotentResource,
   OrderStatistics,
   Page,
   RequestContext,
+  SessionActivity,
   SubmittedOrderRequest,
   WarehouseRepository,
 } from './repository.js';
 import { assertActiveRetailStore, canAccessStore, pagination, slicePage } from './repository.js';
 import { hashPassword, hashSessionToken } from './security.js';
-import { asiaHoChiMinhDateRange } from './time.js';
+import { asiaHoChiMinhDateRange, conversionRetirementDate } from './time.js';
+import { workerStatusDto } from './worker-status.js';
+
+/** lastSeenAt is refreshed at most this often per session. */
+const SESSION_LAST_SEEN_RESOLUTION_MS = 60_000;
 
 export class PostgresWarehouseRepository implements WarehouseRepository {
   public async listWarehouseInventory(
@@ -432,8 +449,39 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     }
     const credentials = await this.credentialsFromRow(row.account);
     const now = new Date();
+    // Every request authenticates; refreshing lastSeenAt at most once a minute keeps polling
+    // screens from turning each read into a write on the sessions table.
+    if (now.getTime() - row.session.lastSeenAt.getTime() < SESSION_LAST_SEEN_RESOLUTION_MS) {
+      return sessionDto(row.session, credentials);
+    }
     await db.update(sessions).set({ lastSeenAt: now }).where(eq(sessions.id, row.session.id));
     return sessionDto({ ...row.session, lastSeenAt: now }, credentials);
+  }
+
+  public async inspectSessions(
+    tokens: readonly string[],
+  ): Promise<ReadonlyMap<string, SessionActivity>> {
+    if (tokens.length === 0) return new Map();
+    const byHash = new Map(tokens.map((token) => [hashSessionToken(token), token] as const));
+    const rows = await db
+      .select({
+        tokenHash: sessions.tokenHash,
+        revokedAt: sessions.revokedAt,
+        expiresAt: sessions.expiresAt,
+        lastSeenAt: sessions.lastSeenAt,
+      })
+      .from(sessions)
+      .where(inArray(sessions.tokenHash, [...byHash.keys()]));
+    const now = Date.now();
+    return new Map(
+      rows.map((row) => [
+        byHash.get(row.tokenHash)!,
+        {
+          active: row.revokedAt === null && row.expiresAt.getTime() > now,
+          lastSeenAt: row.lastSeenAt,
+        },
+      ]),
+    );
   }
 
   public async revokeSession(token: string, reason: string): Promise<boolean> {
@@ -953,6 +1001,130 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     return { current, history };
   }
 
+  public async listIdosiStoreCodes(
+    actor: AuthenticatedPrincipal,
+  ): Promise<readonly IdosiStoreCodeRecord[]> {
+    requirePostgresAdmin(actor);
+    const rows = await db
+      .select({
+        storeId: stores.id,
+        storeCode: stores.code,
+        storeName: stores.name,
+        idosiStoreCode: stores.idosiStoreCode,
+      })
+      .from(stores)
+      .where(and(eq(stores.kind, 'retail'), eq(stores.isActive, true), isNull(stores.deletedAt)))
+      .orderBy(asc(stores.displayOrder), asc(stores.code));
+    return rows;
+  }
+
+  public async setIdosiStoreCode(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+    input: SetIdosiStoreCodeRequest,
+    context: RequestContext,
+  ): Promise<IdosiStoreCodeRecord> {
+    requirePostgresAdmin(actor);
+    try {
+      return await db.transaction(async (tx) => {
+        const [store] = await tx
+          .select()
+          .from(stores)
+          .where(and(eq(stores.id, storeId), isNull(stores.deletedAt)))
+          .for('update')
+          .limit(1);
+        if (!store) throw notFound('Không tìm thấy cửa hàng');
+        if (store.kind !== 'retail') {
+          throw conflict('Chỉ cửa hàng bán lẻ mới có dữ liệu trên IDOSI');
+        }
+        const [updated] = await tx
+          .update(stores)
+          .set({
+            idosiStoreCode: input.idosiStoreCode,
+            version: store.version + 1,
+            updatedAt: new Date(),
+          })
+          .where(eq(stores.id, store.id))
+          .returning();
+        if (!updated) throw new Error('Store IDOSI code update did not return a row');
+        await tx.insert(auditLogs).values({
+          ...auditValue(
+            actor,
+            context,
+            'STORE_IDOSI_CODE_CHANGED',
+            'store',
+            store.id,
+            { idosiStoreCode: store.idosiStoreCode },
+            { idosiStoreCode: updated.idosiStoreCode },
+          ),
+          metadata: { reason: input.reason },
+        });
+        return {
+          storeId: updated.id,
+          storeCode: updated.code,
+          storeName: updated.name,
+          idosiStoreCode: updated.idosiStoreCode,
+        };
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) throw conflict('Mã IDOSI này đã được gán cho cửa hàng khác');
+      throw error;
+    }
+  }
+
+  public async getIdosiProductMatching(
+    actor: AuthenticatedPrincipal,
+    period: string,
+  ): Promise<IdosiProductMatching> {
+    requirePostgresAdmin(actor);
+    const matching = await loadIdosiProductMatching(db, period);
+    return {
+      period: matching.period,
+      links: matching.links.map((link) => ({ ...link, createdAt: link.createdAt.toISOString() })),
+      unmatched: matching.unmatched.map((item) => ({
+        ...item,
+        candidateProductIds: [...item.candidateProductIds],
+      })),
+    };
+  }
+
+  public async setIdosiProductLink(
+    actor: AuthenticatedPrincipal,
+    idosiProductId: string,
+    input: SetIdosiProductLinkRequest,
+    context: RequestContext,
+  ): Promise<IdosiProductLink> {
+    requirePostgresAdmin(actor);
+    try {
+      const link = await setDatabaseIdosiProductLink(db, {
+        idosiProductId,
+        idosiProductName: input.idosiProductName,
+        productId: input.productId,
+        reason: input.reason,
+        actorUserId: actor.accountId,
+        requestId: context.requestId,
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+      });
+      return { ...link, createdAt: link.createdAt.toISOString() };
+    } catch (error) {
+      if (error instanceof IdosiProductLinkValidationError) {
+        throw new ApiError(
+          'VALIDATION_ERROR',
+          'Mặt hàng kho không tồn tại hoặc mã IDOSI không hợp lệ',
+          400,
+        );
+      }
+      throw error;
+    }
+  }
+
+  public async getAllocationWorkerStatus(actor: AuthenticatedPrincipal): Promise<WorkerStatus> {
+    requirePostgresAdmin(actor);
+    const heartbeat = (await loadWorkerHeartbeats(db)).find((row) => row.worker === 'allocation');
+    return workerStatusDto('allocation', heartbeat ?? null, new Date());
+  }
+
   public async updateOperationalSettings(
     actor: AuthenticatedPrincipal,
     input: UpdateOperationalSettingsRequest,
@@ -1018,6 +1190,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         name: stores.name,
         kind: stores.kind,
         isActive: stores.isActive,
+        idosiStoreCode: stores.idosiStoreCode,
       })
       .from(stores)
       .where(and(eq(stores.id, storeId), isNull(stores.deletedAt)))
@@ -1029,7 +1202,12 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     if (store.kind !== 'retail') {
       throw conflict('Đồng bộ doanh thu chỉ áp dụng cho cửa hàng bán lẻ');
     }
-    return { storeId: store.id, storeCode: store.code, storeName: store.name };
+    return {
+      storeId: store.id,
+      storeCode: store.code,
+      storeName: store.name,
+      idosiStoreCode: store.idosiStoreCode,
+    };
   }
 
   public async getIdosiStatisticsState(actor: AuthenticatedPrincipal, scope: IdosiStatisticsScope) {
@@ -1782,7 +1960,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         const [updated] = await tx
           .update(productConversions)
           .set({
-            effectiveTo: retirementDate(current.effectiveFrom, new Date()),
+            effectiveTo: conversionRetirementDate(current.effectiveFrom, new Date()),
             retiredAt: new Date(),
             retiredByUserId: actor.accountId,
             retirementReason: input.reason,
@@ -2196,6 +2374,8 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     if (query.status === 'SUBMITTED')
       conditions.push(inArray(orderRequests.status, ['draft', 'submitted']));
     if (query.status === 'CANCELLED') conditions.push(eq(orderRequests.status, 'cancelled'));
+    if (query.submittedFrom !== undefined)
+      conditions.push(gte(orderRequests.submittedAt, new Date(query.submittedFrom)));
     if (query.status === 'MERGED')
       conditions.push(
         inArray(orderRequests.status, ['merged', 'partially_allocated', 'allocated', 'waitlisted']),
@@ -2567,6 +2747,13 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     }
     if (query.status !== undefined) {
       conditions.push(eq(storeReceipts.status, databaseReceiptStatus(query.status)));
+    }
+    if (query.openOrCreatedFrom !== undefined) {
+      const recent = or(
+        ne(storeReceipts.status, databaseReceiptStatus('FINALIZED')),
+        gte(storeReceipts.createdAt, new Date(query.openOrCreatedFrom)),
+      );
+      if (recent) conditions.push(recent);
     }
 
     const where = and(...conditions);
@@ -3051,6 +3238,18 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       if (!resourceId) throw new Error('Idempotent store outbound review has no resource id');
       return { data: await this.storeOutboundDto(resourceId), replayed: result.replayed };
     });
+  }
+
+  public async listStoreNormalSalePending(
+    actor: AuthenticatedPrincipal,
+    storeId?: string,
+  ): Promise<readonly StoreNormalSalePending[]> {
+    if (storeId && !canAccessStore(actor, storeId)) throw forbidden();
+    const scope = await this.retailScopeStoreIds(actor);
+    return listDatabaseStoreNormalSalePending(
+      db,
+      storeId ? scope.filter((id) => id === storeId) : scope,
+    );
   }
 
   public async listStoreSortedStocks(
@@ -5656,9 +5855,4 @@ function safeVnd(value: bigint): number {
   const converted = Number(value);
   if (!Number.isSafeInteger(converted)) throw new Error('Revenue exceeds safe VND response range');
   return converted;
-}
-
-function retirementDate(effectiveFrom: string, now: Date): string {
-  const today = now.toISOString().slice(0, 10);
-  return today > effectiveFrom ? today : effectiveFrom;
 }

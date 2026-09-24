@@ -375,3 +375,51 @@
     transition: none;
   }
 }
+
+/* IDOSI product links: a product picker and its action stay on one line, wrap on phones. */
+.settings-link-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-link-actions input,
+.settings-link-actions select {
+  min-width: 0;
+  max-width: 260px;
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 0 10px;
+}
+
+.settings-link-details summary {
+  cursor: pointer;
+  color: var(--navy);
+  font-weight: 600;
+}
+
+.settings-link-details[open] summary {
+  margin-bottom: 10px;
+}
+
+@media (max-width: 640px) {
+  .settings-history-list li:has(.settings-link-actions) {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .settings-link-actions {
+    justify-content: stretch;
+  }
+
+  .settings-link-actions input,
+  .settings-link-actions select {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+}

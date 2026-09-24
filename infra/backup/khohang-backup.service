@@ -1,0 +1,15 @@
+[Unit]
+Description=KHOHANG-IDOSI daily verified database backup
+Documentation=https://github.com/mrbengilo/KHOHANG-IDOSI/blob/main/docs/deployment-khoidosi.io.vn.md
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/khohang-backup
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=idle
+StateDirectory=khohang-backup
+StateDirectoryMode=0700

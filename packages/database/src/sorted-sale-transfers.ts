@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, ne, or } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import {
@@ -52,22 +52,39 @@ export interface CancelSortedSaleTransferInput extends CommandContext {
   readonly reason: string;
 }
 
+/** Settled (received/cancelled) transfers shown as history; in-transit ones are never capped. */
+export const SORTED_SALE_TRANSFER_HISTORY_LIMIT = 500;
+
+/**
+ * Every in-transit transfer of the scope, however old (the destination still has to receive it
+ * or the source cancel it), plus the most recent settled ones as history, newest first.
+ */
 export async function listSortedSaleTransfers(
   database: Database,
   storeIds: readonly string[],
+  historyLimit = SORTED_SALE_TRANSFER_HISTORY_LIMIT,
 ): Promise<Transfer[]> {
   if (storeIds.length === 0) return [];
-  return database
-    .select()
-    .from(sortedSaleTransfers)
-    .where(
-      or(
-        inArray(sortedSaleTransfers.sourceStoreId, [...storeIds]),
-        inArray(sortedSaleTransfers.destinationStoreId, [...storeIds]),
-      ),
-    )
-    .orderBy(desc(sortedSaleTransfers.createdAt))
-    .limit(500);
+  const inScope = or(
+    inArray(sortedSaleTransfers.sourceStoreId, [...storeIds]),
+    inArray(sortedSaleTransfers.destinationStoreId, [...storeIds]),
+  );
+  const [open, settled] = await Promise.all([
+    database
+      .select()
+      .from(sortedSaleTransfers)
+      .where(and(inScope, eq(sortedSaleTransfers.status, 'in_transit'))),
+    database
+      .select()
+      .from(sortedSaleTransfers)
+      .where(and(inScope, ne(sortedSaleTransfers.status, 'in_transit')))
+      .orderBy(desc(sortedSaleTransfers.createdAt), desc(sortedSaleTransfers.id))
+      .limit(historyLimit),
+  ]);
+  return [...open, ...settled].sort(
+    (left, right) =>
+      right.createdAt.getTime() - left.createdAt.getTime() || right.id.localeCompare(left.id),
+  );
 }
 
 export async function getSortedSaleTransfer(

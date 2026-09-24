@@ -13,7 +13,15 @@ export interface AllocationWorkerOptions {
   readonly maxSessionsPerTick?: number;
   readonly logger?: WorkerLogger;
   readonly now?: () => Date;
+  /**
+   * How old the last operational tick may be before the process reports not ready. A tick whose
+   * jobs failed still counts: a broken session is a business alert, not a reason for Docker or a
+   * deployment to treat the process as dead (which would also block deploying the fix).
+   */
+  readonly readinessMaxAgeMs?: number;
 }
+
+const DEFAULT_READINESS_MAX_AGE_MS = 15 * 60 * 1_000;
 
 export class AllocationWorker {
   readonly #repository: AllocationJobRepository;
@@ -22,6 +30,7 @@ export class AllocationWorker {
   readonly #maxSessionsPerTick: number;
   readonly #logger: WorkerLogger | undefined;
   readonly #now: () => Date;
+  readonly #readinessMaxAgeMs: number;
   readonly #startedAt: string;
   #stopping = false;
   #running = false;
@@ -29,7 +38,9 @@ export class AllocationWorker {
   #lastTickStartedAt: string | null = null;
   #lastTickCompletedAt: string | null = null;
   #lastSuccessfulTickAt: string | null = null;
+  #lastOperationalTickAt: string | null = null;
   #lastError: string | null = null;
+  #failingJobs: readonly JobReport[] = [];
 
   public constructor(repository: AllocationJobRepository, options: AllocationWorkerOptions) {
     assertNonNegativeInteger(options.catchUpDays, 'catchUpDays');
@@ -41,6 +52,8 @@ export class AllocationWorker {
     this.#timeZone = options.timeZone;
     this.#logger = options.logger;
     this.#now = options.now ?? (() => new Date());
+    this.#readinessMaxAgeMs = options.readinessMaxAgeMs ?? DEFAULT_READINESS_MAX_AGE_MS;
+    assertPositiveInteger(this.#readinessMaxAgeMs, 'readinessMaxAgeMs');
     this.#startedAt = this.#now().toISOString();
   }
 
@@ -52,12 +65,31 @@ export class AllocationWorker {
       lastTickStartedAt: this.#lastTickStartedAt,
       lastTickCompletedAt: this.#lastTickCompletedAt,
       lastSuccessfulTickAt: this.#lastSuccessfulTickAt,
+      lastOperationalTickAt: this.#lastOperationalTickAt,
       lastError: this.#lastError,
+      failingJobs: this.#failingJobs,
     };
   }
 
-  public isReady(): boolean {
-    return !this.#stopping && this.#lastSuccessfulTickAt !== null;
+  /** The polling loop is alive: it recently listed due sessions and attempted their jobs. */
+  public isReady(now = this.#now()): boolean {
+    if (this.#stopping) return false;
+    const oldest = now.getTime() - this.#readinessMaxAgeMs;
+    if (this.#lastOperationalTickAt !== null && Date.parse(this.#lastOperationalTickAt) >= oldest) {
+      return true;
+    }
+    // A long first tick (or a long job) is still progress, as long as it started recently.
+    return (
+      this.#running &&
+      this.#lastOperationalTickAt !== null &&
+      this.#lastTickStartedAt !== null &&
+      Date.parse(this.#lastTickStartedAt) >= oldest
+    );
+  }
+
+  /** Some scheduled job failed or was blocked in the last tick; stores may be waiting on it. */
+  public isDegraded(): boolean {
+    return this.#failingJobs.length > 0;
   }
 
   public async ping(): Promise<void> {
@@ -122,6 +154,9 @@ export class AllocationWorker {
         }
       }
 
+      // Every due session was attempted; one broken session never stops the others.
+      this.#lastOperationalTickAt = this.#now().toISOString();
+      this.#failingJobs = jobs.filter((job) => job.status === 'failed' || job.status === 'blocked');
       const failed = jobs.find((job) => job.status === 'failed');
       if (failed) throw new Error(failed.error ?? `Job ${failed.kind} failed.`);
 
@@ -136,6 +171,23 @@ export class AllocationWorker {
       throw error;
     } finally {
       this.#running = false;
+      await this.#recordHeartbeat();
+    }
+  }
+
+  async #recordHeartbeat(): Promise<void> {
+    if (!this.#repository.recordHeartbeat) return;
+    try {
+      await this.#repository.recordHeartbeat({
+        lastTickStartedAt: this.#lastTickStartedAt,
+        lastTickCompletedAt: this.#lastTickCompletedAt,
+        lastSuccessfulTickAt: this.#lastSuccessfulTickAt,
+        lastError: this.#lastError,
+        failingJobs: this.#failingJobs,
+        recordedAt: this.#now().toISOString(),
+      });
+    } catch (error) {
+      this.#logger?.warn({ error: errorMessage(error) }, 'worker heartbeat could not be recorded');
     }
   }
 

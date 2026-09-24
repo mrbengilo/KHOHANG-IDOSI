@@ -5,6 +5,14 @@ import { Button } from '../../components/Button';
 import { StatCard } from '../../components/StatCard';
 import { businessDate } from '../../lib/business-time';
 import { listAccessibleOrderRequests, listCatalog, listStoreReceipts } from '../../lib/api';
+
+/**
+ * First instant that can still belong to `period` (YYYY-MM) in Vietnam time. Loading from here
+ * keeps the overview to one month of orders and receipts instead of the whole history.
+ */
+export function periodStartInstant(period: string): string {
+  return new Date(`${period}-01T00:00:00+07:00`).toISOString();
+}
 import type { DashboardScope } from './dashboardApi';
 
 interface ProductTotal {
@@ -81,14 +89,15 @@ export function WholesaleOverview({
   );
   const query = useQuery({
     queryFn: async () => {
+      const from = periodStartInstant(period);
       const [orders, receipts, products] = await Promise.all([
-        listAccessibleOrderRequests(),
-        listStoreReceipts(),
+        listAccessibleOrderRequests(from),
+        listStoreReceipts({ openOrCreatedFrom: from }),
         listCatalog(),
       ]);
       return { orders, receipts, products };
     },
-    queryKey: ['wholesale-overview', accountId],
+    queryKey: ['wholesale-overview', accountId, period],
     retry: false,
   });
   if (query.isPending)

@@ -232,6 +232,8 @@ export const ListStoreOrderRequestsQuerySchema = PaginationQuerySchema.extend({
   sessionId: EntityIdSchema.optional(),
   storeId: EntityIdSchema.optional(),
   status: StoreOrderRequestStatusSchema.optional(),
+  /** Only requests submitted at or after this instant; list screens pass a recent window. */
+  submittedFrom: IsoDateTimeSchema.optional(),
 }).strict();
 export type ListStoreOrderRequestsQuery = z.infer<typeof ListStoreOrderRequestsQuerySchema>;
 

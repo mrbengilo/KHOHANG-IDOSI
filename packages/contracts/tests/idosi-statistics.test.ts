@@ -3,8 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   fetchIdosiOrderStatistics,
   IdosiGatewayError,
+  idosiFetchStore,
   IdosiOrderStatisticsPayloadSchema,
   parseIdosiStoreIdMap,
+  resolveIdosiStoreCode,
   SyncIdosiStatisticsRequestSchema,
 } from '../src/index.js';
 
@@ -262,5 +264,34 @@ describe('IDOSI statistics contracts and gateway', () => {
         fetch: async () => new Response(JSON.stringify(payload)),
       }),
     ).rejects.toMatchObject({ code: 'IDOSI_RESPONSE_TOO_LARGE' });
+  });
+});
+
+describe('IDOSI store id resolution', () => {
+  it('prefers the code set in the app, then the environment map, then the local code', () => {
+    expect(
+      resolveIdosiStoreCode({ storeCode: 'DS_NVT', idosiStoreCode: 'S09' }, { DS_NVT: 'S01' }),
+    ).toEqual({ code: 'S09', source: 'STORE' });
+    expect(
+      resolveIdosiStoreCode({ storeCode: 'DS_NVT', idosiStoreCode: null }, { DS_NVT: 'S01' }),
+    ).toEqual({ code: 'S01', source: 'ENVIRONMENT_MAP' });
+    expect(resolveIdosiStoreCode({ storeCode: 'DS_NEW' }, { DS_NVT: 'S01' })).toEqual({
+      code: null,
+      source: 'MISSING',
+    });
+    expect(resolveIdosiStoreCode({ storeCode: 'DS_NVT' })).toEqual({
+      code: 'DS_NVT',
+      source: 'STORE_CODE',
+    });
+  });
+
+  it('sends an app-set code without the environment map', () => {
+    expect(
+      idosiFetchStore({ storeCode: 'DS_NEW', idosiStoreCode: 'S15' }, { DS_NVT: 'S01' }),
+    ).toEqual({ storeCode: 'S15' });
+    expect(idosiFetchStore({ storeCode: 'DS_NVT' }, { DS_NVT: 'S01' })).toEqual({
+      storeCode: 'DS_NVT',
+      storeIdMap: { DS_NVT: 'S01' },
+    });
   });
 });

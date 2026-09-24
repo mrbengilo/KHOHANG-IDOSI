@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto';
 
 import {
   fetchIdosiOrderStatistics,
+  idosiFetchStore,
   IdosiGatewayError,
   type IdosiFetch,
   type IdosiOrderStatisticsPayload,
 } from '@idosi/contracts';
 import {
   listDueIdosiStatisticsTargets,
+  listIdosiPeriodClosingTargets,
   recordIdosiStatisticsFailure,
   recordIdosiStatisticsSuccess,
   type Database,
@@ -18,6 +20,13 @@ import type { WorkerLogger } from './types.js';
 
 export interface ScheduledIdosiSyncRepository {
   listDue(period: string, now: Date, limit: number): Promise<readonly DueIdosiStatisticsTarget[]>;
+  /** Stores whose closed `period` has had no successful sync since `settledAfter`. */
+  listClosing(
+    period: string,
+    settledAfter: Date,
+    now: Date,
+    limit: number,
+  ): Promise<readonly DueIdosiStatisticsTarget[]>;
   recordSuccess(
     target: DueIdosiStatisticsTarget,
     payload: IdosiOrderStatisticsPayload,
@@ -93,6 +102,19 @@ export class IdosiStatisticsSyncWorker {
       if (remaining <= 0) break;
       targets.push(...(await this.#repository.listDue(candidate, now, remaining)));
     }
+    // After the grace days, a store whose previous month never synced since they ended (IDOSI
+    // was down, or the store was unreachable) keeps being retried until one sync succeeds.
+    const closingRoom = this.#options.maxStoresPerTick - targets.length;
+    if (periods.length === 1 && closingRoom > 0) {
+      targets.push(
+        ...(await this.#repository.listClosing(
+          previousBusinessMonth(period),
+          closingSyncSettledAfter(period, this.#options.timeZone),
+          now,
+          closingRoom,
+        )),
+      );
+    }
     let succeeded = 0;
     let failed = 0;
     for (const target of targets) {
@@ -102,8 +124,7 @@ export class IdosiStatisticsSyncWorker {
         const payload = await fetchIdosiOrderStatistics({
           endpoint: this.#options.endpoint,
           secret: this.#options.secret,
-          storeCode: target.storeCode,
-          ...(this.#options.storeIdMap ? { storeIdMap: this.#options.storeIdMap } : {}),
+          ...idosiFetchStore(target, this.#options.storeIdMap),
           scope: {
             period: target.scope.period,
             date: target.scope.date,
@@ -151,6 +172,10 @@ export class PostgresScheduledIdosiSyncRepository implements ScheduledIdosiSyncR
 
   public listDue(period: string, now: Date, limit: number) {
     return listDueIdosiStatisticsTargets(this.database, period, now, limit);
+  }
+
+  public listClosing(period: string, settledAfter: Date, now: Date, limit: number) {
+    return listIdosiPeriodClosingTargets(this.database, period, settledAfter, now, limit);
   }
 
   public recordSuccess(
@@ -249,9 +274,51 @@ export function idosiSyncPeriods(instant: Date, timeZone: string): readonly stri
       .find((part) => part.type === 'day')?.value,
   );
   if (!Number.isSafeInteger(day) || day > PREVIOUS_MONTH_SYNC_DAYS) return [current];
-  const [year, month] = current.split('-').map(Number) as [number, number];
-  const previous = month === 1 ? `${year - 1}-12` : `${year}-${String(month - 1).padStart(2, '0')}`;
-  return [current, previous];
+  return [current, previousBusinessMonth(current)];
+}
+
+export function previousBusinessMonth(period: string): string {
+  const [year, month] = period.split('-').map(Number) as [number, number];
+  return month === 1 ? `${year - 1}-12` : `${year}-${String(month - 1).padStart(2, '0')}`;
+}
+
+/**
+ * Midnight after the grace days of `period` (e.g. 2026-09-04 00:00 in Vietnam for 2026-09): a
+ * previous-month sync completed from then on reflects the month after it closed.
+ */
+export function closingSyncSettledAfter(period: string, timeZone: string): Date {
+  const [year, month] = period.split('-').map(Number) as [number, number];
+  return startOfBusinessDay(year, month, PREVIOUS_MONTH_SYNC_DAYS + 1, timeZone);
+}
+
+/** The instant a calendar day starts in `timeZone` (exact for zones without mid-day shifts). */
+export function startOfBusinessDay(
+  year: number,
+  month: number,
+  day: number,
+  timeZone: string,
+): Date {
+  const utcGuess = Date.UTC(year, month - 1, day);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(new Date(utcGuess));
+  const value = (type: string) => Number(parts.find((part) => part.type === type)?.value);
+  const zonedAsUtc = Date.UTC(
+    value('year'),
+    value('month') - 1,
+    value('day'),
+    value('hour'),
+    value('minute'),
+    value('second'),
+  );
+  return new Date(utcGuess - (zonedAsUtc - utcGuess));
 }
 
 export function businessMonthAt(instant: Date, timeZone: string): string {

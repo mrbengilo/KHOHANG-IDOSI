@@ -10,6 +10,12 @@ import type {
   ReceiptReturn,
   WarehouseInventoryQuery,
   WarehouseInventoryResponse,
+  WorkerStatus,
+  IdosiProductLink,
+  IdosiProductMatching,
+  SetIdosiProductLinkRequest,
+  SetIdosiStoreCodeRequest,
+  StoreNormalSalePending,
   Account,
   AdminAuditLog,
   AllocationResult,
@@ -140,17 +146,20 @@ import {
 import type { MonthlyReportScope } from '@idosi/database';
 
 import { ApiError, conflict, forbidden, notFound, unauthenticated } from './errors.js';
+import { workerStatusDto } from './worker-status.js';
 import { sanitizeAuditObject } from './audit-sanitization.js';
 import { monthlyOperationalReportDto } from './monthly-report.js';
-import { asiaHoChiMinhDateRange } from './time.js';
+import { asiaHoChiMinhDateRange, conversionRetirementDate } from './time.js';
 import type {
   AccountCredentials,
   HtkdAssignmentsState,
   IdosiStatisticsTarget,
+  IdosiStoreCodeRecord,
   OrderStatistics,
   IdempotentResource,
   Page,
   RequestContext,
+  SessionActivity,
   SubmittedOrderRequest,
   WarehouseRepository,
 } from './repository.js';
@@ -334,6 +343,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly htkdAssignments = new Map<string, HtkdAssignment>();
   private readonly sessions = new Map<string, StoredSession>();
   private readonly stores = new Map<string, Store>();
+  /** IDOSI ids set on stores; kept beside Store because the Store contract has no such field. */
+  private readonly idosiStoreCodes = new Map<string, string>();
   private readonly orderSessions = new Map<string, OrderSession>();
   private readonly products = new Map<string, Product>();
   private readonly allocationResults = new Map<string, AllocationResult>();
@@ -390,7 +401,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   >();
   private readonly saleSyncProgress = new Map<
     string,
-    { baseline: bigint; observed: bigint; applied: bigint }
+    { baseline: bigint; observed: bigint; applied: bigint; pending?: boolean }
   >();
   private readonly storeTransfers = new Map<string, StoreTransfer>();
   private readonly transferMutationIdempotency = new Map<
@@ -477,6 +488,22 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     }
     stored.lastSeenAt = now;
     return this.toSession(stored, account);
+  }
+
+  public async inspectSessions(
+    tokens: readonly string[],
+  ): Promise<ReadonlyMap<string, SessionActivity>> {
+    const now = this.now();
+    const activity = new Map<string, SessionActivity>();
+    for (const token of tokens) {
+      const stored = this.sessions.get(hashSessionToken(token));
+      if (!stored) continue;
+      activity.set(token, {
+        active: stored.revokedAt === null && stored.expiresAt > now,
+        lastSeenAt: stored.lastSeenAt,
+      });
+    }
+    return activity;
   }
 
   public async revokeSession(token: string, _reason: string): Promise<boolean> {
@@ -802,6 +829,85 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     };
   }
 
+  public async listIdosiStoreCodes(
+    actor: AuthenticatedPrincipal,
+  ): Promise<readonly IdosiStoreCodeRecord[]> {
+    requireMemoryAdmin(actor);
+    return [...this.stores.values()]
+      .filter((store) => store.kind === 'RETAIL' && store.status === 'ACTIVE')
+      .sort((left, right) => left.code.localeCompare(right.code))
+      .map((store) => ({
+        storeId: store.id,
+        storeCode: store.code,
+        storeName: store.name,
+        idosiStoreCode: this.idosiStoreCodes.get(store.id) ?? null,
+      }));
+  }
+
+  public async setIdosiStoreCode(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+    input: SetIdosiStoreCodeRequest,
+    context: RequestContext,
+  ): Promise<IdosiStoreCodeRecord> {
+    requireMemoryAdmin(actor);
+    const store = this.stores.get(storeId);
+    if (!store) throw notFound('Không tìm thấy cửa hàng');
+    if (store.kind !== 'RETAIL') throw conflict('Chỉ cửa hàng bán lẻ mới có dữ liệu trên IDOSI');
+    const takenBy = [...this.idosiStoreCodes].find(
+      ([id, code]) => id !== storeId && code === input.idosiStoreCode,
+    );
+    if (takenBy) throw conflict('Mã IDOSI này đã được gán cho cửa hàng khác');
+    const before = this.idosiStoreCodes.get(storeId) ?? null;
+    if (input.idosiStoreCode === null) this.idosiStoreCodes.delete(storeId);
+    else this.idosiStoreCodes.set(storeId, input.idosiStoreCode);
+    this.appendAudit(
+      actor,
+      context,
+      'STORE_IDOSI_CODE_CHANGED',
+      'store',
+      storeId,
+      { idosiStoreCode: before },
+      { idosiStoreCode: input.idosiStoreCode },
+      { reason: input.reason },
+    );
+    return {
+      storeId,
+      storeCode: store.code,
+      storeName: store.name,
+      idosiStoreCode: input.idosiStoreCode,
+    };
+  }
+
+  public async getIdosiProductMatching(
+    actor: AuthenticatedPrincipal,
+    period: string,
+  ): Promise<IdosiProductMatching> {
+    requireMemoryAdmin(actor);
+    // The in-memory demo matches IDOSI lines by name and keeps no links.
+    return { period, links: [], unmatched: [] };
+  }
+
+  public async setIdosiProductLink(
+    actor: AuthenticatedPrincipal,
+    _idosiProductId: string,
+    _input: SetIdosiProductLinkRequest,
+    _context: RequestContext,
+  ): Promise<IdosiProductLink> {
+    requireMemoryAdmin(actor);
+    throw new ApiError(
+      'INVALID_STATE_TRANSITION',
+      'Bản chạy thử không lưu ghép mặt hàng IDOSI',
+      409,
+    );
+  }
+
+  public async getAllocationWorkerStatus(actor: AuthenticatedPrincipal): Promise<WorkerStatus> {
+    requireMemoryAdmin(actor);
+    // The in-memory API has no worker process.
+    return workerStatusDto('allocation', null, new Date());
+  }
+
   public async getOperationalSettings(
     actor: AuthenticatedPrincipal,
     historyLimit: number,
@@ -871,7 +977,12 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (store.kind !== 'RETAIL') {
       throw conflict('Đồng bộ doanh thu chỉ áp dụng cho cửa hàng bán lẻ');
     }
-    return { storeId: store.id, storeCode: store.code, storeName: store.name };
+    return {
+      storeId: store.id,
+      storeCode: store.code,
+      storeName: store.name,
+      idosiStoreCode: this.idosiStoreCodes.get(store.id) ?? null,
+    };
   }
 
   public async getIdosiStatisticsState(actor: AuthenticatedPrincipal, scope: IdosiStatisticsScope) {
@@ -1883,7 +1994,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (current.retiredAt !== null) return current;
     const retired: ProductConversion = {
       ...current,
-      effectiveTo: retirementDate(current.effectiveFrom, this.now()),
+      effectiveTo: conversionRetirementDate(current.effectiveFrom, this.now()),
       retiredAt: this.now().toISOString(),
       retiredByAccountId: actor.accountId,
       retirementReason: input.reason,
@@ -2158,6 +2269,11 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       .filter((request) => query.storeId === undefined || request.storeId === query.storeId)
       .filter((request) => query.sessionId === undefined || request.sessionId === query.sessionId)
       .filter((request) => query.status === undefined || request.status === query.status)
+      .filter(
+        (request) =>
+          query.submittedFrom === undefined ||
+          Date.parse(request.submittedAt) >= Date.parse(query.submittedFrom),
+      )
       .sort((left, right) => right.submittedAt.localeCompare(left.submittedAt));
     return {
       data: slicePage(values, query.page, query.pageSize),
@@ -2592,6 +2708,12 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
           receipt.outboundRequestId === query.outboundRequestId,
       )
       .filter((receipt) => query.status === undefined || receipt.status === query.status)
+      .filter(
+        (receipt) =>
+          query.openOrCreatedFrom === undefined ||
+          receipt.status !== 'FINALIZED' ||
+          Date.parse(receipt.createdAt) >= Date.parse(query.openOrCreatedFrom),
+      )
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     return {
       data: slicePage(values, query.page, query.pageSize),
@@ -3140,6 +3262,15 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     return { data: structuredClone(updated), replayed: false };
   }
 
+  public async listStoreNormalSalePending(
+    actor: AuthenticatedPrincipal,
+    storeId?: string,
+  ): Promise<readonly StoreNormalSalePending[]> {
+    this.assertRequestedStoreScope(actor, storeId);
+    // The in-memory API has no IDOSI regular-price sync.
+    return [];
+  }
+
   public async listStoreSortedStocks(
     actor: AuthenticatedPrincipal,
     storeId?: string,
@@ -3400,21 +3531,19 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const snapshot = this.idosiStatisticsSnapshots.get(
       memoryIdosiScopeKey({ storeId, period, date: null, shiftId: null, paymentMethod: null }),
     );
-    if (!snapshot)
-      throw new ApiError(
-        'VALIDATION_ERROR',
-        'Cần đồng bộ IDOSI tháng hiện tại trước khi lưu Sale lần đầu.',
-        400,
-      );
     const name = this.products.get(productId)?.name;
     if (!name) throw notFound('Không tìm thấy mặt hàng');
     for (const type of ['sale_kg', 'sale_piece'] as const) {
-      const baseline = idosiProductSaleGrams(snapshot.payload, name, type);
-      if (baseline === null)
-        throw new ApiError('VALIDATION_ERROR', 'IDOSI thiếu định mức kg cho Sale theo cái.', 400);
+      // Same rule as PostgreSQL: without a usable figure the next sync sets the baseline.
+      const baseline = snapshot ? idosiProductSaleGrams(snapshot.payload, name, type) : null;
       const key = `${storeId}:${productId}:${period}:${type}`;
       if (!this.saleSyncProgress.has(key))
-        this.saleSyncProgress.set(key, { baseline, observed: baseline, applied: 0n });
+        this.saleSyncProgress.set(key, {
+          baseline: baseline ?? 0n,
+          observed: baseline ?? 0n,
+          applied: 0n,
+          ...(baseline === null ? { pending: true } : {}),
+        });
     }
   }
 
@@ -3444,7 +3573,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         const key = `${storeId}:${productId}:${period}:${type}`;
         const previous = this.saleSyncProgress.get(key);
         this.saleSyncProgress.set(key, {
-          baseline: previous?.baseline ?? 0n,
+          baseline: previous?.pending ? observed : (previous?.baseline ?? 0n),
           observed,
           applied: previous?.applied ?? 0n,
         });
@@ -5479,11 +5608,6 @@ function assertMemorySyncTimes(startedAt: Date, completedAt: Date): void {
 
 function boundedMemorySyncText(value: string, maximum: number, fallback: string): string {
   return (value.trim() || fallback).slice(0, maximum);
-}
-
-function retirementDate(effectiveFrom: string, now: Date): string {
-  const today = now.toISOString().slice(0, 10);
-  return today > effectiveFrom ? today : effectiveFrom;
 }
 
 function validateMemoryDeclaration(

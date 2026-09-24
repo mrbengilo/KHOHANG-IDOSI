@@ -38,6 +38,7 @@ import { listStoreReceiptSources } from '../features/receipts/receiptSourceApi';
 import '../features/receipts/receipt-source.css';
 import {
   ApiClientError,
+  daysAgo,
   declareStoreReceipt,
   finalizeStoreReceipt,
   getStoreReceipt,
@@ -50,6 +51,9 @@ import {
 } from '../lib/api';
 import { useSession } from '../lib/auth';
 import { formatKg, formatVnd } from '../lib/format';
+
+/** Finalized receipts shown in the list; older ones are in the monthly report. */
+const RECEIPT_HISTORY_DAYS = 90;
 
 const receiptStatusCopy: Record<
   ReceiptStatus,
@@ -149,6 +153,8 @@ function ProductionReceivePage({ role }: AppOutletContext) {
     enabled: role !== 'WHOLESALE' || Boolean(receivingStoreId),
     queryFn: () =>
       listStoreReceipts({
+        // Receipts in progress are always listed; finalized ones only for a recent window.
+        openOrCreatedFrom: daysAgo(RECEIPT_HISTORY_DAYS),
         ...(statusFilter === 'ALL' ? {} : { status: statusFilter }),
         ...(role === 'WHOLESALE' && receivingStoreId ? { storeId: receivingStoreId } : {}),
         ...(role === 'HTKD' || role === 'ADMIN'
@@ -388,7 +394,7 @@ function ProductionReceivePage({ role }: AppOutletContext) {
         </label>
         <div className="filter-card__summary">
           <strong>{receipts.length}</strong>
-          <span>phiếu trong phạm vi</span>
+          <span>phiếu trong phạm vi (đã chốt: {RECEIPT_HISTORY_DAYS} ngày gần nhất)</span>
         </div>
       </section>
 

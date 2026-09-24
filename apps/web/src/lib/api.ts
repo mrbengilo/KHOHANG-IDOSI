@@ -150,6 +150,32 @@ function paginatedQuery(filters: URLSearchParams, page: number): string {
   return query.toString();
 }
 
+/** At most this many page requests of one list run at once (the API has 20 DB connections). */
+export const PAGE_FETCH_CONCURRENCY = 3;
+
+/** Runs `task` for each index with at most `limit` in flight; results keep index order. */
+export async function mapWithConcurrency<T>(
+  count: number,
+  limit: number,
+  task: (index: number) => Promise<T>,
+): Promise<T[]> {
+  const results = new Array<T>(count);
+  let next = 0;
+  const worker = async () => {
+    while (next < count) {
+      const index = next;
+      next += 1;
+      results[index] = await task(index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, count) }, worker));
+  return results;
+}
+
+/**
+ * Every page of a list. Callers must bound the list with a filter (date window, status, store):
+ * this only keeps an unexpectedly long list from flooding the API with parallel requests.
+ */
 export async function listAllPages<T>(
   path: string,
   filters: URLSearchParams,
@@ -157,12 +183,17 @@ export async function listAllPages<T>(
 ): Promise<T[]> {
   const first = parse(await request(`${path}?${paginatedQuery(filters, 1)}`));
   if (first.pagination.totalPages <= 1) return first.data;
-  const remaining = await Promise.all(
-    Array.from({ length: first.pagination.totalPages - 1 }, async (_, index) =>
-      parse(await request(`${path}?${paginatedQuery(filters, index + 2)}`)),
-    ),
+  const remaining = await mapWithConcurrency(
+    first.pagination.totalPages - 1,
+    PAGE_FETCH_CONCURRENCY,
+    async (index) => parse(await request(`${path}?${paginatedQuery(filters, index + 2)}`)),
   );
   return [first, ...remaining].flatMap((page) => page.data);
+}
+
+/** ISO instant `days` days before `now`, for the recent-history windows of list screens. */
+export function daysAgo(days: number, now = new Date()): string {
+  return new Date(now.getTime() - days * 24 * 60 * 60 * 1_000).toISOString();
 }
 
 export async function getSession(): Promise<Session | null> {
@@ -340,9 +371,12 @@ export async function listOpenOrderSessions(): Promise<OrderSession[]> {
   );
 }
 
-export async function listOrderSessions(): Promise<OrderSession[]> {
-  return listAllPages('/order-sessions', new URLSearchParams(), (payload) =>
-    ListOrderSessionsResponseSchema.parse(payload),
+/** Order sessions, optionally only those whose business date is on or after `dateFrom`. */
+export async function listOrderSessions(dateFrom?: string): Promise<OrderSession[]> {
+  return listAllPages(
+    '/order-sessions',
+    new URLSearchParams(dateFrom ? { dateFrom } : {}),
+    (payload) => ListOrderSessionsResponseSchema.parse(payload),
   );
 }
 
@@ -443,16 +477,23 @@ export async function listStoreOrderRequests(
   return ListStoreOrderRequestsResponseSchema.parse(payload).data;
 }
 
-/** Every order request the account may see, across sessions; the server applies the scope. */
-export async function listAccessibleOrderRequests(): Promise<StoreOrderRequest[]> {
-  return listAllPages('/order-requests', new URLSearchParams(), (payload) =>
+/** Order requests the account may see, submitted since `submittedFrom`; the server scopes them. */
+export async function listAccessibleOrderRequests(
+  submittedFrom: string,
+): Promise<StoreOrderRequest[]> {
+  return listAllPages('/order-requests', new URLSearchParams({ submittedFrom }), (payload) =>
     ListStoreOrderRequestsResponseSchema.parse(payload),
   );
 }
 
-export async function listStoreOrderHistory(storeId: string): Promise<StoreOrderRequest[]> {
-  return listAllPages('/order-requests', new URLSearchParams({ storeId }), (payload) =>
-    ListStoreOrderRequestsResponseSchema.parse(payload),
+export async function listStoreOrderHistory(
+  storeId: string,
+  submittedFrom: string,
+): Promise<StoreOrderRequest[]> {
+  return listAllPages(
+    '/order-requests',
+    new URLSearchParams({ storeId, submittedFrom }),
+    (payload) => ListStoreOrderRequestsResponseSchema.parse(payload),
   );
 }
 
@@ -562,12 +603,15 @@ export async function respondPriorityOffer(
 interface ReceiptFilters {
   readonly status?: ReceiptStatus;
   readonly storeId?: string;
+  /** Finalized receipts older than this are left out; open receipts are always listed. */
+  readonly openOrCreatedFrom?: string;
 }
 
 export async function listStoreReceipts(filters: ReceiptFilters = {}): Promise<Receipt[]> {
   const query = new URLSearchParams();
   if (filters.status) query.set('status', filters.status);
   if (filters.storeId) query.set('storeId', filters.storeId);
+  if (filters.openOrCreatedFrom) query.set('openOrCreatedFrom', filters.openOrCreatedFrom);
   return listAllPages('/store-receipts', query, (payload) =>
     ListReceiptsResponseSchema.parse(payload),
   );

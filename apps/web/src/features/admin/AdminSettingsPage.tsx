@@ -13,6 +13,8 @@ import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/PageHeader';
 import { AdminAccess } from './AdminAccess';
+import { IdosiProductLinksPanel } from './IdosiProductLinksPanel';
+import { IdosiStoreCodesPanel } from './IdosiStoreCodesPanel';
 import {
   AdminApiError,
   adminErrorMessage,
@@ -146,6 +148,8 @@ function AdminSettingsContent() {
           overview={settingsQuery.data}
         />
       ) : null}
+      <IdosiStoreCodesPanel />
+      <IdosiProductLinksPanel />
     </>
   );
 }

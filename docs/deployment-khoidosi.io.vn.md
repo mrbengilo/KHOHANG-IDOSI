@@ -176,8 +176,51 @@ tiếp; tạm dừng watcher nếu cần giữ bản khác.
 
 Sau khi deploy thành công, `deploy.sh` giữ ảnh của năm release gần nhất và bản ngay trước, xóa ảnh
 ứng dụng cũ hơn cùng build cache quá bảy ngày, và gỡ checkout cũ được tạo từ mirror. Checkout tạo
-trước khi có watcher được giữ nguyên để người vận hành tự dọn. Script không bao giờ xóa backup,
-volume hoặc file môi trường.
+trước khi có watcher được giữ nguyên để người vận hành tự dọn. Script không bao giờ xóa volume
+hoặc file môi trường; backup chỉ được dọn theo chính sách giữ bản ở mục dưới.
+
+## Migration phải tương thích ngược
+
+`deploy.sh` chạy migration khi bản cũ vẫn đang phục vụ. Nếu bước chuyển bản lỗi, nó tự rollback về
+image cũ nhưng **giữ nguyên database đã migrate** (`--confirm-forward-compatible-db`). Vì vậy mọi
+migration phải là "expand": bản cũ vẫn chạy được trên schema mới. Muốn xóa hoặc đổi tên bảng/cột, đổi
+kiểu, thêm cột `NOT NULL` không có `DEFAULT` hay bắt cột thành bắt buộc thì phải tách thành hai
+release. Release 1 thêm cấu trúc mới và code đọc/ghi cả hai. Release 2 là bước "contract", gỡ cấu
+trúc cũ khi không còn code nào dùng. Migration của bước contract phải có dòng
+`-- migration-safety: contract <lý do>`.
+
+CI chạy `node infra/scripts/check-migration-safety.mjs`, kiểm tra mọi migration từ `0027` trở đi,
+và chặn merge nếu vi phạm.
+
+## Backup định kỳ và giữ bản
+
+Mỗi lần deploy đều backup trước khi migrate, nhưng tuần không có merge thì không có deploy. Vì vậy
+`install.sh` (kể cả `--refresh` mà mỗi lần deploy tự chạy) cài thêm `khohang-backup.timer`: 02:30 giờ
+Việt Nam mỗi ngày, `Persistent=true` nên VPS tắt lúc 02:30 sẽ backup ngay khi chạy lại. Job:
+
+1. Chờ khóa deploy (`/run/lock/khohang-idosi-deploy.lock`), không chạy chồng lúc deploy/migrate.
+2. Gọi `backup-db.sh` của release đang chạy: dump custom format, `pg_restore --list`, checksum.
+3. Chạy `prune-backups.sh`: giữ 3 bản mới nhất, bản mới nhất của mỗi ngày trong 14 ngày gần nhất và
+   của mỗi tuần ISO trong 8 tuần gần nhất. Chỉ xóa file đúng mẫu `idosi-YYYYMMDDTHHMMSSZ.dump` và
+   checksum đi kèm. `deploy.sh` cũng chạy bước này sau backup của nó để ổ đĩa không đầy dần.
+4. Sao chép bản mới ra ngoài VPS nếu đã cấu hình.
+5. Ghi trạng thái vào `/var/lib/khohang-backup/status` (`state=succeeded|failed`, tên bản, đích
+   ngoài VPS).
+
+Tùy chỉnh trong `/etc/khohang-idosi/backup.env` (chmod 600, không commit):
+
+```bash
+BACKUP_KEEP_DAILY=14
+BACKUP_KEEP_WEEKLY=8
+BACKUP_KEEP_LATEST=3
+# Chọn một hoặc cả hai đích ngoài VPS. Không đặt thì status báo offsite=none.
+BACKUP_OFFSITE_RCLONE_REMOTE=gdrive:khohang-idosi-backups   # cần `rclone config` cho root
+BACKUP_OFFSITE_RSYNC_TARGET=backup@backup-host:/srv/khohang  # cần SSH key của root
+```
+
+Kiểm tra: `systemctl list-timers khohang-backup.timer`, `cat /var/lib/khohang-backup/status`,
+chạy thử ngay `sudo systemctl start khohang-backup.service`. Định kỳ thử khôi phục một bản vào
+database tạm bằng `restore-db.sh` (xem mục Rollback).
 
 ## Build và triển khai
 

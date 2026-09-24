@@ -11,6 +11,12 @@ import type {
   ReceiptReturnActionRequest,
   WarehouseInventoryQuery,
   WarehouseInventoryResponse,
+  WorkerStatus,
+  IdosiProductLink,
+  IdosiProductMatching,
+  SetIdosiProductLinkRequest,
+  SetIdosiStoreCodeRequest,
+  StoreNormalSalePending,
   OrderingContext,
   Account,
   AdminAuditLog,
@@ -225,11 +231,24 @@ export interface IdosiStatisticsTarget {
   readonly storeId: string;
   readonly storeCode: string;
   readonly storeName: string;
+  readonly idosiStoreCode?: string | null;
+}
+
+export interface IdosiStoreCodeRecord {
+  readonly storeId: string;
+  readonly storeCode: string;
+  readonly storeName: string;
+  readonly idosiStoreCode: string | null;
 }
 
 export interface PersistedIdosiStatisticsState {
   readonly snapshot: IdosiStatisticsSnapshot | null;
   readonly latestAttempt: IdosiStatisticsAttempt | null;
+}
+
+export interface SessionActivity {
+  readonly active: boolean;
+  readonly lastSeenAt: Date;
 }
 
 export interface WarehouseRepository {
@@ -245,6 +264,11 @@ export interface WarehouseRepository {
   ): Promise<Session>;
   resolveSession(token: string): Promise<Session>;
   revokeSession(token: string, reason: string): Promise<boolean>;
+  /**
+   * Activity of the sessions behind the given tokens, keyed by token. Unknown tokens are absent;
+   * revoked or expired ones are reported inactive. Used to clean up per-tab cookies.
+   */
+  inspectSessions(tokens: readonly string[]): Promise<ReadonlyMap<string, SessionActivity>>;
 
   /** Revalidates the STORE principal against the current store kind and status. */
   authorizeRetailStoreOperation(actor: AuthenticatedPrincipal): Promise<void>;
@@ -294,6 +318,27 @@ export interface WarehouseRepository {
     input: UpdateOperationalSettingsRequest,
     context: RequestContext,
   ): Promise<OperationalSettingsVersion>;
+  /** Last heartbeat of the allocation worker, for the Admin failure notice. */
+  getAllocationWorkerStatus(actor: AuthenticatedPrincipal): Promise<WorkerStatus>;
+  /** Active retail stores with the IDOSI id set on them in the app (ADMIN). */
+  listIdosiStoreCodes(actor: AuthenticatedPrincipal): Promise<readonly IdosiStoreCodeRecord[]>;
+  setIdosiStoreCode(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+    input: SetIdosiStoreCodeRequest,
+    context: RequestContext,
+  ): Promise<IdosiStoreCodeRecord>;
+  /** IDOSI product links and the IDOSI products of a month that no link covers (ADMIN). */
+  getIdosiProductMatching(
+    actor: AuthenticatedPrincipal,
+    period: string,
+  ): Promise<IdosiProductMatching>;
+  setIdosiProductLink(
+    actor: AuthenticatedPrincipal,
+    idosiProductId: string,
+    input: SetIdosiProductLinkRequest,
+    context: RequestContext,
+  ): Promise<IdosiProductLink>;
 
   resolveIdosiStatisticsTarget(
     actor: AuthenticatedPrincipal,
@@ -655,6 +700,11 @@ export interface WarehouseRepository {
     actor: AuthenticatedPrincipal,
     storeId?: string,
   ): Promise<readonly StoreSortedStock[]>;
+  /** IDOSI regular-price sales still waiting for an opened bag, per store and product. */
+  listStoreNormalSalePending(
+    actor: AuthenticatedPrincipal,
+    storeId?: string,
+  ): Promise<readonly StoreNormalSalePending[]>;
   createStoreSorting(
     actor: AuthenticatedPrincipal,
     input: CreateStoreSortingRequest,

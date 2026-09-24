@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import {
+  AuditReasonSchema,
   EntityIdSchema,
   IsoDateSchema,
   IsoDateTimeSchema,
@@ -598,3 +599,115 @@ function normalizePaymentMethod(value: string | null): IdosiStatisticsPaymentMet
   }
   return null;
 }
+
+/** An IDOSI product id and the warehouse product its sales are charged to. */
+export const IdosiProductLinkSchema = z
+  .object({
+    idosiProductId: z.string().trim().min(1).max(200),
+    firstSeenName: z.string().max(500),
+    productId: EntityIdSchema,
+    productName: z.string(),
+    productSku: z.string(),
+    createdAt: IsoDateTimeSchema,
+  })
+  .strict();
+export type IdosiProductLink = z.infer<typeof IdosiProductLinkSchema>;
+
+/**
+ * An IDOSI product whose sales are not charged to any warehouse stock yet. NO_PRODUCT: no
+ * warehouse product has its name. AMBIGUOUS: several have it. PENDING_SYNC: exactly one has it
+ * and the next sync links it automatically.
+ */
+export const UnmatchedIdosiProductSchema = z
+  .object({
+    idosiProductId: z.string().trim().min(1).max(200),
+    productName: z.string().max(500),
+    storeCount: z.number().int().nonnegative(),
+    reason: z.enum(['NO_PRODUCT', 'AMBIGUOUS', 'PENDING_SYNC']),
+    candidateProductIds: z.array(EntityIdSchema),
+  })
+  .strict();
+export type UnmatchedIdosiProduct = z.infer<typeof UnmatchedIdosiProductSchema>;
+
+export const IdosiProductMatchingSchema = z
+  .object({
+    period: IdosiStatisticsPeriodSchema,
+    links: z.array(IdosiProductLinkSchema),
+    unmatched: z.array(UnmatchedIdosiProductSchema),
+  })
+  .strict();
+export type IdosiProductMatching = z.infer<typeof IdosiProductMatchingSchema>;
+export const IdosiProductMatchingResponseSchema = z
+  .object({ data: IdosiProductMatchingSchema })
+  .strict();
+
+export const IdosiProductMatchingQuerySchema = z
+  .object({ period: IdosiStatisticsPeriodSchema })
+  .strict();
+
+export const IdosiProductLinkParamsSchema = z
+  .object({ idosiProductId: z.string().trim().min(1).max(200) })
+  .strict();
+
+export const SetIdosiProductLinkRequestSchema = z
+  .object({
+    productId: EntityIdSchema,
+    idosiProductName: z.string().trim().max(500).default(''),
+    reason: AuditReasonSchema,
+  })
+  .strict();
+export type SetIdosiProductLinkRequest = z.infer<typeof SetIdosiProductLinkRequestSchema>;
+export const IdosiProductLinkResponseSchema = z.object({ data: IdosiProductLinkSchema }).strict();
+
+/** Where the IDOSI id of a store comes from, in order of precedence. */
+export type IdosiStoreCodeSource = 'STORE' | 'ENVIRONMENT_MAP' | 'STORE_CODE' | 'MISSING';
+
+/**
+ * The store id sent to IDOSI. A code set on the store in the app wins; otherwise the
+ * IDOSI_STORE_ID_MAP environment map applies, and with no map at all the local code is used.
+ */
+export function resolveIdosiStoreCode(
+  store: { readonly storeCode: string; readonly idosiStoreCode?: string | null },
+  storeIdMap: Readonly<Record<string, string>> = {},
+): { readonly code: string | null; readonly source: IdosiStoreCodeSource } {
+  const explicit = store.idosiStoreCode?.trim();
+  if (explicit) return { code: explicit, source: 'STORE' };
+  if (Object.keys(storeIdMap).length === 0) return { code: store.storeCode, source: 'STORE_CODE' };
+  return Object.hasOwn(storeIdMap, store.storeCode)
+    ? { code: storeIdMap[store.storeCode]!, source: 'ENVIRONMENT_MAP' }
+    : { code: null, source: 'MISSING' };
+}
+
+/** Arguments for fetchIdosiOrderStatistics that honour resolveIdosiStoreCode. */
+export function idosiFetchStore(
+  store: { readonly storeCode: string; readonly idosiStoreCode?: string | null },
+  storeIdMap?: Readonly<Record<string, string>>,
+): { readonly storeCode: string; readonly storeIdMap?: Readonly<Record<string, string>> } {
+  const explicit = store.idosiStoreCode?.trim();
+  if (explicit) return { storeCode: explicit };
+  return { storeCode: store.storeCode, ...(storeIdMap ? { storeIdMap } : {}) };
+}
+
+export const IdosiStoreCodeSchema = z
+  .object({
+    storeId: EntityIdSchema,
+    storeCode: z.string(),
+    storeName: z.string(),
+    idosiStoreCode: z.string().nullable(),
+    effectiveIdosiStoreCode: z.string().nullable(),
+    source: z.enum(['STORE', 'ENVIRONMENT_MAP', 'STORE_CODE', 'MISSING']),
+  })
+  .strict();
+export type IdosiStoreCode = z.infer<typeof IdosiStoreCodeSchema>;
+export const ListIdosiStoreCodesResponseSchema = z
+  .object({ data: z.array(IdosiStoreCodeSchema) })
+  .strict();
+export const IdosiStoreCodeResponseSchema = z.object({ data: IdosiStoreCodeSchema }).strict();
+export const SetIdosiStoreCodeRequestSchema = z
+  .object({
+    /** Null clears the code so the environment map (or the local code) applies again. */
+    idosiStoreCode: z.string().trim().min(1).max(100).nullable(),
+    reason: AuditReasonSchema,
+  })
+  .strict();
+export type SetIdosiStoreCodeRequest = z.infer<typeof SetIdosiStoreCodeRequestSchema>;

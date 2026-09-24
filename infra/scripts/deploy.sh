@@ -174,6 +174,9 @@ python3 "$release_dir/infra/scripts/normalize-release-permissions.py"
 stage=backup
 log 'backing up the database'
 "$release_dir/infra/scripts/backup-db.sh" --env-file "$env_file" --output-dir "$backup_dir"
+# Every merge deploys and backs up; without retention the dumps would fill the
+# disk and the free-space preflight above would then block all deployments.
+bash "$release_dir/infra/scripts/prune-backups.sh" --backup-dir "$backup_dir"
 
 stage=build
 log 'pulling third-party images and building application images'

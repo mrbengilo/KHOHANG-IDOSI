@@ -33,6 +33,11 @@ import {
   ExportCharityRequestSchema,
   ListCharityExportsQuerySchema,
   ListStoreSortedStocksQuerySchema,
+  ListStoreNormalSalePendingQuerySchema,
+  IdosiProductLinkParamsSchema,
+  IdosiProductMatchingQuerySchema,
+  SetIdosiProductLinkRequestSchema,
+  SetIdosiStoreCodeRequestSchema,
   MoveCharityToSaleRequestSchema,
   MoveProductCharityToSaleRequestSchema,
   StoreSortedStockParamsSchema,
@@ -42,6 +47,8 @@ import {
   ConfirmReceiptCostsRequestSchema,
   FinalizeReceiptRequestSchema,
   fetchIdosiOrderStatistics,
+  idosiFetchStore,
+  resolveIdosiStoreCode,
   IdosiOrderStatisticsPayloadSchema,
   GetIdosiStatisticsQuerySchema,
   GetOperationalSettingsQuerySchema,
@@ -118,6 +125,7 @@ import {
   type IdosiFetch,
   type IdosiStatisticsScope,
   type IdosiStatisticsState,
+  type IdosiStoreCode,
   type Session,
 } from '@idosi/contracts';
 import Fastify, {
@@ -130,9 +138,10 @@ import { z, ZodError } from 'zod';
 
 import { ApiError, forbidden, unauthenticated } from './errors.js';
 import { MemoryWarehouseRepository } from './memory-repository.js';
-import { LoginRateLimiter, type LoginRateLimitOptions } from './rate-limit.js';
+import { LoginRateLimiter, ManualSyncThrottle, type LoginRateLimitOptions } from './rate-limit.js';
 import type {
   AccountCredentials,
+  IdosiStoreCodeRecord,
   PersistedIdosiStatisticsState,
   RequestContext,
   WarehouseRepository,
@@ -145,6 +154,10 @@ import {
 } from './security.js';
 
 const SESSION_COOKIE = 'idosi_session';
+/** Failures one client address may make across all usernames, relative to the per-user limit. */
+const ADDRESS_FAILURE_MULTIPLIER = 5;
+/** Minimum spacing of manual IDOSI syncs for the same store and scope. */
+const MANUAL_IDOSI_SYNC_INTERVAL_MS = 30_000;
 const TAB_SESSION_HEADER = 'x-idosi-tab-id';
 const TAB_ID_PATTERN = /^[a-f0-9]{32}$/u;
 const DEFAULT_SESSION_TTL_MS = 12 * 60 * 60 * 1_000;
@@ -177,6 +190,8 @@ export interface CreateApiOptions {
   readonly idosiIntegrationSecret?: string;
   readonly idosiStoreIdMap?: Readonly<Record<string, string>>;
   readonly idosiFetch?: IdosiFetch;
+  /** Minimum spacing of manual syncs per store and scope; 0 disables it (tests). */
+  readonly manualIdosiSyncIntervalMs?: number;
 }
 
 export async function createApi(options: CreateApiOptions = {}): Promise<FastifyInstance> {
@@ -186,7 +201,17 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     throw new Error('sessionTtlMs must be a positive safe integer');
   }
   const dummyPasswordHash = await hashPassword(randomUUID());
+  // Failures count per client address and username, so one person mistyping on a store's shared
+  // connection no longer locks everyone behind that address out. A wider per-address budget
+  // still stops one client from spraying guesses across many usernames.
   const loginRateLimiter = new LoginRateLimiter(options.loginRateLimit);
+  const addressRateLimiter = new LoginRateLimiter({
+    ...options.loginRateLimit,
+    maxFailures: (options.loginRateLimit?.maxFailures ?? 10) * ADDRESS_FAILURE_MULTIPLIER,
+  });
+  const manualSyncIntervalMs = options.manualIdosiSyncIntervalMs ?? MANUAL_IDOSI_SYNC_INTERVAL_MS;
+  const manualSyncThrottle =
+    manualSyncIntervalMs > 0 ? new ManualSyncThrottle(manualSyncIntervalMs) : null;
   const idosiIntegration = integrationStatus(options);
   const idosiIntegrationSecret = options.idosiIntegrationSecret?.trim() ?? '';
   const fastifyOptions: FastifyServerOptions = {
@@ -286,7 +311,11 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
   app.post('/api/v1/auth/login', async (request, reply) => {
     const input = LoginRequestSchema.parse(request.body);
     const cookieName = sessionCookieName(request);
-    const retryAfterMs = loginRateLimiter.retryAfterMs(request.ip);
+    const loginKey = `${request.ip}\u0000${input.username.trim().toLocaleLowerCase('en-US')}`;
+    const retryAfterMs = Math.max(
+      loginRateLimiter.retryAfterMs(loginKey),
+      addressRateLimiter.retryAfterMs(request.ip),
+    );
     if (retryAfterMs > 0) {
       const retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMs / 1_000));
       reply.header('retry-after', String(retryAfterSeconds));
@@ -303,10 +332,11 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
       account?.passwordHash ?? dummyPasswordHash,
     );
     if (!account || !passwordMatches) {
-      loginRateLimiter.recordFailure(request.ip);
+      loginRateLimiter.recordFailure(loginKey);
+      addressRateLimiter.recordFailure(request.ip);
       throw unauthenticated('Tên đăng nhập hoặc mật khẩu không đúng');
     }
-    loginRateLimiter.reset(request.ip);
+    loginRateLimiter.reset(loginKey);
     assertActiveAccount(account);
 
     const token = newOpaqueSessionToken();
@@ -317,10 +347,11 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
       expiresAt,
       requestContext(request),
     );
-    reply.header(
-      'set-cookie',
+    const staleTabCookies = await pruneTabSessionCookies(request, cookieName, repository);
+    reply.header('set-cookie', [
       sessionCookie(token, expiresAt, options.secureCookies ?? false, cookieName),
-    );
+      ...staleTabCookies.map((name) => clearSessionCookie(options.secureCookies ?? false, name)),
+    ]);
     reply.header('cache-control', 'no-store');
     return { data: session };
   });
@@ -442,6 +473,60 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return { data: { ...settings, integration: idosiIntegration } };
   });
 
+  app.get('/api/v1/admin/idosi-store-codes', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const rows = await repository.listIdosiStoreCodes(session.principal);
+    reply.header('cache-control', 'no-store');
+    return { data: rows.map((row) => idosiStoreCodeDto(row, options.idosiStoreIdMap)) };
+  });
+
+  app.put('/api/v1/admin/idosi-store-codes/:storeId', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const { storeId } = StoreParamsSchema.parse(request.params);
+    const input = SetIdosiStoreCodeRequestSchema.parse(request.body);
+    const row = await repository.setIdosiStoreCode(
+      session.principal,
+      storeId,
+      input,
+      requestContext(request),
+    );
+    reply.header('cache-control', 'no-store');
+    return { data: idosiStoreCodeDto(row, options.idosiStoreIdMap) };
+  });
+
+  app.get('/api/v1/admin/idosi-product-links', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const { period } = IdosiProductMatchingQuerySchema.parse(request.query);
+    reply.header('cache-control', 'no-store');
+    return { data: await repository.getIdosiProductMatching(session.principal, period) };
+  });
+
+  app.put('/api/v1/admin/idosi-product-links/:idosiProductId', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const { idosiProductId } = IdosiProductLinkParamsSchema.parse(request.params);
+    const input = SetIdosiProductLinkRequestSchema.parse(request.body);
+    reply.header('cache-control', 'no-store');
+    return {
+      data: await repository.setIdosiProductLink(
+        session.principal,
+        idosiProductId,
+        input,
+        requestContext(request),
+      ),
+    };
+  });
+
+  app.get('/api/v1/admin/worker-status', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    reply.header('cache-control', 'no-store');
+    return { data: await repository.getAllocationWorkerStatus(session.principal) };
+  });
+
   app.get('/api/v1/integrations/idosi/statistics-summary', async (request, reply) => {
     const session = await authenticate(request, repository);
     const query = ListIdosiStatisticsQuerySchema.parse(request.query);
@@ -500,13 +585,22 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
       );
     }
     const target = await repository.resolveIdosiStatisticsTarget(session.principal, scope.storeId);
+    // Every open dashboard can trigger this; one outbound IDOSI request per store and scope at a
+    // time is enough, the worker keeps the figures fresh on its own schedule.
+    // A sync for the same store and scope moments ago already brought the figures in: answer
+    // with them instead of asking IDOSI again.
+    if (manualSyncThrottle && manualSyncThrottle.acquire(JSON.stringify(scope)) > 0) {
+      const persisted = await repository.getIdosiStatisticsState(session.principal, scope);
+      reply.header('cache-control', 'no-store');
+      reply.header('idosi-sync-skipped', 'recent');
+      return { data: idosiStatisticsState(scope, persisted, idosiIntegration.status) };
+    }
     const startedAt = new Date();
     try {
       const payload = await fetchIdosiOrderStatistics({
         endpoint: idosiIntegration.endpoint,
         secret: idosiIntegrationSecret,
-        storeCode: target.storeCode,
-        ...(options.idosiStoreIdMap ? { storeIdMap: options.idosiStoreIdMap } : {}),
+        ...idosiFetchStore(target, options.idosiStoreIdMap),
         scope: externalIdosiScope(scope),
         requestId: request.id,
         ...(options.idosiFetch ? { fetch: options.idosiFetch } : {}),
@@ -1348,6 +1442,14 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return { data: await repository.listStoreSortedStocks(session.principal, query.storeId) };
   });
 
+  app.get('/api/v1/store-normal-sale-pending', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = ListStoreNormalSalePendingQuerySchema.parse(request.query);
+    return {
+      data: await repository.listStoreNormalSalePending(session.principal, query.storeId),
+    };
+  });
+
   app.post('/api/v1/store-sortings', async (request, reply) => {
     const session = await authenticate(request, repository);
     requireRole(session.principal, ['STORE']);
@@ -1701,6 +1803,64 @@ function sessionCookieName(request: FastifyRequest): string {
   return `${SESSION_COOKIE}_${tabId}`;
 }
 
+/** Tab cookies kept per browser; each closed tab otherwise leaves one behind for 12 hours. */
+export const MAX_TAB_SESSION_COOKIES = 12;
+
+/**
+ * Every tab has its own session cookie, and a closed tab cannot log itself out, so its cookie
+ * stays until it expires. On each login the browser's other tab cookies are checked: cookies of
+ * ended sessions are cleared, and beyond MAX_TAB_SESSION_COOKIES the least recently used tab
+ * sessions are revoked and cleared. This keeps the Cookie header (sent with every request)
+ * bounded instead of growing until the browser or the server rejects it.
+ */
+async function pruneTabSessionCookies(
+  request: FastifyRequest,
+  currentCookieName: string,
+  repository: WarehouseRepository,
+): Promise<string[]> {
+  const tabCookies = readTabSessionCookies(request).filter(
+    (cookie) => cookie.name !== currentCookieName,
+  );
+  if (tabCookies.length === 0) return [];
+  const activity = await repository.inspectSessions(tabCookies.map((cookie) => cookie.token));
+  const stale = tabCookies.filter((cookie) => !activity.get(cookie.token)?.active);
+  // Most recently used first; browsers list older cookies first, which breaks ties.
+  const live = tabCookies
+    .map((cookie, index) => ({ ...cookie, index }))
+    .filter((cookie) => activity.get(cookie.token)?.active)
+    .sort(
+      (left, right) =>
+        activity.get(right.token)!.lastSeenAt.getTime() -
+          activity.get(left.token)!.lastSeenAt.getTime() || right.index - left.index,
+    );
+  // The login being answered is one tab too.
+  const overflow = live.slice(Math.max(0, MAX_TAB_SESSION_COOKIES - 1));
+  for (const cookie of overflow) await repository.revokeSession(cookie.token, 'tab_cookie_limit');
+  return [...stale, ...overflow].map((cookie) => cookie.name);
+}
+
+function readTabSessionCookies(
+  request: FastifyRequest,
+): { readonly name: string; readonly token: string }[] {
+  const header = request.headers.cookie;
+  if (!header) return [];
+  const cookies: { name: string; token: string }[] = [];
+  for (const part of header.split(';')) {
+    const separator = part.indexOf('=');
+    if (separator < 0) continue;
+    const name = part.slice(0, separator).trim();
+    if (!name.startsWith(`${SESSION_COOKIE}_`)) continue;
+    if (!TAB_ID_PATTERN.test(name.slice(SESSION_COOKIE.length + 1))) continue;
+    try {
+      const token = decodeURIComponent(part.slice(separator + 1).trim());
+      if (token) cookies.push({ name, token });
+    } catch {
+      cookies.push({ name, token: '' });
+    }
+  }
+  return cookies;
+}
+
 function sessionCookie(
   token: string,
   expiresAt: Date,
@@ -1778,6 +1938,21 @@ function integrationStatus(options: CreateApiOptions): {
       options.idosiIntegrationSecret?.trim() || options.idosiIntegrationSecretConfigured
         ? 'CONFIGURED'
         : 'NOT_CONFIGURED',
+  };
+}
+
+function idosiStoreCodeDto(
+  row: IdosiStoreCodeRecord,
+  storeIdMap: Readonly<Record<string, string>> | undefined,
+): IdosiStoreCode {
+  const resolved = resolveIdosiStoreCode(row, storeIdMap);
+  return {
+    storeId: row.storeId,
+    storeCode: row.storeCode,
+    storeName: row.storeName,
+    idosiStoreCode: row.idosiStoreCode,
+    effectiveIdosiStoreCode: resolved.code,
+    source: resolved.source,
   };
 }
 
@@ -1907,6 +2082,59 @@ function openApiDocument(): Record<string, unknown> {
         get: {
           security: cookieSecurity,
           responses: { '200': { description: 'Filtered immutable audit history (ADMIN only)' } },
+        },
+      },
+      '/api/v1/store-normal-sale-pending': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': {
+              description: 'IDOSI regular-price sales waiting for the next opened bag, in scope',
+            },
+          },
+        },
+      },
+      '/api/v1/admin/idosi-store-codes': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'IDOSI id of each retail store and where it comes from (ADMIN)' },
+          },
+        },
+      },
+      '/api/v1/admin/idosi-store-codes/{storeId}': {
+        put: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'Set or cleared the IDOSI id of a store (ADMIN, audited)' },
+            '409': { description: 'Another store already uses that IDOSI id' },
+          },
+        },
+      },
+      '/api/v1/admin/idosi-product-links': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'IDOSI product links and unmatched IDOSI products (ADMIN only)' },
+          },
+        },
+      },
+      '/api/v1/admin/idosi-product-links/{idosiProductId}': {
+        put: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'Linked or re-linked an IDOSI product (ADMIN only, audited)' },
+          },
+        },
+      },
+      '/api/v1/admin/worker-status': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': {
+              description: 'Last allocation worker heartbeat and failing jobs (ADMIN only)',
+            },
+          },
         },
       },
       '/api/v1/admin/operational-settings': {

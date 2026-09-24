@@ -3,6 +3,7 @@ import {
   cancelStoreOrderRequest,
   cancelWaitTicket,
   createOrderSession,
+  daysAgo,
   declareStoreReceipt,
   finalizeStoreReceipt,
   getMonthlyOperationalReport,
@@ -15,6 +16,7 @@ import {
   listPriorityOffers,
   listStoreReceipts,
   listWaitTickets,
+  mapWithConcurrency,
   respondPriorityOffer,
   returnStoreReceiptForCorrection,
   submitStoreOrderRequest,
@@ -790,5 +792,43 @@ describe('API projections', () => {
     );
 
     await expect(listWaitTickets()).rejects.toThrow();
+  });
+
+  it('never runs more page requests at once than the concurrency limit, and keeps order', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const results = await mapWithConcurrency(25, 3, async (index) => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, (25 - index) % 4));
+      inFlight -= 1;
+      return index;
+    });
+    expect(peak).toBeLessThanOrEqual(3);
+    expect(results).toEqual(Array.from({ length: 25 }, (_, index) => index));
+    await expect(mapWithConcurrency(0, 3, async () => 1)).resolves.toEqual([]);
+  });
+
+  it('computes recent-history windows as exact instants', () => {
+    expect(daysAgo(31, new Date('2026-09-24T02:00:00.000Z'))).toBe('2026-08-24T02:00:00.000Z');
+  });
+
+  it('sends the receipt window and keeps open receipts in the server filter', async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((requestInput: string | URL | Request) => {
+        urls.push(String(requestInput));
+        return Promise.resolve(
+          new Response(JSON.stringify({ data: [], pagination: { ...pagination, totalItems: 0 } }), {
+            status: 200,
+          }),
+        );
+      }),
+    );
+    await listStoreReceipts({ openOrCreatedFrom: '2026-06-26T02:00:00.000Z' });
+    expect(new URL(urls[0]!, 'http://localhost').searchParams.get('openOrCreatedFrom')).toBe(
+      '2026-06-26T02:00:00.000Z',
+    );
   });
 });

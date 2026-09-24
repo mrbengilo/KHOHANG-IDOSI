@@ -548,6 +548,11 @@ export const ListReceiptsQuerySchema = PaginationQuerySchema.extend({
   storeId: EntityIdSchema.optional(),
   outboundRequestId: EntityIdSchema.optional(),
   status: ReceiptStatusSchema.optional(),
+  /**
+   * Leaves out finalized receipts created before this instant. Receipts still in progress are
+   * always listed, however old, because someone still has to act on them.
+   */
+  openOrCreatedFrom: IsoDateTimeSchema.optional(),
 }).strict();
 export type ListReceiptsQuery = z.infer<typeof ListReceiptsQuerySchema>;
 

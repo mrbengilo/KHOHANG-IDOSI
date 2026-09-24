@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the KHOHANG-IDOSI database backup every night
+
+[Timer]
+# 02:30 Vietnam time, outside store hours and before the 08:00 snapshot.
+OnCalendar=*-*-* 02:30:00 Asia/Ho_Chi_Minh
+# A VPS that was off at 02:30 backs up as soon as it is running again.
+Persistent=true
+RandomizedDelaySec=10min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

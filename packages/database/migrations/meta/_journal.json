@@ -190,6 +190,27 @@
       "when": 1790243670279,
       "tag": "0026_receipt_discrepancy_adjustments",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1790262963656,
+      "tag": "0027_worker_heartbeats",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1790263906569,
+      "tag": "0028_sale_baseline_pending",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1790287849437,
+      "tag": "0029_store_idosi_code",
+      "breakpoints": true
     }
   ]
 }

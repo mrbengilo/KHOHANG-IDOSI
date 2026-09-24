@@ -243,12 +243,24 @@ export const stores = pgTable(
     timezone: text('timezone').notNull().default('Asia/Ho_Chi_Minh'),
     displayOrder: integer('display_order').notNull().default(0),
     isActive: boolean('is_active').notNull().default(true),
+    /**
+     * The store's id on idosi.io.vn when it differs from `code`. Set by Admin in the app; takes
+     * precedence over the IDOSI_STORE_ID_MAP environment fallback.
+     */
+    idosiStoreCode: text('idosi_store_code'),
     version: integer('version').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
   },
   (table) => [
+    uniqueIndex('stores_idosi_store_code_uidx')
+      .on(table.idosiStoreCode)
+      .where(sql`${table.idosiStoreCode} IS NOT NULL`),
+    check(
+      'stores_idosi_store_code_not_blank',
+      sql`${table.idosiStoreCode} IS NULL OR length(btrim(${table.idosiStoreCode})) BETWEEN 1 AND 100`,
+    ),
     index('stores_group_active_idx').on(table.groupId, table.isActive, table.displayOrder),
     index('stores_kind_active_idx').on(table.kind, table.isActive, table.displayOrder),
     check('stores_code_not_blank', sql`length(btrim(${table.code})) > 0`),
@@ -2574,6 +2586,11 @@ export const storeSaleSyncProgress = pgTable(
     appliedGrams: bigint('applied_grams', { mode: 'bigint' })
       .notNull()
       .default(sql`0`),
+    /**
+     * Sale was first credited while no usable IDOSI figure existed (no snapshot yet, or a piece
+     * norm missing). The next usable sync sets the baseline instead of charging the month so far.
+     */
+    baselinePending: boolean('baseline_pending').notNull().default(false),
     sourceSnapshotId: uuid('source_snapshot_id').references(() => idosiStatisticsSnapshots.id, {
       onDelete: 'restrict',
     }),
@@ -2874,6 +2891,31 @@ export const idempotencyKeys = pgTable(
     check(
       'idempotency_keys_completed_response',
       sql`${table.status} <> 'completed' OR ${table.responseStatus} IS NOT NULL`,
+    ),
+  ],
+);
+
+/**
+ * Last known state of each background worker loop, one row per loop. The worker upserts it after
+ * every tick so Admin screens can show why a scheduled 08:00/09:00 job did not complete; a job
+ * transaction that fails rolls back, so this row is the only durable trace of the failure.
+ */
+export const workerHeartbeats = pgTable(
+  'worker_heartbeats',
+  {
+    worker: text('worker').primaryKey(),
+    lastTickStartedAt: timestamp('last_tick_started_at', { withTimezone: true }),
+    lastTickCompletedAt: timestamp('last_tick_completed_at', { withTimezone: true }),
+    lastSuccessfulTickAt: timestamp('last_successful_tick_at', { withTimezone: true }),
+    lastError: text('last_error'),
+    failingJobs: jsonb('failing_jobs').$type<JsonValue>().notNull().default([]),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check('worker_heartbeats_worker_not_blank', sql`length(btrim(${table.worker})) > 0`),
+    check(
+      'worker_heartbeats_failing_jobs_array',
+      sql`jsonb_typeof(${table.failingJobs}) = 'array'`,
     ),
   ],
 );

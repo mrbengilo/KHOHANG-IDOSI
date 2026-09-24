@@ -26,6 +26,7 @@ export type {
 export {
   idosiStatisticsScopeKey,
   listDueIdosiStatisticsTargets,
+  listIdosiPeriodClosingTargets,
   loadIdosiStatisticsState,
   loadIdosiStatisticsStates,
   recordIdosiStatisticsFailure,
@@ -242,6 +243,19 @@ export {
   moveProductCharityToSale,
 } from './store-sorting.js';
 export { idosiProductSaleGrams } from './store-sale-sync.js';
+export { listStoreNormalSalePending } from './store-normal-sale-sync.js';
+export {
+  IdosiProductLinkValidationError,
+  loadIdosiProductMatching,
+  setIdosiProductLink,
+} from './idosi-product-links.js';
+export type {
+  IdosiProductLinkRecord,
+  IdosiProductMatchingRecord,
+  SetIdosiProductLinkInput,
+  UnmatchedIdosiProductRecord,
+} from './idosi-product-links.js';
+export type { StoreNormalSalePendingRecord } from './store-normal-sale-sync.js';
 export type {
   CreateCharityExportInput,
   CreateStoreSortingInput,
@@ -288,6 +302,14 @@ export type {
 } from './store-inventory-operations.js';
 
 export * from './schema.js';
+export { loadWorkerHeartbeats, recordWorkerHeartbeat } from './worker-heartbeats.js';
+export { MAINTENANCE_BATCH, pruneOperationalHistory, RETENTION } from './maintenance.js';
+export type { MaintenanceResult } from './maintenance.js';
+export type {
+  WorkerHeartbeatFailingJob,
+  WorkerHeartbeatInput,
+  WorkerHeartbeatRecord,
+} from './worker-heartbeats.js';
 export {
   PRODUCT_CONVERSION_SEEDS,
   PRODUCT_SEEDS,

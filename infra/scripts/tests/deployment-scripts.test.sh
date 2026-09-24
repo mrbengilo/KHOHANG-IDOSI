@@ -150,4 +150,70 @@ if bash "${repository_dir}/infra/scripts/backup-db.sh" \
   fail 'backup accepted an unreadable environment file'
 fi
 
+# Retention keeps the newest dumps, one per recent day and one per recent ISO
+# week, removes each pruned dump together with its checksum and never touches
+# files that are not backup-db.sh archives.
+prune_dir="${temporary_dir}/prune"
+mkdir -p -- "$prune_dir"
+make_dump() {
+  printf 'dump' >"${prune_dir}/idosi-$1.dump"
+  printf 'sum' >"${prune_dir}/idosi-$1.dump.sha256"
+}
+for day in $(seq 0 39); do
+  make_dump "$(date -u -d "2026-09-30 - ${day} days" +%Y%m%d)T020000Z"
+done
+make_dump 20260930T100000Z
+make_dump 20260930T150000Z
+printf 'keep me' >"${prune_dir}/operator-notes.txt"
+printf 'keep me' >"${prune_dir}/idosi-manual.dump"
+bash "${repository_dir}/infra/scripts/prune-backups.sh" \
+  --backup-dir "$prune_dir" --config "${temporary_dir}/missing-backup.env" \
+  --keep-daily 7 --keep-weekly 4 --keep-latest 3 >/dev/null
+remaining="$(find "$prune_dir" -name 'idosi-2026*.dump' | wc -l)"
+# 3 newest (all 2026-09-30) + 6 older days + the Sunday-ending weeks not
+# already covered: 2026-W39..W36 minus the week that the daily set covers.
+[[ "$remaining" -ge 10 && "$remaining" -le 12 ]] || fail "unexpected retained dump count: $remaining"
+for kept in 20260930T150000Z 20260930T100000Z 20260930T020000Z 20260924T020000Z; do
+  [[ -f "${prune_dir}/idosi-${kept}.dump" ]] || fail "retention removed a required dump: $kept"
+done
+[[ ! -e "${prune_dir}/idosi-20260822T020000Z.dump" ]] || fail 'an expired dump was kept'
+[[ ! -e "${prune_dir}/idosi-20260822T020000Z.dump.sha256" ]] || fail 'an expired checksum was kept'
+[[ -f "${prune_dir}/operator-notes.txt" && -f "${prune_dir}/idosi-manual.dump" ]] ||
+  fail 'retention removed a file it does not own'
+while IFS= read -r dump; do
+  [[ -f "${dump}.sha256" ]] || fail "retained dump lost its checksum: $dump"
+done < <(find "$prune_dir" -name 'idosi-2026*.dump')
+
+# The nightly job backs up through the running release, prunes and records a
+# machine-readable status for monitoring.
+backup_root="${temporary_dir}/backup-root"
+mkdir -p -- "$backup_root/releases/current-release/infra/scripts"
+cp -- "${repository_dir}/docker-compose.yml" "$backup_root/releases/current-release/"
+cp -- "${repository_dir}/infra/scripts/"{backup-db.sh,prune-backups.sh} \
+  "$backup_root/releases/current-release/infra/scripts/"
+ln -sfn -- "$backup_root/releases/current-release" "$backup_root/current"
+printf '%s\n' \
+  "BACKUP_ROOT=${backup_root}" \
+  "BACKUP_ENV_FILE=${env_file}" \
+  "BACKUP_DIR=${temporary_dir}/nightly" \
+  "BACKUP_STATE_DIR=${temporary_dir}/nightly-state" \
+  "BACKUP_DEPLOY_LOCK=${temporary_dir}/nightly.lock" \
+  'BACKUP_KEEP_DAILY=2' >"${temporary_dir}/backup.env"
+: >"$docker_log"
+PATH="${fake_bin}:$PATH" FAKE_DOCKER_LOG="$docker_log" \
+  KHOHANG_BACKUP_CONFIG="${temporary_dir}/backup.env" \
+  bash "${repository_dir}/infra/backup/khohang-backup.sh" >/dev/null
+assert_compose_received_env_file
+grep -q '^state=succeeded$' "${temporary_dir}/nightly-state/status" || fail 'nightly backup status was not recorded'
+grep -q '^offsite=none$' "${temporary_dir}/nightly-state/status" || fail 'missing off-site target was not reported'
+compgen -G "${temporary_dir}/nightly/idosi-*.dump" >/dev/null || fail 'nightly backup archive was not created'
+
+rm -f -- "$backup_root/current"
+if PATH="${fake_bin}:$PATH" FAKE_DOCKER_LOG="$docker_log" \
+  KHOHANG_BACKUP_CONFIG="${temporary_dir}/backup.env" \
+  bash "${repository_dir}/infra/backup/khohang-backup.sh" >/dev/null 2>&1; then
+  fail 'nightly backup succeeded without a running release'
+fi
+grep -q '^state=failed$' "${temporary_dir}/nightly-state/status" || fail 'nightly backup failure was not recorded'
+
 printf 'deployment script tests passed\n'

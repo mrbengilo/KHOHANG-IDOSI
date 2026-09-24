@@ -16,7 +16,9 @@ import {
   users,
   type JsonObject,
 } from './schema.js';
+import { settleStoreNormalSaleProgress } from './store-normal-sale-sync.js';
 import {
+  gramsToKilogramsExact,
   kilogramsToGramsExact,
   StoreOperationConflictError,
   StoreOperationValidationError,
@@ -117,8 +119,11 @@ export interface OpenStoreInventoryBagInput {
 
 export interface OpenedStoreInventoryBag {
   readonly bagId: string;
-  readonly status: 'opened';
+  /** Depleted when regular-price sales already waiting in IDOSI use up the whole bag. */
+  readonly status: 'opened' | 'depleted';
   readonly version: number;
+  /** Weight of outstanding IDOSI regular-price sales taken out of this bag on opening. */
+  readonly normalSaleAppliedKg: string;
 }
 
 export interface CreateStoreOutboundInput {
@@ -316,56 +321,80 @@ export async function openStoreInventoryBag(
       requestHash: input.requestHash,
     },
     (tx) =>
-      withAdvisoryLock(tx, 'store-inventory-bag', input.bagId, async () => {
-        await assertActiveStoreActor(tx, input.actorUserId, input.storeId);
-        const [bag] = await tx
-          .select()
-          .from(storeInventoryBags)
-          .where(eq(storeInventoryBags.id, input.bagId))
-          .for('update')
-          .limit(1);
-        if (!bag || bag.storeId !== input.storeId) {
-          throw new StoreInventoryAuthorizationError();
-        }
-        if (bag.version !== input.expectedVersion || bag.status !== 'available') {
-          throw new StoreOperationConflictError('Inventory bag is stale or cannot be opened.');
-        }
-        const now = new Date();
-        const [updated] = await tx
-          .update(storeInventoryBags)
-          .set({ status: 'opened', openedAt: now, version: bag.version + 1, updatedAt: now })
-          .where(
-            and(
-              eq(storeInventoryBags.id, bag.id),
-              eq(storeInventoryBags.version, input.expectedVersion),
-              eq(storeInventoryBags.status, 'available'),
+      // The store-sorting lock comes first, as in the IDOSI sync and sorting, because opening
+      // settles the regular-price sales that were waiting for an opened bag of this product.
+      withAdvisoryLock(tx, 'store-sorting', input.storeId, () =>
+        withAdvisoryLock(tx, 'store-inventory-bag', input.bagId, async () => {
+          await assertActiveStoreActor(tx, input.actorUserId, input.storeId);
+          const [bag] = await tx
+            .select()
+            .from(storeInventoryBags)
+            .where(eq(storeInventoryBags.id, input.bagId))
+            .for('update')
+            .limit(1);
+          if (!bag || bag.storeId !== input.storeId) {
+            throw new StoreInventoryAuthorizationError();
+          }
+          if (bag.version !== input.expectedVersion || bag.status !== 'available') {
+            throw new StoreOperationConflictError('Inventory bag is stale or cannot be opened.');
+          }
+          const now = new Date();
+          const [updated] = await tx
+            .update(storeInventoryBags)
+            .set({ status: 'opened', openedAt: now, version: bag.version + 1, updatedAt: now })
+            .where(
+              and(
+                eq(storeInventoryBags.id, bag.id),
+                eq(storeInventoryBags.version, input.expectedVersion),
+                eq(storeInventoryBags.status, 'available'),
+              ),
+            )
+            .returning({ version: storeInventoryBags.version });
+          if (!updated)
+            throw new StoreOperationConflictError('Inventory bag changed while opening.');
+          await settleStoreNormalSaleProgress(tx, bag.storeId, bag.productId, now);
+          const [settled] = await tx
+            .select()
+            .from(storeInventoryBags)
+            .where(eq(storeInventoryBags.id, bag.id))
+            .limit(1);
+          if (!settled) throw new Error('Opened inventory bag disappeared.');
+          const result: OpenedStoreInventoryBag = {
+            bagId: bag.id,
+            status: settled.status === 'depleted' ? 'depleted' : 'opened',
+            version: settled.version,
+            normalSaleAppliedKg: gramsToKilogramsExact(
+              kilogramsToGramsExact(bag.currentWeightKg) -
+                kilogramsToGramsExact(settled.currentWeightKg),
             ),
-          )
-          .returning({ version: storeInventoryBags.version });
-        if (!updated) throw new StoreOperationConflictError('Inventory bag changed while opening.');
-        const result: OpenedStoreInventoryBag = {
-          bagId: bag.id,
-          status: 'opened',
-          version: updated.version,
-        };
-        await tx.insert(auditLogs).values({
-          requestId: input.requestId,
-          actorUserId: input.actorUserId,
-          actorRole: 'store',
-          actorStoreId: input.storeId,
-          action: 'STORE_INVENTORY_BAG_OPENED',
-          entityType: 'store_inventory_bag',
-          entityId: bag.id,
-          before: inventoryBagSnapshot(bag),
-          after: { ...inventoryBagSnapshot(bag), status: 'opened', version: updated.version },
-        });
-        return idempotentMutationResult(
-          result,
-          { bagId: result.bagId, status: result.status, version: result.version },
-          'store_inventory_bag',
-          bag.id,
-        );
-      }),
+          };
+          await tx.insert(auditLogs).values({
+            requestId: input.requestId,
+            actorUserId: input.actorUserId,
+            actorRole: 'store',
+            actorStoreId: input.storeId,
+            action: 'STORE_INVENTORY_BAG_OPENED',
+            entityType: 'store_inventory_bag',
+            entityId: bag.id,
+            before: inventoryBagSnapshot(bag),
+            after: {
+              ...inventoryBagSnapshot(settled),
+              normalSaleAppliedKg: result.normalSaleAppliedKg,
+            },
+          });
+          return idempotentMutationResult(
+            result,
+            {
+              bagId: result.bagId,
+              status: result.status,
+              version: result.version,
+              normalSaleAppliedKg: result.normalSaleAppliedKg,
+            },
+            'store_inventory_bag',
+            bag.id,
+          );
+        }),
+      ),
   );
 }
 

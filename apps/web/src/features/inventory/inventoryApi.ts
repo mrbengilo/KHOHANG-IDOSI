@@ -11,6 +11,7 @@ import {
   StoreInventoryBagResponseSchema,
   StoreOutboundResponseSchema,
   ListStoreSortedStocksResponseSchema,
+  ListStoreNormalSalePendingResponseSchema,
   StoreSortingResultResponseSchema,
   CreateStoreSortingRequestSchema,
   MoveProductCharityToSaleRequestSchema,
@@ -34,6 +35,7 @@ import {
   type StoreOutbound,
   type StoreOutboundStatus,
   type StoreSortedStock,
+  type StoreNormalSalePending,
   type StoreSortingResult,
   type CreateStoreSortingRequest,
   type MoveProductCharityToSaleRequest,
@@ -45,7 +47,7 @@ import {
 import { reportUnauthorizedResponse } from '../../lib/session-expiry';
 import { addTabSessionHeader } from '../../lib/tab-session';
 
-import { ApiClientError } from '../../lib/api';
+import { ApiClientError, mapWithConcurrency, PAGE_FETCH_CONCURRENCY } from '../../lib/api';
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
 const apiBaseUrl = (configuredBaseUrl || '/api/v1').replace(/\/$/, '');
@@ -162,10 +164,10 @@ async function listAllPages<T>(
   const first = parse(await request(`${path}?${pageQuery(filters, 1)}`));
   if (first.pagination.totalPages <= 1) return first.data;
 
-  const remaining = await Promise.all(
-    Array.from({ length: first.pagination.totalPages - 1 }, async (_, index) =>
-      parse(await request(`${path}?${pageQuery(filters, index + 2)}`)),
-    ),
+  const remaining = await mapWithConcurrency(
+    first.pagination.totalPages - 1,
+    PAGE_FETCH_CONCURRENCY,
+    async (index) => parse(await request(`${path}?${pageQuery(filters, index + 2)}`)),
   );
   return [first, ...remaining].flatMap((page) => page.data);
 }
@@ -249,6 +251,16 @@ export async function listStoreSortedStocks(storeId?: string): Promise<StoreSort
   const query = storeId ? `?${new URLSearchParams({ storeId })}` : '';
   return ListStoreSortedStocksResponseSchema.parse(await request(`/store-sorted-stocks${query}`))
     .data;
+}
+
+/** IDOSI regular-price sales still waiting for the next bag the store opens. */
+export async function listStoreNormalSalePending(
+  storeId?: string,
+): Promise<StoreNormalSalePending[]> {
+  const query = storeId ? `?${new URLSearchParams({ storeId })}` : '';
+  return ListStoreNormalSalePendingResponseSchema.parse(
+    await request(`/store-normal-sale-pending${query}`),
+  ).data;
 }
 
 export async function createStoreSorting(

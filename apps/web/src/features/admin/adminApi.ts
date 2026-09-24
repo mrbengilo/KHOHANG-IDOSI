@@ -5,6 +5,10 @@ import {
   ErrorEnvelopeSchema,
   GetSessionResponseSchema,
   HtkdAssignmentsResponseSchema,
+  IdosiProductLinkResponseSchema,
+  IdosiProductMatchingResponseSchema,
+  IdosiStoreCodeResponseSchema,
+  ListIdosiStoreCodesResponseSchema,
   ListAccountsResponseSchema,
   ListAuditLogsResponseSchema,
   ListStoreGroupsResponseSchema,
@@ -16,12 +20,18 @@ import {
   UpdateAccountResponseSchema,
   UpdateStoreGroupRequestSchema,
   UpdateStoreRequestSchema,
+  SetIdosiProductLinkRequestSchema,
+  SetIdosiStoreCodeRequestSchema,
+  WorkerStatusResponseSchema,
   type Account,
   type AdminAuditLog,
   type CreateAccountRequest,
   type CreateStoreGroupRequest,
   type CreateStoreRequest,
   type HtkdAssignmentsResponse,
+  type IdosiProductLink,
+  type IdosiProductMatching,
+  type IdosiStoreCode,
   type ListAccountsQuery,
   type ListAuditLogsQuery,
   type ListStoreGroupsQuery,
@@ -31,12 +41,15 @@ import {
   type ResetPasswordRequest,
   type ReplaceHtkdAssignmentsRequest,
   type Session,
+  type SetIdosiProductLinkRequest,
+  type SetIdosiStoreCodeRequest,
   type Store,
   type StoreGroup,
   type UpdateAccountRequest,
   type UpdateOperationalSettingsRequest,
   type UpdateStoreGroupRequest,
   type UpdateStoreRequest,
+  type WorkerStatus,
 } from '@idosi/contracts';
 import { reportUnauthorizedResponse } from '../../lib/session-expiry';
 import { addTabSessionHeader } from '../../lib/tab-session';
@@ -186,6 +199,46 @@ export async function getAdminOperationalSettings(
     `/admin/operational-settings?${queryString({ historyLimit })}`,
   );
   return OperationalSettingsOverviewResponseSchema.parse(payload).data;
+}
+
+/** IDOSI id of each active retail store, with where it comes from. */
+export async function listIdosiStoreCodes(): Promise<IdosiStoreCode[]> {
+  return ListIdosiStoreCodesResponseSchema.parse(await requestAdminApi('/admin/idosi-store-codes'))
+    .data;
+}
+
+export async function setIdosiStoreCode(
+  storeId: string,
+  input: SetIdosiStoreCodeRequest,
+): Promise<IdosiStoreCode> {
+  const payload = await requestAdminApi(`/admin/idosi-store-codes/${encodeURIComponent(storeId)}`, {
+    body: JSON.stringify(SetIdosiStoreCodeRequestSchema.parse(input)),
+    method: 'PUT',
+  });
+  return IdosiStoreCodeResponseSchema.parse(payload).data;
+}
+
+/** IDOSI product links plus the IDOSI products of the month whose sales reach no stock yet. */
+export async function getIdosiProductMatching(period: string): Promise<IdosiProductMatching> {
+  const payload = await requestAdminApi(`/admin/idosi-product-links?${queryString({ period })}`);
+  return IdosiProductMatchingResponseSchema.parse(payload).data;
+}
+
+export async function setIdosiProductLink(
+  idosiProductId: string,
+  input: SetIdosiProductLinkRequest,
+): Promise<IdosiProductLink> {
+  const payload = await requestAdminApi(
+    `/admin/idosi-product-links/${encodeURIComponent(idosiProductId)}`,
+    { body: JSON.stringify(SetIdosiProductLinkRequestSchema.parse(input)), method: 'PUT' },
+  );
+  return IdosiProductLinkResponseSchema.parse(payload).data;
+}
+
+/** Last allocation worker heartbeat: why a scheduled 08:00/09:00 job did not finish. */
+export async function getAllocationWorkerStatus(): Promise<WorkerStatus> {
+  const payload = await requestAdminApi('/admin/worker-status');
+  return WorkerStatusResponseSchema.parse(payload).data;
 }
 
 export async function updateAdminOperationalSettings(
