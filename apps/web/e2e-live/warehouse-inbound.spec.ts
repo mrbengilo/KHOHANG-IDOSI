@@ -24,10 +24,9 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   await page.getByRole('checkbox').nth(1).uncheck();
   await expect(page.getByRole('spinbutton')).toHaveCount(1);
   await expect(page.getByLabel(/^Khối lượng bao/)).toHaveCount(0);
-  await page.getByRole('button', { name: 'Nhập VAT · 8%' }).click();
-  await page.getByLabel('Số tiền VAT (VND)').fill('1000000');
-  await expect(page.getByLabel('Thuế suất mặc định')).toHaveValue('8%');
-  await page.getByRole('button', { name: 'Mặt hàng', exact: true }).click();
+  // VAT is entered by HTKD on the store's actual delivery note, not on the warehouse receipt.
+  await expect(page.getByRole('button', { name: /VAT/ })).toHaveCount(0);
+  await expect(page.getByLabel(/VAT/)).toHaveCount(0);
   for (const width of [360, 390, 768, 1366, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await expect
@@ -82,7 +81,7 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   expect(reference).toMatch(/^PN\d{5,}-\d{2}\/\d{2}\/\d{4}$/);
   expect(receipt.bags).toHaveLength(2);
   expect(receipt.totalWeightKg).toBeNull();
-  expect(receipt.vat).toEqual({ amountVnd: 1000000, ratePercent: 8 });
+  expect(receipt.vat).toBeNull();
   await expect(page.getByRole('status')).toContainText(`Đã nhập phiếu ${reference}`);
   await expect(page.getByRole('checkbox').first()).not.toBeChecked();
   const api = new URL(response.url()).origin;
@@ -90,7 +89,7 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   expect(stored.status()).toBe(200);
   const storedReceipt = (await stored.json()).data;
   expect(storedReceipt.bags).toEqual(receipt.bags);
-  expect(storedReceipt.vat).toEqual(receipt.vat);
+  expect(storedReceipt.vat).toBeNull();
   const replay = await tabApi(page).post(response.url(), {
     data: response.request().postDataJSON(),
     headers: { 'idempotency-key': response.request().headers()['idempotency-key']! },
@@ -99,59 +98,32 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   expect(replay.headers()['idempotency-replayed']).toBe('true');
   expect((await replay.json()).data.id).toBe(receipt.id);
   const historyRow = page.locator('article').filter({ hasText: reference });
-  await historyRow.getByText('Cập nhật VAT · 8%', { exact: true }).click();
-  // Refetch while a local edit exists must not silently adopt a newer version.
-  await historyRow.getByLabel(`Số tiền VAT cho ${reference}`, { exact: true }).fill('999999');
-  const external = await tabApi(page).patch(`${api}/api/v1/inbound-receipts/${receipt.id}/vat`, {
-    headers: { 'idempotency-key': `external-vat-${receipt.id}` },
-    data: {
-      vat: { amountVnd: 1050000, ratePercent: 8 },
-      expectedVersion: receipt.version,
-      reason: 'Admin khác cập nhật hóa đơn',
-    },
-  });
-  expect(external.status(), await external.text()).toBe(200);
-  await page.getByRole('button', { name: 'Làm mới phiếu nhập' }).click();
-  await expect(historyRow.getByRole('button', { name: 'Tải bản VAT mới' })).toBeVisible();
-  await expect(historyRow.getByRole('button', { name: 'Lưu VAT', exact: true })).toBeDisabled();
-  await expect(historyRow.getByLabel(`Số tiền VAT cho ${reference}`, { exact: true })).toHaveValue(
-    '999,999',
-  );
-  await historyRow.getByRole('button', { name: 'Tải bản VAT mới' }).click();
-  await expect(historyRow.getByLabel(`Số tiền VAT cho ${reference}`, { exact: true })).toHaveValue(
-    '1,050,000',
-  );
-  await historyRow.getByLabel(`Số tiền VAT cho ${reference}`, { exact: true }).fill('1100000');
-  await historyRow
-    .getByLabel(`Lý do cập nhật VAT cho ${reference}`, { exact: true })
-    .fill('Điều chỉnh theo hóa đơn thuế');
-  await historyRow.getByRole('button', { name: 'Lưu VAT', exact: true }).click();
-  await expect(historyRow.getByRole('status')).toContainText('Đã lưu VAT 8%');
-  const corrected = await tabApi(page).get(`${api}/api/v1/inbound-receipts/${receipt.id}`);
-  expect((await corrected.json()).data.vat).toEqual({ amountVnd: 1100000, ratePercent: 8 });
+  await expect(historyRow).toBeVisible();
+  await expect(historyRow.getByLabel(/VAT/)).toHaveCount(0);
+  await expect(historyRow.getByText(/Cập nhật VAT/)).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => document.body.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({
     path: testInfo.outputPath('warehouse-inbound-mobile.png'),
     fullPage: true,
   });
-  // The PostgreSQL DTO must distinguish unknown tax from an explicitly entered zero.
-  const deferred = await tabApi(page).post(`${api}/api/v1/inbound-receipts`, {
-    headers: { 'idempotency-key': `deferred-${receipt.id}` },
+  // Without warehouse VAT the confirmed total is known at once, and the old VAT endpoint is gone.
+  const withoutVat = await tabApi(page).post(`${api}/api/v1/inbound-receipts`, {
+    headers: { 'idempotency-key': `no-vat-${receipt.id}` },
     data: {
-      referenceCode: `DEFERRED-${reference}`,
-      supplierName: 'Kiểm thử VAT chưa có',
+      referenceCode: `NO-VAT-${reference}`,
+      supplierName: 'Kiểm thử không VAT kho tổng',
       receivedAt: new Date().toISOString(),
       bags: [
         { productId: receipt.bags[0].productId, bagCode: `D-${reference}`, weightKg: '2.000' },
       ],
     },
   });
-  expect(deferred.status()).toBe(201);
-  const deferredReceipt = (await deferred.json()).data;
+  expect(withoutVat.status()).toBe(201);
+  const withoutVatReceipt = (await withoutVat.json()).data;
   const confirmed = await tabApi(page).post(
-    `${api}/api/v1/inbound-receipts/${deferredReceipt.id}/confirm-costs`,
+    `${api}/api/v1/inbound-receipts/${withoutVatReceipt.id}/confirm-costs`,
     {
-      headers: { 'idempotency-key': `confirm-deferred-${receipt.id}` },
+      headers: { 'idempotency-key': `confirm-no-vat-${receipt.id}` },
       data: {
         expectedVersion: 0,
         productCosts: [{ productId: receipt.bags[0].productId, priceVndPerKg: 1000 }],
@@ -164,10 +136,10 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   expect((await confirmed.json()).data.cost).toMatchObject({
     goodsCostVnd: 2000,
     vatAmountVnd: null,
-    totalCostVnd: null,
+    totalCostVnd: 2000,
   });
-  const zeroTax = await tabApi(page).patch(
-    `${api}/api/v1/inbound-receipts/${deferredReceipt.id}/vat`,
+  const removedVatEndpoint = await tabApi(page).patch(
+    `${api}/api/v1/inbound-receipts/${withoutVatReceipt.id}/vat`,
     {
       headers: { 'idempotency-key': `zero-vat-${receipt.id}` },
       data: {
@@ -177,6 +149,5 @@ test('Admin selects products and persists exactly the selected bags in the wareh
       },
     },
   );
-  expect(zeroTax.status()).toBe(200);
-  expect((await zeroTax.json()).data.cost).toMatchObject({ vatAmountVnd: 0, totalCostVnd: 2000 });
+  expect(removedVatEndpoint.status()).toBe(404);
 });

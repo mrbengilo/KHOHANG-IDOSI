@@ -489,6 +489,7 @@ describe('API projections', () => {
         expectedVersion: 1,
         freightVnd: 100_000,
         handlingVnd: 50_000,
+        vat: { amountVnd: 185_000, ratePercent: 8 },
         lines: [
           {
             approvedUnits: 2,

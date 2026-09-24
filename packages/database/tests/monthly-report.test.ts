@@ -12,6 +12,7 @@ import {
 const emptyRows: MonthlyReportRows = {
   inboundSource: 'WAREHOUSE_RECEIPTS',
   inboundHeaders: [],
+  storeReceiptVat: [],
   inboundProducts: [],
   sales: [],
   outboundOrderIds: [],
@@ -114,18 +115,30 @@ describe('exact report arithmetic', () => {
 });
 
 describe('monthly operational summary', () => {
-  it('reports captured VAT exactly and distinguishes legacy unknown VAT', () => {
+  it('reports store-receipt VAT separately and never blocks landed cost on warehouse VAT', () => {
     const rows = {
       inboundSource: 'WAREHOUSE_RECEIPTS' as const,
       inboundHeaders: [
         {
-          receiptId: 'vat-1',
+          receiptId: 'legacy-vat',
           goodsCostVnd: 5000000n,
           transportationFeeVnd: 0n,
           handlingFeeVnd: 0n,
           otherCostVnd: 0n,
           vatAmountVnd: 1000000n as bigint | null,
         },
+        {
+          receiptId: 'no-warehouse-vat',
+          goodsCostVnd: 3000000n,
+          transportationFeeVnd: 0n,
+          handlingFeeVnd: 0n,
+          otherCostVnd: 0n,
+          vatAmountVnd: null as bigint | null,
+        },
+      ],
+      storeReceiptVat: [
+        { receiptId: 'store-1', vatAmountVnd: 240000n as bigint | null },
+        { receiptId: 'store-2', vatAmountVnd: 0n as bigint | null },
       ],
       inboundProducts: [
         {
@@ -133,7 +146,7 @@ describe('monthly operational summary', () => {
           sku: 'VAT',
           productName: 'VAT product',
           weightKg: '2.000',
-          goodsCostVnd: 5000000n,
+          goodsCostVnd: 8000000n,
         },
       ],
       sales: [],
@@ -143,21 +156,48 @@ describe('monthly operational summary', () => {
     };
     const input = { year: 2026, month: 9, scope: { kind: 'ALL' as const } };
     const result = summarizeMonthlyReport(input, rows);
-    expect(result.totals.vatCostVnd.value).toBe(1000000n);
-    expect(result.totals.landedInboundCostVnd.value).toBe(6000000n);
-    rows.inboundHeaders[0]!.vatAmountVnd = null;
-    expect(summarizeMonthlyReport(input, rows).totals.landedInboundCostVnd.value).toBeNull();
-    expect(
-      summarizeMonthlyReport(input, rows).ratios.averageInboundCostPerKgVnd.unavailableReason,
-    ).toBe('VAT_NOT_CAPTURED');
-    expect(summarizeMonthlyReport(input, rows).totals.vatCostVnd.unavailableReason).toBe(
-      'VAT_NOT_CAPTURED',
-    );
+    // Legacy warehouse VAT stays inside that receipt's recorded total; a receipt without
+    // warehouse VAT no longer makes the landed cost unknown.
+    expect(result.totals.landedInboundCostVnd).toEqual({
+      value: 9000000n,
+      unavailableReason: null,
+      source: 'WAREHOUSE_RECEIPTS',
+    });
+    expect(result.ratios.averageInboundCostPerKgVnd.value).toBe(4500000n);
+    expect(result.totals.vatCostVnd).toEqual({
+      value: 240000n,
+      unavailableReason: null,
+      source: 'STORE_RECEIPTS',
+    });
+
+    rows.storeReceiptVat[1]!.vatAmountVnd = null;
+    const legacyStore = summarizeMonthlyReport(input, rows);
+    expect(legacyStore.totals.vatCostVnd).toEqual({
+      value: null,
+      unavailableReason: 'VAT_NOT_CAPTURED',
+      source: 'NOT_AVAILABLE',
+    });
+    expect(legacyStore.totals.landedInboundCostVnd.value).toBe(9000000n);
+
     const scoped = summarizeMonthlyReport(
       { ...input, scope: { kind: 'STORE', id: 'store-1' } },
-      { ...rows, inboundSource: 'STORE_RECEIPTS' },
+      {
+        ...rows,
+        inboundSource: 'STORE_RECEIPTS',
+        inboundHeaders: [
+          {
+            receiptId: 'store-1',
+            goodsCostVnd: 5000000n,
+            transportationFeeVnd: 0n,
+            handlingFeeVnd: 0n,
+            otherCostVnd: 0n,
+          },
+        ],
+        storeReceiptVat: [{ receiptId: 'store-1', vatAmountVnd: 400000n }],
+      },
     );
-    expect(scoped.totals.vatCostVnd.unavailableReason).toBe('VAT_NOT_CAPTURED');
+    // Store receipt VAT is deductible input VAT and is not added to the landed cost.
+    expect(scoped.totals.vatCostVnd.value).toBe(400000n);
     expect(scoped.totals.landedInboundCostVnd.value).toBe(5000000n);
     expect(scoped.ratios.averageInboundCostPerKgVnd.value).toBe(2500000n);
   });
@@ -177,6 +217,7 @@ describe('monthly operational summary', () => {
             vatAmountVnd: 0n,
           },
         ],
+        storeReceiptVat: [],
         inboundProducts: [
           {
             productId: 'p1',
@@ -282,10 +323,14 @@ describe('monthly operational summary', () => {
     );
   });
 
-  it('distinguishes a zero denominator from incomplete data and marks VAT unavailable', () => {
+  it('distinguishes a zero denominator from incomplete data and marks legacy VAT unavailable', () => {
     const report = summarizeMonthlyReport(
       { year: 2026, month: 9, scope: { kind: 'STORE', id: 'store-1' } },
-      { ...emptyRows, inboundSource: 'STORE_RECEIPTS' },
+      {
+        ...emptyRows,
+        inboundSource: 'STORE_RECEIPTS',
+        storeReceiptVat: [{ receiptId: 'legacy-store-receipt', vatAmountVnd: null }],
+      },
     );
 
     expect(report.totals.inboundWeightGrams.value).toBe(0n);

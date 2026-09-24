@@ -373,6 +373,7 @@ describePostgres('priority goods join the next ordinary shipment', () => {
           reviewedByUserId: admin.id,
           freightVnd: 0n,
           handlingVnd: 0n,
+          vat: { amountVnd: 0n, ratePercent: 8 as const },
           lines: [
             {
               productId: product!.id,

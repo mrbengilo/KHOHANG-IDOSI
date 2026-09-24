@@ -176,6 +176,13 @@
       "when": 1790231870648,
       "tag": "0024_allocation_sorting_integrity",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790237331660,
+      "tag": "0025_store_receipt_vat",
+      "breakpoints": true
     }
   ]
 }

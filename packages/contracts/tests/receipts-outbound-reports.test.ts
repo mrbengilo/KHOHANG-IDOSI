@@ -55,25 +55,18 @@ describe('receipt, outbound and report contracts', () => {
       }).success,
     ).toBe(true);
   });
-  it('accepts directly entered whole VND VAT at 8% without recalculating the amount', () => {
+  it('no longer accepts VAT when a warehouse inbound receipt is created', () => {
     const input = {
       referenceCode: 'VAT-1',
       supplierName: 'Supplier',
       receivedAt: '2026-09-10T08:00:00+07:00',
       bags: [{ productId: IDS.product, bagCode: 'VAT-BAG', weightKg: '2.000' }],
-      vat: { amountVnd: 1000000, ratePercent: 8 },
     };
-    expect(CreateInboundReceiptRequestSchema.parse(input).vat).toEqual(input.vat);
-    for (const amountVnd of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
-      expect(
-        CreateInboundReceiptRequestSchema.safeParse({ ...input, vat: { ...input.vat, amountVnd } })
-          .success,
-      ).toBe(false);
-    }
+    expect(CreateInboundReceiptRequestSchema.safeParse(input).success).toBe(true);
     expect(
       CreateInboundReceiptRequestSchema.safeParse({
         ...input,
-        vat: { amountVnd: 1, ratePercent: 10 },
+        vat: { amountVnd: 1000000, ratePercent: 8 },
       }).success,
     ).toBe(false);
   });
@@ -108,6 +101,7 @@ describe('receipt, outbound and report contracts', () => {
       confirmedAt: '2026-09-10T10:00:00Z',
     };
     expect(ReceiptCostConfirmationSchema.safeParse(confirmation).success).toBe(true);
+    // Responses from older API versions could still wait for warehouse VAT.
     expect(
       ReceiptCostConfirmationSchema.safeParse({
         ...confirmation,
@@ -115,19 +109,13 @@ describe('receipt, outbound and report contracts', () => {
         totalCostVnd: null,
       }).success,
     ).toBe(true);
+    // Without warehouse VAT the total is known: goods + transportation + handling.
     expect(
       ReceiptCostConfirmationSchema.safeParse({ ...confirmation, vatAmountVnd: null }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       ReceiptCostConfirmationSchema.safeParse({ ...confirmation, vatAmountVnd: 0 }).success,
     ).toBe(true);
-    expect(
-      ReceiptCostConfirmationSchema.safeParse({
-        ...confirmation,
-        vatAmountVnd: 0,
-        totalCostVnd: null,
-      }).success,
-    ).toBe(false);
     expect(
       ReceiptCostConfirmationSchema.safeParse({
         ...confirmation,
@@ -314,22 +302,35 @@ describe('receipt, outbound and report contracts', () => {
       bagWeightsKg: ['1.250', '1.500'],
       pricePerKgVnd: 20_000,
     };
+    const finalize = {
+      lines: [line],
+      freightVnd: 10_000,
+      handlingVnd: 5_000,
+      vat: { amountVnd: 4_400, ratePercent: 8 },
+      expectedVersion: 3,
+    };
+    expect(FinalizeReceiptRequestSchema.safeParse(finalize).success).toBe(true);
     expect(
       FinalizeReceiptRequestSchema.safeParse({
-        lines: [line],
-        freightVnd: 10_000,
-        handlingVnd: 5_000,
-        expectedVersion: 3,
-      }).success,
-    ).toBe(true);
-    expect(
-      FinalizeReceiptRequestSchema.safeParse({
+        ...finalize,
         lines: [{ ...line, bagWeightsKg: ['2.750'] }],
-        freightVnd: 10_000,
-        handlingVnd: 5_000,
-        expectedVersion: 3,
       }).success,
     ).toBe(false);
+    // HTKD must enter the delivery-note VAT (0 when none) before stock is booked.
+    const { vat: _omitted, ...withoutVat } = finalize;
+    expect(FinalizeReceiptRequestSchema.safeParse(withoutVat).success).toBe(false);
+    expect(
+      FinalizeReceiptRequestSchema.safeParse({ ...finalize, vat: { amountVnd: 0, ratePercent: 8 } })
+        .success,
+    ).toBe(true);
+    for (const vat of [
+      { amountVnd: -1, ratePercent: 8 },
+      { amountVnd: 0.5, ratePercent: 8 },
+      { amountVnd: Number.MAX_SAFE_INTEGER + 1, ratePercent: 8 },
+      { amountVnd: 1, ratePercent: 10 },
+    ]) {
+      expect(FinalizeReceiptRequestSchema.safeParse({ ...finalize, vat }).success).toBe(false);
+    }
 
     const finalizedReceipt = {
       id: IDS.receipt,
@@ -350,6 +351,12 @@ describe('receipt, outbound and report contracts', () => {
       updatedAt: '2026-09-10T10:00:00Z',
     };
     expect(ReceiptSchema.safeParse(finalizedReceipt).success).toBe(true);
+    expect(
+      ReceiptSchema.safeParse({ ...finalizedReceipt, vat: { amountVnd: 4_400, ratePercent: 8 } })
+        .success,
+    ).toBe(true);
+    // Receipts finalized before VAT capture keep an unknown VAT.
+    expect(ReceiptSchema.safeParse({ ...finalizedReceipt, vat: null }).success).toBe(true);
     expect(
       ReceiptSchema.safeParse({ ...finalizedReceipt, reviewedByAccountId: null }).success,
     ).toBe(false);

@@ -4,7 +4,6 @@ import { nextOrderingWindow, type OrderingContext } from '@idosi/contracts';
 import type {
   WarehouseInventoryQuery,
   WarehouseInventoryResponse,
-  UpdateInboundVatRequest,
   Account,
   AdminAuditLog,
   AllocationResult,
@@ -1426,7 +1425,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         input.referenceCode ??
         formatInboundReceiptNumber(String(this.inboundReceipts.size + 1), this.now()),
       supplierName: input.supplierName,
-      vat: input.vat ?? null,
+      vat: null,
       status: 'COST_PENDING',
       bags: input.bags.map((bag) => ({
         id: randomUUID(),
@@ -1551,7 +1550,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         handlingFeeVnd: input.handlingFeeVnd,
         vatAmountVnd: current.vat?.amountVnd ?? null,
         goodsCostVnd: Number(goodsCostVnd),
-        totalCostVnd: current.vat == null ? null : Number(totalCostVnd),
+        totalCostVnd: Number(totalCostVnd),
         confirmedByAccountId: actor.accountId,
         confirmedAt: now,
       },
@@ -1568,56 +1567,6 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       receiptId,
       current,
       updated,
-    );
-    return { data: structuredClone(updated), replayed: false };
-  }
-
-  public async updateSupplierInboundVat(
-    actor: AuthenticatedPrincipal,
-    receiptId: string,
-    input: UpdateInboundVatRequest,
-    idempotencyKey: string,
-    requestHash: string,
-    context: RequestContext,
-  ): Promise<IdempotentResource<InboundReceipt>> {
-    requireMemoryAdmin(actor);
-    const key = `${actor.accountId}:supplier-inbound:vat:${receiptId}:${idempotencyKey}`;
-    const replay = this.replayInboundReceipt(key, requestHash);
-    if (replay) return { data: replay, replayed: true };
-    const current = this.inboundReceipts.get(receiptId);
-    if (!current) throw notFound('Không tìm thấy phiếu nhập');
-    if (current.version !== input.expectedVersion) throw versionConflict();
-    if (current.status === 'CANCELLED') throw conflict('Phiếu đã hủy không thể cập nhật VAT');
-    const cost = current.cost;
-    const total = cost
-      ? BigInt(cost.goodsCostVnd) +
-        BigInt(cost.transportationFeeVnd) +
-        BigInt(cost.handlingFeeVnd) +
-        BigInt(input.vat.amountVnd)
-      : null;
-    if (total !== null && total > BigInt(Number.MAX_SAFE_INTEGER))
-      throw new ApiError('VALIDATION_ERROR', 'Tổng chi phí vượt giới hạn VND an toàn', 400);
-    const updated: InboundReceipt = {
-      ...current,
-      vat: input.vat,
-      cost:
-        cost && total !== null
-          ? { ...cost, vatAmountVnd: input.vat.amountVnd, totalCostVnd: Number(total) }
-          : cost,
-      version: current.version + 1,
-      updatedAt: this.now().toISOString(),
-    };
-    this.inboundReceipts.set(receiptId, updated);
-    this.rememberInboundReceipt(key, requestHash, updated);
-    this.appendAudit(
-      actor,
-      context,
-      'SUPPLIER_INBOUND_VAT_UPDATED',
-      'supplier_inbound_receipt',
-      receiptId,
-      current,
-      updated,
-      { reason: input.reason },
     );
     return { data: structuredClone(updated), replayed: false };
   }
@@ -2843,6 +2792,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       ...current,
       freightVnd: input.freightVnd,
       handlingVnd: input.handlingVnd,
+      vat: input.vat,
       lines: input.lines,
       unexpectedItems: (current.unexpectedItems ?? []).map((item) => {
         const booked = (input.unexpectedItems ?? []).find(
@@ -4520,6 +4470,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         {
           inboundSource: scope.kind === 'ALL' ? 'WAREHOUSE_RECEIPTS' : 'STORE_RECEIPTS',
           inboundHeaders: [],
+          storeReceiptVat: [],
           inboundProducts: [],
           sales: [],
           outboundOrderIds: [],

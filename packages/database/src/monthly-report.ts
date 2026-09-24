@@ -61,6 +61,10 @@ export interface ReportMetric<T> {
 }
 
 export interface MonthlyInboundHeaderRow {
+  /**
+   * Legacy warehouse-receipt VAT, part of that receipt's recorded total. VAT is now entered on
+   * store receipts and reported through `storeReceiptVat`, never through this field.
+   */
   readonly vatAmountVnd?: bigint | null;
   readonly receiptId: string;
   readonly goodsCostVnd: bigint;
@@ -88,9 +92,17 @@ export interface MonthlySaleRow {
   readonly revenueVnd: bigint | null;
 }
 
+/** VAT HTKD entered on a finalized store receipt; null for receipts finalized before capture. */
+export interface MonthlyStoreReceiptVatRow {
+  readonly receiptId: string;
+  readonly vatAmountVnd: bigint | null;
+}
+
 export interface MonthlyReportRows {
   readonly inboundSource: Extract<ReportMetricSource, 'WAREHOUSE_RECEIPTS' | 'STORE_RECEIPTS'>;
   readonly inboundHeaders: readonly MonthlyInboundHeaderRow[];
+  /** Store receipts finalized in the period and scope, the only place VAT is entered. */
+  readonly storeReceiptVat: readonly MonthlyStoreReceiptVatRow[];
   readonly inboundProducts: readonly MonthlyInboundProductRow[];
   readonly sales: readonly MonthlySaleRow[];
   readonly outboundOrderIds: readonly string[];
@@ -268,13 +280,17 @@ export function summarizeMonthlyReport(
   const transportationFeeVnd = sum(rows.inboundHeaders, (row) => row.transportationFeeVnd);
   const handlingFeeVnd = sum(rows.inboundHeaders, (row) => row.handlingFeeVnd);
   const otherInboundCostVnd = sum(rows.inboundHeaders, (row) => row.otherCostVnd);
-  const vatCostVnd = sum(rows.inboundHeaders, (row) => row.vatAmountVnd ?? 0n);
-  const vatComplete =
-    rows.inboundSource === 'WAREHOUSE_RECEIPTS' &&
-    rows.inboundHeaders.every((row) => row.vatAmountVnd != null);
-  const landedCostComplete = rows.inboundSource === 'STORE_RECEIPTS' || vatComplete;
+  // Landed cost is the sum of the recorded receipt totals. Legacy warehouse receipts kept their
+  // entered VAT inside that total; store receipts keep deductible VAT outside it.
+  const legacyWarehouseVatVnd = sum(rows.inboundHeaders, (row) => row.vatAmountVnd ?? 0n);
   const landedInboundCostVnd =
-    inboundGoodsCostVnd + transportationFeeVnd + handlingFeeVnd + otherInboundCostVnd + vatCostVnd;
+    inboundGoodsCostVnd +
+    transportationFeeVnd +
+    handlingFeeVnd +
+    otherInboundCostVnd +
+    legacyWarehouseVatVnd;
+  const vatComplete = rows.storeReceiptVat.every((row) => row.vatAmountVnd !== null);
+  const vatCostVnd = sum(rows.storeReceiptVat, (row) => row.vatAmountVnd ?? 0n);
 
   const inboundWeightMetric =
     inboundWeightGrams === null
@@ -335,18 +351,17 @@ export function summarizeMonthlyReport(
       transportationFeeVnd: available(transportationFeeVnd, rows.inboundSource),
       handlingFeeVnd: available(handlingFeeVnd, rows.inboundSource),
       otherInboundCostVnd: available(otherInboundCostVnd, rows.inboundSource),
-      landedInboundCostVnd: landedCostComplete
-        ? available(landedInboundCostVnd, rows.inboundSource)
-        : unavailable('VAT_NOT_CAPTURED', 'NOT_AVAILABLE'),
+      landedInboundCostVnd: available(landedInboundCostVnd, rows.inboundSource),
       vatCostVnd: vatComplete
-        ? available(vatCostVnd, rows.inboundSource)
+        ? available(vatCostVnd, 'STORE_RECEIPTS')
         : unavailable('VAT_NOT_CAPTURED', 'NOT_AVAILABLE'),
     },
     ratios: {
-      averageInboundCostPerKgVnd:
-        !landedCostComplete && inboundWeightGrams !== null && inboundWeightGrams > 0n
-          ? unavailable('VAT_NOT_CAPTURED', 'NOT_AVAILABLE')
-          : costPerInboundKilogram(landedInboundCostVnd, inboundWeightGrams, rows.inboundSource),
+      averageInboundCostPerKgVnd: costPerInboundKilogram(
+        landedInboundCostVnd,
+        inboundWeightGrams,
+        rows.inboundSource,
+      ),
       revenuePerInboundKgVnd:
         revenueVnd === null
           ? unavailable('MISSING_SALE_REVENUE', 'STORE_OUTBOUNDS')
@@ -395,10 +410,12 @@ export async function loadMonthlyOperationalReport(
   const period = monthWindowInHoChiMinh(input.year, input.month);
   const scopeFilter = storeScopeFilter(input.scope);
 
-  const inbound =
+  const [inbound, storeReceiptVat] = await Promise.all([
     input.scope.kind === 'ALL'
-      ? await loadWarehouseInbound(database, period)
-      : await loadStoreInbound(database, period, scopeFilter);
+      ? loadWarehouseInbound(database, period)
+      : loadStoreInbound(database, period, scopeFilter),
+    loadStoreReceiptVat(database, period, scopeFilter),
+  ]);
 
   const [sales, receivedOrders, completedAllocationRows, queuedWaitRows] = await Promise.all([
     database
@@ -482,6 +499,7 @@ export async function loadMonthlyOperationalReport(
     {
       inboundSource: inbound.source,
       inboundHeaders: inbound.headers,
+      storeReceiptVat,
       inboundProducts: inbound.products,
       sales,
       outboundOrderIds: receivedOrders.map((row) => row.id),
@@ -609,14 +627,34 @@ async function loadStoreInbound(
 
   return {
     source: 'STORE_RECEIPTS' as const,
-    // Store receipts currently persist goods, freight and handling only. Do not infer VAT or
-    // another charge from totalCostVnd; that would double count a known component.
+    // Store receipt totals are goods, freight and handling. VAT is reported separately from
+    // storeReceiptVat; never infer another charge from totalCostVnd.
     headers: headers.map((row) => ({
       ...row,
       otherCostVnd: 0n,
     })),
     products: mergeScopedInboundRows(lines, bags),
   };
+}
+
+async function loadStoreReceiptVat(
+  database: Database,
+  period: MonthWindow,
+  scopeFilter: SQL | undefined,
+): Promise<MonthlyStoreReceiptVatRow[]> {
+  return database
+    .select({ receiptId: storeReceipts.id, vatAmountVnd: storeReceipts.vatAmountVnd })
+    .from(storeReceipts)
+    .innerJoin(stores, eq(storeReceipts.storeId, stores.id))
+    .where(
+      and(
+        eq(storeReceipts.status, 'finalized'),
+        gte(storeReceipts.finalizedAt, period.start),
+        lt(storeReceipts.finalizedAt, period.endExclusive),
+        isNull(storeReceipts.deletedAt),
+        scopeFilter,
+      ),
+    );
 }
 
 function storeScopeFilter(scope: MonthlyReportScope): SQL | undefined {

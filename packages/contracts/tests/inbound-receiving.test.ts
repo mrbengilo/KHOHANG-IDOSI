@@ -46,6 +46,7 @@ describe('warehouse count first, store weight later', () => {
       expectedVersion: 1,
       freightVnd: 0,
       handlingVnd: 0,
+      vat: { amountVnd: 0, ratePercent: 8 },
       lines: [
         {
           productId,

@@ -1821,8 +1821,18 @@ describe('KHOHANG-IDOSI API', () => {
       ],
       freightVnd: 10_000,
       handlingVnd: 5_000,
+      vat: { amountVnd: 9_208, ratePercent: 8 },
       expectedVersion: 1,
     };
+    const { vat: _vat, ...withoutVat } = finalization;
+    const missingVat = await mutateReceipt(
+      htkdCookie,
+      'POST',
+      `/api/v1/store-receipts/${receiptId}/finalize`,
+      'receipt-finalize-missing-vat',
+      withoutVat,
+    );
+    assert.equal(missingVat.statusCode, 400);
     const storeDenied = await mutateReceipt(
       storeCookie,
       'POST',
@@ -1877,8 +1887,10 @@ describe('KHOHANG-IDOSI API', () => {
       { ...declaration.unexpectedItems[0], ...finalization.unexpectedItems[0] },
     ]);
     assert.equal(finalized.json().data.version, 4);
-    // 1.255 kg × 20,001 + 7.5 kg of excess × 10,000 + freight 10,000 + handling 5,000
+    // 1.255 kg × 20,001 + 7.5 kg of excess × 10,000 + freight 10,000 + handling 5,000;
+    // the delivery-note VAT is kept beside the landed cost, not added to it.
     assert.equal(finalized.json().data.totalCostVnd, 115_101);
+    assert.deepEqual(finalized.json().data.vat, finalization.vat);
 
     const shortageChecks = await app.inject({
       method: 'GET',
@@ -3271,20 +3283,29 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(nonAdminAudit.statusCode, 403);
   });
 
-  test('keeps confirmed totals unknown until deferred VAT is recorded', async () => {
+  test('confirms warehouse receipt totals without VAT and no longer exposes warehouse VAT entry', async () => {
     const adminCookie = cookieOf(await login('admin'));
     const productId = await firstProductId(adminCookie);
+    const payload = {
+      referenceCode: 'NO-WAREHOUSE-VAT',
+      supplierName: 'VAT test',
+      receivedAt: new Date().toISOString(),
+      bags: [{ productId, bagCode: 'NO-WAREHOUSE-VAT-BAG', weightKg: '2.000' }],
+    };
+    const rejected = await mutateReceipt(
+      adminCookie,
+      'POST',
+      '/api/v1/inbound-receipts',
+      'warehouse-vat-rejected',
+      { ...payload, vat: { amountVnd: 80, ratePercent: 8 } },
+    );
+    assert.equal(rejected.statusCode, 400, rejected.body);
     const created = await mutateReceipt(
       adminCookie,
       'POST',
       '/api/v1/inbound-receipts',
-      'unknown-vat-create',
-      {
-        referenceCode: 'UNKNOWN-VAT',
-        supplierName: 'VAT test',
-        receivedAt: new Date().toISOString(),
-        bags: [{ productId, bagCode: 'UNKNOWN-VAT-BAG', weightKg: '2.000' }],
-      },
+      'warehouse-no-vat-create',
+      payload,
     );
     assert.equal(created.statusCode, 201, created.body);
     const id = created.json().data.id;
@@ -3299,97 +3320,23 @@ describe('KHOHANG-IDOSI API', () => {
         adminCookie,
         'POST',
         `/api/v1/inbound-receipts/${id}/confirm-costs`,
-        'unknown-vat-confirm',
+        'warehouse-no-vat-confirm',
         confirmation,
       );
       assert.equal(result.statusCode, 200, result.body);
       assert.equal(result.json().data.vat, null);
       assert.equal(result.json().data.cost.vatAmountVnd, null);
-      assert.equal(result.json().data.cost.totalCostVnd, null);
       assert.equal(result.json().data.cost.goodsCostVnd, 2000);
+      assert.equal(result.json().data.cost.totalCostVnd, 2150);
     }
-    const updated = await mutateReceipt(
+    const removed = await mutateReceipt(
       adminCookie,
       'PATCH',
       `/api/v1/inbound-receipts/${id}/vat`,
-      'unknown-vat-update',
+      'warehouse-vat-update',
       { expectedVersion: 1, vat: { amountVnd: 80, ratePercent: 8 }, reason: 'Bổ sung số tiền VAT' },
     );
-    assert.equal(updated.statusCode, 200, updated.body);
-    assert.equal(updated.json().data.cost.totalCostVnd, 2230);
-  });
-
-  test('allows only ADMIN to fill deferred VAT and correct a confirmed receipt with audit and replay', async () => {
-    const adminCookie = cookieOf(await login('admin'));
-    const productId = await firstProductId(adminCookie);
-    const created = await mutateReceipt(
-      adminCookie,
-      'POST',
-      '/api/v1/inbound-receipts',
-      'vat-deferred-create',
-      {
-        referenceCode: 'VAT-LATER',
-        supplierName: 'VAT test',
-        receivedAt: new Date().toISOString(),
-        bags: [{ productId, bagCode: 'VAT-LATER-BAG', weightKg: '2.000' }],
-      },
-    );
-    assert.equal(created.statusCode, 201);
-    const id = created.json().data.id;
-    const url = `/api/v1/inbound-receipts/${id}/vat`;
-    const input = {
-      expectedVersion: 0,
-      vat: { amountVnd: 1000000, ratePercent: 8 },
-      reason: 'Bổ sung số tiền VAT',
-    };
-    const denied = await mutateReceipt(
-      cookieOf(await login('htkd')),
-      'PATCH',
-      url,
-      'vat-forbidden',
-      input,
-    );
-    assert.equal(denied.statusCode, 403);
-    const updated = await mutateReceipt(adminCookie, 'PATCH', url, 'vat-update', input);
-    assert.equal(updated.statusCode, 200, updated.body);
-    assert.deepEqual(updated.json().data.vat, input.vat);
-    assert.equal(
-      (await mutateReceipt(adminCookie, 'PATCH', url, 'vat-update', input)).headers[
-        'idempotency-replayed'
-      ],
-      'true',
-    );
-    assert.equal(
-      (await mutateReceipt(adminCookie, 'PATCH', url, 'vat-stale', input)).statusCode,
-      409,
-    );
-    const confirmed = await mutateReceipt(
-      adminCookie,
-      'POST',
-      `/api/v1/inbound-receipts/${id}/confirm-costs`,
-      'vat-confirm',
-      {
-        expectedVersion: 1,
-        productCosts: [{ productId, priceVndPerKg: 1000 }],
-        transportationFeeVnd: 0,
-        handlingFeeVnd: 0,
-      },
-    );
-    assert.equal(confirmed.json().data.cost.totalCostVnd, 1002000);
-    const correction = await mutateReceipt(adminCookie, 'PATCH', url, 'vat-correct', {
-      ...input,
-      expectedVersion: 2,
-      vat: { amountVnd: 0, ratePercent: 8 },
-    });
-    assert.equal(correction.statusCode, 200, correction.body);
-    assert.equal(correction.json().data.cost.totalCostVnd, 2000);
-    assert.equal(correction.json().data.cost.vatAmountVnd, 0);
-    const audit = await app.inject({
-      method: 'GET',
-      url: `/api/v1/admin/audit-logs?action=SUPPLIER_INBOUND_VAT_UPDATED&entityId=${id}`,
-      headers: { cookie: adminCookie },
-    });
-    assert.equal(audit.json().pagination.totalItems, 2);
+    assert.equal(removed.statusCode, 404, removed.body);
   });
 
   test('returns a retryable conflict after database contention without leaking SQL', async () => {
@@ -3460,7 +3407,7 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(priced.statusCode, 200, priced.body);
     assert.equal(priced.json().data.status, 'COST_CONFIRMED');
     assert.equal(priced.json().data.cost.goodsCostVnd, 0);
-    assert.equal(priced.json().data.cost.totalCostVnd, null);
+    assert.equal(priced.json().data.cost.totalCostVnd, 15000);
     assert.equal(priced.json().data.totalWeightKg, null);
     const replayCost = await mutateReceipt(
       cookie,
@@ -3544,7 +3491,6 @@ describe('KHOHANG-IDOSI API', () => {
     const beforeBalance = before.json().data.find((balance) => balance.productId === productId);
     const payload = {
       referenceCode: 'SUPPLIER-TEST-001',
-      vat: { amountVnd: 1000000, ratePercent: 8 },
       supplierName: 'Nhà cung cấp test',
       receivedAt: '2026-09-17T08:00:00+07:00',
       bags: [
@@ -3563,7 +3509,7 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(received.headers['idempotency-replayed'], 'false');
     assert.equal(received.json().data.status, 'COST_PENDING');
     assert.equal(received.json().data.totalWeightKg, '3.235');
-    assert.deepEqual(received.json().data.vat, payload.vat);
+    assert.equal(received.json().data.vat, null);
     const receiptId = received.json().data.id;
 
     const replay = await mutateReceipt(
@@ -3623,8 +3569,8 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(confirmed.statusCode, 200);
     assert.equal(confirmed.json().data.status, 'COST_CONFIRMED');
     assert.equal(confirmed.json().data.cost.goodsCostVnd, 32_353);
-    assert.equal(confirmed.json().data.cost.totalCostVnd, 1_152_353);
-    assert.equal(confirmed.json().data.cost.vatAmountVnd, 1_000_000);
+    assert.equal(confirmed.json().data.cost.totalCostVnd, 152_353);
+    assert.equal(confirmed.json().data.cost.vatAmountVnd, null);
     assert.equal(confirmed.json().data.version, 1);
 
     const cannotCancelConfirmed = await mutateReceipt(
