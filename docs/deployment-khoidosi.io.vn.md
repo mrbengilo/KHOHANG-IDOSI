@@ -179,6 +179,19 @@ Sau khi deploy thành công, `deploy.sh` giữ ảnh của năm release gần nh
 trước khi có watcher được giữ nguyên để người vận hành tự dọn. Script không bao giờ xóa volume
 hoặc file môi trường; backup chỉ được dọn theo chính sách giữ bản ở mục dưới.
 
+## Migration phải tương thích ngược
+
+`deploy.sh` chạy migration khi bản cũ vẫn đang phục vụ. Nếu bước chuyển bản lỗi, nó tự rollback về
+image cũ nhưng **giữ nguyên database đã migrate** (`--confirm-forward-compatible-db`). Vì vậy mọi
+migration phải là "expand": bản cũ vẫn chạy được trên schema mới. Muốn xóa hoặc đổi tên bảng/cột, đổi
+kiểu, thêm cột `NOT NULL` không có `DEFAULT` hay bắt cột thành bắt buộc thì phải tách thành hai
+release. Release 1 thêm cấu trúc mới và code đọc/ghi cả hai. Release 2 là bước "contract", gỡ cấu
+trúc cũ khi không còn code nào dùng. Migration của bước contract phải có dòng
+`-- migration-safety: contract <lý do>`.
+
+CI chạy `node infra/scripts/check-migration-safety.mjs`, kiểm tra mọi migration từ `0027` trở đi,
+và chặn merge nếu vi phạm.
+
 ## Backup định kỳ và giữ bản
 
 Mỗi lần deploy đều backup trước khi migrate, nhưng tuần không có merge thì không có deploy. Vì vậy
