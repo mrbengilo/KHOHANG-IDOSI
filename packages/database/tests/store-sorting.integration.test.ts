@@ -352,6 +352,99 @@ describePostgres('sorted sale and charity stock with IDOSI reconciliation', () =
     ).toBe('24.000');
   });
 
+  it('lets a store sort into Sale before its first IDOSI sync and baselines on that sync', async () => {
+    const token = randomUUID().replaceAll('-', '');
+    const [group] = await db
+      .insert(storeGroups)
+      .values({ code: `B${token}`, name: 'Pending baseline' })
+      .returning();
+    const [store] = await db
+      .insert(stores)
+      .values({ groupId: group!.id, code: `B${token}`, name: 'Pending baseline store' })
+      .returning();
+    const [admin] = await db
+      .select({ passwordHash: users.passwordHash })
+      .from(users)
+      .where(eq(users.role, 'admin'))
+      .limit(1);
+    const [actor] = await db
+      .insert(users)
+      .values({
+        email: `baseline.${token}@example.invalid`,
+        displayName: 'Baseline test',
+        role: 'store',
+        status: 'active',
+        storeId: store!.id,
+        passwordHash: admin?.passwordHash ?? 'test-hash-placeholder-long-enough',
+      })
+      .returning();
+    const [dress] = await db.select().from(products).where(eq(products.sku, 'DAM')).limit(1);
+    const now = new Date();
+    const period = new Date(now.getTime() + 7 * 3600000).toISOString().slice(0, 7);
+    const inbound = await createStorePartnerInbound(db, {
+      storeId: store!.id,
+      partnerName: 'Baseline partner',
+      note: null,
+      receivedAt: now,
+      lines: [{ productId: dress!.id, quantity: 1, bagWeightsKg: ['20.000'] }],
+      createdByUserId: actor!.id,
+      requestId: randomUUID(),
+      idempotencyKey: randomUUID(),
+      requestHash: randomUUID(),
+    });
+    if (inbound.replayed) throw new Error('Unexpected inbound replay');
+    const [bag] = await db
+      .select()
+      .from(storeInventoryBags)
+      .where(eq(storeInventoryBags.storeId, store!.id));
+
+    // No IDOSI snapshot exists for this store yet: sorting into Sale is no longer refused.
+    await createStoreSorting(db, {
+      storeId: store!.id,
+      inventoryBagId: bag!.id,
+      expectedInventoryVersion: bag!.version,
+      reason: 'SALE',
+      weightKg: '20.000',
+      actorUserId: actor!.id,
+      idempotencyKey: randomUUID(),
+      requestHash: randomUUID(),
+    });
+    const pending = await db
+      .select()
+      .from(storeSaleSyncProgress)
+      .where(eq(storeSaleSyncProgress.storeId, store!.id));
+    expect(pending.map((row) => row.baselinePending)).toEqual([true, true]);
+
+    const sync = async (dressKg: number, offsetSeconds: number) => {
+      const at = new Date(now.getTime() + offsetSeconds * 1000);
+      await recordIdosiStatisticsSuccess(db, {
+        target: { storeId: store!.id, storeCode: store!.code, storeName: store!.name },
+        scope: { storeId: store!.id, period, date: null, shiftId: null, paymentMethod: null },
+        payload: payload(period, at, 0, dressKg),
+        source: 'MANUAL',
+        startedAt: at,
+        completedAt: at,
+        context: {
+          actor: { userId: null, role: null, storeId: null },
+          requestId: randomUUID(),
+          ipAddress: null,
+          userAgent: null,
+        },
+      });
+    };
+    // The first usable figure (5 kg sold this month) is the baseline, not a deduction.
+    await sync(5, 1);
+    expect((await listStoreSortedStocks(db, store!.id))[0]?.saleWeightKg).toBe('20.000');
+    // 2 kg sold afterwards come out of the Sale stock.
+    await sync(7, 2);
+    expect((await listStoreSortedStocks(db, store!.id))[0]?.saleWeightKg).toBe('18.000');
+    const settled = await db
+      .select()
+      .from(storeSaleSyncProgress)
+      .where(eq(storeSaleSyncProgress.storeId, store!.id));
+    expect(settled.every((row) => !row.baselinePending)).toBe(true);
+  });
+
   it('takes regular-price IDOSI sales out of the store bags from the first tracked month', async () => {
     const token = randomUUID().replaceAll('-', '');
     const [group] = await db

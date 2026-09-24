@@ -396,7 +396,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   >();
   private readonly saleSyncProgress = new Map<
     string,
-    { baseline: bigint; observed: bigint; applied: bigint }
+    { baseline: bigint; observed: bigint; applied: bigint; pending?: boolean }
   >();
   private readonly storeTransfers = new Map<string, StoreTransfer>();
   private readonly transferMutationIdempotency = new Map<
@@ -3455,21 +3455,19 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const snapshot = this.idosiStatisticsSnapshots.get(
       memoryIdosiScopeKey({ storeId, period, date: null, shiftId: null, paymentMethod: null }),
     );
-    if (!snapshot)
-      throw new ApiError(
-        'VALIDATION_ERROR',
-        'Cần đồng bộ IDOSI tháng hiện tại trước khi lưu Sale lần đầu.',
-        400,
-      );
     const name = this.products.get(productId)?.name;
     if (!name) throw notFound('Không tìm thấy mặt hàng');
     for (const type of ['sale_kg', 'sale_piece'] as const) {
-      const baseline = idosiProductSaleGrams(snapshot.payload, name, type);
-      if (baseline === null)
-        throw new ApiError('VALIDATION_ERROR', 'IDOSI thiếu định mức kg cho Sale theo cái.', 400);
+      // Same rule as PostgreSQL: without a usable figure the next sync sets the baseline.
+      const baseline = snapshot ? idosiProductSaleGrams(snapshot.payload, name, type) : null;
       const key = `${storeId}:${productId}:${period}:${type}`;
       if (!this.saleSyncProgress.has(key))
-        this.saleSyncProgress.set(key, { baseline, observed: baseline, applied: 0n });
+        this.saleSyncProgress.set(key, {
+          baseline: baseline ?? 0n,
+          observed: baseline ?? 0n,
+          applied: 0n,
+          ...(baseline === null ? { pending: true } : {}),
+        });
     }
   }
 
@@ -3499,7 +3497,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         const key = `${storeId}:${productId}:${period}:${type}`;
         const previous = this.saleSyncProgress.get(key);
         this.saleSyncProgress.set(key, {
-          baseline: previous?.baseline ?? 0n,
+          baseline: previous?.pending ? observed : (previous?.baseline ?? 0n),
           observed,
           applied: previous?.applied ?? 0n,
         });

@@ -197,6 +197,13 @@
       "when": 1790262963656,
       "tag": "0027_worker_heartbeats",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1790263906569,
+      "tag": "0028_sale_baseline_pending",
+      "breakpoints": true
     }
   ]
 }

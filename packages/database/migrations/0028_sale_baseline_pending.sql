@@ -1,0 +1,1 @@
+ALTER TABLE "store_sale_sync_progress" ADD COLUMN "baseline_pending" boolean DEFAULT false NOT NULL;

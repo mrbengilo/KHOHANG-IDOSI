@@ -2574,6 +2574,11 @@ export const storeSaleSyncProgress = pgTable(
     appliedGrams: bigint('applied_grams', { mode: 'bigint' })
       .notNull()
       .default(sql`0`),
+    /**
+     * Sale was first credited while no usable IDOSI figure existed (no snapshot yet, or a piece
+     * norm missing). The next usable sync sets the baseline instead of charging the month so far.
+     */
+    baselinePending: boolean('baseline_pending').notNull().default(false),
     sourceSnapshotId: uuid('source_snapshot_id').references(() => idosiStatisticsSnapshots.id, {
       onDelete: 'restrict',
     }),

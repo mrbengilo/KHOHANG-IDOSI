@@ -146,7 +146,13 @@ function fullMonthScopeKey(period: string): string {
   return JSON.stringify([period, null, null, null]);
 }
 
-/** Capture existing IDOSI sales before the first sale credit so historical sales are not charged to new stock. */
+/**
+ * Capture existing IDOSI sales before the first sale credit so historical sales are not charged
+ * to new stock. Without a usable IDOSI figure (no snapshot this month yet, IDOSI unreachable, or a
+ * piece norm missing) the store is not blocked: the checkpoint is marked baselinePending and the
+ * next usable sync sets the baseline. Sales between the credit and that sync are then not
+ * deducted, a small gap preferred over stopping the store from sorting into Sale.
+ */
 export async function initializeSaleBaseline(
   tx: Transaction,
   storeId: string,
@@ -170,18 +176,14 @@ export async function initializeSaleBaseline(
       ),
     )
     .limit(1);
-  if (!snapshot)
-    throw new StoreOperationValidationError(
-      'Cần đồng bộ IDOSI tháng hiện tại trước khi lưu Sale lần đầu.',
-    );
-  const payload = IdosiOrderStatisticsPayloadSchema.parse(snapshot.payload);
-  const links = await linkIdosiProducts(tx, payload);
+  const parsed = snapshot ? IdosiOrderStatisticsPayloadSchema.safeParse(snapshot.payload) : null;
+  const payload = parsed?.success ? parsed.data : null;
+  const links = payload ? await linkIdosiProducts(tx, payload) : null;
   for (const type of ['sale_kg', 'sale_piece'] as const) {
-    const grams = idosiProductSaleGrams(payload, product.name, type, { productId, links });
-    if (grams === null)
-      throw new StoreOperationValidationError(
-        'IDOSI chưa có đủ định mức kg cho Sale theo cái của mặt hàng này.',
-      );
+    const grams =
+      payload && links
+        ? idosiProductSaleGrams(payload, product.name, type, { productId, links })
+        : null;
     await tx
       .insert(storeSaleSyncProgress)
       .values({
@@ -189,10 +191,11 @@ export async function initializeSaleBaseline(
         productId,
         period,
         saleType: type,
-        baselineGrams: grams,
-        observedGrams: grams,
+        baselineGrams: grams ?? 0n,
+        observedGrams: grams ?? 0n,
         appliedGrams: 0n,
-        sourceSnapshotId: snapshot.id,
+        baselinePending: grams === null,
+        sourceSnapshotId: grams === null ? null : (snapshot?.id ?? null),
         updatedAt: now,
       })
       .onConflictDoNothing();
@@ -251,7 +254,19 @@ export async function reconcileStoreSaleSnapshot(
         )
         .for('update')
         .limit(1);
-      if (existing) {
+      if (existing?.baselinePending) {
+        // First usable figure since Sale was credited without one: it becomes the baseline.
+        await tx
+          .update(storeSaleSyncProgress)
+          .set({
+            baselineGrams: observed,
+            observedGrams: observed,
+            baselinePending: false,
+            sourceSnapshotId: snapshotId,
+            updatedAt: now,
+          })
+          .where(eq(storeSaleSyncProgress.id, existing.id));
+      } else if (existing) {
         await tx
           .update(storeSaleSyncProgress)
           .set({ observedGrams: observed, sourceSnapshotId: snapshotId, updatedAt: now })
