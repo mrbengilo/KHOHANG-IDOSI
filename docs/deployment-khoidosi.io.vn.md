@@ -106,7 +106,74 @@ Không xóa volume này khi deploy hoặc rollback. Các tab tham chiếu tới 
 trong bất kỳ image nào cần tải lại trang một lần. Theo dõi dung lượng volume và chỉ dọn các
 asset cũ sau khi chắc chắn không còn tab nào dùng phiên bản tương ứng.
 
+## Deploy tự động từ `main`
+
+Đây là cách deploy mặc định. VPS chạy `khohang-autodeploy.timer` khoảng 2 phút một lần. Khi đầu
+nhánh `main` khác bản đang chạy và check `Node 24 / PostgreSQL 17` của chính commit đó đã xanh,
+watcher `/usr/local/sbin/khohang-autodeploy`:
+
+1. Fetch commit vào mirror `/opt/khohang-idosi/repo.git` và tạo checkout
+   `/opt/khohang-idosi/releases/<FULL_SHA>`.
+2. Chạy `infra/scripts/deploy.sh` của chính commit đó: backup database có checksum, build bốn ảnh
+   ứng dụng, chạy migration, thay `api`, `worker`, `web`, `caddy` rồi kiểm tra `/health`, `/ready`,
+   `/openapi.json` và `/` qua HTTPS.
+3. Chỉ khi mọi kiểm tra đạt mới đổi `IMAGE_TAG` trong file môi trường và symlink `current`. Nếu lỗi
+   sau khi đã thay container, script tự đưa ảnh về bản trước bằng `rollback.sh` (không đảo
+   migration). Lỗi trước bước đó không đụng tới service đang chạy.
+
+VPS chỉ gọi ra GitHub qua HTTPS vì repository public; GitHub không cần khóa SSH hay secret. Commit
+có CI đỏ hoặc deploy lỗi không bị thử lại; merge một commit mới để deploy tiếp. Deploy dùng khóa
+`/run/lock/khohang-idosi-deploy.lock`, nên watcher và người vận hành không thể deploy chồng nhau.
+
+Cài lần đầu bằng root từ checkout đang chạy. Sau mỗi lần deploy thành công, watcher tự cập nhật từ
+release mới:
+
+```bash
+sudo bash /opt/khohang-idosi/current/infra/autodeploy/install.sh
+```
+
+Theo dõi trạng thái:
+
+```bash
+cat /var/lib/khohang-autodeploy/status
+journalctl -u khohang-autodeploy --since today
+ls -t /var/lib/khohang-autodeploy/logs/ | head
+```
+
+`state` là một trong `up-to-date`, `waiting-ci`, `deploying`, `deployed`, `ci-failed`, `failed`,
+`skipped`, `busy`, `paused` hoặc `error`; `detail` ghi đường dẫn log của lần deploy.
+
+- Tạm dừng khi xử lý sự cố: `sudo touch /etc/khohang-idosi/autodeploy.paused`; xóa file để chạy lại.
+- Cho phép thử lại một commit đã lỗi sau khi sửa nguyên nhân ngoài code:
+  `sudo rm /var/lib/khohang-autodeploy/failed/<FULL_SHA>`.
+- Tùy chọn trong `/etc/khohang-idosi/autodeploy.env` (không bắt buộc): `AUTODEPLOY_BRANCH`,
+  `AUTODEPLOY_REQUIRED_CHECK`, `AUTODEPLOY_GITHUB_TOKEN` (chỉ cần nếu repository chuyển sang
+  private hoặc bị giới hạn tốc độ API).
+
+Deploy tay một commit đã merge, dùng cùng script và khóa với watcher:
+
+```bash
+set -euo pipefail
+sha=<FULL_SHA>
+mirror=/opt/khohang-idosi/repo.git
+git --git-dir="$mirror" fetch --quiet https://github.com/mrbengilo/KHOHANG-IDOSI.git \
+  +refs/heads/main:refs/heads/main
+git --git-dir="$mirror" worktree add --detach "/opt/khohang-idosi/releases/$sha" "$sha"
+sudo "/opt/khohang-idosi/releases/$sha/infra/scripts/deploy.sh" --sha "$sha" --yes
+```
+
+Nếu `main` mới hơn commit vừa deploy tay, watcher sẽ đưa production về đầu `main` ở lần kiểm tra kế
+tiếp; tạm dừng watcher nếu cần giữ bản khác.
+
+Sau khi deploy thành công, `deploy.sh` giữ ảnh của năm release gần nhất và bản ngay trước, xóa ảnh
+ứng dụng cũ hơn cùng build cache quá bảy ngày, và gỡ checkout cũ được tạo từ mirror. Checkout tạo
+trước khi có watcher được giữ nguyên để người vận hành tự dọn. Script không bao giờ xóa backup,
+volume hoặc file môi trường.
+
 ## Build và triển khai
+
+Các bước dưới đây là quy trình thủ công mà `infra/scripts/deploy.sh` tự động hóa; chỉ dùng trực tiếp
+khi chẩn đoán sự cố.
 
 VPS build ảnh bất biến từ đúng checkout; `--pull never` ngăn Compose tìm registry khi dùng prefix
 `local/`. Nếu dùng registry, CI phải build/push cùng một SHA cho đủ bốn ảnh `api`, `migrate`,
