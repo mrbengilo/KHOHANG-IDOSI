@@ -303,6 +303,8 @@ export type {
 
 export * from './schema.js';
 export { loadWorkerHeartbeats, recordWorkerHeartbeat } from './worker-heartbeats.js';
+export { MAINTENANCE_BATCH, pruneOperationalHistory, RETENTION } from './maintenance.js';
+export type { MaintenanceResult } from './maintenance.js';
 export type {
   WorkerHeartbeatFailingJob,
   WorkerHeartbeatInput,

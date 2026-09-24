@@ -259,6 +259,15 @@ export async function recordIdosiStatisticsSuccess(
           });
         }
 
+        // A scheduled sync every 15 minutes per store would bury the audit log. Manual syncs and
+        // changed figures are recorded; an unchanged scheduled refresh is only an attempt row.
+        if (
+          input.source === 'SCHEDULED' &&
+          existing &&
+          sameStatisticsTotals(existing.payload, input.payload)
+        ) {
+          return;
+        }
         await tx.insert(auditLogs).values({
           requestId: input.context.requestId,
           actorUserId: input.context.actor.userId,
@@ -294,6 +303,20 @@ export async function recordIdosiStatisticsFailure(
   const errorCode = boundedText(input.errorCode, 100, 'IDOSI_SYNC_FAILED');
   const errorMessage = boundedText(input.errorMessage, 1_000, 'Đồng bộ IDOSI thất bại.');
   await database.transaction(async (tx) => {
+    const [previous] = await tx
+      .select({
+        status: idosiStatisticsSyncAttempts.status,
+        errorCode: idosiStatisticsSyncAttempts.errorCode,
+      })
+      .from(idosiStatisticsSyncAttempts)
+      .where(
+        and(
+          eq(idosiStatisticsSyncAttempts.storeId, input.scope.storeId),
+          eq(idosiStatisticsSyncAttempts.scopeKey, scopeKey),
+        ),
+      )
+      .orderBy(desc(idosiStatisticsSyncAttempts.completedAt), desc(idosiStatisticsSyncAttempts.id))
+      .limit(1);
     const [attempt] = await tx
       .insert(idosiStatisticsSyncAttempts)
       .values({
@@ -312,6 +335,15 @@ export async function recordIdosiStatisticsFailure(
       })
       .returning({ id: idosiStatisticsSyncAttempts.id });
     if (!attempt) throw new Error('IDOSI failure attempt insert did not return a row');
+    // An outage retried by the scheduler is audited when it starts or its cause changes, not on
+    // every retry; each retry is still an attempt row.
+    if (
+      input.source === 'SCHEDULED' &&
+      previous?.status === 'failed' &&
+      previous.errorCode === errorCode
+    ) {
+      return;
+    }
     await tx.insert(auditLogs).values({
       requestId: input.context.requestId,
       actorUserId: input.context.actor.userId,
@@ -388,6 +420,32 @@ export async function listDueIdosiStatisticsTargets(
       scope: { storeId: store.id, ...scopeTemplate },
       intervalMinutes,
     }));
+}
+
+/** Orders, revenue and weight per product unchanged since the stored snapshot. */
+function sameStatisticsTotals(stored: unknown, next: IdosiOrderStatisticsPayload): boolean {
+  const previous = stored as Partial<IdosiOrderStatisticsPayload> | null;
+  if (!previous?.totals || !previous.products) return false;
+  const fingerprint = (payload: Pick<IdosiOrderStatisticsPayload, 'totals' | 'products'>) =>
+    JSON.stringify([
+      payload.totals.orders,
+      payload.totals.revenue,
+      payload.products.items.map((item) => [
+        item.canonicalProductId ?? item.productId,
+        item.revenueType,
+        item.quantity,
+        item.weight.actualKg,
+        item.weight.estimatedKg,
+      ]),
+    ]);
+  try {
+    return (
+      fingerprint(previous as Pick<IdosiOrderStatisticsPayload, 'totals' | 'products'>) ===
+      fingerprint(next)
+    );
+  } catch {
+    return false;
+  }
 }
 
 function snapshotDto(row: typeof idosiStatisticsSnapshots.$inferSelect): IdosiStatisticsSnapshot {

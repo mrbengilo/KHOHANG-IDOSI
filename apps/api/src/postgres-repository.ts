@@ -331,6 +331,9 @@ import { hashPassword, hashSessionToken } from './security.js';
 import { asiaHoChiMinhDateRange } from './time.js';
 import { workerStatusDto } from './worker-status.js';
 
+/** lastSeenAt is refreshed at most this often per session. */
+const SESSION_LAST_SEEN_RESOLUTION_MS = 60_000;
+
 export class PostgresWarehouseRepository implements WarehouseRepository {
   public async listWarehouseInventory(
     actor: AuthenticatedPrincipal,
@@ -443,6 +446,11 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     }
     const credentials = await this.credentialsFromRow(row.account);
     const now = new Date();
+    // Every request authenticates; refreshing lastSeenAt at most once a minute keeps polling
+    // screens from turning each read into a write on the sessions table.
+    if (now.getTime() - row.session.lastSeenAt.getTime() < SESSION_LAST_SEEN_RESOLUTION_MS) {
+      return sessionDto(row.session, credentials);
+    }
     await db.update(sessions).set({ lastSeenAt: now }).where(eq(sessions.id, row.session.id));
     return sessionDto({ ...row.session, lastSeenAt: now }, credentials);
   }
