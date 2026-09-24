@@ -41,6 +41,20 @@ export function monthlyOperationalReportDto(
       effectiveCostPerSoldKgVnd: exactMetric(report.ratios.effectiveCostPerSoldKgVnd),
       grossMarginBasisPoints: { ...report.ratios.grossMarginBasisPoints },
     },
+    adjustments: {
+      appliedCount: report.adjustments.appliedCount,
+      goodsDeltaVnd: report.adjustments.goodsDeltaVnd.toString(),
+      freightDeltaVnd: report.adjustments.freightDeltaVnd.toString(),
+      handlingDeltaVnd: report.adjustments.handlingDeltaVnd.toString(),
+      vatDeltaVnd: report.adjustments.vatDeltaVnd.toString(),
+      costDeltaVnd: report.adjustments.costDeltaVnd.toString(),
+      totalDeltaVnd: report.adjustments.totalDeltaVnd.toString(),
+      adjustedLandedInboundCostVnd:
+        report.adjustments.adjustedLandedInboundCostVnd?.toString() ?? null,
+      adjustedVatCostVnd: report.adjustments.adjustedVatCostVnd?.toString() ?? null,
+      returnsHandedOverCount: report.adjustments.returnsHandedOverCount,
+      returnsHandedOverValueVnd: report.adjustments.returnsHandedOverValueVnd.toString(),
+    },
     products: report.products.map((product) => ({
       productId: product.productId,
       sku: product.sku,
@@ -49,6 +63,8 @@ export function monthlyOperationalReportDto(
       inboundGoodsCostVnd: exactMetric(product.inboundGoodsCostVnd),
       soldWeightGrams: exactMetric(product.soldWeightGrams),
       revenueVnd: exactMetric(product.revenueVnd),
+      adjustmentWeightDeltaGrams: product.adjustmentWeightDeltaGrams.toString(),
+      adjustmentGoodsDeltaVnd: product.adjustmentGoodsDeltaVnd.toString(),
     })),
   };
 }

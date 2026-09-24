@@ -2,6 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { isRetryableTransactionError } from '@idosi/database';
 
 import {
+  CreateReceiptAdjustmentRequestSchema,
+  CreateReceiptReturnRequestSchema,
+  ListReceiptAdjustmentsQuerySchema,
+  ListReceiptReturnsQuerySchema,
+  ReceiptAdjustmentActionRequestSchema,
+  ReceiptAdjustmentLineParamsSchema,
+  ReceiptAdjustmentParamsSchema,
+  ReceiptReturnActionRequestSchema,
+  ReceiptReturnParamsSchema,
   WarehouseInventoryQuerySchema,
   ListIdosiStatisticsQuerySchema,
   AccountParamsSchema,
@@ -1099,6 +1108,129 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return reply.send({ data: result.data });
   });
 
+  app.get('/api/v1/store-receipts/:receiptId/adjustment-context', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE']);
+    const { receiptId } = ReceiptParamsSchema.parse(request.params);
+    return { data: await repository.getReceiptAdjustmentContext(session.principal, receiptId) };
+  });
+
+  app.get('/api/v1/receipt-adjustments', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE']);
+    return repository.listReceiptAdjustments(
+      session.principal,
+      ListReceiptAdjustmentsQuerySchema.parse(request.query),
+    );
+  });
+
+  app.get('/api/v1/receipt-adjustments/:adjustmentId', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE']);
+    const { adjustmentId } = ReceiptAdjustmentParamsSchema.parse(request.params);
+    return { data: await repository.getReceiptAdjustment(session.principal, adjustmentId) };
+  });
+
+  app.post('/api/v1/receipt-adjustments', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = CreateReceiptAdjustmentRequestSchema.parse(request.body);
+    const result = await repository.createReceiptAdjustment(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({
+        action: 'CREATE_RECEIPT_ADJUSTMENT',
+        ...input,
+        lines: [...input.lines].sort((left, right) =>
+          left.receiptBagId.localeCompare(right.receiptBagId),
+        ),
+      }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
+  });
+
+  app.post('/api/v1/receipt-adjustments/:adjustmentId/actions', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { adjustmentId } = ReceiptAdjustmentParamsSchema.parse(request.params);
+    const input = ReceiptAdjustmentActionRequestSchema.parse(request.body);
+    const result = await repository.actOnReceiptAdjustment(
+      session.principal,
+      adjustmentId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({
+        ...input,
+        adjustmentAction: input.action,
+        adjustmentId,
+        ...('lines' in input
+          ? {
+              lines: [...input.lines].sort((left, right) =>
+                left.receiptBagId.localeCompare(right.receiptBagId),
+              ),
+            }
+          : {}),
+      }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.post(
+    '/api/v1/receipt-adjustments/:adjustmentId/lines/:lineId/returns',
+    async (request, reply) => {
+      const session = await authenticate(request, repository);
+      requireRole(session.principal, ['STORE']);
+      const headers = IdempotencyHeadersSchema.parse(request.headers);
+      const { adjustmentId, lineId } = ReceiptAdjustmentLineParamsSchema.parse(request.params);
+      const input = CreateReceiptReturnRequestSchema.parse(request.body);
+      const result = await repository.createReceiptReturn(
+        session.principal,
+        adjustmentId,
+        lineId,
+        input,
+        headers['idempotency-key'],
+        hashCanonicalRequest({ action: 'CREATE_RECEIPT_RETURN', adjustmentId, lineId, ...input }),
+        requestContext(request),
+      );
+      reply.header('idempotency-replayed', String(result.replayed));
+      return reply.status(201).send({ data: result.data });
+    },
+  );
+
+  app.get('/api/v1/receipt-returns', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE']);
+    return repository.listReceiptReturns(
+      session.principal,
+      ListReceiptReturnsQuerySchema.parse(request.query),
+    );
+  });
+
+  app.post('/api/v1/receipt-returns/:returnId/actions', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { returnId } = ReceiptReturnParamsSchema.parse(request.params);
+    const input = ReceiptReturnActionRequestSchema.parse(request.body);
+    const result = await repository.actOnReceiptReturn(
+      session.principal,
+      returnId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ ...input, returnAction: input.action, returnId }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
   app.get('/api/v1/store-inventory-bags', async (request) => {
     const session = await authenticate(request, repository);
     const query = ListStoreInventoryBagsQuerySchema.parse(request.query);
@@ -2155,6 +2287,77 @@ function openApiDocument(): Record<string, unknown> {
         post: {
           security: cookieSecurity,
           responses: { '200': { description: 'Finalized receipt and inventory' } },
+        },
+      },
+      '/api/v1/store-receipts/{receiptId}/adjustment-context': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': {
+              description:
+                'Bags of a finalized receipt with effective SKU/kg/cost, dependencies and adjustments (ADMIN, assigned HTKD, own STORE)',
+            },
+          },
+        },
+      },
+      '/api/v1/receipt-adjustments': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Scoped receipt discrepancy adjustments' } },
+        },
+        post: {
+          security: cookieSecurity,
+          responses: {
+            '201': {
+              description:
+                'STORE reports a post-finalization discrepancy; affected bags are held, money and demand unchanged',
+            },
+          },
+        },
+      },
+      '/api/v1/receipt-adjustments/{adjustmentId}': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'Adjustment with before/after, blockers and rights' },
+          },
+        },
+      },
+      '/api/v1/receipt-adjustments/{adjustmentId}/actions': {
+        post: {
+          security: cookieSecurity,
+          responses: {
+            '200': {
+              description:
+                'RESUBMIT/CANCEL (STORE), VERIFY/REQUEST_INFO/REJECT (HTKD, ADMIN), RETURN_TO_VERIFIER/APPLY (ADMIN); expectedVersion required',
+            },
+            '409': {
+              description: 'Stale version, wrong status or bags blocked by later transactions',
+            },
+          },
+        },
+      },
+      '/api/v1/receipt-adjustments/{adjustmentId}/lines/{lineId}/returns': {
+        post: {
+          security: cookieSecurity,
+          responses: { '201': { description: 'STORE switches a kept bag to a warehouse return' } },
+        },
+      },
+      '/api/v1/receipt-returns': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Scoped store returns to the warehouse' } },
+        },
+      },
+      '/api/v1/receipt-returns/{returnId}/actions': {
+        post: {
+          security: cookieSecurity,
+          responses: {
+            '200': {
+              description:
+                'HANDOVER (STORE), RECEIVE/RESOLVE (ADMIN), CANCEL back to keep (STORE, HTKD, ADMIN)',
+            },
+          },
         },
       },
       '/api/v1/store-inventory-bags': {

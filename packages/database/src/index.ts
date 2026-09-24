@@ -389,6 +389,7 @@ export type {
   WaitTicketRecord,
 } from './wait-ticket-operations.js';
 export {
+  allowedReceiptAdjustmentActions,
   createReceiptAdjustment,
   createReceiptReturn,
   getReceiptAdjustment,

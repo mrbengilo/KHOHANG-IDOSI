@@ -3,6 +3,16 @@ import {
   prepareOrderingContext as prepareDatabaseOrdering,
 } from '@idosi/database';
 import type {
+  CreateReceiptAdjustmentRequest,
+  CreateReceiptReturnRequest,
+  ListReceiptAdjustmentsQuery,
+  ListReceiptReturnsQuery,
+  ReceiptAdjustment,
+  ReceiptAdjustmentActionRequest,
+  ReceiptAdjustmentContext,
+  ReceiptAdjustmentListItem,
+  ReceiptReturn,
+  ReceiptReturnActionRequest,
   WarehouseInventoryQuery,
   WarehouseInventoryResponse,
   OrderingContext,
@@ -284,6 +294,17 @@ import {
 import { sanitizeAuditObject } from './audit-sanitization.js';
 import { ApiError, conflict, forbidden, notFound, unauthenticated } from './errors.js';
 import { monthlyOperationalReportDto } from './monthly-report.js';
+import {
+  actOnAdjustment,
+  actOnReturn,
+  createAdjustment,
+  createReturn,
+  getAdjustment,
+  getAdjustmentContext,
+  listAdjustments,
+  listReturns,
+  receiptAdjustmentSummary,
+} from './postgres-receipt-adjustments.js';
 import type {
   AccountCredentials,
   HtkdAssignmentsState,
@@ -2771,6 +2792,87 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     }
   }
 
+  public async getReceiptAdjustmentContext(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+  ): Promise<ReceiptAdjustmentContext> {
+    return getAdjustmentContext(db, actor, receiptId);
+  }
+
+  public async listReceiptAdjustments(
+    actor: AuthenticatedPrincipal,
+    query: ListReceiptAdjustmentsQuery,
+  ): Promise<Page<ReceiptAdjustmentListItem>> {
+    return listAdjustments(db, actor, query);
+  }
+
+  public async getReceiptAdjustment(
+    actor: AuthenticatedPrincipal,
+    adjustmentId: string,
+  ): Promise<ReceiptAdjustment> {
+    return getAdjustment(db, actor, adjustmentId);
+  }
+
+  public async createReceiptAdjustment(
+    actor: AuthenticatedPrincipal,
+    input: CreateReceiptAdjustmentRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ReceiptAdjustment>> {
+    return createAdjustment(db, actor, input, idempotencyKey, requestHash, context);
+  }
+
+  public async actOnReceiptAdjustment(
+    actor: AuthenticatedPrincipal,
+    adjustmentId: string,
+    input: ReceiptAdjustmentActionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ReceiptAdjustment>> {
+    return actOnAdjustment(db, actor, adjustmentId, input, idempotencyKey, requestHash, context);
+  }
+
+  public async createReceiptReturn(
+    actor: AuthenticatedPrincipal,
+    adjustmentId: string,
+    lineId: string,
+    input: CreateReceiptReturnRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ReceiptReturn>> {
+    return createReturn(
+      db,
+      actor,
+      adjustmentId,
+      lineId,
+      input,
+      idempotencyKey,
+      requestHash,
+      context,
+    );
+  }
+
+  public async listReceiptReturns(
+    actor: AuthenticatedPrincipal,
+    query: ListReceiptReturnsQuery,
+  ): Promise<Page<ReceiptReturn>> {
+    return listReturns(db, actor, query);
+  }
+
+  public async actOnReceiptReturn(
+    actor: AuthenticatedPrincipal,
+    returnId: string,
+    input: ReceiptReturnActionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ReceiptReturn>> {
+    return actOnReturn(db, actor, returnId, input, idempotencyKey, requestHash, context);
+  }
+
   public async listStoreInventoryBags(
     actor: AuthenticatedPrincipal,
     query: ListStoreInventoryBagsQuery,
@@ -3941,6 +4043,9 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
           : null,
       reviewedByAccountId: receipt.reviewedByUserId,
       reviewNote: receipt.reviewNote,
+      ...(receipt.status === 'finalized'
+        ? { adjustmentSummary: await receiptAdjustmentSummary(db, receipt) }
+        : {}),
       version: receipt.version,
       createdAt: receipt.createdAt.toISOString(),
       updatedAt: receipt.updatedAt.toISOString(),

@@ -2,6 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { nextOrderingWindow, type OrderingContext } from '@idosi/contracts';
 
 import type {
+  ListReceiptAdjustmentsQuery,
+  ListReceiptReturnsQuery,
+  ReceiptAdjustment,
+  ReceiptAdjustmentContext,
+  ReceiptAdjustmentListItem,
+  ReceiptReturn,
   WarehouseInventoryQuery,
   WarehouseInventoryResponse,
   Account,
@@ -2755,6 +2761,50 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       updated,
     );
     return { data: structuredClone(updated), replayed: false };
+  }
+
+  // Post-finalization discrepancy adjustments need PostgreSQL row locks, ledgers and the P0B
+  // wait chain; the in-memory development store lists none and refuses the commands.
+  public async getReceiptAdjustmentContext(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+  ): Promise<ReceiptAdjustmentContext> {
+    await this.getReceipt(actor, receiptId);
+    throw receiptAdjustmentsUnavailable();
+  }
+
+  public async listReceiptAdjustments(
+    _actor: AuthenticatedPrincipal,
+    query: ListReceiptAdjustmentsQuery,
+  ): Promise<Page<ReceiptAdjustmentListItem>> {
+    return { data: [], pagination: pagination(query.page, query.pageSize, 0) };
+  }
+
+  public async getReceiptAdjustment(): Promise<ReceiptAdjustment> {
+    throw notFound('Không tìm thấy hồ sơ sai lệch');
+  }
+
+  public async createReceiptAdjustment(): Promise<IdempotentResource<ReceiptAdjustment>> {
+    throw receiptAdjustmentsUnavailable();
+  }
+
+  public async actOnReceiptAdjustment(): Promise<IdempotentResource<ReceiptAdjustment>> {
+    throw receiptAdjustmentsUnavailable();
+  }
+
+  public async createReceiptReturn(): Promise<IdempotentResource<ReceiptReturn>> {
+    throw receiptAdjustmentsUnavailable();
+  }
+
+  public async listReceiptReturns(
+    _actor: AuthenticatedPrincipal,
+    query: ListReceiptReturnsQuery,
+  ): Promise<Page<ReceiptReturn>> {
+    return { data: [], pagination: pagination(query.page, query.pageSize, 0) };
+  }
+
+  public async actOnReceiptReturn(): Promise<IdempotentResource<ReceiptReturn>> {
+    throw receiptAdjustmentsUnavailable();
   }
 
   public async finalizeStoreReceipt(
@@ -5540,4 +5590,12 @@ function takeMemoryWeight(
     remaining -= take;
   }
   return remaining === 0n ? consumed : null;
+}
+
+function receiptAdjustmentsUnavailable(): ApiError {
+  return new ApiError(
+    'INVALID_STATE_TRANSITION',
+    'Báo sai lệch sau chốt phiếu chỉ hỗ trợ khi máy chủ dùng PostgreSQL.',
+    409,
+  );
 }

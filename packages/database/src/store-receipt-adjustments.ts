@@ -1,3 +1,4 @@
+export { allowedReceiptAdjustmentActions } from '@idosi/domain';
 import {
   applyReceiptMoneyDeltas,
   assessReceiptAdjustmentBag,
