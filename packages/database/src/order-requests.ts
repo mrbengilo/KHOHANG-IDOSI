@@ -1,4 +1,4 @@
-import { and, count, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, count, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
@@ -85,7 +85,8 @@ export function isRequestDeadlineClosed(requestDeadlineAt: Date, instant: Date):
 }
 
 /** Closing a window is not a quota reset. Only a completed allocation starts a new cycle.
- * Orders already queued for the next session still consume that session's two slots. */
+ * Orders already queued for the next session still consume that session's two slots.
+ * A cancelled request never reaches allocation, so it gives its slot back. */
 export async function countOrderingQuota(
   tx: Transaction,
   storeId: string,
@@ -97,6 +98,8 @@ export async function countOrderingQuota(
     .where(
       and(
         eq(orderRequests.storeId, storeId),
+        ne(orderRequests.status, 'cancelled'),
+        isNull(orderRequests.deletedAt),
         or(
           eq(orderRequests.orderSessionId, sessionId),
           sql`${orderRequests.submittedAt} > coalesce((select max(s.completed_at) from order_sessions s where s.status = 'completed' and s.deleted_at is null), '-infinity'::timestamptz)`,
@@ -166,6 +169,7 @@ export async function createOrderRequest(
             and(
               eq(orderRequests.orderSessionId, input.orderSessionId),
               eq(orderRequests.storeId, input.storeId),
+              ne(orderRequests.status, 'cancelled'),
             ),
           );
 

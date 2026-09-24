@@ -5,6 +5,7 @@ import {
   availableSessionTransitions,
   defaultOrderSessionDraft,
   orderSessionInputFromDraft,
+  overdueAllocationSessions,
 } from './AllocationPage';
 
 const operationalSettings = {
@@ -70,6 +71,33 @@ describe('production allocation session helpers', () => {
     expect(availableSessionTransitions('ALLOCATING')).toEqual([]);
     expect(availableSessionTransitions('ALLOCATED')).toEqual([]);
     expect(availableSessionTransitions('CANCELLED')).toEqual([]);
+    // After the stock snapshot the backend refuses a cancel, so it is not offered.
+    expect(availableSessionTransitions('OPEN', true)).toEqual(['CLOSED']);
+    expect(availableSessionTransitions('CLOSED', true)).toEqual([]);
+  });
+
+  it('flags sessions still unfinished well after their allocation time', () => {
+    const session = {
+      id: '10000000-0000-4000-8000-000000000001',
+      businessDate: '2026-09-17',
+      status: 'OPEN' as const,
+      requestOpensAt: '2026-09-16T17:00:00.000Z',
+      requestClosesAt: '2026-09-17T01:00:00.000Z',
+      allocationStartsAt: '2026-09-17T02:00:00.000Z',
+      policyVersion: 'idosi-round-robin-p0a-p3-v1',
+      version: 1,
+      createdAt: '2026-09-16T17:00:00.000Z',
+      updatedAt: '2026-09-16T17:00:00.000Z',
+    };
+    const at = (iso: string) => Date.parse(iso);
+    expect(overdueAllocationSessions([session], at('2026-09-17T02:10:00.000Z'))).toEqual([]);
+    expect(overdueAllocationSessions([session], at('2026-09-17T02:20:00.000Z'))).toEqual([session]);
+    expect(
+      overdueAllocationSessions(
+        [{ ...session, status: 'ALLOCATED' as const }],
+        at('2026-09-17T05:00:00.000Z'),
+      ),
+    ).toEqual([]);
   });
 
   it('keeps allocation result loading, error, empty and ready states explicit', () => {

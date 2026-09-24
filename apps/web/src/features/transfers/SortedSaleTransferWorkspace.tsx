@@ -11,6 +11,7 @@ import { formatKgExact } from '../../lib/format';
 import type { Role } from '../../lib/types';
 import { listStoreSortedStocks } from '../inventory/inventoryApi';
 import {
+  cancelSortedSaleTransfer,
   createSortedSaleTransfer,
   listSortedSaleTransfers,
   receiveSortedSaleTransfer,
@@ -149,6 +150,33 @@ export function SortedSaleTransferWorkspace({
       setNotice({
         tone: 'success',
         text: `Đã nhận phiếu ${transfer.transferNumber}; tồn Sale cửa hàng nhận đã tăng.`,
+      });
+      await invalidate();
+    },
+  });
+
+  const [cancelReasons, setCancelReasons] = useState<Record<string, string>>({});
+  const cancelMutation = useMutation({
+    mutationFn: async ({ id, version }: { id: string; version: number }) => {
+      const reason = (cancelReasons[id] ?? '').trim();
+      if (reason.length < 3) throw new Error('Ghi lý do hủy phiếu tối thiểu 3 ký tự.');
+      const signature = `cancel:${id}:${version}`;
+      const key = mutationKeys.current.get(signature) ?? crypto.randomUUID();
+      mutationKeys.current.set(signature, key);
+      return cancelSortedSaleTransfer(id, { expectedVersion: version, reason }, key);
+    },
+    onError: (error) =>
+      setNotice({
+        tone: 'error',
+        text:
+          error instanceof Error && !(error instanceof ApiClientError)
+            ? error.message
+            : message(error),
+      }),
+    onSuccess: async (transfer) => {
+      setNotice({
+        tone: 'success',
+        text: `Đã hủy phiếu ${transfer.transferNumber}; ${formatKgExact(transfer.weightKg)} đã trở lại tồn Sale của cửa hàng.`,
       });
       await invalidate();
     },
@@ -312,7 +340,13 @@ export function SortedSaleTransferWorkspace({
               <article className="transfer-card" key={transfer.id}>
                 <header>
                   <strong>{transfer.transferNumber}</strong>
-                  <span>{transfer.status === 'RECEIVED' ? 'Đã nhận' : 'Đang vận chuyển'}</span>
+                  <span>
+                    {transfer.status === 'RECEIVED'
+                      ? 'Đã nhận'
+                      : transfer.status === 'CANCELLED'
+                        ? 'Đã hủy'
+                        : 'Đang vận chuyển'}
+                  </span>
                 </header>
                 <p>
                   {storeName(transfer.sourceStoreId)} → {storeName(transfer.destinationStoreId)}
@@ -348,6 +382,40 @@ export function SortedSaleTransferWorkspace({
                   >
                     Xác nhận đã nhận
                   </Button>
+                ) : null}
+                {transfer.status === 'CANCELLED' && transfer.cancellationReason ? (
+                  <small>Lý do hủy: {transfer.cancellationReason}</small>
+                ) : null}
+                {role === 'STORE' &&
+                transfer.sourceStoreId === principalStoreId &&
+                transfer.status === 'IN_TRANSIT' ? (
+                  <div className="transfer-card__cancel">
+                    <input
+                      aria-label={`Lý do hủy phiếu ${transfer.transferNumber}`}
+                      maxLength={500}
+                      placeholder="Lý do hủy, ví dụ: chọn nhầm cửa hàng"
+                      value={cancelReasons[transfer.id] ?? ''}
+                      disabled={cancelMutation.isPending}
+                      onChange={(event) =>
+                        setCancelReasons((current) => ({
+                          ...current,
+                          [transfer.id]: event.target.value,
+                        }))
+                      }
+                    />
+                    <Button
+                      tone="danger"
+                      busy={
+                        cancelMutation.isPending && cancelMutation.variables?.id === transfer.id
+                      }
+                      disabled={cancelMutation.isPending}
+                      onClick={() =>
+                        cancelMutation.mutate({ id: transfer.id, version: transfer.version })
+                      }
+                    >
+                      Hủy phiếu, trả Sale về cửa hàng
+                    </Button>
+                  </div>
                 ) : null}
               </article>
             ))}

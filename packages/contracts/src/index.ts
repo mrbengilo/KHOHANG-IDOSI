@@ -20,3 +20,4 @@ export * from './stores.js';
 export * from './waitlist.js';
 export * from './warehouse.js';
 export * from './warehouse-inventory.js';
+export * from './warehouse-shortage-checks.js';

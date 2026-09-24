@@ -558,11 +558,10 @@ export const orderRequests = pgTable(
     }),
   },
   (table) => [
-    uniqueIndex('order_requests_session_store_slot_uidx').on(
-      table.orderSessionId,
-      table.storeId,
-      table.requestNumber,
-    ),
+    // A cancelled request gives its slot back, so only live requests hold a slot number.
+    uniqueIndex('order_requests_session_store_slot_uidx')
+      .on(table.orderSessionId, table.storeId, table.requestNumber)
+      .where(sql`${table.status} <> 'cancelled'`),
     index('order_requests_store_created_idx').on(table.storeId, table.createdAt),
     index('order_requests_session_status_idx').on(table.orderSessionId, table.status),
     check('order_requests_max_two_slots', sql`${table.requestNumber} BETWEEN 1 AND 2`),
@@ -1464,14 +1463,18 @@ export const storeReceiptLines = pgTable(
     storeReceiptId: uuid('store_receipt_id')
       .notNull()
       .references(() => storeReceipts.id, { onDelete: 'restrict' }),
-    outboundRequestLineId: uuid('outbound_request_line_id')
-      .notNull()
-      .references(() => outboundRequestLines.id, { onDelete: 'restrict' }),
+    /** NULL only for a product the store received without it being dispatched (excess goods). */
+    outboundRequestLineId: uuid('outbound_request_line_id').references(
+      () => outboundRequestLines.id,
+      { onDelete: 'restrict' },
+    ),
     productId: uuid('product_id')
       .notNull()
       .references(() => products.id, { onDelete: 'restrict' }),
     approvedQuantity: integer('approved_quantity').notNull(),
     receivedQuantity: integer('received_quantity').notNull(),
+    /** Bags received on top of the approved quantity; booked from warehouse stock at finalize. */
+    excessQuantity: integer('excess_quantity').notNull().default(0),
     priorityQueuedQuantity: integer('priority_queued_quantity').notNull().default(0),
     pricePerKgVnd: bigint('price_per_kg_vnd', { mode: 'bigint' }),
     goodsCostVnd: bigint('goods_cost_vnd', { mode: 'bigint' })
@@ -1490,8 +1493,12 @@ export const storeReceiptLines = pgTable(
       table.storeReceiptId,
       table.outboundRequestLineId,
     ),
-    check('store_receipt_lines_approved_positive', sql`${table.approvedQuantity} > 0`),
+    check(
+      'store_receipt_lines_source',
+      sql`(${table.outboundRequestLineId} IS NOT NULL AND ${table.approvedQuantity} > 0) OR (${table.outboundRequestLineId} IS NULL AND ${table.approvedQuantity} = 0 AND ${table.receivedQuantity} = 0 AND ${table.excessQuantity} > 0)`,
+    ),
     check('store_receipt_lines_received_nonnegative', sql`${table.receivedQuantity} >= 0`),
+    check('store_receipt_lines_excess_nonnegative', sql`${table.excessQuantity} >= 0`),
     check(
       'store_receipt_lines_priority_queued_nonnegative',
       sql`${table.priorityQueuedQuantity} >= 0`,
@@ -1539,6 +1546,57 @@ export const storeReceiptBags = pgTable(
   ],
 );
 
+export const warehouseShortageCheckStatusEnum = pgEnum('warehouse_shortage_check_status', [
+  'pending',
+  'returned_to_stock',
+  'lost',
+]);
+
+/**
+ * Units a store reported missing stay reserved in the warehouse until someone confirms where
+ * they are: back on the shelf (released for allocation) or lost (written off on-hand).
+ */
+export const warehouseShortageChecks = pgTable(
+  'warehouse_shortage_checks',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    storeReceiptLineId: uuid('store_receipt_line_id')
+      .notNull()
+      .references(() => storeReceiptLines.id, { onDelete: 'restrict' }),
+    storeReceiptId: uuid('store_receipt_id')
+      .notNull()
+      .references(() => storeReceipts.id, { onDelete: 'restrict' }),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    quantity: integer('quantity').notNull(),
+    status: warehouseShortageCheckStatusEnum('status').notNull().default('pending'),
+    shortageReason: text('shortage_reason'),
+    resolutionReason: text('resolution_reason'),
+    resolvedByUserId: uuid('resolved_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    version: integer('version').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('warehouse_shortage_checks_receipt_line_uidx').on(table.storeReceiptLineId),
+    index('warehouse_shortage_checks_status_created_idx').on(table.status, table.createdAt),
+    index('warehouse_shortage_checks_store_idx').on(table.storeId),
+    check('warehouse_shortage_checks_quantity_positive', sql`${table.quantity} > 0`),
+    check('warehouse_shortage_checks_version_nonnegative', sql`${table.version} >= 0`),
+    check(
+      'warehouse_shortage_checks_resolution',
+      sql`(${table.status} = 'pending' AND ${table.resolvedAt} IS NULL AND ${table.resolvedByUserId} IS NULL) OR (${table.status} <> 'pending' AND ${table.resolvedAt} IS NOT NULL AND ${table.resolvedByUserId} IS NOT NULL AND length(btrim(coalesce(${table.resolutionReason}, ''))) >= 3)`,
+    ),
+  ],
+);
+
 export const storeInventoryBags = pgTable(
   'store_inventory_bags',
   {
@@ -1576,6 +1634,10 @@ export const storeInventoryBags = pgTable(
     status: storeInventoryBagStatusEnum('status').notNull().default('available'),
     initialWeightKg: numeric('initial_weight_kg', { precision: 14, scale: 3 }).notNull(),
     currentWeightKg: numeric('current_weight_kg', { precision: 14, scale: 3 }).notNull(),
+    /** Weight taken out by regular-price (NORMAL) IDOSI sales; the cap for sale corrections. */
+    normalSaleConsumedKg: numeric('normal_sale_consumed_kg', { precision: 14, scale: 3 })
+      .notNull()
+      .default('0.000'),
     costVnd: bigint('cost_vnd', { mode: 'bigint' }).notNull(),
     version: integer('version').notNull().default(0),
     receivedAt: timestamp('received_at', { withTimezone: true }).notNull(),
@@ -1608,6 +1670,10 @@ export const storeInventoryBags = pgTable(
     check(
       'store_inventory_bags_current_not_over_initial',
       sql`${table.currentWeightKg} <= ${table.initialWeightKg}`,
+    ),
+    check(
+      'store_inventory_bags_normal_sale_consumed',
+      sql`${table.normalSaleConsumedKg} >= 0 AND ${table.normalSaleConsumedKg} <= ${table.initialWeightKg}`,
     ),
     uniqueIndex('store_inventory_bags_partner_inbound_bag_uidx').on(
       table.sourcePartnerInboundBagId,
@@ -1807,13 +1873,16 @@ export const storeInventoryLedgerEntries = pgTable(
     eventSequence: smallint('event_sequence').notNull().default(1),
     reason: text('reason').notNull(),
     metadata: jsonb('metadata').$type<JsonObject>().notNull().default({}),
-    actorUserId: uuid('actor_user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'restrict' }),
+    /** NULL only for movements the IDOSI sales sync records on its own. */
+    actorUserId: uuid('actor_user_id').references(() => users.id, { onDelete: 'restrict' }),
     occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    check(
+      'store_inventory_ledger_actor',
+      sql`${table.actorUserId} IS NOT NULL OR ${table.sourceType} IN ('idosi_normal_sale', 'idosi_normal_sale_correction')`,
+    ),
     uniqueIndex('store_inventory_ledger_source_event_uidx').on(
       table.sourceType,
       table.sourceId,
@@ -2000,8 +2069,13 @@ export const sortedSaleTransfers = pgTable(
     receivedByUserId: uuid('received_by_user_id').references(() => users.id, {
       onDelete: 'restrict',
     }),
+    cancelledByUserId: uuid('cancelled_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    cancellationReason: text('cancellation_reason'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     receivedAt: timestamp('received_at', { withTimezone: true }),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
   },
   (table) => [
     index('sorted_sale_transfers_source_created_idx').on(table.sourceStoreId, table.createdAt),
@@ -2023,7 +2097,14 @@ export const sortedSaleTransfers = pgTable(
       'sorted_sale_transfers_bag_weights',
       sql`${table.bagWeightsKg} IS NULL OR (cardinality(${table.bagWeightsKg}) = ${table.bagQuantity} AND 0 < ALL (${table.bagWeightsKg}))`,
     ),
-    check('sorted_sale_transfers_status', sql`${table.status} IN ('in_transit', 'received')`),
+    check(
+      'sorted_sale_transfers_status',
+      sql`${table.status} IN ('in_transit', 'received', 'cancelled')`,
+    ),
+    check(
+      'sorted_sale_transfers_cancellation',
+      sql`${table.status} <> 'cancelled' OR (${table.cancelledByUserId} IS NOT NULL AND ${table.cancelledAt} IS NOT NULL AND length(btrim(coalesce(${table.cancellationReason}, ''))) >= 3)`,
+    ),
     check('sorted_sale_transfers_version_nonnegative', sql`${table.version} >= 0`),
     check(
       'sorted_sale_transfers_receipt',
@@ -2095,7 +2176,7 @@ export const storeSortingEvents = pgTable(
     check('store_sorting_events_weight_positive', sql`${table.weightKg} > 0`),
     check(
       'store_sorting_events_action',
-      sql`${table.action} IN ('sort_sale', 'sort_charity', 'sort_cancel', 'charity_to_sale', 'charity_export', 'idosi_sale_kg', 'idosi_sale_piece', 'idosi_sale_correction', 'sale_transfer_out', 'sale_transfer_in')`,
+      sql`${table.action} IN ('sort_sale', 'sort_charity', 'sort_cancel', 'charity_to_sale', 'charity_export', 'idosi_sale_kg', 'idosi_sale_piece', 'idosi_sale_correction', 'sale_transfer_out', 'sale_transfer_in', 'sale_transfer_return')`,
     ),
     check(
       'store_sorting_events_piece_positive',
@@ -2142,6 +2223,70 @@ export const storeSaleSyncProgress = pgTable(
     check('store_sale_sync_progress_type', sql`${table.saleType} IN ('sale_kg', 'sale_piece')`),
     check(
       'store_sale_sync_progress_nonnegative',
+      sql`${table.baselineGrams} >= 0 AND ${table.observedGrams} >= 0 AND ${table.appliedGrams} >= 0`,
+    ),
+  ],
+);
+
+/**
+ * IDOSI renames products, so a name only identifies a product until the first sync sees it.
+ * From then on its IDOSI id (the canonical one when IDOSI sends it) keeps pointing at the
+ * same warehouse product, whatever either side calls it later.
+ */
+export const idosiProductLinks = pgTable(
+  'idosi_product_links',
+  {
+    idosiProductId: text('idosi_product_id').primaryKey(),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    firstSeenName: text('first_seen_name').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idosi_product_links_product_idx').on(table.productId),
+    check('idosi_product_links_id_not_blank', sql`length(btrim(${table.idosiProductId})) > 0`),
+  ],
+);
+
+/**
+ * Regular-price (NORMAL) IDOSI sales per store, product and month, applied to the store's
+ * inventory bags. Same cumulative-checkpoint model as the Sale pool progress above.
+ */
+export const storeNormalSaleProgress = pgTable(
+  'store_normal_sale_progress',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    period: text('period').notNull(),
+    baselineGrams: bigint('baseline_grams', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    observedGrams: bigint('observed_grams', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    appliedGrams: bigint('applied_grams', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    sourceSnapshotId: uuid('source_snapshot_id').references(() => idosiStatisticsSnapshots.id, {
+      onDelete: 'restrict',
+    }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('store_normal_sale_progress_scope_uidx').on(
+      table.storeId,
+      table.productId,
+      table.period,
+    ),
+    check('store_normal_sale_progress_period', sql`${table.period} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`),
+    check(
+      'store_normal_sale_progress_nonnegative',
       sql`${table.baselineGrams} >= 0 AND ${table.observedGrams} >= 0 AND ${table.appliedGrams} >= 0`,
     ),
   ],

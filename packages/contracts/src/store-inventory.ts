@@ -143,7 +143,8 @@ export const StoreInventoryBagLedgerEntrySchema = z
     beforeWeightKg: KilogramsDecimalSchema,
     afterWeightKg: KilogramsDecimalSchema,
     reason: z.string().trim().min(1).max(500),
-    actorAccountId: EntityIdSchema,
+    /** Null for movements the IDOSI regular-sale sync records on its own. */
+    actorAccountId: EntityIdSchema.nullable(),
     createdAt: IsoDateTimeSchema,
   })
   .strict();

@@ -7,6 +7,7 @@ import { and, asc, eq, gt, sql } from 'drizzle-orm';
 
 import {
   auditLogs,
+  idosiProductLinks,
   idosiStatisticsSnapshots,
   products,
   storeSaleSyncProgress,
@@ -22,7 +23,7 @@ import type { Transaction } from './transaction.js';
 
 type SaleType = 'sale_kg' | 'sale_piece';
 
-const productKey = (value: string) =>
+export const productKey = (value: string) =>
   canonicalIdosiProductName(value)
     .normalize('NFC')
     .trim()
@@ -38,16 +39,70 @@ function sourceGrams(value: number): bigint {
   return BigInt(Math.round(value * 1000));
 }
 
+type IdosiItem = IdosiOrderStatisticsPayload['products']['items'][number];
+
+/** IDOSI id -> warehouse product id, learned the first time a name matched. */
+export type IdosiProductLinks = ReadonlyMap<string, string>;
+
+export interface IdosiProductMatch {
+  readonly productId: string;
+  readonly links: IdosiProductLinks;
+}
+
+/** The id IDOSI keeps across renames when it sends one, else the id the line was sold with. */
+export function idosiItemKey(item: Pick<IdosiItem, 'productId' | 'canonicalProductId'>): string {
+  return item.canonicalProductId ?? item.productId;
+}
+
+/**
+ * Lines belonging to one warehouse product: by learned IDOSI id first, by name only for
+ * lines IDOSI has not linked yet. A rename on either side therefore keeps matching.
+ */
+export function idosiItemsForProduct(
+  payload: IdosiOrderStatisticsPayload,
+  name: string,
+  match?: IdosiProductMatch,
+): IdosiItem[] {
+  return payload.products.items.filter((item) => {
+    const linked = match?.links.get(idosiItemKey(item));
+    if (linked !== undefined) return linked === match?.productId;
+    return productKey(item.productName) === productKey(name);
+  });
+}
+
+/** Records the IDOSI id of every line whose name matches a warehouse product today. */
+export async function linkIdosiProducts(
+  tx: Transaction,
+  payload: IdosiOrderStatisticsPayload,
+): Promise<IdosiProductLinks> {
+  const existing = await tx.select().from(idosiProductLinks);
+  const links = new Map(existing.map((row) => [row.idosiProductId, row.productId]));
+  const unlinked = payload.products.items.filter((item) => !links.has(idosiItemKey(item)));
+  if (unlinked.length === 0) return links;
+  const catalog = await tx.select({ id: products.id, name: products.name }).from(products);
+  const byName = new Map(catalog.map((product) => [productKey(product.name), product.id]));
+  for (const item of unlinked) {
+    const key = idosiItemKey(item);
+    const productId = byName.get(productKey(item.productName));
+    if (!productId || links.has(key)) continue;
+    await tx
+      .insert(idosiProductLinks)
+      .values({ idosiProductId: key, productId, firstSeenName: item.productName })
+      .onConflictDoNothing();
+    links.set(key, productId);
+  }
+  return links;
+}
+
 /** The monthly source is cumulative. Round the whole product/type once to avoid drift. */
 export function idosiProductSaleGrams(
   payload: IdosiOrderStatisticsPayload,
   name: string,
   type: SaleType,
+  match?: IdosiProductMatch,
 ): bigint | null {
-  const matching = payload.products.items.filter(
-    (item) =>
-      productKey(item.productName) === productKey(name) &&
-      item.revenueType === (type === 'sale_kg' ? 'SALE_KG' : 'SALE_PIECE'),
+  const matching = idosiItemsForProduct(payload, name, match).filter(
+    (item) => item.revenueType === (type === 'sale_kg' ? 'SALE_KG' : 'SALE_PIECE'),
   );
   if (matching.some((item) => !item.weight.isComplete)) return null;
   const kilograms = matching.reduce(
@@ -94,8 +149,9 @@ export async function initializeSaleBaseline(
       'Cần đồng bộ IDOSI tháng hiện tại trước khi lưu Sale lần đầu.',
     );
   const payload = IdosiOrderStatisticsPayloadSchema.parse(snapshot.payload);
+  const links = await linkIdosiProducts(tx, payload);
   for (const type of ['sale_kg', 'sale_piece'] as const) {
-    const grams = idosiProductSaleGrams(payload, product.name, type);
+    const grams = idosiProductSaleGrams(payload, product.name, type, { productId, links });
     if (grams === null)
       throw new StoreOperationValidationError(
         'IDOSI chưa có đủ định mức kg cho Sale theo cái của mặt hàng này.',
@@ -149,11 +205,12 @@ export async function reconcileStoreSaleSnapshot(
   if (productIds.length === 0) return;
   const namedProducts = await tx.select({ id: products.id, name: products.name }).from(products);
   const names = new Map(namedProducts.map((product) => [product.id, product.name]));
+  const links = await linkIdosiProducts(tx, payload);
   for (const productId of productIds) {
     const name = names.get(productId);
     if (!name) continue;
     for (const type of ['sale_kg', 'sale_piece'] as const) {
-      const observed = idosiProductSaleGrams(payload, name, type);
+      const observed = idosiProductSaleGrams(payload, name, type, { productId, links });
       if (observed === null) continue;
       const [existing] = await tx
         .select()

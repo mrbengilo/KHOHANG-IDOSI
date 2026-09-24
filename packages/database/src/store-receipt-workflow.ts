@@ -124,6 +124,7 @@ export function validateStoreReceiptDeclaration(
   }
 
   const declaredProducts = new Set<string>();
+  const shortProducts = new Set<string>();
   let hasShortage = false;
   for (const line of lines) {
     if (line.productId.trim().length === 0 || declaredProducts.has(line.productId)) {
@@ -152,7 +153,10 @@ export function validateStoreReceiptDeclaration(
         'Receipt lines must exactly match dispatched products and cannot declare excess goods.',
       );
     }
-    hasShortage ||= line.receivedQuantity < dispatchedQuantity;
+    if (line.receivedQuantity < dispatchedQuantity) {
+      hasShortage = true;
+      shortProducts.add(line.productId);
+    }
   }
 
   if (declaredProducts.size !== dispatchedByProduct.size) {
@@ -170,7 +174,8 @@ export function validateStoreReceiptDeclaration(
         !item.productId ||
         !Number.isSafeInteger(item.quantity) ||
         item.quantity <= 0 ||
-        dispatchedByProduct.has(item.productId) ||
+        // Extra bags of a dispatched product only make sense on top of a complete line.
+        shortProducts.has(item.productId) ||
         unexpectedIds.has(item.productId)
       )
         return true;
@@ -179,7 +184,7 @@ export function validateStoreReceiptDeclaration(
     })
   ) {
     throw new StoreOperationValidationError(
-      'Unexpected goods must have unique, non-dispatched products and positive quantities.',
+      'Hàng dư phải có số bao dương, mỗi mặt hàng khai một lần và không trùng mặt hàng đang nhận thiếu.',
     );
   }
   if ((hasShortage || unexpectedItems.length > 0) && normalizedNote === null) {
@@ -453,6 +458,11 @@ export async function submitStoreReceiptInTransaction(
           const suppliedLine = suppliedByProduct.get(persistedLine.productId);
           if (!suppliedLine) {
             throw new StoreOperationValidationError('A persisted receipt product is missing.');
+          }
+          if (persistedLine.outboundRequestLineId === null) {
+            throw new StoreOperationValidationError(
+              'A declared receipt line lost its outbound line.',
+            );
           }
           await reconcileReceiptShortageWait(tx, {
             storeId: receipt.storeId,

@@ -85,8 +85,14 @@ export class IdosiStatisticsSyncWorker {
 
   async #runTick(now: Date): Promise<IdosiSyncTickReport> {
     if (Number.isNaN(now.getTime())) throw new TypeError('IDOSI scheduler instant is invalid');
-    const period = businessMonthAt(now, this.#options.timeZone);
-    const targets = await this.#repository.listDue(period, now, this.#options.maxStoresPerTick);
+    const periods = idosiSyncPeriods(now, this.#options.timeZone);
+    const period = periods[0]!;
+    const targets: DueIdosiStatisticsTarget[] = [];
+    for (const candidate of periods) {
+      const remaining = this.#options.maxStoresPerTick - targets.length;
+      if (remaining <= 0) break;
+      targets.push(...(await this.#repository.listDue(candidate, now, remaining)));
+    }
     let succeeded = 0;
     let failed = 0;
     for (const target of targets) {
@@ -116,7 +122,7 @@ export class IdosiStatisticsSyncWorker {
         );
         succeeded += 1;
         this.#options.logger?.info(
-          { storeCode: target.storeCode, period },
+          { storeCode: target.storeCode, period: target.scope.period },
           'scheduled IDOSI statistics sync succeeded',
         );
       } catch (error) {
@@ -131,7 +137,7 @@ export class IdosiStatisticsSyncWorker {
         );
         failed += 1;
         this.#options.logger?.warn(
-          { errorCode: failure.code, storeCode: target.storeCode, period },
+          { errorCode: failure.code, storeCode: target.storeCode, period: target.scope.period },
           'scheduled IDOSI statistics sync failed',
         );
       }
@@ -225,6 +231,27 @@ export function startIdosiSyncPolling(
       await active;
     },
   };
+}
+
+/** Days into a new month during which the previous month is still re-synced. */
+export const PREVIOUS_MONTH_SYNC_DAYS = 3;
+
+/**
+ * The current month always, plus the previous month for the first few days: sales rung up
+ * after the last sync of a month, and IDOSI corrections made just after it closes, still
+ * have to reach the Sale pool and the store bags.
+ */
+export function idosiSyncPeriods(instant: Date, timeZone: string): readonly string[] {
+  const current = businessMonthAt(instant, timeZone);
+  const day = Number(
+    new Intl.DateTimeFormat('en-US', { timeZone, day: '2-digit' })
+      .formatToParts(instant)
+      .find((part) => part.type === 'day')?.value,
+  );
+  if (!Number.isSafeInteger(day) || day > PREVIOUS_MONTH_SYNC_DAYS) return [current];
+  const [year, month] = current.split('-').map(Number) as [number, number];
+  const previous = month === 1 ? `${year - 1}-12` : `${year}-${String(month - 1).padStart(2, '0')}`;
+  return [current, previous];
 }
 
 export function businessMonthAt(instant: Date, timeZone: string): string {

@@ -46,6 +46,14 @@ describe('receipt, outbound and report contracts', () => {
         unexpectedItems: [{ productId: IDS.product, quantity: 3 }],
       }).success,
     ).toBe(false);
+    // Extra bags of a product received in full are excess goods, not a contradiction.
+    expect(
+      DeclareStoreReceiptRequestSchema.safeParse({
+        ...request,
+        lines: [{ productId: IDS.product, approvedUnits: 3, receivedUnits: 3 }],
+        unexpectedItems: [{ productId: IDS.product, quantity: 1 }],
+      }).success,
+    ).toBe(true);
   });
   it('accepts directly entered whole VND VAT at 8% without recalculating the amount', () => {
     const input = {

@@ -19,10 +19,12 @@ import {
   stores,
   users,
   waitTickets,
+  warehouseShortageChecks,
   type JsonObject,
 } from './schema.js';
+import { livePriorityOfferCondition } from './priority-offer-state.js';
 import { withAdvisoryLock, type Transaction } from './transaction.js';
-import { applyWarehouseMovement } from './warehouse.js';
+import { applyWarehouseMovement, WarehouseBalanceViolationError } from './warehouse.js';
 
 const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
 const KILOGRAMS_PATTERN = /^(0|[1-9]\d{0,10})(?:\.(\d{1,3}))?$/;
@@ -33,6 +35,13 @@ export interface FinalizeStoreReceiptLineInput {
   readonly bagWeightsKg: readonly string[];
 }
 
+/** Excess bags the store declared; HTKD weighs and prices each one at finalization. */
+export interface FinalizeStoreReceiptUnexpectedItemInput {
+  readonly productId: string;
+  readonly pricePerKgVnd: bigint;
+  readonly bagWeightsKg: readonly string[];
+}
+
 export interface FinalizeStoreReceiptInput {
   readonly receiptId: string;
   readonly expectedVersion: number;
@@ -40,6 +49,7 @@ export interface FinalizeStoreReceiptInput {
   readonly freightVnd: bigint;
   readonly handlingVnd: bigint;
   readonly lines: readonly FinalizeStoreReceiptLineInput[];
+  readonly unexpectedItems?: readonly FinalizeStoreReceiptUnexpectedItemInput[];
   readonly reviewNote?: string | null;
   readonly idempotencyKey: string;
   readonly requestHash: string;
@@ -235,6 +245,7 @@ export async function finalizeStoreReceiptInTransaction(
         discrepancyNote: storeReceipts.discrepancyNote,
         declaredByUserId: storeReceipts.declaredByUserId,
         submittedAt: storeReceipts.submittedAt,
+        unexpectedItems: storeReceipts.unexpectedItems,
         version: storeReceipts.version,
       })
       .from(storeReceipts)
@@ -287,6 +298,8 @@ export async function finalizeStoreReceiptInTransaction(
       throw new StoreOperationValidationError('A short receipt requires a discrepancy note.');
     }
 
+    const excessItems = matchDeclaredExcess(receipt.unexpectedItems, input.unexpectedItems ?? []);
+
     const sortedProductIds = persistedLines.map((line) => line.productId).sort();
     return withStoreProductWaitLocks(tx, receipt.storeId, sortedProductIds, async () => {
       let goodsCostVnd = 0n;
@@ -312,6 +325,12 @@ export async function finalizeStoreReceiptInTransaction(
             `Product "${persistedLine.productId}" requires exactly one weight per received bag.`,
           );
         }
+        const outboundRequestLineId = persistedLine.outboundRequestLineId;
+        if (outboundRequestLineId === null) {
+          throw new StoreOperationValidationError(
+            'A declared receipt line lost its outbound line.',
+          );
+        }
 
         const [outboundLine] = await tx
           .select({
@@ -321,7 +340,7 @@ export async function finalizeStoreReceiptInTransaction(
             dispatchedQuantity: outboundRequestLines.dispatchedQuantity,
           })
           .from(outboundRequestLines)
-          .where(eq(outboundRequestLines.id, persistedLine.outboundRequestLineId))
+          .where(eq(outboundRequestLines.id, outboundRequestLineId))
           .for('update')
           .limit(1);
 
@@ -346,7 +365,7 @@ export async function finalizeStoreReceiptInTransaction(
           .from(reservations)
           .where(
             and(
-              eq(reservations.outboundRequestLineId, persistedLine.outboundRequestLineId),
+              eq(reservations.outboundRequestLineId, outboundRequestLineId),
               eq(reservations.status, 'active'),
               isNull(reservations.deletedAt),
             ),
@@ -379,91 +398,65 @@ export async function finalizeStoreReceiptInTransaction(
               : 'Store receipt finalized in full',
           metadata: {
             storeId: receipt.storeId,
-            outboundRequestLineId: persistedLine.outboundRequestLineId,
+            outboundRequestLineId,
             approvedQuantity: persistedLine.approvedQuantity,
             receivedQuantity: persistedLine.receivedQuantity,
           },
           actorUserId: input.reviewedByUserId,
           occurredAt: now,
         });
+        if (shortage > 0) {
+          // The missing units may still be in the warehouse or may be lost in transit. They stay
+          // reserved, out of allocation, until someone checks the shelf and resolves the check.
+          await openWarehouseShortageCheck(tx, {
+            storeReceiptLineId: persistedLine.id,
+            storeReceiptId: receipt.id,
+            storeId: receipt.storeId,
+            productId: persistedLine.productId,
+            quantity: shortage,
+            shortageReason: receipt.discrepancyNote,
+            actorUserId: input.reviewedByUserId,
+            occurredAt: now,
+          });
+        }
 
         // Legacy pending receipts have no queued shortage; new receipts were queued
         // when the store submitted them. Reconcile once, before settling reservations.
         await reconcileReceiptShortageWait(tx, {
           storeId: receipt.storeId,
           productId: persistedLine.productId,
-          outboundRequestLineId: persistedLine.outboundRequestLineId,
+          outboundRequestLineId,
           approvedQuantity: persistedLine.approvedQuantity,
           queuedQuantity: persistedLine.priorityQueuedQuantity,
           receivedQuantity: persistedLine.receivedQuantity,
         });
         await settleReservations(tx, activeReservations, persistedLine.receivedQuantity, now);
 
-        let lineGoodsCostVnd = 0n;
-        for (const [index, weightKg] of suppliedLine.bagWeightsKg.entries()) {
-          const pricePerKgVnd = suppliedLine.pricePerKgVnd;
-          if (pricePerKgVnd === null) {
-            throw new StoreOperationValidationError('A received bag requires a price per kg.');
-          }
-          const weightGrams = kilogramsToGramsExact(weightKg);
-          if (weightGrams <= 0n) {
-            throw new StoreOperationValidationError('Receipt bag weights must be positive.');
-          }
-          const canonicalWeightKg = gramsToKilogramsExact(weightGrams);
-          const bagGoodsCostVnd = calculateWeightedCostVnd(canonicalWeightKg, pricePerKgVnd);
-          lineGoodsCostVnd += bagGoodsCostVnd;
-          assertVnd(lineGoodsCostVnd, 'line goods cost');
-
-          const bagNumber = index + 1;
-          const bagCode = `SRB-${receipt.id}-${persistedLine.id}-${bagNumber}`;
-          const [receiptBag] = await tx
-            .insert(storeReceiptBags)
-            .values({
-              storeReceiptLineId: persistedLine.id,
-              bagNumber,
-              bagCode,
-              weightKg: canonicalWeightKg,
-              pricePerKgVnd,
-              goodsCostVnd: bagGoodsCostVnd,
-            })
-            .returning({ id: storeReceiptBags.id });
-          if (!receiptBag) {
-            throw new Error('Store receipt bag insert returned no row.');
-          }
-
-          const [inventoryBag] = await tx
-            .insert(storeInventoryBags)
-            .values({
-              bagCode,
-              storeId: receipt.storeId,
-              productId: persistedLine.productId,
-              sourceStoreReceiptBagId: receiptBag.id,
-              outboundRequestLineId: persistedLine.outboundRequestLineId,
-              status: 'available',
-              initialWeightKg: canonicalWeightKg,
-              currentWeightKg: canonicalWeightKg,
-              costVnd: bagGoodsCostVnd,
-              receivedAt: now,
-            })
-            .returning({ id: storeInventoryBags.id });
-          if (!inventoryBag) {
-            throw new Error('Store inventory bag insert returned no row.');
-          }
-          inventoryBagIds.push(inventoryBag.id);
-
-          await tx.insert(storeInventoryLedgerEntries).values({
-            storeInventoryBagId: inventoryBag.id,
-            storeId: receipt.storeId,
-            productId: persistedLine.productId,
-            eventType: 'receive',
-            weightBeforeKg: '0.000',
-            weightAfterKg: canonicalWeightKg,
-            sourceType: 'store_receipt_bag',
-            sourceId: receiptBag.id,
-            reason: 'Store receipt finalized',
+        const excess = excessItems.get(persistedLine.productId);
+        excessItems.delete(persistedLine.productId);
+        const received = await bookReceiptBags(tx, {
+          receipt,
+          line: { ...persistedLine, outboundRequestLineId },
+          bagWeightsKg: suppliedLine.bagWeightsKg,
+          pricePerKgVnd: suppliedLine.pricePerKgVnd,
+          firstBagNumber: 1,
+          reason: 'Store receipt finalized',
+          actorUserId: input.reviewedByUserId,
+          now,
+        });
+        inventoryBagIds.push(...received.inventoryBagIds);
+        let lineGoodsCostVnd = received.goodsCostVnd;
+        if (excess) {
+          lineGoodsCostVnd += await bookReceiptExcess(tx, {
+            receipt,
+            line: { ...persistedLine, outboundRequestLineId },
+            excess,
+            firstBagNumber: persistedLine.receivedQuantity + 1,
             actorUserId: input.reviewedByUserId,
-            occurredAt: now,
+            now,
+            inventoryBagIds,
           });
+          assertVnd(lineGoodsCostVnd, 'line goods cost');
         }
 
         goodsCostVnd += lineGoodsCostVnd;
@@ -473,6 +466,7 @@ export async function finalizeStoreReceiptInTransaction(
           .set({
             pricePerKgVnd: suppliedLine.pricePerKgVnd,
             goodsCostVnd: lineGoodsCostVnd,
+            excessQuantity: excess?.bagWeightsKg.length ?? 0,
             priorityQueuedQuantity: shortage,
             shortageReason: shortage > 0 ? receipt.discrepancyNote : null,
             updatedAt: now,
@@ -486,7 +480,41 @@ export async function finalizeStoreReceiptInTransaction(
             shortageReason: shortage > 0 ? receipt.discrepancyNote : null,
             updatedAt: now,
           })
-          .where(eq(outboundRequestLines.id, persistedLine.outboundRequestLineId));
+          .where(eq(outboundRequestLines.id, outboundRequestLineId));
+      }
+
+      // Excess of a product that was never dispatched gets its own receipt line.
+      for (const excess of excessItems.values()) {
+        const [excessLine] = await tx
+          .insert(storeReceiptLines)
+          .values({
+            storeReceiptId: receipt.id,
+            outboundRequestLineId: null,
+            productId: excess.productId,
+            approvedQuantity: 0,
+            receivedQuantity: 0,
+            excessQuantity: excess.bagWeightsKg.length,
+            pricePerKgVnd: excess.pricePerKgVnd,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning({ id: storeReceiptLines.id, productId: storeReceiptLines.productId });
+        if (!excessLine) throw new Error('Excess receipt line insert returned no row.');
+        const excessCostVnd = await bookReceiptExcess(tx, {
+          receipt,
+          line: { ...excessLine, outboundRequestLineId: null },
+          excess,
+          firstBagNumber: 1,
+          actorUserId: input.reviewedByUserId,
+          now,
+          inventoryBagIds,
+        });
+        await tx
+          .update(storeReceiptLines)
+          .set({ goodsCostVnd: excessCostVnd })
+          .where(eq(storeReceiptLines.id, excessLine.id));
+        goodsCostVnd += excessCostVnd;
+        assertVnd(goodsCostVnd, 'receipt goods cost');
       }
 
       const totalCostVnd = goodsCostVnd + input.freightVnd + input.handlingVnd;
@@ -839,7 +867,7 @@ async function undoShortageWait(
     .where(
       and(
         eq(dailyPriorityOffers.waitTicketId, ticket.id),
-        inArray(dailyPriorityOffers.status, ['offered', 'accepted']),
+        livePriorityOfferCondition(),
         isNull(dailyPriorityOffers.deletedAt),
       ),
     )
@@ -1096,6 +1124,235 @@ export async function withStoreProductWaitLocks<T>(
         );
   };
   return acquire(0);
+}
+
+interface ReceiptBookingTarget {
+  readonly id: string;
+  readonly receiptNumber: string;
+  readonly storeId: string;
+}
+
+interface ReceiptLineBookingTarget {
+  readonly id: string;
+  readonly productId: string;
+  readonly outboundRequestLineId: string | null;
+}
+
+/** Creates the receipt bags, the store's inventory bags and their ledger rows for one line. */
+async function bookReceiptBags(
+  tx: Transaction,
+  input: {
+    readonly receipt: ReceiptBookingTarget;
+    readonly line: ReceiptLineBookingTarget;
+    readonly bagWeightsKg: readonly string[];
+    readonly pricePerKgVnd: bigint | null;
+    readonly firstBagNumber: number;
+    readonly reason: string;
+    readonly actorUserId: string;
+    readonly now: Date;
+  },
+): Promise<{ goodsCostVnd: bigint; inventoryBagIds: string[] }> {
+  let goodsCostVnd = 0n;
+  const inventoryBagIds: string[] = [];
+  for (const [index, weightKg] of input.bagWeightsKg.entries()) {
+    const pricePerKgVnd = input.pricePerKgVnd;
+    if (pricePerKgVnd === null) {
+      throw new StoreOperationValidationError('A received bag requires a price per kg.');
+    }
+    const weightGrams = kilogramsToGramsExact(weightKg);
+    if (weightGrams <= 0n) {
+      throw new StoreOperationValidationError('Receipt bag weights must be positive.');
+    }
+    const canonicalWeightKg = gramsToKilogramsExact(weightGrams);
+    const bagGoodsCostVnd = calculateWeightedCostVnd(canonicalWeightKg, pricePerKgVnd);
+    goodsCostVnd += bagGoodsCostVnd;
+    assertVnd(goodsCostVnd, 'line goods cost');
+
+    const bagNumber = input.firstBagNumber + index;
+    const bagCode = `SRB-${input.receipt.id}-${input.line.id}-${bagNumber}`;
+    const [receiptBag] = await tx
+      .insert(storeReceiptBags)
+      .values({
+        storeReceiptLineId: input.line.id,
+        bagNumber,
+        bagCode,
+        weightKg: canonicalWeightKg,
+        pricePerKgVnd,
+        goodsCostVnd: bagGoodsCostVnd,
+      })
+      .returning({ id: storeReceiptBags.id });
+    if (!receiptBag) {
+      throw new Error('Store receipt bag insert returned no row.');
+    }
+
+    const [inventoryBag] = await tx
+      .insert(storeInventoryBags)
+      .values({
+        bagCode,
+        storeId: input.receipt.storeId,
+        productId: input.line.productId,
+        sourceStoreReceiptBagId: receiptBag.id,
+        outboundRequestLineId: input.line.outboundRequestLineId,
+        status: 'available',
+        initialWeightKg: canonicalWeightKg,
+        currentWeightKg: canonicalWeightKg,
+        costVnd: bagGoodsCostVnd,
+        receivedAt: input.now,
+      })
+      .returning({ id: storeInventoryBags.id });
+    if (!inventoryBag) {
+      throw new Error('Store inventory bag insert returned no row.');
+    }
+    inventoryBagIds.push(inventoryBag.id);
+
+    await tx.insert(storeInventoryLedgerEntries).values({
+      storeInventoryBagId: inventoryBag.id,
+      storeId: input.receipt.storeId,
+      productId: input.line.productId,
+      eventType: 'receive',
+      weightBeforeKg: '0.000',
+      weightAfterKg: canonicalWeightKg,
+      sourceType: 'store_receipt_bag',
+      sourceId: receiptBag.id,
+      reason: input.reason,
+      actorUserId: input.actorUserId,
+      occurredAt: input.now,
+    });
+  }
+  return { goodsCostVnd, inventoryBagIds };
+}
+
+/**
+ * Excess bags physically left the warehouse without an allocation, so they are taken out of
+ * unreserved on-hand stock. If the warehouse has no such stock the booking is refused rather
+ * than letting on-hand go negative or eating into stock held for other stores.
+ */
+async function bookReceiptExcess(
+  tx: Transaction,
+  input: {
+    readonly receipt: ReceiptBookingTarget;
+    readonly line: ReceiptLineBookingTarget;
+    readonly excess: FinalizeStoreReceiptUnexpectedItemInput;
+    readonly firstBagNumber: number;
+    readonly actorUserId: string;
+    readonly now: Date;
+    readonly inventoryBagIds: string[];
+  },
+): Promise<bigint> {
+  const quantity = input.excess.bagWeightsKg.length;
+  try {
+    await applyWarehouseMovement(tx, {
+      productId: input.line.productId,
+      eventType: 'outbound',
+      onHandDelta: -quantity,
+      reservedDelta: 0,
+      sourceType: 'store_receipt_excess',
+      sourceId: input.receipt.id,
+      reason: 'Store received excess goods; booked out of unreserved warehouse stock',
+      metadata: { storeId: input.receipt.storeId, storeReceiptLineId: input.line.id, quantity },
+      actorUserId: input.actorUserId,
+      occurredAt: input.now,
+    });
+  } catch (error) {
+    if (error instanceof WarehouseBalanceViolationError) {
+      throw new StoreOperationValidationError(
+        'Kho tổng không còn đủ hàng chưa giữ để ghi nhận hàng dư; hãy kiểm tra lại số bao dư hoặc trả phiếu cho cửa hàng.',
+      );
+    }
+    throw error;
+  }
+  const booked = await bookReceiptBags(tx, {
+    receipt: input.receipt,
+    line: input.line,
+    bagWeightsKg: input.excess.bagWeightsKg,
+    pricePerKgVnd: input.excess.pricePerKgVnd,
+    firstBagNumber: input.firstBagNumber,
+    reason: 'Store receipt excess goods booked',
+    actorUserId: input.actorUserId,
+    now: input.now,
+  });
+  input.inventoryBagIds.push(...booked.inventoryBagIds);
+  return booked.goodsCostVnd;
+}
+
+/** Every declared excess product needs exactly one weight per declared bag, and nothing else. */
+function matchDeclaredExcess(
+  declared: readonly { readonly productId: string; readonly quantity: number }[],
+  supplied: readonly FinalizeStoreReceiptUnexpectedItemInput[],
+): Map<string, FinalizeStoreReceiptUnexpectedItemInput> {
+  const suppliedByProduct = new Map(supplied.map((item) => [item.productId, item]));
+  if (suppliedByProduct.size !== supplied.length || supplied.length !== declared.length) {
+    throw new StoreOperationValidationError(
+      'Cần cân từng bao hàng dư cửa hàng đã khai trước khi duyệt phiếu.',
+    );
+  }
+  for (const item of declared) {
+    const match = suppliedByProduct.get(item.productId);
+    if (!match || match.bagWeightsKg.length !== item.quantity) {
+      throw new StoreOperationValidationError(
+        'Số bao hàng dư được cân phải khớp số bao cửa hàng đã khai.',
+      );
+    }
+    assertVnd(match.pricePerKgVnd, 'pricePerKgVnd');
+  }
+  return suppliedByProduct;
+}
+
+/** Keeps a reported shortage reserved in the warehouse until someone resolves the check. */
+export async function openWarehouseShortageCheck(
+  tx: Transaction,
+  input: {
+    readonly storeReceiptLineId: string;
+    readonly storeReceiptId: string;
+    readonly storeId: string;
+    readonly productId: string;
+    readonly quantity: number;
+    readonly shortageReason: string | null;
+    readonly actorUserId: string;
+    readonly occurredAt: Date;
+  },
+): Promise<string> {
+  const [check] = await tx
+    .insert(warehouseShortageChecks)
+    .values({
+      storeReceiptLineId: input.storeReceiptLineId,
+      storeReceiptId: input.storeReceiptId,
+      storeId: input.storeId,
+      productId: input.productId,
+      quantity: input.quantity,
+      shortageReason: input.shortageReason,
+      createdAt: input.occurredAt,
+      updatedAt: input.occurredAt,
+    })
+    .returning({ id: warehouseShortageChecks.id });
+  if (!check) throw new Error('Warehouse shortage check insert returned no row.');
+  await applyWarehouseMovement(tx, {
+    productId: input.productId,
+    eventType: 'reservation',
+    onHandDelta: 0,
+    reservedDelta: input.quantity,
+    sourceType: 'warehouse_shortage_check',
+    sourceId: check.id,
+    eventSequence: 1,
+    reason: 'Reported store shortage held until the warehouse confirms it',
+    metadata: { storeId: input.storeId, storeReceiptLineId: input.storeReceiptLineId },
+    actorUserId: input.actorUserId,
+    occurredAt: input.occurredAt,
+  });
+  await tx.insert(auditLogs).values({
+    actorUserId: input.actorUserId,
+    actorStoreId: input.storeId,
+    action: 'WAREHOUSE_SHORTAGE_CHECK_OPENED',
+    entityType: 'warehouse_shortage_check',
+    entityId: check.id,
+    after: {
+      status: 'pending',
+      productId: input.productId,
+      quantity: input.quantity,
+      storeReceiptId: input.storeReceiptId,
+    },
+  });
+  return check.id;
 }
 
 function validateFinalizationInput(

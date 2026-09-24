@@ -2,7 +2,7 @@ import { and, eq, isNull, ne } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
-import { auditLogs, orderSessions, users, type JsonObject } from './schema.js';
+import { auditLogs, orderRequests, orderSessions, users, type JsonObject } from './schema.js';
 import { withAdvisoryLock, type Transaction } from './transaction.js';
 
 const HO_CHI_MINH_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
@@ -203,6 +203,28 @@ export async function transitionOrderSession(
           throw new OrderSessionConflictError('Order session changed during transition.');
         }
 
+        // A cancelled session is never allocated, so its pending requests must not linger as
+        // "submitted" forever. They are cancelled with the session and free the stores' slots.
+        const cancelledRequests =
+          input.targetStatus === 'cancelled'
+            ? await tx
+                .update(orderRequests)
+                .set({
+                  status: 'cancelled',
+                  cancelledAt: transitionedAt,
+                  cancellationReason: `Phiên đặt hàng bị hủy: ${input.reason?.trim() ?? ''}`.trim(),
+                  updatedAt: transitionedAt,
+                })
+                .where(
+                  and(
+                    eq(orderRequests.orderSessionId, current.id),
+                    eq(orderRequests.status, 'submitted'),
+                    isNull(orderRequests.deletedAt),
+                  ),
+                )
+                .returning({ id: orderRequests.id, storeId: orderRequests.storeId })
+            : [];
+
         await tx.insert(auditLogs).values({
           requestId: input.requestId ?? null,
           actorUserId: input.actorUserId,
@@ -212,7 +234,12 @@ export async function transitionOrderSession(
           entityId: updated.id,
           before: sessionAuditSnapshot(current),
           after: sessionAuditSnapshot(updated),
-          metadata: input.reason ? { reason: input.reason.trim() } : {},
+          metadata: {
+            ...(input.reason ? { reason: input.reason.trim() } : {}),
+            ...(cancelledRequests.length > 0
+              ? { cancelledOrderRequestIds: cancelledRequests.map((request) => request.id) }
+              : {}),
+          },
         });
 
         return sessionOperationResult(updated);
@@ -241,6 +268,17 @@ function assertTransition(current: OrderSessionRecord, input: TransitionOrderSes
     );
   }
   const transitionedAt = input.transitionedAt ?? new Date();
+  if (
+    input.targetStatus === 'cancelled' &&
+    current.status !== 'cancelled' &&
+    transitionedAt >= current.inventorySnapshotDueAt
+  ) {
+    // From the 08:00 snapshot on, priority stock is held and stores are answering offers.
+    // Only the 09:00 run can settle those holds, so the session must run to completion.
+    throw new OrderSessionConflictError(
+      'Không thể hủy phiên sau mốc chụp tồn: hàng ưu tiên đã được giữ và phiên sẽ tự chốt ở mốc phân bổ.',
+    );
+  }
   if (
     input.targetStatus === 'open' &&
     (transitionedAt < (current.openedAt ?? current.createdAt) ||

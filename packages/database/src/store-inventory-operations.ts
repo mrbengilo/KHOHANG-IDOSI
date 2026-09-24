@@ -81,7 +81,8 @@ export interface StoreInventoryLedgerRecord {
   readonly weightBeforeKg: string;
   readonly weightAfterKg: string;
   readonly reason: string;
-  readonly actorUserId: string;
+  /** Null for regular-sale movements recorded by the IDOSI sync. */
+  readonly actorUserId: string | null;
   readonly occurredAt: Date;
 }
 

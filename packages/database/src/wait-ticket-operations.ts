@@ -33,6 +33,7 @@ import {
   type DatabaseUserRole,
   type JsonObject,
 } from './schema.js';
+import { livePriorityOfferCondition } from './priority-offer-state.js';
 import { withAdvisoryLock, type Transaction } from './transaction.js';
 
 const DEFAULT_PAGE_SIZE = 20;
@@ -717,7 +718,7 @@ export async function cancelWaitTicketInTransaction(
           .where(
             and(
               eq(dailyPriorityOffers.waitTicketId, ticket.id),
-              inArray(dailyPriorityOffers.status, ['offered', 'accepted']),
+              livePriorityOfferCondition(),
               isNull(dailyPriorityOffers.deletedAt),
             ),
           )

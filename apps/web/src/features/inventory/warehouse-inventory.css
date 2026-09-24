@@ -29,3 +29,17 @@
     width: 28%;
   }
 }
+.shortage-check-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.shortage-check-actions input {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+.shortage-check-actions .button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}

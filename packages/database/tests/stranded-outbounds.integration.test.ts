@@ -26,6 +26,7 @@ import {
   outboundRequests,
   products,
   reservations,
+  resolveWarehouseShortageCheck,
   returnStoreReceiptForCorrection,
   storeGroups,
   stores,
@@ -35,6 +36,7 @@ import {
   users,
   waitTickets,
   warehouseBalances,
+  warehouseShortageChecks,
   withSerializableTransaction,
 } from '../src/index.js';
 
@@ -307,7 +309,30 @@ describePostgres('stranded allocation outbound backfill', () => {
           .from(warehouseBalances)
           .where(eq(warehouseBalances.productId, fixture.productId))
       )[0],
-    ).toMatchObject({ onHandQuantity: 1, reservedQuantity: 0 });
+    ).toMatchObject({ onHandQuantity: 1, reservedQuantity: 1 });
+    // The missing bag stays held until the warehouse confirms it; lost leaves on-hand too.
+    const [check] = await db
+      .select()
+      .from(warehouseShortageChecks)
+      .where(eq(warehouseShortageChecks.storeReceiptId, receiptId));
+    expect(check).toMatchObject({ quantity: 1, status: 'pending' });
+    await resolveWarehouseShortageCheck(db, {
+      checkId: check!.id,
+      decision: 'lost',
+      reason: 'Thất lạc trên đường giao',
+      expectedVersion: 0,
+      actorUserId: admin.id,
+      idempotencyKey: `lost-${token}`,
+      requestHash: `lost-${token}`,
+    });
+    expect(
+      (
+        await db
+          .select()
+          .from(warehouseBalances)
+          .where(eq(warehouseBalances.productId, fixture.productId))
+      )[0],
+    ).toMatchObject({ onHandQuantity: 0, reservedQuantity: 0 });
   });
 
   it('still queues a legacy pending shortage during finalization', async () => {

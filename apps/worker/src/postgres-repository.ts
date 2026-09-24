@@ -488,8 +488,24 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
     const offers = acceptedRows.map((row) => toDomainOffer(row, false));
     const storeOrder = await loadStoreOrder(tx, mergedDemands, domainTickets);
     const cursorByProduct = await loadPreviousCursors(tx);
+    const capacityByProduct = await loadAllocationCapacity(tx, acceptedRows);
+    const capacityAdjustments: JsonObject[] = [];
+    const allocatableItems = snapshotItems.map((item) => {
+      const allocatable = allocatableSnapshotQuantity(
+        item.availableQuantity,
+        capacityByProduct.get(item.productId) ?? 0,
+      );
+      if (allocatable !== item.availableQuantity) {
+        capacityAdjustments.push({
+          productId: item.productId,
+          snapshotAvailable: item.availableQuantity,
+          allocatable,
+        });
+      }
+      return { ...item, availableQuantity: allocatable };
+    });
 
-    const plannedAllocations = snapshotItems.map((item) => ({
+    const plannedAllocations = allocatableItems.map((item) => ({
       item,
       result: planProductAllocation({
         allocationId: persistedRunId,
@@ -754,6 +770,7 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
           storeOrder,
           nextCursorByProduct,
           snapshotCapturedAt: snapshot.capturedAt.toISOString(),
+          capacityAdjustments,
         },
         requestedQuantity,
         allocatedQuantity,
@@ -1253,6 +1270,32 @@ async function persistMergedDemands(
   return persisted;
 }
 
+/**
+ * Stock can leave the warehouse between the 08:00 snapshot and the 09:00 run (a
+ * supplier receipt cancelled in between). The run may only reserve what is still
+ * physically unreserved now, plus the units it already holds for accepted priority
+ * offers, which it re-uses instead of reserving twice.
+ */
+async function loadAllocationCapacity(
+  tx: Transaction,
+  acceptedOffers: readonly OfferRow[],
+): Promise<Map<string, number>> {
+  const balances = await tx.select().from(warehouseBalances);
+  const capacity = new Map<string, number>();
+  for (const balance of balances) {
+    capacity.set(balance.productId, Math.max(0, balance.onHandQuantity - balance.reservedQuantity));
+  }
+  for (const offer of acceptedOffers) {
+    if (offer.stockHeldQuantity <= 0) continue;
+    capacity.set(offer.productId, (capacity.get(offer.productId) ?? 0) + offer.stockHeldQuantity);
+  }
+  return capacity;
+}
+
+export function allocatableSnapshotQuantity(snapshotAvailable: number, capacity: number): number {
+  return Math.max(0, Math.min(snapshotAvailable, capacity));
+}
+
 function snapshotItemPlan(snapshot: SnapshotRow, item: SnapshotItemRow) {
   return {
     id: `${snapshot.id}:${item.productId}`,
@@ -1414,10 +1457,9 @@ async function persistWaitRemainders(
 ): Promise<void> {
   for (const remainder of remainders) {
     const demand = demandById.get(remainder.demandId);
-    const source =
-      demand?.sourceLines.find(
-        (line) => line.quantity - (remainder.allocatedQuantity > 0 ? line.quantity : 0) > 0,
-      ) ?? demand?.sourceLines.at(-1);
+    const source = demand
+      ? firstUnderallocatedSourceLine(demand.sourceLines, remainder.allocatedQuantity)
+      : undefined;
     if (!source) throw new Error(`Wait remainder ${remainder.demandId} has no source line.`);
     const [active] = await tx
       .select()
@@ -1459,6 +1501,23 @@ async function persistWaitRemainders(
       });
     }
   }
+}
+
+/**
+ * Allocation fills a merged demand's source lines in order (see #finalizeAllocation), so the
+ * waitlisted remainder starts at the first line that did not receive its full quantity.
+ */
+export function firstUnderallocatedSourceLine<T extends { readonly quantity: number }>(
+  sourceLines: readonly T[],
+  allocatedQuantity: number,
+): T | undefined {
+  let allocationLeft = allocatedQuantity;
+  for (const line of sourceLines) {
+    const allocated = Math.min(line.quantity, allocationLeft);
+    allocationLeft -= allocated;
+    if (allocated < line.quantity) return line;
+  }
+  return sourceLines.at(-1);
 }
 
 export function deterministicUuid(value: string): string {

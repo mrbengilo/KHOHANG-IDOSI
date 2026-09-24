@@ -100,6 +100,10 @@ import type {
   SortedSaleTransfer,
   CreateSortedSaleTransferRequest,
   ReceiveSortedSaleTransferRequest,
+  ListWarehouseShortageChecksQuery,
+  ResolveWarehouseShortageCheckRequest,
+  WarehouseShortageCheck,
+  CancelSortedSaleTransferRequest,
   MoveProductCharityToSaleRequest,
   ProductCharityBalance,
   CreateCharityExportRequest,
@@ -124,9 +128,15 @@ import {
   createStoreSorting as createDatabaseStoreSorting,
   createSortedSaleTransfer as createDatabaseSortedSaleTransfer,
   receiveSortedSaleTransfer as receiveDatabaseSortedSaleTransfer,
+  cancelSortedSaleTransfer as cancelDatabaseSortedSaleTransfer,
+  getWarehouseShortageCheck as getDatabaseWarehouseShortageCheck,
+  listWarehouseShortageChecks as listDatabaseWarehouseShortageChecks,
+  resolveWarehouseShortageCheck as resolveDatabaseWarehouseShortageCheck,
+  WarehouseShortageCheckAuthorizationError,
+  type WarehouseShortageCheckRecord,
   listSortedSaleTransfers as listDatabaseSortedSaleTransfers,
   getSortedSaleTransfer as getDatabaseSortedSaleTransfer,
-  type sortedSaleTransfers,
+  sortedSaleTransfers,
   type storeCharityExports,
   createCharityExport as createDatabaseCharityExport,
   getCharityExport as getDatabaseCharityExport,
@@ -234,10 +244,13 @@ import {
   StoreTransferAuthorizationError,
   StoreTransferNotFoundError,
   storeTransfers,
+  reservations,
+  waitTickets,
   withAdvisoryLock,
   withIdempotency,
   withSerializableTransaction,
   type JsonObject,
+  type Transaction,
   type AllocationResultDatabaseStatus,
   type AllocationResultRecord,
   type MonthlyReportScope,
@@ -1216,6 +1229,53 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     };
   }
 
+  public async listWarehouseShortageChecks(
+    actor: AuthenticatedPrincipal,
+    query: ListWarehouseShortageChecksQuery,
+  ): Promise<Page<WarehouseShortageCheck>> {
+    if (actor.role !== 'ADMIN') throw forbidden();
+    const result = await listDatabaseWarehouseShortageChecks(db, {
+      page: query.page,
+      pageSize: query.pageSize,
+      ...(query.status === undefined ? {} : { status: databaseShortageCheckStatus(query.status) }),
+    });
+    return {
+      data: result.data.map(warehouseShortageCheckDto),
+      pagination: pagination(query.page, query.pageSize, result.totalItems),
+    };
+  }
+
+  public async resolveWarehouseShortageCheck(
+    actor: AuthenticatedPrincipal,
+    checkId: string,
+    input: ResolveWarehouseShortageCheckRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<WarehouseShortageCheck>> {
+    if (actor.role !== 'ADMIN') throw forbidden();
+    try {
+      const result = await resolveDatabaseWarehouseShortageCheck(db, {
+        checkId,
+        decision: input.decision === 'LOST' ? 'lost' : 'returned_to_stock',
+        reason: input.reason,
+        expectedVersion: input.expectedVersion,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const id = result.replayed ? result.resourceId : result.value.checkId;
+      if (!id) throw new Error('Resolved shortage check has no id.');
+      const record = await getDatabaseWarehouseShortageCheck(db, id);
+      if (!record) throw notFound('Không tìm thấy phiếu kiểm hàng thiếu');
+      return { data: warehouseShortageCheckDto(record), replayed: result.replayed };
+    } catch (error: unknown) {
+      if (error instanceof WarehouseShortageCheckAuthorizationError) throw forbidden();
+      throwReceiptError(error);
+    }
+  }
+
   public async listInboundReceipts(
     actor: AuthenticatedPrincipal,
     query: ListInboundReceiptsQuery,
@@ -2068,6 +2128,9 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
               );
             }
           }
+          if (current.isActive && targetStatus === 'INACTIVE') {
+            await assertStoreHasNoPendingWork(tx, storeId);
+          }
           const before = storeDto(current);
           const [updated] = await tx
             .update(stores)
@@ -2719,6 +2782,11 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
           pricePerKgVnd: line.pricePerKgVnd === null ? null : BigInt(line.pricePerKgVnd),
           bagWeightsKg: line.bagWeightsKg,
         })),
+        unexpectedItems: (input.unexpectedItems ?? []).map((item) => ({
+          productId: item.productId,
+          pricePerKgVnd: BigInt(item.pricePerKgVnd),
+          bagWeightsKg: item.bagWeightsKg,
+        })),
         requestId: context.requestId,
         idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
         requestHash,
@@ -3159,6 +3227,35 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       });
       const id = result.replayed ? result.resourceId : result.value.transferId;
       if (!id) throw new Error('Received Sale transfer has no id.');
+      const row = await getDatabaseSortedSaleTransfer(db, id);
+      if (!row) throw notFound('Không tìm thấy phiếu điều chuyển Sale');
+      return { data: sortedSaleTransferDto(row), replayed: result.replayed };
+    });
+  }
+
+  public async cancelSortedSaleTransfer(
+    actor: AuthenticatedPrincipal,
+    transferId: string,
+    input: CancelSortedSaleTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<SortedSaleTransfer>> {
+    await this.authorizeRetailStoreOperation(actor);
+    const current = await getDatabaseSortedSaleTransfer(db, transferId);
+    if (!current) throw notFound('Không tìm thấy phiếu điều chuyển Sale');
+    if (actor.storeId !== current.sourceStoreId) throw forbidden();
+    return withStoreTransferErrors(async () => {
+      const result = await cancelDatabaseSortedSaleTransfer(db, {
+        transferId,
+        ...input,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      const id = result.replayed ? result.resourceId : result.value.transferId;
+      if (!id) throw new Error('Cancelled Sale transfer has no id.');
       const row = await getDatabaseSortedSaleTransfer(db, id);
       if (!row) throw notFound('Không tìm thấy phiếu điều chuyển Sale');
       return { data: sortedSaleTransferDto(row), replayed: result.replayed };
@@ -3825,6 +3922,17 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       weights.push(bag.weightKg);
       weightsByLine.set(bag.storeReceiptLineId, weights);
     }
+    // Bags beyond the received count are booked excess goods; they belong to unexpected items.
+    const dispatchedLines = lines.filter((line) => line.outboundRequestLineId !== null);
+    const excessByProduct = new Map<string, { weights: string[]; price: number | null }>();
+    for (const line of lines) {
+      if (line.excessQuantity === 0) continue;
+      const weights = (weightsByLine.get(line.id) ?? []).slice(line.receivedQuantity);
+      excessByProduct.set(line.productId, {
+        weights,
+        price: line.pricePerKgVnd === null ? null : safeVnd(line.pricePerKgVnd),
+      });
+    }
 
     return {
       id: receipt.id,
@@ -3833,15 +3941,20 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       storeId: receipt.storeId,
       outboundRequestId: receipt.outboundRequestId,
       declaredByAccountId: receipt.declaredByUserId,
-      lines: lines.map((line) => ({
+      lines: dispatchedLines.map((line) => ({
         productId: line.productId,
         approvedUnits: line.approvedQuantity,
         receivedUnits: line.receivedQuantity,
-        bagWeightsKg: weightsByLine.get(line.id) ?? [],
+        bagWeightsKg: (weightsByLine.get(line.id) ?? []).slice(0, line.receivedQuantity),
         pricePerKgVnd: line.pricePerKgVnd === null ? null : safeVnd(line.pricePerKgVnd),
       })),
       discrepancyNote: receipt.discrepancyNote,
-      unexpectedItems: receipt.unexpectedItems.map((item) => ({ ...item })),
+      unexpectedItems: receipt.unexpectedItems.map((item) => {
+        const booked = excessByProduct.get(item.productId);
+        return booked
+          ? { ...item, bagWeightsKg: booked.weights, pricePerKgVnd: booked.price }
+          : { ...item };
+      }),
       status: receiptStatus(receipt.status),
       freightVnd: safeVnd(receipt.freightVnd),
       handlingVnd: safeVnd(receipt.handlingVnd),
@@ -4141,6 +4254,76 @@ function storeOutboundPage(
   return { data: page.data.map(storeOutboundDto), pagination: page.pagination };
 }
 
+/**
+ * An inactive store is still in the allocation ring for demand it already has, but its
+ * account can no longer declare receipts or answer offers. Deactivating it with work in
+ * flight would strand held stock, so that work must be finished or cancelled first.
+ */
+async function assertStoreHasNoPendingWork(tx: Transaction, storeId: string): Promise<void> {
+  const result = await tx.execute(sql`
+    select
+      (select count(*) from ${orderRequests} where ${orderRequests.storeId} = ${storeId}
+        and ${orderRequests.status} in ('submitted', 'merged') and ${orderRequests.deletedAt} is null)::int as orders,
+      (select count(*) from ${waitTickets} where ${waitTickets.storeId} = ${storeId}
+        and ${waitTickets.status} = 'active' and ${waitTickets.deletedAt} is null)::int as waits,
+      (select count(*) from ${reservations} where ${reservations.storeId} = ${storeId}
+        and ${reservations.status} = 'active' and ${reservations.deletedAt} is null)::int as holds,
+      (select count(*) from ${storeReceipts} where ${storeReceipts.storeId} = ${storeId}
+        and ${storeReceipts.status} in ('draft', 'pending_htkd', 'returned')
+        and ${storeReceipts.deletedAt} is null)::int as receipts,
+      (select count(*) from ${sortedSaleTransfers}
+        where (${sortedSaleTransfers.sourceStoreId} = ${storeId}
+          or ${sortedSaleTransfers.destinationStoreId} = ${storeId})
+        and ${sortedSaleTransfers.status} = 'in_transit')::int as transfers
+  `);
+  const row = (result.rows[0] ?? {}) as Record<string, number | undefined>;
+  const pending = [
+    ['phiếu đặt chưa phân bổ', row.orders],
+    ['phiếu chờ đang mở', row.waits],
+    ['hàng đang giữ ở kho tổng', row.holds],
+    ['phiếu nhận chưa chốt', row.receipts],
+    ['phiếu điều chuyển Sale đang chuyển', row.transfers],
+  ].filter(([, count]) => Number(count ?? 0) > 0);
+  if (pending.length > 0) {
+    throw new ApiError(
+      'CONFLICT',
+      `Chưa thể ngừng hoạt động cửa hàng khi còn ${pending
+        .map(([label, count]) => `${count} ${label}`)
+        .join(', ')}. Hãy xử lý hoặc hủy các mục này trước.`,
+      409,
+    );
+  }
+}
+
+function databaseShortageCheckStatus(
+  status: WarehouseShortageCheck['status'],
+): WarehouseShortageCheckRecord['status'] {
+  return status === 'PENDING' ? 'pending' : status === 'LOST' ? 'lost' : 'returned_to_stock';
+}
+
+function warehouseShortageCheckDto(record: WarehouseShortageCheckRecord): WarehouseShortageCheck {
+  return {
+    id: record.id,
+    storeReceiptId: record.storeReceiptId,
+    receiptNumber: record.receiptNumber,
+    storeId: record.storeId,
+    productId: record.productId,
+    quantity: record.quantity,
+    status:
+      record.status === 'pending'
+        ? 'PENDING'
+        : record.status === 'lost'
+          ? 'LOST'
+          : 'RETURNED_TO_STOCK',
+    shortageReason: record.shortageReason,
+    resolutionReason: record.resolutionReason,
+    resolvedByAccountId: record.resolvedByUserId,
+    resolvedAt: record.resolvedAt?.toISOString() ?? null,
+    version: record.version,
+    createdAt: record.createdAt.toISOString(),
+  };
+}
+
 function sortedSaleTransferDto(row: typeof sortedSaleTransfers.$inferSelect): SortedSaleTransfer {
   return {
     id: row.id,
@@ -4153,11 +4336,18 @@ function sortedSaleTransferDto(row: typeof sortedSaleTransfers.$inferSelect): So
     weightKg: row.weightKg,
     enteredWeightKg: row.enteredWeightKg,
     bagWeightsKg: row.bagWeightsKg ?? [],
-    status: row.status === 'received' ? 'RECEIVED' : 'IN_TRANSIT',
+    status:
+      row.status === 'received'
+        ? 'RECEIVED'
+        : row.status === 'cancelled'
+          ? 'CANCELLED'
+          : 'IN_TRANSIT',
     version: row.version,
     note: row.note,
     createdAt: row.createdAt.toISOString(),
     receivedAt: row.receivedAt?.toISOString() ?? null,
+    cancelledAt: row.cancelledAt?.toISOString() ?? null,
+    cancellationReason: row.cancellationReason,
   };
 }
 
@@ -5049,6 +5239,21 @@ function assertFinalizationMatchesDeclaration(
   current: Receipt,
   input: FinalizeReceiptRequest,
 ): void {
+  const declaredExcess = new Map(
+    (current.unexpectedItems ?? []).map((item) => [item.productId, item.quantity] as const),
+  );
+  if (
+    (input.unexpectedItems ?? []).length !== declaredExcess.size ||
+    (input.unexpectedItems ?? []).some(
+      (item) => declaredExcess.get(item.productId) !== item.bagWeightsKg.length,
+    )
+  ) {
+    throw new ApiError(
+      'VALIDATION_ERROR',
+      'Số bao hàng dư được cân phải khớp số bao cửa hàng đã khai',
+      400,
+    );
+  }
   const declaredByProduct = new Map(current.lines.map((line) => [line.productId, line]));
   if (declaredByProduct.size !== input.lines.length) {
     throw new ApiError(

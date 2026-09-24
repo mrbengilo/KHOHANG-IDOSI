@@ -19,6 +19,11 @@ import {
   CharityExportResponseSchema,
   CharityExportsResponseSchema,
   ListStoreSortingHistoryResponseSchema,
+  ListWarehouseShortageChecksResponseSchema,
+  ResolveWarehouseShortageCheckRequestSchema,
+  WarehouseShortageCheckResponseSchema,
+  type ResolveWarehouseShortageCheckRequest,
+  type WarehouseShortageCheck,
   type CreateStoreOutboundRequest,
   type OpenStoreInventoryBagRequest,
   type OutboundReason,
@@ -59,6 +64,29 @@ export async function loadWarehouseOutboundHistory(page: number) {
       `/outbound-requests?${new URLSearchParams({ page: String(page), pageSize: '20' })}`,
     ),
   );
+}
+
+export async function loadPendingShortageChecks() {
+  return ListWarehouseShortageChecksResponseSchema.parse(
+    await request(
+      `/warehouse-shortage-checks?${new URLSearchParams({ status: 'PENDING', pageSize: '100' })}`,
+    ),
+  );
+}
+
+export async function resolveShortageCheck(
+  checkId: string,
+  input: ResolveWarehouseShortageCheckRequest,
+  idempotencyKey: string,
+): Promise<WarehouseShortageCheck> {
+  const parsed = ResolveWarehouseShortageCheckRequestSchema.parse(input);
+  return WarehouseShortageCheckResponseSchema.parse(
+    await request(`/warehouse-shortage-checks/${encodeURIComponent(checkId)}/resolve`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(parsed),
+    }),
+  ).data;
 }
 
 interface InventoryFilters {

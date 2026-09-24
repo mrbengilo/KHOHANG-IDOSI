@@ -1437,7 +1437,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
         description={
           mode === 'SALE'
             ? 'Số dư Sale theo mặt hàng tự cập nhật từ dữ liệu bán trên IDOSI'
-            : 'Lưu kg đã lọc vào Sale hoặc Từ thiện; xuất từ thiện sau khi xác nhận'
+            : 'Lưu kg đã lọc vào Sale hoặc Từ thiện; kg bán giá thường trên IDOSI tự trừ vào Mã bao'
         }
         actions={
           <Button

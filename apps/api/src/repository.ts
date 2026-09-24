@@ -99,6 +99,10 @@ import type {
   SortedSaleTransfer,
   CreateSortedSaleTransferRequest,
   ReceiveSortedSaleTransferRequest,
+  ListWarehouseShortageChecksQuery,
+  ResolveWarehouseShortageCheckRequest,
+  WarehouseShortageCheck,
+  CancelSortedSaleTransferRequest,
   ListStoreTransfersQuery,
   CreateStoreTransferRequest,
   DispatchStoreTransferRequest,
@@ -344,6 +348,18 @@ export interface WarehouseRepository {
     actor: AuthenticatedPrincipal,
     query: WarehouseInventoryQuery,
   ): Promise<WarehouseInventoryResponse>;
+  listWarehouseShortageChecks(
+    actor: AuthenticatedPrincipal,
+    query: ListWarehouseShortageChecksQuery,
+  ): Promise<Page<WarehouseShortageCheck>>;
+  resolveWarehouseShortageCheck(
+    actor: AuthenticatedPrincipal,
+    checkId: string,
+    input: ResolveWarehouseShortageCheckRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<WarehouseShortageCheck>>;
   listInboundReceipts(
     actor: AuthenticatedPrincipal,
     query: ListInboundReceiptsQuery,
@@ -646,6 +662,14 @@ export interface WarehouseRepository {
     actor: AuthenticatedPrincipal,
     transferId: string,
     input: ReceiveSortedSaleTransferRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<SortedSaleTransfer>>;
+  cancelSortedSaleTransfer(
+    actor: AuthenticatedPrincipal,
+    transferId: string,
+    input: CancelSortedSaleTransferRequest,
     idempotencyKey: string,
     requestHash: string,
     context: RequestContext,

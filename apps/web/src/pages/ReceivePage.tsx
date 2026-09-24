@@ -749,8 +749,11 @@ function CreateReceiptForm({
                 ))}
               </div>
               <div className="receipt-unexpected-items">
-                <strong>Hàng nhận dư khác mặt hàng đã duyệt</strong>
-                <p>Ghi đúng mặt hàng và số bao. HTKD sẽ đối chiếu riêng; chưa cộng vào tồn kho.</p>
+                <strong>Hàng nhận dư</strong>
+                <p>
+                  Ghi mặt hàng không có trong lệnh xuất hoặc số bao dư của mặt hàng đã nhận đủ. HTKD
+                  cân từng bao và nhập kho khi duyệt phiếu.
+                </p>
                 {unexpectedItems.map((item) => (
                   <div className="receipt-unexpected-item" key={item.productId}>
                     <span>{productNameById.get(item.productId) ?? item.productId}</span>
@@ -800,8 +803,11 @@ function CreateReceiptForm({
                   {unexpectedProducts
                     .filter(
                       (product) =>
-                        !lines.some((line) => line.productId === product.id) &&
-                        !unexpectedItems.some((item) => item.productId === product.id),
+                        !lines.some(
+                          (line) =>
+                            line.productId === product.id &&
+                            line.receivedUnits < line.approvedUnits,
+                        ) && !unexpectedItems.some((item) => item.productId === product.id),
                     )
                     .map((product) => (
                       <option key={product.id} value={product.id}>
@@ -915,7 +921,7 @@ function ReceiptDetail({
         <>
           {(receipt.unexpectedItems?.length ?? 0) > 0 ? (
             <div className="receipt-unexpected-items">
-              <strong>Hàng nhận dư cần HTKD đối chiếu</strong>
+              <strong>Hàng nhận dư cần HTKD cân và nhập kho</strong>
               {receipt.unexpectedItems?.map((item) => (
                 <p key={item.productId}>
                   {productNameById.get(item.productId) ?? item.productId}: {item.quantity} bao
@@ -1070,7 +1076,7 @@ function StoreReceiptForm({
         </table>
       </div>
       <div className="receipt-unexpected-items">
-        <strong>Hàng nhận dư khác mặt hàng đã duyệt</strong>
+        <strong>Hàng nhận dư</strong>
         {unexpectedItems.length === 0 ? <p>Không có hàng nhận dư.</p> : null}
         {unexpectedItems.map((item) => (
           <div className="receipt-unexpected-item" key={item.productId}>
@@ -1128,8 +1134,10 @@ function StoreReceiptForm({
             {unexpectedProducts
               .filter(
                 (product) =>
-                  !lines.some((line) => line.productId === product.id) &&
-                  !unexpectedItems.some((item) => item.productId === product.id),
+                  !lines.some(
+                    (line) =>
+                      line.productId === product.id && line.receivedUnits < line.approvedUnits,
+                  ) && !unexpectedItems.some((item) => item.productId === product.id),
               )
               .map((product) => (
                 <option key={product.id} value={product.id}>
@@ -1207,6 +1215,24 @@ function ReviewerReceiptForm({
       receipt.lines.map((line) => [line.productId, line.pricePerKgVnd?.toString() ?? '']),
     ),
   );
+  const [excessWeights, setExcessWeights] = useState<Record<string, string[]>>(() =>
+    Object.fromEntries(
+      (receipt.unexpectedItems ?? []).map((item) => [
+        item.productId,
+        item.bagWeightsKg?.length === item.quantity
+          ? [...item.bagWeightsKg]
+          : Array.from({ length: item.quantity }, () => ''),
+      ]),
+    ),
+  );
+  const [excessPrices, setExcessPrices] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      (receipt.unexpectedItems ?? []).map((item) => [
+        item.productId,
+        item.pricePerKgVnd?.toString() ?? '',
+      ]),
+    ),
+  );
   const [freight, setFreight] = useState(receipt.freightVnd.toString());
   const [handling, setHandling] = useState(receipt.handlingVnd.toString());
   const [returnReason, setReturnReason] = useState('');
@@ -1222,10 +1248,17 @@ function ReviewerReceiptForm({
         (weights[line.productId] ?? []).length !== line.receivedUnits ||
         (weights[line.productId] ?? []).some((weight) => !isPositiveKilograms(weight)),
     );
-    const invalidPrice = receipt.lines.some(
-      (line) => line.receivedUnits > 0 && !isMoney(prices[line.productId] ?? ''),
+    const excessItems = receipt.unexpectedItems ?? [];
+    const invalidExcessWeight = excessItems.some(
+      (item) =>
+        (excessWeights[item.productId] ?? []).length !== item.quantity ||
+        (excessWeights[item.productId] ?? []).some((weight) => !isPositiveKilograms(weight)),
     );
-    if (invalidWeight) {
+    const invalidPrice =
+      receipt.lines.some(
+        (line) => line.receivedUnits > 0 && !isMoney(prices[line.productId] ?? ''),
+      ) || excessItems.some((item) => !isMoney(excessPrices[item.productId] ?? ''));
+    if (invalidWeight || invalidExcessWeight) {
       setFormError('Mỗi bao cần một khối lượng lớn hơn 0, tối đa 3 chữ số thập phân.');
       return;
     }
@@ -1244,6 +1277,11 @@ function ReviewerReceiptForm({
         pricePerKgVnd: line.receivedUnits > 0 ? Number(prices[line.productId]) : null,
         productId: line.productId,
         receivedUnits: line.receivedUnits,
+      })),
+      unexpectedItems: excessItems.map((item) => ({
+        productId: item.productId,
+        bagWeightsKg: excessWeights[item.productId] ?? [],
+        pricePerKgVnd: Number(excessPrices[item.productId]),
       })),
     });
   };
@@ -1330,6 +1368,58 @@ function ReviewerReceiptForm({
           </div>
           <p aria-live="polite">
             Tổng khối lượng: {receiptWeightTotal(weights[line.productId] ?? [])}
+          </p>
+        </article>
+      ))}
+      {(receipt.unexpectedItems ?? []).map((item) => (
+        <article className="receipt-review-line" key={`excess:${item.productId}`}>
+          <div className="receipt-review-line__title">
+            <span>
+              <strong>{productNameById.get(item.productId) ?? item.productId}</strong>
+              <small>Hàng dư · cửa hàng khai {item.quantity} bao</small>
+            </span>
+            <Badge tone="warning">Dư</Badge>
+          </div>
+          <div className="receipt-review-line__fields">
+            <label>
+              <span className="field-label">Giá nhập / kg (VND)</span>
+              <MoneyInput
+                required
+                disabled={mutationPending}
+                onValueChange={(digits) =>
+                  setExcessPrices((current) => ({ ...current, [item.productId]: digits }))
+                }
+                placeholder="0"
+                value={excessPrices[item.productId] ?? ''}
+              />
+            </label>
+            {(excessWeights[item.productId] ?? []).map((weight, index) => (
+              <label key={`excess:${item.productId}:bag:${index + 1}`}>
+                <span className="field-label">Khối lượng bao dư {index + 1} (kg)</span>
+                <input
+                  required
+                  disabled={mutationPending}
+                  inputMode="decimal"
+                  min="0.001"
+                  onChange={(event) =>
+                    setExcessWeights((current) => ({
+                      ...current,
+                      [item.productId]: (current[item.productId] ?? []).map(
+                        (candidate, currentIndex) =>
+                          currentIndex === index ? event.target.value.replace(',', '.') : candidate,
+                      ),
+                    }))
+                  }
+                  placeholder="Ví dụ 30 hoặc 2,33"
+                  step="0.001"
+                  value={weight}
+                />
+              </label>
+            ))}
+          </div>
+          <p aria-live="polite">
+            Tổng khối lượng: {receiptWeightTotal(excessWeights[item.productId] ?? [])} · trừ từ tồn
+            chưa giữ của kho tổng khi chốt
           </p>
         </article>
       ))}
