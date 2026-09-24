@@ -593,6 +593,7 @@ function returnDto(row: ReceiptReturnRecord): ReceiptReturn {
     adjustmentId: row.adjustmentId,
     adjustmentCode: row.adjustmentCode,
     adjustmentLineId: row.adjustmentLineId,
+    receiptId: row.receiptId,
     storeId: row.storeId,
     inventoryBagId: row.inventoryBagId,
     bagDisplayCode: row.bagDisplayCode,

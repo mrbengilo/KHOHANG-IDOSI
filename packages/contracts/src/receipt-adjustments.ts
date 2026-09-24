@@ -92,6 +92,7 @@ export const ReceiptReturnSchema = z
     adjustmentId: EntityIdSchema,
     adjustmentCode: z.string().min(1).max(20),
     adjustmentLineId: EntityIdSchema,
+    receiptId: EntityIdSchema,
     storeId: EntityIdSchema,
     inventoryBagId: EntityIdSchema,
     bagDisplayCode: z.string().max(40),
@@ -444,3 +445,9 @@ export const ListReceiptReturnsResponseSchema = z
   .strict();
 
 export const ReceiptReturnParamsSchema = z.object({ returnId: EntityIdSchema }).strict();
+
+export const ReceiptAdjustmentResponseSchema = z.object({ data: ReceiptAdjustmentSchema }).strict();
+export const ReceiptAdjustmentContextResponseSchema = z
+  .object({ data: ReceiptAdjustmentContextSchema })
+  .strict();
+export const ReceiptReturnResponseSchema = z.object({ data: ReceiptReturnSchema }).strict();

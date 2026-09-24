@@ -195,6 +195,7 @@ export interface ReceiptReturnRecord {
   readonly adjustmentId: string;
   readonly adjustmentCode: string;
   readonly adjustmentLineId: string;
+  readonly receiptId: string;
   readonly storeId: string;
   readonly inventoryBagId: string;
   readonly bagDisplayCode: string;
@@ -367,7 +368,12 @@ export async function createReceiptAdjustment(
       withAdvisoryLock(tx, 'store-receipt-adjustment', input.receiptId, async () => {
         const receipt = await loadFinalizedReceipt(tx, input.receiptId);
         await resolveActor(tx, input.actorUserId, receipt.storeId, ['STORE']);
-        if (receipt.finalizedAt && input.discoveredAt < receipt.finalizedAt) {
+        // Discovery time is entered to the minute, so the finalization minute itself is valid.
+        if (
+          receipt.finalizedAt &&
+          input.discoveredAt.getTime() <
+            receipt.finalizedAt.getTime() - (receipt.finalizedAt.getTime() % 60_000)
+        ) {
           throw new StoreOperationValidationError(
             'Thời điểm phát hiện không được trước thời điểm chốt phiếu.',
           );
@@ -1999,6 +2005,7 @@ async function listReceiptReturnRecords(
       row: storeReceiptReturns,
       adjustmentId: storeReceiptAdjustments.id,
       adjustmentCode: storeReceiptAdjustments.code,
+      receiptId: storeReceiptAdjustments.storeReceiptId,
       displayCode: storeInventoryBags.displayCode,
     })
     .from(storeReceiptReturns)
@@ -2021,12 +2028,13 @@ async function listReceiptReturnRecords(
     query = query.limit(input.pageSize).offset((input.page - 1) * input.pageSize);
   }
   const rows = await query;
-  return rows.map(({ row, adjustmentId, adjustmentCode, displayCode }) => ({
+  return rows.map(({ row, adjustmentId, adjustmentCode, receiptId, displayCode }) => ({
     id: row.id,
     code: row.code,
     adjustmentId,
     adjustmentCode,
     adjustmentLineId: row.adjustmentLineId,
+    receiptId,
     storeId: row.storeId,
     inventoryBagId: row.storeInventoryBagId,
     bagDisplayCode: displayCode,
