@@ -727,6 +727,10 @@ describePostgres('sorted sale and charity stock with IDOSI reconciliation', () =
     expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(1);
     expect(attempts.filter((attempt) => attempt.status === 'rejected')).toHaveLength(1);
     const [transfer] = await listSortedSaleTransfers(db, [source!.id]);
+    // An in-transit transfer is always listed, even when no room is left for history.
+    expect((await listSortedSaleTransfers(db, [source!.id], 0)).map((row) => row.id)).toEqual([
+      transfer!.id,
+    ]);
     expect([
       transfer?.status,
       transfer?.bagQuantity,
@@ -745,6 +749,8 @@ describePostgres('sorted sale and charity stock with IDOSI reconciliation', () =
     });
     const [received] = await listStoreSortedStocks(db, destination!.id);
     expect(received?.saleWeightKg).toBe('6.000');
+    // Once received it is history, which the cap applies to.
+    expect(await listSortedSaleTransfers(db, [source!.id], 0)).toEqual([]);
     await snapshot(source, 9, 1);
     const [sold] = await listStoreSortedStocks(db, source!.id);
     expect(sold?.saleWeightKg).toBe('0.000');
