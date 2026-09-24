@@ -431,3 +431,91 @@ function boundedText(value: string, maximum: number, fallback: string): string {
   const normalized = value.trim() || fallback;
   return normalized.slice(0, maximum);
 }
+
+/**
+ * Stores whose full-month figures for a closed `period` have not been synced successfully since
+ * `settledAfter` (the end of the new month's grace days). Sales rung up just before month end
+ * and IDOSI corrections made after it must still reach the stock, even if IDOSI was down during
+ * the grace days. A store stays listed until one such sync succeeds; the usual interval still
+ * spaces the attempts.
+ */
+export async function listIdosiPeriodClosingTargets(
+  database: Database,
+  period: string,
+  settledAfter: Date,
+  now: Date,
+  limit: number,
+): Promise<readonly DueIdosiStatisticsTarget[]> {
+  if (!/^\d{4}-(?:0[1-9]|1[0-2])$/u.test(period)) throw new TypeError('Invalid IDOSI period');
+  if (Number.isNaN(settledAfter.getTime()) || Number.isNaN(now.getTime())) {
+    throw new TypeError('Invalid closing sync instant');
+  }
+  if (!Number.isSafeInteger(limit) || limit <= 0) throw new RangeError('Invalid scheduler limit');
+  const [settings] = await database
+    .select({ interval: operationalSettingsVersions.idosiSyncIntervalMinutes })
+    .from(operationalSettingsVersions)
+    .orderBy(desc(operationalSettingsVersions.version))
+    .limit(1);
+  if (!settings || (settings.interval !== 15 && settings.interval !== 30)) {
+    throw new Error('Operational settings have not initialized a valid IDOSI interval');
+  }
+  const intervalMinutes = settings.interval as 15 | 30;
+  const scopeTemplate = { period, date: null, shiftId: null, paymentMethod: null } as const;
+  const scopeKey = idosiStatisticsScopeKey(scopeTemplate);
+  const activeStores = await database
+    .select({ id: stores.id, code: stores.code, name: stores.name })
+    .from(stores)
+    .where(and(eq(stores.isActive, true), eq(stores.kind, 'retail'), isNull(stores.deletedAt)))
+    .orderBy(stores.code);
+  if (activeStores.length === 0) return [];
+  const storeIds = activeStores.map((store) => store.id);
+  const [latestAttempts, latestSuccesses] = await Promise.all([
+    database
+      .select({
+        storeId: idosiStatisticsSyncAttempts.storeId,
+        completedAt: max(idosiStatisticsSyncAttempts.completedAt),
+      })
+      .from(idosiStatisticsSyncAttempts)
+      .where(
+        and(
+          inArray(idosiStatisticsSyncAttempts.storeId, storeIds),
+          eq(idosiStatisticsSyncAttempts.scopeKey, scopeKey),
+        ),
+      )
+      .groupBy(idosiStatisticsSyncAttempts.storeId),
+    database
+      .select({
+        storeId: idosiStatisticsSyncAttempts.storeId,
+        completedAt: max(idosiStatisticsSyncAttempts.completedAt),
+      })
+      .from(idosiStatisticsSyncAttempts)
+      .where(
+        and(
+          inArray(idosiStatisticsSyncAttempts.storeId, storeIds),
+          eq(idosiStatisticsSyncAttempts.scopeKey, scopeKey),
+          eq(idosiStatisticsSyncAttempts.status, 'succeeded'),
+        ),
+      )
+      .groupBy(idosiStatisticsSyncAttempts.storeId),
+  ]);
+  const attemptedAt = new Map(latestAttempts.map((row) => [row.storeId, row.completedAt] as const));
+  const succeededAt = new Map(
+    latestSuccesses.map((row) => [row.storeId, row.completedAt] as const),
+  );
+  const dueBefore = new Date(now.getTime() - intervalMinutes * 60_000);
+  return activeStores
+    .filter((store) => {
+      const success = succeededAt.get(store.id);
+      if (success && success >= settledAfter) return false;
+      const attempt = attemptedAt.get(store.id);
+      return !attempt || attempt <= dueBefore;
+    })
+    .slice(0, limit)
+    .map((store) => ({
+      storeId: store.id,
+      storeCode: store.code,
+      storeName: store.name,
+      scope: { storeId: store.id, ...scopeTemplate },
+      intervalMinutes,
+    }));
+}

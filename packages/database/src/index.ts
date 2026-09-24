@@ -26,6 +26,7 @@ export type {
 export {
   idosiStatisticsScopeKey,
   listDueIdosiStatisticsTargets,
+  listIdosiPeriodClosingTargets,
   loadIdosiStatisticsState,
   loadIdosiStatisticsStates,
   recordIdosiStatisticsFailure,

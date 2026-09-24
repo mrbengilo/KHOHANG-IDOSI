@@ -8,8 +8,10 @@ import {
   closeDatabase,
   db,
   idosiStatisticsSnapshots,
+  listIdosiPeriodClosingTargets,
   loadIdosiStatisticsState,
   loadIdosiStatisticsStates,
+  recordIdosiStatisticsFailure,
   recordIdosiStatisticsSuccess,
   storeGroups,
   stores,
@@ -160,5 +162,76 @@ describePostgres('IDOSI snapshot PostgreSQL isolation', () => {
                (SELECT count(*) FROM warehouse_balances)::text AS balances
       `);
     expect(stockAfter.rows).toEqual(stockBefore.rows);
+  });
+
+  it('keeps a closed month due until one sync succeeds after its grace days', async () => {
+    const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
+    const [group] = await db
+      .insert(storeGroups)
+      .values({ code: `C${suffix}`, name: 'Closing sync test' })
+      .returning();
+    const [store] = await db
+      .insert(stores)
+      .values({ groupId: group!.id, code: `C${suffix}`, name: 'Closing store' })
+      .returning();
+    const scope: IdosiStatisticsScope = {
+      storeId: store!.id,
+      period: '2026-08',
+      date: null,
+      shiftId: null,
+      paymentMethod: null,
+    };
+    const settledAfter = new Date('2026-09-03T17:00:00.000Z');
+    const now = new Date('2026-09-17T03:00:00.000Z');
+    const due = async () =>
+      (await listIdosiPeriodClosingTargets(db, '2026-08', settledAfter, now, 1_000)).some(
+        (target) => target.storeId === store!.id,
+      );
+    const context = {
+      actor: { userId: null, role: null, storeId: null },
+      requestId: randomUUID(),
+      ipAddress: null,
+      userAgent: null,
+    };
+    const succeed = (completedAt: string) =>
+      recordIdosiStatisticsSuccess(db, {
+        target: { storeId: store!.id, storeCode: store!.code, storeName: store!.name },
+        scope,
+        payload: payload(store!.code, scope, completedAt, 10),
+        source: 'SCHEDULED',
+        startedAt: new Date(completedAt),
+        completedAt: new Date(completedAt),
+        context,
+      });
+
+    expect(await due()).toBe(true);
+    // Synced during the grace days only: IDOSI may still have corrected the month afterwards.
+    await succeed('2026-09-02T03:00:00.000Z');
+    expect(await due()).toBe(true);
+    // A failure moments ago waits for the regular interval before the next try.
+    await recordIdosiStatisticsFailure(db, {
+      target: { storeId: store!.id, storeCode: store!.code, storeName: store!.name },
+      scope,
+      source: 'SCHEDULED',
+      errorCode: 'IDOSI_REQUEST_FAILED',
+      errorMessage: 'IDOSI unavailable',
+      startedAt: new Date('2026-09-17T02:55:00.000Z'),
+      completedAt: new Date('2026-09-17T02:55:00.000Z'),
+      context,
+    });
+    expect(await due()).toBe(false);
+    // One success after the grace days closes the month for good.
+    await succeed('2026-09-10T03:00:00.000Z');
+    expect(
+      (
+        await listIdosiPeriodClosingTargets(
+          db,
+          '2026-08',
+          settledAfter,
+          new Date('2026-09-30T03:00:00.000Z'),
+          1_000,
+        )
+      ).some((target) => target.storeId === store!.id),
+    ).toBe(false);
   });
 });

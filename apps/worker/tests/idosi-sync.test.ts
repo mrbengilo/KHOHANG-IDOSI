@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   businessMonthAt,
+  closingSyncSettledAfter,
   idosiSyncPeriods,
   IdosiStatisticsSyncWorker,
   type ScheduledIdosiSyncRepository,
@@ -30,13 +31,22 @@ function target(storeId: string, storeCode: string): DueIdosiStatisticsTarget {
 class FakeRepository implements ScheduledIdosiSyncRepository {
   readonly successes: string[] = [];
   readonly failures: { readonly storeCode: string; readonly code: string }[] = [];
+  readonly closingCalls: { period: string; settledAfter: string; limit: number }[] = [];
 
-  public constructor(readonly targets: readonly DueIdosiStatisticsTarget[]) {}
+  public constructor(
+    readonly targets: readonly DueIdosiStatisticsTarget[],
+    readonly closing: readonly DueIdosiStatisticsTarget[] = [],
+  ) {}
 
   public async listDue(period: string, instant: Date, limit: number) {
     expect(period).toBe('2026-09');
     expect(instant).toEqual(now);
     return this.targets.slice(0, limit);
+  }
+
+  public async listClosing(period: string, settledAfter: Date, _now: Date, limit: number) {
+    this.closingCalls.push({ period, settledAfter: settledAfter.toISOString(), limit });
+    return this.closing.slice(0, limit);
   }
 
   public async recordSuccess(
@@ -69,6 +79,48 @@ describe('scheduled IDOSI statistics sync', () => {
       '2026-12',
     ]);
     expect(idosiSyncPeriods(new Date('2026-09-04T03:00:00.000Z'), zone)).toEqual(['2026-09']);
+  });
+
+  it('closes the previous month after the grace days at Vietnam midnight', () => {
+    expect(closingSyncSettledAfter('2026-09', 'Asia/Ho_Chi_Minh').toISOString()).toBe(
+      '2026-09-03T17:00:00.000Z',
+    );
+    expect(closingSyncSettledAfter('2027-01', 'Asia/Ho_Chi_Minh').toISOString()).toBe(
+      '2027-01-03T17:00:00.000Z',
+    );
+  });
+
+  it('retries a previous month that never synced after its grace days', async () => {
+    const closingTarget = {
+      ...target('20000000-0000-4000-8000-000000000003', 'DS_Q7'),
+      scope: {
+        storeId: '20000000-0000-4000-8000-000000000003',
+        period: '2026-08',
+        date: null,
+        shiftId: null,
+        paymentMethod: null,
+      },
+    };
+    const repository = new FakeRepository([], [closingTarget]);
+    const requested: string[] = [];
+    const worker = new IdosiStatisticsSyncWorker(repository, {
+      endpoint: 'https://idosi.io.vn/api/integrations/warehouse/v1/order-statistics',
+      secret: 'worker-secret',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      maxStoresPerTick: 10,
+      fetch: vi.fn(async (input: string | URL | Request) => {
+        const url = new URL(String(input));
+        requested.push(`${url.searchParams.get('storeId')}:${url.searchParams.get('period')}`);
+        return new Response('unavailable', { status: 503 });
+      }),
+      now: () => now,
+    });
+
+    await expect(worker.runOnce(now)).resolves.toMatchObject({ due: 1, failed: 1 });
+    expect(repository.closingCalls).toEqual([
+      { period: '2026-08', settledAfter: '2026-09-03T17:00:00.000Z', limit: 10 },
+    ]);
+    expect(requested).toEqual(['DS_Q7:2026-08']);
   });
 
   it('continues other stores, records safe failure state and never sends the secret in the URL', async () => {
