@@ -2,6 +2,9 @@
 Description=Check GitHub main for a new KHOHANG-IDOSI release every two minutes
 
 [Timer]
+# OnActiveSec starts the cycle right after installation; OnUnitInactiveSec
+# alone never fires for a service that has not run yet.
+OnActiveSec=1min
 OnBootSec=3min
 OnUnitInactiveSec=2min
 RandomizedDelaySec=15s
