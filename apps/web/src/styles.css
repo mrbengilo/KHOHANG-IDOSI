@@ -3679,6 +3679,72 @@ label:has(:required) > .field-label::after {
 }
 
 /*
+ * Điện thoại: cả màn đăng nhập gói trong một màn hình, không phải cuộn.
+ * Dải giới thiệu chỉ lặp lại slogan đã có trong biểu mẫu nên được ẩn; nền màu
+ * thương hiệu phủ toàn trang và thẻ đăng nhập nằm giữa màn hình theo cả hai chiều.
+ * Dùng dvh để chiều cao khớp vùng nhìn thấy khi thanh địa chỉ trình duyệt hiện/ẩn.
+ */
+@media (max-width: 620px) {
+  .login-page {
+    min-height: 100vh;
+    min-height: 100dvh;
+    place-items: center;
+    background: linear-gradient(145deg, #4338ca, #4f46e5 48%, #2563eb);
+    padding: 16px;
+  }
+
+  .login-visual {
+    display: none;
+  }
+
+  .login-panel {
+    width: min(100%, 420px);
+    padding: 20px 18px;
+  }
+
+  .login-panel form {
+    gap: 12px;
+  }
+
+  .login-panel .app-logo {
+    width: auto;
+    height: 56px;
+    margin: 0 auto;
+  }
+
+  .login-panel form > div:first-of-type {
+    text-align: center;
+  }
+
+  .login-panel h1 {
+    font-size: 22px;
+    line-height: 1.25;
+    margin: 2px 0 4px;
+  }
+
+  .login-slogan {
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .login-panel label {
+    gap: 5px;
+  }
+
+  .login-panel input {
+    min-height: 44px;
+  }
+
+  .login-panel .button {
+    min-height: 46px;
+  }
+
+  .login-panel small {
+    text-align: center;
+  }
+}
+
+/*
  * Ô mật khẩu có nút con mắt: input và nút nằm chung một khung viền để nút không
  * đè lên chữ và vẫn đủ lớn để bấm trên mobile.
  */
