@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CreateStoreOutboundRequestSchema,
+  StoreBagOpeningSchema,
   ListStoreInventoryBagLedgerQuerySchema,
   OpenStoreInventoryBagRequestSchema,
   OutboundReasonSchema,
@@ -93,5 +94,37 @@ describe('store inventory operation contracts', () => {
   it('still recognizes historical reasons when reading old outbounds', () => {
     expect(OutboundReasonSchema.parse('DISCOUNT_SALE')).toBe('DISCOUNT_SALE');
     expect(OutboundReasonSchema.parse('TORN')).toBe('TORN');
+  });
+});
+
+describe('opening actor projection', () => {
+  const legacy = {
+    id: '11111111-1111-4111-8111-111111111111',
+    bagId: '22222222-2222-4222-8222-222222222222',
+    storeId: '33333333-3333-4333-8333-333333333333',
+    bagCode: null,
+    productId: null,
+    weightBeforeKg: null,
+    weightAfterKg: null,
+    normalSaleAppliedKg: null,
+    actorAccountId: null,
+    actorDisplayName: null,
+    actorRole: null,
+    openedAt: null,
+    source: 'LEGACY',
+    currentStatus: 'OPEN',
+  };
+  it('accepts null legacy identity and validated roles without sensitive fields', () => {
+    expect(StoreBagOpeningSchema.parse(legacy)).toEqual(legacy);
+    for (const actorRole of ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE']) {
+      expect(
+        StoreBagOpeningSchema.safeParse({ ...legacy, actorRole, actorDisplayName: 'Tên tài khoản' })
+          .success,
+      ).toBe(true);
+    }
+    expect(StoreBagOpeningSchema.safeParse({ ...legacy, actorRole: 'SYSTEM' }).success).toBe(false);
+    expect(StoreBagOpeningSchema.safeParse({ ...legacy, passwordHash: 'secret' }).success).toBe(
+      false,
+    );
   });
 });

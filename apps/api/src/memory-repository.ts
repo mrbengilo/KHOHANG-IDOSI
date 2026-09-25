@@ -3044,6 +3044,9 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       )
       .map((row) => ({
         ...row,
+        actorDisplayName: row.actorAccountId
+          ? this.accounts.get(row.actorAccountId)?.displayName.trim() || null
+          : null,
         currentStatus: this.inventoryBags.get(row.bagId)?.status ?? row.currentStatus,
       }));
     return {
@@ -3145,6 +3148,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       normalSaleAppliedKg: '0.000',
       weightAfterKg: updated.remainingWeightKg,
       actorAccountId: actor.accountId,
+      actorDisplayName: null,
+      actorRole: actor.role,
       openedAt: updated.openedAt!,
       source: 'BUTTON',
       currentStatus: updated.status,

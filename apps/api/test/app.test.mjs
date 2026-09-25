@@ -2155,6 +2155,27 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(replay.headers['idempotency-replayed'], 'true');
     assert.deepEqual(replay.json().data, opened.json().data);
 
+    for (const cookie of [storeCookie, htkdCookie, cookieOf(await login('admin'))]) {
+      const history = await app.inject({
+        method: 'GET',
+        url: '/api/v1/store-bag-openings?pageSize=1',
+        headers: { cookie },
+      });
+      assert.equal(history.statusCode, 200, history.body);
+      assert.equal(history.json().pagination.totalItems, 1);
+      assert.equal(history.json().data.length, 1);
+      assert.equal(history.json().data[0].actorDisplayName, 'Cửa hàng DS NVT');
+      assert.equal(history.json().data[0].actorRole, 'STORE');
+      assert.equal(history.json().data[0].actorAccountId, MEMORY_SEED_IDS.storeAccount);
+      assert.equal(history.json().data[0].weightBeforeKg, '24.500');
+      assert.equal('passwordHash' in history.json().data[0], false);
+    }
+    const historyOutsideScope = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-bag-openings?storeId=' + MEMORY_SEED_IDS.bdStore,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(historyOutsideScope.statusCode, 403);
     const stale = await mutateInventory(
       storeCookie,
       `/api/v1/store-inventory-bags/${bag.id}/open`,

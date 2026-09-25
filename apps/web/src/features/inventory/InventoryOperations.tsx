@@ -10,7 +10,6 @@ import type {
   NewOutboundReason,
   Store,
   StoreInventoryBag,
-  StoreInventoryBagStatus,
   StoreNormalSalePending,
   StoreOutbound,
   StoreSortedStock,
@@ -74,18 +73,8 @@ import {
   type StoreTab,
 } from './inventoryNavigation';
 
-const statusCopy: Record<
-  StoreInventoryBagStatus,
-  { readonly label: string; readonly tone: 'neutral' | 'info' | 'success' | 'warning' | 'danger' }
-> = {
-  IN_TRANSIT: { label: 'Đang vận chuyển', tone: 'info' },
-  AVAILABLE: { label: 'Chưa khui', tone: 'success' },
-  OPEN: { label: 'Đang bán tại CH', tone: 'info' },
-  EMPTY: { label: 'Đã hết', tone: 'neutral' },
-  QUARANTINED: { label: 'Cách ly', tone: 'warning' },
-  RETURNED: { label: 'Đã trả', tone: 'neutral' },
-  LOST: { label: 'Thất lạc', tone: 'danger' },
-};
+import { bagStatusCopy as statusCopy } from './bag-status';
+import { BagOpeningHistoryTable } from './BagOpeningHistoryTable';
 
 const outboundStatusCopy = {
   PENDING: { label: 'Chờ duyệt', tone: 'warning' },
@@ -1105,54 +1094,25 @@ export function ProductionOpenBagPage({ role }: AppOutletContext) {
           <p role="alert">Ngày kết thúc phải từ ngày bắt đầu trở đi.</p>
         ) : historyQuery.error ? (
           <p role="alert">
-            {errorMessage(historyQuery.error)}{' '}
+            {historyQuery.error instanceof ApiClientError && historyQuery.error.status === 403
+              ? 'Bạn không có quyền xem lịch sử khui trong phạm vi này.'
+              : errorMessage(historyQuery.error)}{' '}
             <Button onClick={() => void historyQuery.refetch()}>Thử lại lịch sử</Button>
           </p>
         ) : historyQuery.isPending ? (
-          <DashboardSkeleton />
+          <p role="status">Đang tải lịch sử khui…</p>
         ) : historyQuery.data?.data.length === 0 ? (
           <EmptyState
             title="Chưa có lịch sử khui"
             detail="Không có lần khui được ghi nhận trong bộ lọc này."
           />
         ) : (
-          <div className="opening-cards">
-            {historyQuery.data?.data.map((row) => (
-              <article className="opening-card" key={row.id}>
-                <h3>
-                  {row.bagCode ?? 'Chưa ghi nhận'} · {timestamp(row.openedAt)}
-                </h3>
-                <p>
-                  {
-                    {
-                      BUTTON: 'Xác nhận khui bán',
-                      SORTING: 'Mở do lọc hàng',
-                      TRANSFER: 'Mở do xuất chuyển',
-                      OUTBOUND: 'Mở do duyệt xuất hàng',
-                      IDOSI: 'Mở do đồng bộ IDOSI (legacy)',
-                      LEGACY: 'Nguồn mở chưa ghi nhận',
-                    }[row.source]
-                  }
-                </p>
-                <p>
-                  {storeName(stores, row.storeId)} · Mặt hàng (tên danh mục hiện tại):{' '}
-                  {productName(row.productId)}
-                </p>
-                <p>
-                  Kg trước khui:{' '}
-                  {row.weightBeforeKg ? formatKg(row.weightBeforeKg) : 'Chưa ghi nhận'} · Bù bán
-                  IDOSI:{' '}
-                  {row.normalSaleAppliedKg ? formatKg(row.normalSaleAppliedKg) : 'Chưa ghi nhận'} ·
-                  Kg sau thao tác:{' '}
-                  {row.weightAfterKg ? formatKg(row.weightAfterKg) : 'Chưa ghi nhận'}
-                </p>
-                <p className="opening-reference">
-                  Người thực hiện (ID): {row.actorAccountId ?? 'Chưa ghi nhận'}
-                </p>
-                <p>Trạng thái hiện tại: {statusCopy[row.currentStatus].label}</p>
-              </article>
-            ))}
-          </div>
+          <BagOpeningHistoryTable
+            rows={historyQuery.data?.data ?? []}
+            stores={stores}
+            productName={productName}
+            showStore={role !== 'STORE'}
+          />
         )}
         {pager(
           historyPage,
