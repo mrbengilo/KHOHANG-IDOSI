@@ -18,7 +18,22 @@ import {
   type ReceiptMoneyState,
   type ReceiptMoneyView,
 } from '@idosi/domain';
-import { and, asc, count, desc, eq, gte, inArray, isNull, ne, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  lt,
+  ne,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
@@ -279,12 +294,15 @@ export interface ReceiptAdjustmentRecord {
     readonly after: ReceiptMoneyView | null;
   };
   readonly reportedByUserId: string;
+  readonly reportedBy: AdjustmentAccountRef;
   readonly reportedAt: Date;
   readonly verifiedByUserId: string | null;
+  readonly verifiedBy: AdjustmentAccountRef | null;
   readonly verifiedAt: Date | null;
   readonly verificationNote: string | null;
   readonly infoRequestNote: string | null;
   readonly decidedByUserId: string | null;
+  readonly decidedBy: AdjustmentAccountRef | null;
   readonly decidedAt: Date | null;
   readonly decisionNote: string | null;
   readonly appliedAt: Date | null;
@@ -293,19 +311,37 @@ export interface ReceiptAdjustmentRecord {
   readonly lines: readonly ReceiptAdjustmentLineRecord[];
 }
 
+/** An account named on a document; name fields are null when the account no longer exists. */
+export interface AdjustmentAccountRef {
+  readonly userId: string;
+  readonly displayName: string | null;
+  readonly username: string | null;
+  /** The account's current role, not necessarily the role it had when it acted. */
+  readonly role: typeof users.$inferSelect.role | null;
+}
+
 export interface ReceiptAdjustmentSummaryRecord {
   readonly id: string;
   readonly code: string;
   readonly receiptId: string;
   readonly receiptNumber: string;
   readonly storeId: string;
+  readonly storeCode: string | null;
+  readonly storeName: string | null;
   readonly status: DatabaseStatus;
   readonly version: number;
   readonly reason: string;
+  readonly cause: typeof storeReceiptAdjustments.$inferSelect.cause;
   readonly lineCount: number;
   readonly shortageQuantity: number;
   readonly goodsDeltaVnd: bigint;
+  readonly reportedBy: AdjustmentAccountRef;
   readonly reportedAt: Date;
+  readonly verifiedBy: AdjustmentAccountRef | null;
+  readonly verifiedAt: Date | null;
+  readonly decidedBy: AdjustmentAccountRef | null;
+  readonly decidedAt: Date | null;
+  readonly decisionNote: string | null;
   readonly appliedAt: Date | null;
   readonly updatedAt: Date;
 }
@@ -341,12 +377,16 @@ export interface ReceiptAdjustmentContext {
   readonly finalizedAt: Date | null;
   readonly money: { readonly original: ReceiptMoneyView; readonly effective: ReceiptMoneyView };
   readonly appliedCount: number;
+  /** Exact counts over every adjustment of the receipt, independent of any list page. */
+  readonly openCount: number;
+  readonly adjustmentCount: number;
   readonly bags: readonly ReceiptAdjustmentContextBag[];
 }
 
 export interface ReceiptAdjustmentMoneySummary {
   readonly appliedCount: number;
   readonly openCount: number;
+  readonly totalCount: number;
   readonly original: ReceiptMoneyView;
   readonly effective: ReceiptMoneyView;
 }
@@ -1771,6 +1811,8 @@ export async function getReceiptAdjustmentContext(
     finalizedAt: receipt.finalizedAt,
     money: { original: summary.original, effective: summary.effective },
     appliedCount: summary.appliedCount,
+    openCount: summary.openCount,
+    adjustmentCount: summary.totalCount,
     bags,
   };
 }
@@ -1792,6 +1834,7 @@ export async function receiptAdjustmentMoneySummary(
       open: sql<number>`count(*) FILTER (WHERE ${storeReceiptAdjustments.status} IN ('pending_htkd', 'needs_info', 'pending_admin'))`.mapWith(
         Number,
       ),
+      total: sql<number>`count(*)`.mapWith(Number),
       goods: sql<string>`coalesce(sum(${storeReceiptAdjustments.goodsDeltaVnd}) FILTER (WHERE ${storeReceiptAdjustments.status} = 'applied'), 0)`,
       freight: sql<string>`coalesce(sum(${storeReceiptAdjustments.freightDeltaVnd}) FILTER (WHERE ${storeReceiptAdjustments.status} = 'applied'), 0)`,
       handling: sql<string>`coalesce(sum(${storeReceiptAdjustments.handlingDeltaVnd}) FILTER (WHERE ${storeReceiptAdjustments.status} = 'applied'), 0)`,
@@ -1816,6 +1859,7 @@ export async function receiptAdjustmentMoneySummary(
   return {
     appliedCount: totals?.applied ?? 0,
     openCount: totals?.open ?? 0,
+    totalCount: totals?.total ?? 0,
     original: moneyView(original),
     effective: moneyView(effective),
   };
@@ -1825,10 +1869,49 @@ export interface ListReceiptAdjustmentsInput {
   readonly storeIds?: readonly string[];
   readonly receiptId?: string;
   readonly status?: DatabaseStatus;
+  /** Case-insensitive match on the PSL code or the source receipt number. */
+  readonly search?: string;
+  /** Half-open instant window [from, to) on the chosen moment. */
+  readonly period?: {
+    readonly field: 'reported' | 'decided';
+    readonly from?: Date;
+    readonly to?: Date;
+  };
   readonly page: number;
   readonly pageSize: number;
 }
 
+const reporters = alias(users, 'adjustment_reporters');
+const verifiers = alias(users, 'adjustment_verifiers');
+const deciders = alias(users, 'adjustment_deciders');
+
+function accountRef(
+  userId: string | null,
+  // A left join yields null when the account row can no longer be read.
+  account: {
+    readonly displayName: string | null;
+    readonly email: string | null;
+    readonly role: typeof users.$inferSelect.role | null;
+  } | null,
+): AdjustmentAccountRef | null {
+  if (userId === null) return null;
+  return {
+    userId,
+    displayName: account?.displayName ?? null,
+    username: account?.email ?? null,
+    role: account?.role ?? null,
+  };
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
+
+/**
+ * One page of adjustments with the names a list shows (store, reporter, verifier, decider)
+ * joined in the same query, so a list never fetches each document's detail. The total uses
+ * the same scope and filter predicates as the page.
+ */
 export async function listReceiptAdjustments(
   database: Database,
   input: ListReceiptAdjustmentsInput,
@@ -1843,12 +1926,44 @@ export async function listReceiptAdjustments(
     predicates.push(eq(storeReceiptAdjustments.storeReceiptId, input.receiptId));
   }
   if (input.status !== undefined) predicates.push(eq(storeReceiptAdjustments.status, input.status));
+  const search = input.search?.trim();
+  if (search) {
+    const pattern = `%${escapeLike(search)}%`;
+    predicates.push(
+      sql`(${storeReceiptAdjustments.code} ILIKE ${pattern} OR ${storeReceipts.receiptNumber} ILIKE ${pattern})`,
+    );
+  }
+  if (input.period) {
+    const column =
+      input.period.field === 'decided'
+        ? storeReceiptAdjustments.decidedAt
+        : storeReceiptAdjustments.reportedAt;
+    if (input.period.from) predicates.push(gte(column, input.period.from));
+    if (input.period.to) predicates.push(lt(column, input.period.to));
+  }
   const where = predicates.length === 0 ? undefined : and(...predicates);
   const [rows, totals] = await Promise.all([
     database
       .select({
         adjustment: storeReceiptAdjustments,
         receiptNumber: storeReceipts.receiptNumber,
+        storeCode: stores.code,
+        storeName: stores.name,
+        reporter: {
+          displayName: reporters.displayName,
+          email: reporters.email,
+          role: reporters.role,
+        },
+        verifier: {
+          displayName: verifiers.displayName,
+          email: verifiers.email,
+          role: verifiers.role,
+        },
+        decider: {
+          displayName: deciders.displayName,
+          email: deciders.email,
+          role: deciders.role,
+        },
         lineCount:
           sql<number>`(SELECT count(*) FROM ${storeReceiptAdjustmentLines} WHERE ${storeReceiptAdjustmentLines.adjustmentId} = ${storeReceiptAdjustments.id})`.mapWith(
             Number,
@@ -1860,28 +1975,162 @@ export async function listReceiptAdjustments(
       })
       .from(storeReceiptAdjustments)
       .innerJoin(storeReceipts, eq(storeReceipts.id, storeReceiptAdjustments.storeReceiptId))
+      .leftJoin(stores, eq(stores.id, storeReceiptAdjustments.storeId))
+      .leftJoin(reporters, eq(reporters.id, storeReceiptAdjustments.reportedByUserId))
+      .leftJoin(verifiers, eq(verifiers.id, storeReceiptAdjustments.verifiedByUserId))
+      .leftJoin(deciders, eq(deciders.id, storeReceiptAdjustments.decidedByUserId))
       .where(where)
       .orderBy(desc(storeReceiptAdjustments.updatedAt), desc(storeReceiptAdjustments.id))
       .limit(input.pageSize)
       .offset((input.page - 1) * input.pageSize),
-    database.select({ value: count() }).from(storeReceiptAdjustments).where(where),
+    database
+      .select({ value: count() })
+      .from(storeReceiptAdjustments)
+      .innerJoin(storeReceipts, eq(storeReceipts.id, storeReceiptAdjustments.storeReceiptId))
+      .where(where),
   ]);
   return {
-    data: rows.map(({ adjustment, receiptNumber, lineCount, shortageQuantity }) => ({
-      id: adjustment.id,
-      code: adjustment.code,
-      receiptId: adjustment.storeReceiptId,
-      receiptNumber,
-      storeId: adjustment.storeId,
-      status: adjustment.status,
-      version: adjustment.version,
-      reason: adjustment.reason,
-      lineCount,
-      shortageQuantity,
-      goodsDeltaVnd: adjustment.goodsDeltaVnd,
-      reportedAt: adjustment.reportedAt,
-      appliedAt: adjustment.appliedAt,
-      updatedAt: adjustment.updatedAt,
+    data: rows.map(
+      ({
+        adjustment,
+        receiptNumber,
+        storeCode,
+        storeName,
+        reporter,
+        verifier,
+        decider,
+        lineCount,
+        shortageQuantity,
+      }) => ({
+        id: adjustment.id,
+        code: adjustment.code,
+        receiptId: adjustment.storeReceiptId,
+        receiptNumber,
+        storeId: adjustment.storeId,
+        storeCode,
+        storeName,
+        status: adjustment.status,
+        version: adjustment.version,
+        reason: adjustment.reason,
+        cause: adjustment.cause,
+        lineCount,
+        shortageQuantity,
+        goodsDeltaVnd: adjustment.goodsDeltaVnd,
+        reportedBy: accountRef(adjustment.reportedByUserId, reporter)!,
+        reportedAt: adjustment.reportedAt,
+        verifiedBy: accountRef(adjustment.verifiedByUserId, verifier),
+        verifiedAt: adjustment.verifiedAt,
+        decidedBy: accountRef(adjustment.decidedByUserId, decider),
+        decidedAt: adjustment.decidedAt,
+        decisionNote: adjustment.decisionNote,
+        appliedAt: adjustment.appliedAt,
+        updatedAt: adjustment.updatedAt,
+      }),
+    ),
+    totalItems: totals[0]?.value ?? 0,
+  };
+}
+
+/** One immutable audit row of an adjustment or of a return raised from it. */
+export interface ReceiptAdjustmentHistoryRecord {
+  readonly id: string;
+  readonly createdAt: Date;
+  readonly action: string;
+  readonly entityType: 'store_receipt_adjustment' | 'store_receipt_return';
+  readonly entityId: string;
+  readonly returnCode: string | null;
+  readonly actorUserId: string | null;
+  readonly actorDisplayName: string | null;
+  readonly actorUsername: string | null;
+  /** Role written on the audit row when the action happened. */
+  readonly actorRole: typeof auditLogs.$inferSelect.actorRole;
+  readonly actorStoreId: string | null;
+  readonly storeCode: string | null;
+  readonly storeName: string | null;
+  readonly before: JsonObject | null;
+  readonly after: JsonObject | null;
+}
+
+/**
+ * The audit trail of one adjustment and of the returns raised from it, oldest first. It is read
+ * from the immutable audit log, never rebuilt from the document header, which a resubmission or
+ * re-verification overwrites. Callers authorize the adjustment's store before calling.
+ */
+export async function listReceiptAdjustmentHistory(
+  database: Database,
+  input: { readonly adjustmentId: string; readonly page: number; readonly pageSize: number },
+): Promise<{ readonly data: ReceiptAdjustmentHistoryRecord[]; readonly totalItems: number }> {
+  // Resolve the document's return ids first (a handful), so both branches of the filter are
+  // index lookups on (entity_type, entity_id) instead of a scan of every return audit row.
+  const returnIds = (
+    await database
+      .select({ id: storeReceiptReturns.id })
+      .from(storeReceiptReturns)
+      .innerJoin(
+        storeReceiptAdjustmentLines,
+        eq(storeReceiptAdjustmentLines.id, storeReceiptReturns.adjustmentLineId),
+      )
+      .where(eq(storeReceiptAdjustmentLines.adjustmentId, input.adjustmentId))
+  ).map((row) => row.id);
+  const ownRows = and(
+    eq(auditLogs.entityType, 'store_receipt_adjustment'),
+    eq(auditLogs.entityId, input.adjustmentId),
+  );
+  const where =
+    returnIds.length === 0
+      ? ownRows
+      : or(
+          ownRows,
+          and(
+            eq(auditLogs.entityType, 'store_receipt_return'),
+            inArray(auditLogs.entityId, returnIds),
+          ),
+        );
+  const [rows, totals] = await Promise.all([
+    database
+      .select({
+        id: auditLogs.id,
+        createdAt: auditLogs.createdAt,
+        action: auditLogs.action,
+        entityType: auditLogs.entityType,
+        entityId: auditLogs.entityId,
+        returnCode: storeReceiptReturns.code,
+        actorUserId: auditLogs.actorUserId,
+        actorDisplayName: users.displayName,
+        actorUsername: users.email,
+        actorRole: auditLogs.actorRole,
+        actorStoreId: auditLogs.actorStoreId,
+        storeCode: stores.code,
+        storeName: stores.name,
+        before: auditLogs.before,
+        after: auditLogs.after,
+      })
+      .from(auditLogs)
+      .leftJoin(users, eq(users.id, auditLogs.actorUserId))
+      .leftJoin(stores, eq(stores.id, auditLogs.actorStoreId))
+      .leftJoin(
+        storeReceiptReturns,
+        and(
+          eq(auditLogs.entityType, 'store_receipt_return'),
+          eq(storeReceiptReturns.id, auditLogs.entityId),
+        ),
+      )
+      .where(where)
+      .orderBy(asc(auditLogs.createdAt), asc(auditLogs.id))
+      .limit(input.pageSize)
+      .offset((input.page - 1) * input.pageSize),
+    database.select({ value: count() }).from(auditLogs).where(where),
+  ]);
+  return {
+    data: rows.map((row) => ({
+      ...row,
+      entityType:
+        row.entityType === 'store_receipt_return'
+          ? 'store_receipt_return'
+          : 'store_receipt_adjustment',
+      entityId: row.entityId ?? input.adjustmentId,
+      before: row.before ?? null,
+      after: row.after ?? null,
     })),
     totalItems: totals[0]?.value ?? 0,
   };
@@ -1966,6 +2215,26 @@ export async function getReceiptAdjustment(
     });
   }
   const summary = await receiptAdjustmentMoneySummary(database, receipt);
+  const accountIds = [
+    adjustment.reportedByUserId,
+    adjustment.verifiedByUserId,
+    adjustment.decidedByUserId,
+  ].filter((value): value is string => value !== null);
+  const accounts = new Map(
+    (
+      await database
+        .select({
+          id: users.id,
+          displayName: users.displayName,
+          email: users.email,
+          role: users.role,
+        })
+        .from(users)
+        .where(inArray(users.id, accountIds))
+    ).map((row) => [row.id, row]),
+  );
+  const account = (userId: string | null) =>
+    accountRef(userId, userId === null ? null : (accounts.get(userId) ?? null));
   const verification = adjustment.verification as {
     money?: { before?: MoneyJson; after?: MoneyJson };
   } | null;
@@ -1999,12 +2268,15 @@ export async function getReceiptAdjustment(
     vatDeltaVnd: adjustment.vatDeltaVnd,
     money: { original: summary.original, before, after },
     reportedByUserId: adjustment.reportedByUserId,
+    reportedBy: account(adjustment.reportedByUserId)!,
     reportedAt: adjustment.reportedAt,
     verifiedByUserId: adjustment.verifiedByUserId,
+    verifiedBy: account(adjustment.verifiedByUserId),
     verifiedAt: adjustment.verifiedAt,
     verificationNote: adjustment.verificationNote,
     infoRequestNote: adjustment.infoRequestNote,
     decidedByUserId: adjustment.decidedByUserId,
+    decidedBy: account(adjustment.decidedByUserId),
     decidedAt: adjustment.decidedAt,
     decisionNote: adjustment.decisionNote,
     appliedAt: adjustment.appliedAt,

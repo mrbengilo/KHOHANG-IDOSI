@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import type { WarehouseShortageCheck } from '@idosi/contracts';
 import { Button } from '../../components/Button';
+import { useDraftGuard } from '../../lib/draft-guard';
 import { formatInteger } from '../../lib/format';
 import { loadPendingShortageChecks, resolveShortageCheck } from './inventoryApi';
 
@@ -28,6 +29,7 @@ export function ShortageChecksPanel({
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const keys = useRef(new Map<string, string>());
+  useDraftGuard(Object.values(reasons).some((reason) => reason.trim() !== ''));
   const resolve = useMutation({
     mutationFn: ({ check, decision }: { check: WarehouseShortageCheck; decision: Decision }) => {
       const keyScope = `${check.id}:${check.version}:${decision}`;
@@ -39,8 +41,10 @@ export function ShortageChecksPanel({
         key,
       );
     },
-    onSuccess: async (resolved, { decision }) => {
+    onSuccess: async (resolved, { check, decision }) => {
       setError('');
+      // The check is closed: its typed reason is no longer a draft.
+      setReasons(({ [check.id]: _resolved, ...rest }) => rest);
       setNotice(
         decision === 'LOST'
           ? `Đã ghi thất lạc ${resolved.quantity} bao của phiếu ${resolved.receiptNumber}; tồn kho tổng đã giảm.`
@@ -85,7 +89,7 @@ export function ShortageChecksPanel({
       {checks.isPending ? (
         <p role="status">Đang tải hàng thiếu chờ xác nhận…</p>
       ) : checks.isError ? (
-        <p role="alert">Không tải được hàng thiếu chờ xác nhận. Hãy bấm Cập nhật để thử lại.</p>
+        <p role="alert">Không tải được hàng thiếu chờ xác nhận. Hãy bấm Làm mới để thử lại.</p>
       ) : checks.data.data.length === 0 ? (
         <p>Không có hàng thiếu nào chờ xác nhận.</p>
       ) : (

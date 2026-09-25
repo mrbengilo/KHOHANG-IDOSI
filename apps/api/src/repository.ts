@@ -7,6 +7,8 @@ import type {
   ReceiptAdjustment,
   ReceiptAdjustmentActionRequest,
   ReceiptAdjustmentContext,
+  ReceiptAdjustmentHistoryEvent,
+  ReceiptAdjustmentHistoryQuery,
   ReceiptAdjustmentListItem,
   ReceiptReturn,
   ReceiptReturnActionRequest,
@@ -624,6 +626,12 @@ export interface WarehouseRepository {
     actor: AuthenticatedPrincipal,
     adjustmentId: string,
   ): Promise<ReceiptAdjustment>;
+  /** Immutable audit trail of one adjustment and its returns, scoped to the document's store. */
+  listReceiptAdjustmentHistory(
+    actor: AuthenticatedPrincipal,
+    adjustmentId: string,
+    query: ReceiptAdjustmentHistoryQuery,
+  ): Promise<Page<ReceiptAdjustmentHistoryEvent>>;
   createReceiptAdjustment(
     actor: AuthenticatedPrincipal,
     input: CreateReceiptAdjustmentRequest,

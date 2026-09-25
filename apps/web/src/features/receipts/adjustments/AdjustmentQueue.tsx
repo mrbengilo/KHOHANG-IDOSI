@@ -3,8 +3,9 @@ import type { ReceiptAdjustmentStatus, ReceiptReturnStatus } from '@idosi/contra
 import { ClipboardList } from 'lucide-react';
 
 import { Badge } from '../../../components/Badge';
-import { listReceiptAdjustments, listReceiptReturns } from './adjustmentApi';
+import { adjustmentSyncOptions, listReceiptAdjustments, listReceiptReturns } from './adjustmentApi';
 import { adjustmentStatusCopy, returnStatusCopy, type AdjustmentAudience } from './adjustmentModel';
+import { SyncNotice } from './SyncNotice';
 
 type Role = AdjustmentAudience;
 
@@ -36,6 +37,7 @@ export function AdjustmentQueue({
       ).flat(),
     queryKey: ['receipt-adjustments', 'queue', role],
     retry: false,
+    ...adjustmentSyncOptions,
   });
   const returns = useQuery({
     queryFn: async () =>
@@ -44,9 +46,29 @@ export function AdjustmentQueue({
       ).flat(),
     queryKey: ['receipt-returns', 'queue', role],
     retry: false,
+    ...adjustmentSyncOptions,
   });
   const items = adjustments.data ?? [];
   const returnItems = returns.data ?? [];
+  // A queue that never loaded is an error, not an empty queue: say so instead of hiding it.
+  const failed =
+    (adjustments.isError && adjustments.data === undefined) ||
+    (returns.isError && returns.data === undefined);
+  if (failed) {
+    return (
+      <section className="panel adjustment-queue" aria-label="Hồ sơ sai lệch cần xử lý">
+        <div className="receipt-error" role="alert">
+          <span>Không tải được danh sách sai lệch/phiếu trả cần xử lý.</span>
+          <button
+            onClick={() => void Promise.all([adjustments.refetch(), returns.refetch()])}
+            type="button"
+          >
+            Thử lại
+          </button>
+        </div>
+      </section>
+    );
+  }
   if (items.length === 0 && returnItems.length === 0) return null;
   return (
     <section className="panel adjustment-queue" aria-label="Hồ sơ sai lệch cần xử lý">
@@ -58,6 +80,7 @@ export function AdjustmentQueue({
           <p>Chọn hồ sơ để mở phiếu nhận gốc và thao tác theo đúng vai trò.</p>
         </div>
       </div>
+      <SyncNotice query={adjustments.isError ? adjustments : returns} />
       <ul className="adjustment-list">
         {items.map((item) => {
           const copy = adjustmentStatusCopy[item.status];
@@ -72,7 +95,7 @@ export function AdjustmentQueue({
                   <strong>
                     {item.code} · {item.receiptNumber}
                   </strong>
-                  <small>{storeNameById.get(item.storeId) ?? 'Cửa hàng'}</small>
+                  <small>{item.storeName ?? storeNameById.get(item.storeId) ?? 'Cửa hàng'}</small>
                 </span>
                 <Badge tone={copy.tone}>{copy.label}</Badge>
                 <span className="adjustment-card__meta">{item.reason}</span>

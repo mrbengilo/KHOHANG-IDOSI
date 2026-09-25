@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import {
   EntityIdSchema,
+  IsoDateSchema,
   IsoDateTimeSchema,
   KilogramsDecimalSchema,
   MoneyVndSchema,
@@ -184,6 +185,16 @@ export const ReceiptAdjustmentActionSchema = z.enum([
 ]);
 export type ReceiptAdjustmentAction = z.infer<typeof ReceiptAdjustmentActionSchema>;
 
+/** An account named on a document; names are null when the account no longer exists. */
+export const AdjustmentAccountSchema = z
+  .object({
+    accountId: EntityIdSchema,
+    displayName: z.string().nullable(),
+    username: z.string().nullable(),
+  })
+  .strict();
+export type AdjustmentAccount = z.infer<typeof AdjustmentAccountSchema>;
+
 export const ReceiptAdjustmentSchema = z
   .object({
     id: EntityIdSchema,
@@ -216,12 +227,15 @@ export const ReceiptAdjustmentSchema = z
       })
       .strict(),
     reportedByAccountId: EntityIdSchema,
+    reportedBy: AdjustmentAccountSchema,
     reportedAt: IsoDateTimeSchema,
     verifiedByAccountId: EntityIdSchema.nullable(),
+    verifiedBy: AdjustmentAccountSchema.nullable(),
     verifiedAt: IsoDateTimeSchema.nullable(),
     verificationNote: z.string().nullable(),
     infoRequestNote: z.string().nullable(),
     decidedByAccountId: EntityIdSchema.nullable(),
+    decidedBy: AdjustmentAccountSchema.nullable(),
     decidedAt: IsoDateTimeSchema.nullable(),
     decisionNote: z.string().nullable(),
     appliedAt: IsoDateTimeSchema.nullable(),
@@ -241,13 +255,26 @@ export const ReceiptAdjustmentListItemSchema = z
     receiptId: EntityIdSchema,
     receiptNumber: z.string().min(1).max(100),
     storeId: EntityIdSchema,
+    /** Null only when the store row can no longer be read; the document stays listed. */
+    storeCode: z.string().nullable(),
+    storeName: z.string().nullable(),
     status: ReceiptAdjustmentStatusSchema,
     version: z.number().int().nonnegative(),
     reason: z.string().min(1).max(1_000),
+    cause: ReceiptAdjustmentCauseSchema.nullable(),
     lineCount: z.number().int().positive(),
     shortageQuantity: z.number().int().nonnegative(),
+    /** Verified goods delta; effective only once the status is APPLIED. */
     goodsDeltaVnd: SignedMoneyVndSchema,
+    reportedBy: AdjustmentAccountSchema,
     reportedAt: IsoDateTimeSchema,
+    /** HTKD/admin who verified the current version and sent it to the admin. */
+    verifiedBy: AdjustmentAccountSchema.nullable(),
+    verifiedAt: IsoDateTimeSchema.nullable(),
+    /** Who closed the document: applied, rejected or cancelled. */
+    decidedBy: AdjustmentAccountSchema.nullable(),
+    decidedAt: IsoDateTimeSchema.nullable(),
+    decisionNote: z.string().nullable(),
     appliedAt: IsoDateTimeSchema.nullable(),
     updatedAt: IsoDateTimeSchema,
   })
@@ -286,7 +313,10 @@ export const ReceiptAdjustmentContextSchema = z
     finalizedAt: IsoDateTimeSchema.nullable(),
     summary: ReceiptAdjustmentSummarySchema,
     bags: z.array(ReceiptAdjustmentContextBagSchema),
+    /** The most recent adjustments of the receipt (at most one page). */
     adjustments: z.array(ReceiptAdjustmentListItemSchema),
+    /** Exact number of adjustments of the receipt; more than listed means page the list API. */
+    adjustmentCount: z.number().int().nonnegative(),
   })
   .strict();
 export type ReceiptAdjustmentContext = z.infer<typeof ReceiptAdjustmentContextSchema>;
@@ -374,15 +404,123 @@ export const ReceiptAdjustmentActionRequestSchema = z.discriminatedUnion('action
 ]);
 export type ReceiptAdjustmentActionRequest = z.infer<typeof ReceiptAdjustmentActionRequestSchema>;
 
+/** Which moment a date filter applies to: when the store reported, or when it was closed. */
+export const ReceiptAdjustmentDateFieldSchema = z.enum(['REPORTED', 'DECIDED']);
+export type ReceiptAdjustmentDateField = z.infer<typeof ReceiptAdjustmentDateFieldSchema>;
+
 export const ListReceiptAdjustmentsQuerySchema = PaginationQuerySchema.extend({
   storeId: EntityIdSchema.optional(),
   receiptId: EntityIdSchema.optional(),
   status: ReceiptAdjustmentStatusSchema.optional(),
-}).strict();
+  /** PSL code or source receipt number, partial and case-insensitive. */
+  q: z.string().trim().min(1).max(40).optional(),
+  dateField: ReceiptAdjustmentDateFieldSchema.default('REPORTED'),
+  /** Business dates in Asia/Ho_Chi_Minh, both inclusive. */
+  from: IsoDateSchema.optional(),
+  to: IsoDateSchema.optional(),
+})
+  .strict()
+  .refine((query) => !query.from || !query.to || query.from <= query.to, {
+    message: 'Ngày bắt đầu phải trước hoặc bằng ngày kết thúc',
+    path: ['to'],
+  });
 export type ListReceiptAdjustmentsQuery = z.infer<typeof ListReceiptAdjustmentsQuerySchema>;
 
 export const ListReceiptAdjustmentsResponseSchema = z
   .object({ data: z.array(ReceiptAdjustmentListItemSchema), pagination: PaginationMetaSchema })
+  .strict();
+
+export const ReceiptAdjustmentHistoryEventTypeSchema = z.enum([
+  'REPORTED',
+  'RESUBMITTED',
+  'VERIFIED',
+  'INFO_REQUESTED',
+  'RETURNED_TO_VERIFIER',
+  'REJECTED',
+  'CANCELLED',
+  'APPLIED',
+  'RETURN_CREATED',
+  'RETURN_HANDED_OVER',
+  'RETURN_RECEIVED',
+  'RETURN_DISPUTED',
+  'RETURN_RECEIVED_AFTER_RECONCILIATION',
+  'RETURN_LOST',
+  'RETURN_CANCELLED',
+  /** An audit action this version does not know; `action` carries the raw name. */
+  'OTHER',
+]);
+export type ReceiptAdjustmentHistoryEventType = z.infer<
+  typeof ReceiptAdjustmentHistoryEventTypeSchema
+>;
+
+export const AuditActorRoleSchema = z.enum(['ADMIN', 'HTKD', 'STORE', 'WHOLESALE']);
+export type AuditActorRole = z.infer<typeof AuditActorRoleSchema>;
+
+/**
+ * One immutable audit event of an adjustment or of a return raised from it. Every field the
+ * audit row did not record is null ("Chưa ghi nhận"), never guessed. Request/session/IP data
+ * of the audit row is never exposed.
+ */
+export const ReceiptAdjustmentHistoryEventSchema = z
+  .object({
+    id: EntityIdSchema,
+    occurredAt: IsoDateTimeSchema,
+    type: ReceiptAdjustmentHistoryEventTypeSchema,
+    action: z.string().min(1).max(120),
+    subject: z.enum(['ADJUSTMENT', 'RETURN']),
+    returnCode: z.string().max(20).nullable(),
+    actor: z
+      .object({
+        accountId: EntityIdSchema.nullable(),
+        /** Current name of the account; null when it no longer exists. */
+        displayName: z.string().nullable(),
+        username: z.string().nullable(),
+        /** Role recorded on the audit row at the time of the action. */
+        role: AuditActorRoleSchema.nullable(),
+      })
+      .strict(),
+    store: z
+      .object({
+        storeId: EntityIdSchema.nullable(),
+        code: z.string().nullable(),
+        name: z.string().nullable(),
+      })
+      .strict(),
+    statusBefore: z.union([ReceiptAdjustmentStatusSchema, ReceiptReturnStatusSchema]).nullable(),
+    statusAfter: z.union([ReceiptAdjustmentStatusSchema, ReceiptReturnStatusSchema]).nullable(),
+    note: z.string().nullable(),
+    changes: z
+      .object({
+        reason: z.string().nullable(),
+        evidenceNote: z.string().nullable(),
+        cause: ReceiptAdjustmentCauseSchema.nullable(),
+        lineCount: z.number().int().nonnegative().nullable(),
+        goodsDeltaVnd: SignedMoneyVndSchema.nullable(),
+        freightDeltaVnd: SignedMoneyVndSchema.nullable(),
+        handlingDeltaVnd: SignedMoneyVndSchema.nullable(),
+        vatDeltaVnd: SignedMoneyVndSchema.nullable(),
+        totalBeforeVnd: MoneyVndSchema.nullable(),
+        totalAfterVnd: MoneyVndSchema.nullable(),
+        costBeforeVnd: MoneyVndSchema.nullable(),
+        costAfterVnd: MoneyVndSchema.nullable(),
+        appliedSequence: z.number().int().positive().nullable(),
+        releasedBagCount: z.number().int().nonnegative().nullable(),
+        returnCount: z.number().int().nonnegative().nullable(),
+        entitlementCount: z.number().int().nonnegative().nullable(),
+      })
+      .strict(),
+  })
+  .strict();
+export type ReceiptAdjustmentHistoryEvent = z.infer<typeof ReceiptAdjustmentHistoryEventSchema>;
+
+export const ReceiptAdjustmentHistoryQuerySchema = PaginationQuerySchema;
+export type ReceiptAdjustmentHistoryQuery = z.infer<typeof ReceiptAdjustmentHistoryQuerySchema>;
+
+export const ReceiptAdjustmentHistoryResponseSchema = z
+  .object({
+    data: z.array(ReceiptAdjustmentHistoryEventSchema),
+    pagination: PaginationMetaSchema,
+  })
   .strict();
 
 export const ReceiptAdjustmentParamsSchema = z.object({ adjustmentId: EntityIdSchema }).strict();

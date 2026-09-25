@@ -1,0 +1,82 @@
+/*
+ * Thanh tab: cuộn ngang có chủ đích trên màn hẹp thay vì xuống dòng, tab đang mở có gạch chân
+ * và chữ đậm (không chỉ đổi màu) để người dùng nhận ra kể cả khi không phân biệt màu.
+ */
+.tabs {
+  display: flex;
+  gap: 4px;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+
+.tabs__tab {
+  position: relative;
+  flex: 0 0 auto;
+  min-height: 44px;
+  border: 0;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 15px;
+  padding: 8px 14px;
+  white-space: nowrap;
+}
+
+.tabs--secondary {
+  border-bottom-style: dashed;
+}
+
+.tabs--secondary .tabs__tab {
+  min-height: 40px;
+  font-size: 14px;
+  padding: 6px 12px;
+}
+
+.tabs__tab:hover {
+  background: var(--brand-soft);
+  color: var(--text);
+}
+
+.tabs__tab--active {
+  color: var(--brand-dark);
+  font-weight: 700;
+}
+
+.tabs__tab--active::after {
+  position: absolute;
+  right: 8px;
+  bottom: -1px;
+  left: 8px;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--brand);
+  content: '';
+}
+
+.tabs__tab:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+.tab-panel {
+  display: grid;
+  min-width: 0;
+  gap: var(--content-gap, 24px);
+}
+
+.tab-panel:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 4px;
+  border-radius: 6px;
+}
+
+@media (max-width: 620px) {
+  .tabs__tab {
+    padding: 8px 12px;
+  }
+}

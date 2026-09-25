@@ -315,6 +315,25 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
       context(),
     );
     assert.equal(received.data.status, 'RECEIVED');
+    // The timeline carries the return's own events, linked by code, after the admin decision.
+    const history = await repository.listReceiptAdjustmentHistory(fx.store, created.data.id, {
+      page: 1,
+      pageSize: 50,
+    });
+    assert.deepEqual(
+      history.data.map((event) => event.type),
+      ['REPORTED', 'VERIFIED', 'APPLIED', 'RETURN_HANDED_OVER', 'RETURN_RECEIVED'],
+    );
+    assert.equal(history.data[2].changes.returnCount, 1);
+    const returnEvents = history.data.filter((event) => event.subject === 'RETURN');
+    assert.ok(returnEvents.every((event) => event.returnCode === pending.code));
+    assert.deepEqual(
+      returnEvents.map((event) => [event.statusBefore, event.statusAfter, event.actor.role]),
+      [
+        ['PENDING_HANDOVER', 'IN_TRANSIT', 'STORE'],
+        ['IN_TRANSIT', 'RECEIVED', 'ADMIN'],
+      ],
+    );
     const returns = await repository.listReceiptReturns(fx.store, { page: 1, pageSize: 20 });
     assert.equal(returns.data[0].status, 'RECEIVED');
     assert.equal(
@@ -519,6 +538,520 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
     );
   });
 
+  test('admin list projection, filters and the full audit timeline across rework rounds', async () => {
+    const fx = await finalizedReceipt(repository);
+    const contextView = await repository.getReceiptAdjustmentContext(fx.store, fx.receiptId);
+    const bagLine = {
+      receiptBagId: contextView.bags[2].receiptBagId,
+      actualProductId: fx.jeansId,
+      disposition: 'KEEP',
+    };
+    const verifyInput = (expectedVersion, note) => ({
+      action: 'VERIFY',
+      expectedVersion,
+      cause: 'SOURCE_MISCLASSIFICATION',
+      note,
+      lines: [
+        {
+          receiptBagId: bagLine.receiptBagId,
+          actualProductId: fx.jeansId,
+          weightKg: '20.000',
+          pricePerKgVnd: 40_000,
+          weightChangeNote: null,
+        },
+      ],
+      freightDeltaVnd: 0,
+      handlingDeltaVnd: 0,
+      vatDeltaVnd: 0,
+    });
+    const act = (actor, input) =>
+      repository.actOnReceiptAdjustment(
+        actor,
+        created.data.id,
+        input,
+        randomUUID(),
+        randomUUID(),
+        context(),
+      );
+    const created = await repository.createReceiptAdjustment(
+      fx.store,
+      {
+        receiptId: fx.receiptId,
+        reason: 'Bao 3 là jeans',
+        evidenceNote: null,
+        discoveredAt: new Date().toISOString(),
+        lines: [bagLine],
+      },
+      randomUUID(),
+      'timeline',
+      context(),
+    );
+    await act(fx.htkd, { action: 'REQUEST_INFO', expectedVersion: 0, note: 'Gửi ảnh tem bao' });
+    await act(fx.store, {
+      action: 'RESUBMIT',
+      expectedVersion: 1,
+      reason: 'Bao 3 là jeans, đã có ảnh tem',
+      evidenceNote: 'Ảnh tem bao trong nhóm',
+      discoveredAt: new Date().toISOString(),
+      lines: [bagLine],
+    });
+    await act(fx.htkd, verifyInput(2, 'Xác minh lần 1'));
+    await act(fx.admin, {
+      action: 'RETURN_TO_VERIFIER',
+      expectedVersion: 3,
+      note: 'Cân lại bao trước khi duyệt',
+    });
+    await act(fx.htkd, verifyInput(4, 'Xác minh lần 2 sau khi cân'));
+
+    // Pending admin: the queue row already names the store and who verified it.
+    const pending = await repository.listReceiptAdjustments(fx.admin, {
+      status: 'PENDING_ADMIN',
+      storeId: fx.storeId,
+      dateField: 'REPORTED',
+      page: 1,
+      pageSize: 20,
+    });
+    assert.deepEqual(
+      pending.data.map((row) => row.id),
+      [created.data.id],
+    );
+    assert.equal(pending.data[0].storeName, 'A');
+    assert.match(pending.data[0].storeCode, /^API-ADJ-A-/u);
+    assert.equal(pending.data[0].reportedBy.accountId, fx.store.accountId);
+    assert.equal(pending.data[0].reportedBy.displayName, fx.store.displayName);
+    assert.equal(pending.data[0].verifiedBy.accountId, fx.htkd.accountId);
+    assert.equal(pending.data[0].decidedBy, null);
+    assert.equal(pending.data[0].cause, 'SOURCE_MISCLASSIFICATION');
+
+    const applied = await act(fx.admin, { action: 'APPLY', expectedVersion: 5, note: 'Duyệt' });
+    assert.equal(applied.data.status, 'APPLIED');
+    // The detail names who reported, verified and decided, for every role in scope.
+    assert.equal(applied.data.reportedBy.displayName, fx.store.displayName);
+    assert.equal(applied.data.verifiedBy.accountId, fx.htkd.accountId);
+    assert.equal(applied.data.decidedBy.accountId, fx.admin.accountId);
+    assert.equal(applied.data.decidedBy.displayName, fx.admin.displayName);
+
+    // Search by PSL code and by receipt number, status and decided-date windows (Vietnam days).
+    const listed = (query) =>
+      repository.listReceiptAdjustments(fx.admin, {
+        dateField: 'REPORTED',
+        page: 1,
+        pageSize: 20,
+        ...query,
+      });
+    const byCode = await listed({ q: created.data.code.toLowerCase() });
+    assert.deepEqual(
+      byCode.data.map((row) => row.id),
+      [created.data.id],
+    );
+    assert.equal(byCode.pagination.totalItems, 1);
+    const byReceipt = await listed({ q: applied.data.receiptNumber, status: 'APPLIED' });
+    assert.ok(byReceipt.data.some((row) => row.id === created.data.id));
+    assert.equal(byReceipt.data[0].decidedBy.accountId, fx.admin.accountId);
+    assert.equal(byReceipt.data[0].decisionNote, 'Duyệt');
+    const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+    const yesterday = new Date(Date.now() + 7 * 3_600_000 - 86_400_000).toISOString().slice(0, 10);
+    const decidedToday = await listed({
+      storeId: fx.storeId,
+      dateField: 'DECIDED',
+      from: today,
+      to: today,
+    });
+    assert.deepEqual(
+      decidedToday.data.map((row) => row.id),
+      [created.data.id],
+    );
+    const decidedYesterday = await listed({
+      storeId: fx.storeId,
+      dateField: 'DECIDED',
+      from: yesterday,
+      to: yesterday,
+    });
+    assert.equal(decidedYesterday.pagination.totalItems, 0);
+    const noMatch = await listed({ q: 'khong-co-ma-nay_%' });
+    assert.equal(noMatch.pagination.totalItems, 0);
+
+    // Timeline from the immutable audit rows, oldest first, with the role at the time.
+    const history = await repository.listReceiptAdjustmentHistory(fx.admin, created.data.id, {
+      page: 1,
+      pageSize: 100,
+    });
+    assert.deepEqual(
+      history.data.map((event) => event.type),
+      [
+        'REPORTED',
+        'INFO_REQUESTED',
+        'RESUBMITTED',
+        'VERIFIED',
+        'RETURNED_TO_VERIFIER',
+        'VERIFIED',
+        'APPLIED',
+      ],
+    );
+    assert.deepEqual(
+      history.data.map((event) => event.actor.role),
+      ['STORE', 'HTKD', 'STORE', 'HTKD', 'ADMIN', 'HTKD', 'ADMIN'],
+    );
+    assert.deepEqual(
+      history.data.map((event) => event.statusAfter),
+      [
+        'PENDING_HTKD',
+        'NEEDS_INFO',
+        'PENDING_HTKD',
+        'PENDING_ADMIN',
+        'PENDING_HTKD',
+        'PENDING_ADMIN',
+        'APPLIED',
+      ],
+    );
+    assert.equal(history.data[0].statusBefore, null);
+    assert.equal(history.data[1].note, 'Gửi ảnh tem bao');
+    assert.equal(history.data[2].changes.evidenceNote, 'Ảnh tem bao trong nhóm');
+    assert.equal(history.data[4].note, 'Cân lại bao trước khi duyệt');
+    assert.equal(history.data[5].note, 'Xác minh lần 2 sau khi cân');
+    const appliedEvent = history.data[6];
+    assert.equal(appliedEvent.actor.accountId, fx.admin.accountId);
+    assert.equal(appliedEvent.store.storeId, fx.storeId);
+    assert.equal(appliedEvent.store.name, 'A');
+    assert.equal(appliedEvent.changes.goodsDeltaVnd, -200_000);
+    assert.equal(appliedEvent.changes.appliedSequence, 1);
+    assert.equal(appliedEvent.changes.entitlementCount, 1);
+    assert.equal(appliedEvent.note, 'Duyệt');
+    assert.ok(
+      history.data.every(
+        (event, index) => index === 0 || history.data[index - 1].occurredAt <= event.occurredAt,
+      ),
+    );
+    // Only the selected DTO leaves the server: no request id, IP or raw audit JSON.
+    assert.equal(
+      Object.keys(appliedEvent).sort().join(','),
+      'action,actor,changes,id,note,occurredAt,returnCode,statusAfter,statusBefore,store,subject,type',
+    );
+    const secondPage = await repository.listReceiptAdjustmentHistory(fx.admin, created.data.id, {
+      page: 2,
+      pageSize: 5,
+    });
+    assert.equal(secondPage.pagination.totalItems, 7);
+    assert.deepEqual(
+      secondPage.data.map((event) => event.id),
+      history.data.slice(5).map((event) => event.id),
+    );
+
+    // Same document for the three roles, each in its own scope.
+    for (const actor of [fx.store, fx.htkd]) {
+      const own = await repository.listReceiptAdjustmentHistory(actor, created.data.id, {
+        page: 1,
+        pageSize: 100,
+      });
+      assert.equal(own.pagination.totalItems, 7);
+      const view = await repository.getReceiptAdjustment(actor, created.data.id);
+      assert.equal(view.status, 'APPLIED');
+    }
+    for (const outsider of [fx.otherStore, fx.otherHtkd, fx.wholesale]) {
+      await assert.rejects(
+        repository.listReceiptAdjustmentHistory(outsider, created.data.id, {
+          page: 1,
+          pageSize: 20,
+        }),
+        (error) => error.code === 'FORBIDDEN',
+      );
+    }
+    await assert.rejects(
+      repository.listReceiptAdjustmentHistory(fx.admin, randomUUID(), { page: 1, pageSize: 20 }),
+      (error) => error.code === 'NOT_FOUND',
+    );
+
+    // Context counts are exact SQL counts, not counted from the embedded page.
+    const afterContext = await repository.getReceiptAdjustmentContext(fx.admin, fx.receiptId);
+    assert.equal(afterContext.adjustmentCount, 1);
+    assert.equal(afterContext.summary.openCount, 0);
+    assert.equal(afterContext.summary.appliedCount, 1);
+  });
+
+  test('two admins applying at once take effect once; a lost response replays by key', async () => {
+    const fx = await finalizedReceipt(repository);
+    const contextView = await repository.getReceiptAdjustmentContext(fx.store, fx.receiptId);
+    const bagLine = {
+      receiptBagId: contextView.bags[0].receiptBagId,
+      actualProductId: fx.jeansId,
+      disposition: 'KEEP',
+    };
+    const created = await repository.createReceiptAdjustment(
+      fx.store,
+      {
+        receiptId: fx.receiptId,
+        reason: 'Bao 1 là jeans',
+        evidenceNote: null,
+        discoveredAt: new Date().toISOString(),
+        lines: [bagLine],
+      },
+      randomUUID(),
+      'concurrent',
+      context(),
+    );
+    await repository.actOnReceiptAdjustment(
+      fx.htkd,
+      created.data.id,
+      {
+        action: 'VERIFY',
+        expectedVersion: 0,
+        cause: 'SOURCE_MISCLASSIFICATION',
+        note: 'Đã xác minh',
+        lines: [
+          {
+            receiptBagId: bagLine.receiptBagId,
+            actualProductId: fx.jeansId,
+            weightKg: '20.000',
+            pricePerKgVnd: 40_000,
+            weightChangeNote: null,
+          },
+        ],
+        freightDeltaVnd: 0,
+        handlingDeltaVnd: 0,
+        vatDeltaVnd: 0,
+      },
+      randomUUID(),
+      'v',
+      context(),
+    );
+    const [secondAdminRow] = await db
+      .insert(users)
+      .values({
+        email: `api-adj-admin-${randomUUID()}@example.test`,
+        passwordHash: 'integration-test-placeholder-hash',
+        displayName: 'API admin 2',
+        role: 'admin',
+      })
+      .returning();
+    const secondAdmin = {
+      ...fx.admin,
+      accountId: secondAdminRow.id,
+      username: secondAdminRow.email,
+      displayName: secondAdminRow.displayName,
+    };
+    const apply = { action: 'APPLY', expectedVersion: 1, note: null };
+    const firstKey = randomUUID();
+    const outcomes = await Promise.allSettled([
+      repository.actOnReceiptAdjustment(
+        fx.admin,
+        created.data.id,
+        apply,
+        firstKey,
+        'apply-1',
+        context(),
+      ),
+      repository.actOnReceiptAdjustment(
+        secondAdmin,
+        created.data.id,
+        apply,
+        randomUUID(),
+        'apply-2',
+        context(),
+      ),
+    ]);
+    const fulfilled = outcomes.filter((outcome) => outcome.status === 'fulfilled');
+    const rejected = outcomes.filter((outcome) => outcome.status === 'rejected');
+    assert.equal(fulfilled.length, 1);
+    assert.equal(rejected.length, 1);
+    assert.equal(rejected[0].reason.code, 'VERSION_CONFLICT');
+    assert.equal(fulfilled[0].value.data.status, 'APPLIED');
+
+    const appliedAudits = await db
+      .select({ id: auditLogs.id })
+      .from(auditLogs)
+      .where(
+        and(
+          eq(auditLogs.entityId, created.data.id),
+          eq(auditLogs.action, 'RECEIPT_ADJUSTMENT_APPLIED'),
+        ),
+      );
+    assert.equal(appliedAudits.length, 1);
+    const shortage = await db
+      .select({ remaining: waitTickets.remainingQuantity })
+      .from(waitTickets)
+      .where(and(eq(waitTickets.storeId, fx.storeId), eq(waitTickets.status, 'active')));
+    assert.deepEqual(
+      shortage.map((row) => row.remaining),
+      [1],
+    );
+
+    // Retrying the winner's request (lost response) replays; a changed payload is refused.
+    if (outcomes[0].status === 'fulfilled') {
+      const replay = await repository.actOnReceiptAdjustment(
+        fx.admin,
+        created.data.id,
+        apply,
+        firstKey,
+        'apply-1',
+        context(),
+      );
+      assert.equal(replay.replayed, true);
+      assert.equal(replay.data.status, 'APPLIED');
+      await assert.rejects(
+        repository.actOnReceiptAdjustment(
+          fx.admin,
+          created.data.id,
+          { ...apply, note: 'khác' },
+          firstKey,
+          'apply-1-changed',
+          context(),
+        ),
+        (error) => error.code === 'IDEMPOTENCY_CONFLICT',
+      );
+    }
+    assert.equal(
+      (
+        await db
+          .select({ id: auditLogs.id })
+          .from(auditLogs)
+          .where(
+            and(
+              eq(auditLogs.entityId, created.data.id),
+              eq(auditLogs.action, 'RECEIPT_ADJUSTMENT_APPLIED'),
+            ),
+          )
+      ).length,
+      1,
+    );
+  });
+
+  test('more than 100 adjustments on one receipt: exact counts and nothing cut from paging', async () => {
+    const fx = await finalizedReceipt(repository);
+    const contextView = await repository.getReceiptAdjustmentContext(fx.store, fx.receiptId);
+    const line = {
+      receiptBagId: contextView.bags[0].receiptBagId,
+      actualProductId: fx.jeansId,
+      disposition: 'KEEP',
+    };
+    for (let index = 0; index < 101; index += 1) {
+      const created = await repository.createReceiptAdjustment(
+        fx.store,
+        {
+          receiptId: fx.receiptId,
+          reason: `Báo lần ${index + 1}`,
+          evidenceNote: null,
+          discoveredAt: new Date().toISOString(),
+          lines: [line],
+        },
+        randomUUID(),
+        `bulk-${index}`,
+        context(),
+      );
+      if (index < 100) {
+        await repository.actOnReceiptAdjustment(
+          fx.store,
+          created.data.id,
+          { action: 'CANCEL', expectedVersion: 0, note: 'Báo nhầm' },
+          randomUUID(),
+          `bulk-cancel-${index}`,
+          context(),
+        );
+      }
+    }
+    const view = await repository.getReceiptAdjustmentContext(fx.admin, fx.receiptId);
+    assert.equal(view.adjustmentCount, 101);
+    assert.equal(view.adjustments.length, 100);
+    assert.equal(view.summary.openCount, 1);
+    const first = await repository.listReceiptAdjustments(fx.admin, {
+      receiptId: fx.receiptId,
+      dateField: 'REPORTED',
+      page: 1,
+      pageSize: 100,
+    });
+    const second = await repository.listReceiptAdjustments(fx.admin, {
+      receiptId: fx.receiptId,
+      dateField: 'REPORTED',
+      page: 2,
+      pageSize: 100,
+    });
+    assert.equal(first.pagination.totalItems, 101);
+    assert.equal(first.pagination.totalPages, 2);
+    assert.equal(second.data.length, 1);
+    assert.equal(new Set([...first.data, ...second.data].map((row) => row.id)).size, 101);
+    const cancelled = await repository.listReceiptAdjustments(fx.admin, {
+      receiptId: fx.receiptId,
+      status: 'CANCELLED',
+      dateField: 'REPORTED',
+      page: 1,
+      pageSize: 20,
+    });
+    assert.equal(cancelled.pagination.totalItems, 100);
+    assert.equal(cancelled.data.length, 20);
+  });
+
+  test('legacy or foreign audit rows never break the timeline and are never guessed', async () => {
+    const fx = await finalizedReceipt(repository);
+    const contextView = await repository.getReceiptAdjustmentContext(fx.store, fx.receiptId);
+    const created = await repository.createReceiptAdjustment(
+      fx.store,
+      {
+        receiptId: fx.receiptId,
+        reason: 'Bao 2 là jeans',
+        evidenceNote: null,
+        discoveredAt: new Date().toISOString(),
+        lines: [
+          {
+            receiptBagId: contextView.bags[1].receiptBagId,
+            actualProductId: fx.jeansId,
+            disposition: 'KEEP',
+          },
+        ],
+      },
+      randomUUID(),
+      'legacy',
+      context(),
+    );
+    await db.insert(auditLogs).values([
+      {
+        actorUserId: null,
+        actorRole: null,
+        actorStoreId: null,
+        action: 'RECEIPT_ADJUSTMENT_REJECTED',
+        entityType: 'store_receipt_adjustment',
+        entityId: created.data.id,
+        before: null,
+        after: { status: 'not-a-status', money: { delta: { goodsVnd: 'abc' } }, lines: 'x' },
+        createdAt: new Date(Date.now() + 60_000),
+      },
+      {
+        actorUserId: fx.admin.accountId,
+        actorRole: 'admin',
+        actorStoreId: fx.storeId,
+        action: 'SOMETHING_NEW',
+        entityType: 'store_receipt_adjustment',
+        entityId: created.data.id,
+        ipAddress: '10.0.0.1',
+        userAgent: 'secret-agent',
+        requestId: 'req-secret',
+        createdAt: new Date(Date.now() + 120_000),
+      },
+    ]);
+    const history = await repository.listReceiptAdjustmentHistory(fx.store, created.data.id, {
+      page: 1,
+      pageSize: 20,
+    });
+    assert.deepEqual(
+      history.data.map((event) => event.type),
+      ['REPORTED', 'REJECTED', 'OTHER'],
+    );
+    const legacy = history.data[1];
+    assert.deepEqual(legacy.actor, {
+      accountId: null,
+      displayName: null,
+      username: null,
+      role: null,
+    });
+    assert.equal(legacy.statusAfter, null);
+    assert.equal(legacy.statusBefore, null);
+    assert.equal(legacy.note, null);
+    assert.equal(legacy.changes.goodsDeltaVnd, null);
+    assert.equal(legacy.changes.lineCount, null);
+    const unknown = history.data[2];
+    assert.equal(unknown.action, 'SOMETHING_NEW');
+    assert.ok(!JSON.stringify(history).includes('secret'));
+    assert.ok(!JSON.stringify(history).includes('10.0.0.1'));
+  });
+
   test('opened intact bags return structured 409 and history respects store scope', async () => {
     const fx = await finalizedReceipt(repository);
     const view = await repository.getReceiptAdjustmentContext(fx.store, fx.receiptId);
@@ -591,10 +1124,16 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
     const app = await createApi({ repository });
     const unauthenticated = await app.inject({ method: 'GET', url: '/api/v1/receipt-adjustments' });
     assert.equal(unauthenticated.statusCode, 401);
+    const historyUnauthenticated = await app.inject({
+      method: 'GET',
+      url: `/api/v1/receipt-adjustments/${randomUUID()}/history`,
+    });
+    assert.equal(historyUnauthenticated.statusCode, 401);
     const openapi = (await app.inject({ method: 'GET', url: '/openapi.json' })).json();
     for (const path of [
       '/api/v1/store-receipts/{receiptId}/adjustment-context',
       '/api/v1/receipt-adjustments',
+      '/api/v1/receipt-adjustments/{adjustmentId}/history',
       '/api/v1/receipt-adjustments/{adjustmentId}/actions',
       '/api/v1/receipt-returns/{returnId}/actions',
     ]) {
