@@ -2522,6 +2522,8 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(transfer.json().data.weightKg, '2.500');
     assert.equal(transfer.json().data.bagQuantity, 2);
     assert.deepEqual(transfer.json().data.bagWeightsKg, ['1.000', '1.500']);
+    assert.equal(transfer.json().data.totalBagQuantity, 2);
+    assert.equal(transfer.json().data.totalWeightKg, '2.500');
     const replay = await mutateTransfer(
       sourceCookie,
       '/api/v1/sorted-sale-transfers',

@@ -2,7 +2,7 @@
 
 ## Mô hình và compatibility
 
-Một sorted_sale_transfers là một header có ID/mã/version/trạng thái duy nhất. Cột JSONB lines chứa mỗi productId đúng một lần, kg từng bao và sourceLots (stockId/kg) giữ provenance FIFO. Các cột scalar cũ giữ dòng đầu để đọc phiếu cũ; consumer mới phải đọc lines, fallback scalar chỉ khi lines null. Tổng là tổng các dòng, cộng bằng gram nguyên.
+Một sorted_sale_transfers là một header có ID/mã/version/trạng thái duy nhất. Cột JSONB lines chứa mỗi productId đúng một lần, kg từng bao và sourceLots (stockId/kg) giữ provenance FIFO. Các cột scalar cũ giữ dòng đầu để đọc phiếu cũ; consumer mới phải đọc lines, fallback scalar chỉ khi lines null. API trả totalBagQuantity và totalWeightKg là tổng các dòng, cộng bằng gram nguyên; UI cũng hỗ trợ response cũ chưa có hai trường tổng.
 
 Migration 0030 mở rộng schema, không sửa/mất ID, mã, thời gian, cân hoặc chi phí cũ; không gộp các phiếu độc lập. Không backfill cân chưa từng ghi nhận. Unique nguồn nhận chuyển từ source_transfer_id sang (source_transfer_id, product_id). Trigger settlement kiểm tra đủ credit tất cả dòng trước khi đổi trạng thái: binary cũ cố nhận/hủy phiếu mới chỉ một dòng sẽ rollback, không làm lệch tồn. Dữ liệu mới không được xử lý bằng UI cũ vì chỉ hiển thị dòng đầu: cần phát hành đồng bộ frontend/API. Rollback giữ migration, tạm dừng xử lý phiếu nhiều dòng và dùng forward-fix. Không restore backup đè giao dịch mới.
 

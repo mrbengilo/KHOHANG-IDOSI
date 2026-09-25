@@ -31,6 +31,8 @@ export const SortedSaleTransferSchema = z
     id: EntityIdSchema,
     transferNumber: z.string().min(1),
     lines: z.array(SortedSaleTransferLineSchema).min(1).optional(),
+    totalBagQuantity: PositiveUnitQuantitySchema.optional(),
+    totalWeightKg: PositiveKilogramsDecimalSchema.optional(),
     createdByAccountId: EntityIdSchema.optional(),
     createdByDisplayName: z.string().nullable().optional(),
     sourceStockId: EntityIdSchema,

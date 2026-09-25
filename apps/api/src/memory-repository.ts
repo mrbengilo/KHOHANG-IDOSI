@@ -3952,6 +3952,16 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       .map((transfer) =>
         structuredClone({
           ...transfer,
+          totalBagQuantity: (transfer.lines ?? [transfer]).reduce(
+            (sum, line) => sum + line.bagQuantity,
+            0,
+          ),
+          totalWeightKg: gramsToKilogramsExact(
+            (transfer.lines ?? [transfer]).reduce(
+              (sum, line) => sum + kilogramsToGramsExact(line.weightKg),
+              0n,
+            ),
+          ),
           createdByDisplayName: transfer.createdByAccountId
             ? (this.accounts.get(transfer.createdByAccountId)?.displayName ?? null)
             : null,
@@ -4020,6 +4030,10 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const transfer: SortedSaleTransfer = {
       id: randomUUID(),
       transferNumber: this.nextDocumentCode('PDC'),
+      totalBagQuantity: prepared.reduce((sum, item) => sum + item.bagGrams.length, 0),
+      totalWeightKg: gramsToKilogramsExact(
+        prepared.reduce((sum, item) => sum + item.movedGrams, 0n),
+      ),
       sourceStockId: first.consumed[0]!.lot.id,
       sourceStoreId: input.sourceStoreId,
       destinationStoreId: input.destinationStoreId,

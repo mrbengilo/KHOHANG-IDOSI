@@ -121,9 +121,13 @@ test('one multi-product Sale document is created, displayed and received against
     expect(response.status(), await response.text()).toBe(201);
     const transfer = (await response.json()).data;
     expect(transfer.lines).toHaveLength(2);
+    expect(transfer.totalBagQuantity).toBe(3);
+    expect(transfer.totalWeightKg).toBe('130.000');
     const listed = await (await tabApi(page).get(api + '/sorted-sale-transfers?pageSize=1')).json();
     expect(listed.data).toHaveLength(1);
     expect(listed.data[0].lines).toHaveLength(2);
+    expect(listed.data[0].totalBagQuantity).toBe(3);
+    expect(listed.data[0].totalWeightKg).toBe('130.000');
     expect(listed.hasMore).toBe(false);
     const nextPage = await (
       await tabApi(page).get(api + '/sorted-sale-transfers?page=2&pageSize=1')

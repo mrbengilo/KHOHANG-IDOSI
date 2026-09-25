@@ -4654,19 +4654,24 @@ function warehouseShortageCheckDto(record: WarehouseShortageCheckRecord): Wareho
 function sortedSaleTransferDto(
   row: typeof sortedSaleTransfers.$inferSelect & { createdByDisplayName?: string | null },
 ): SortedSaleTransfer {
+  const lines = row.lines ?? [
+    {
+      productId: row.productId,
+      sourceStockId: row.sourceStockId,
+      bagQuantity: row.bagQuantity,
+      weightKg: row.weightKg,
+      enteredWeightKg: row.enteredWeightKg,
+      bagWeightsKg: row.bagWeightsKg ?? [],
+    },
+  ];
   return {
     id: row.id,
     transferNumber: row.transferNumber,
-    lines: row.lines ?? [
-      {
-        productId: row.productId,
-        sourceStockId: row.sourceStockId,
-        bagQuantity: row.bagQuantity,
-        weightKg: row.weightKg,
-        enteredWeightKg: row.enteredWeightKg,
-        bagWeightsKg: row.bagWeightsKg ?? [],
-      },
-    ],
+    lines,
+    totalBagQuantity: lines.reduce((sum, line) => sum + line.bagQuantity, 0),
+    totalWeightKg: gramsToKilogramsExact(
+      lines.reduce((sum, line) => sum + kilogramsToGramsExact(line.weightKg), 0n),
+    ),
     createdByAccountId: row.createdByUserId,
     createdByDisplayName: row.createdByDisplayName ?? null,
     sourceStockId: row.sourceStockId,

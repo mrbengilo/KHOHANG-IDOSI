@@ -439,10 +439,12 @@ export function SortedSaleTransferWorkspace({
               </thead>
               {(transfersQuery.data?.data ?? []).map((transfer) => {
                 const lines = transfer.lines ?? [transfer];
-                const totalBags = lines.reduce((sum, line) => sum + line.bagQuantity, 0);
-                const totalWeight = kilograms(
-                  lines.reduce((sum, line) => sum + grams(line.weightKg), 0n),
-                );
+                const totalBags =
+                  transfer.totalBagQuantity ??
+                  lines.reduce((sum, line) => sum + line.bagQuantity, 0);
+                const totalWeight =
+                  transfer.totalWeightKg ??
+                  kilograms(lines.reduce((sum, line) => sum + grams(line.weightKg), 0n));
                 return (
                   <tbody key={transfer.id}>
                     {lines.map((line, index) => (
