@@ -267,6 +267,7 @@ test('sorting credits Sale kilograms and transfers weighed bags per product', as
   await page.goto('/transfers');
   await expect(page.getByRole('heading', { name: 'Điều chuyển từ Sale sau lọc' })).toBeVisible();
   await expect(page.getByLabel('Mặt hàng Sale sau lọc')).toContainText('Đồ nam · 1,25 kg');
+  await page.getByRole('button', { name: 'Thêm mặt hàng', exact: true }).click();
   await page.getByLabel('Số lượng (bao)').fill('2');
   await page.getByLabel('Bao 1 · Đồ nam (kg)').fill('0.5');
   await page.getByLabel('Bao 2 · Đồ nam (kg)').fill('0.9');
@@ -282,12 +283,11 @@ test('sorting credits Sale kilograms and transfers weighed bags per product', as
     .toEqual({
       sourceStoreId: storeId,
       destinationStoreId,
-      productId,
-      bagWeightsKg: ['0.500', '0.125'],
+      lines: [{ productId, bagWeightsKg: ['0.500', '0.125'] }],
       note: null,
     });
-  await expect(page.getByText('Bao 1 · Đồ nam · 0,5 kg')).toBeVisible();
-  await expect(page.getByText('Bao 2 · Đồ nam · 0,125 kg')).toBeVisible();
+  await expect(page.getByText('Bao 1: 0,5 kg')).toBeVisible();
+  await expect(page.getByText('Bao 2: 0,125 kg')).toBeVisible();
   for (const width of [360, 390, 768, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
@@ -299,7 +299,9 @@ test('sorting credits Sale kilograms and transfers weighed bags per product', as
   await page.reload();
   await page.getByRole('button', { name: 'Xác nhận đã nhận' }).click();
   await expect(page.locator('.transfer-card').getByText('Đồ nam · 0,625 kg').first()).toBeVisible();
-  await expect(page.locator('.transfer-card header span').getByText('Đã nhận')).toBeVisible();
+  await expect(
+    page.locator('.document-history').getByText('Đã nhận', { exact: true }),
+  ).toBeVisible();
 });
 
 test('charity goes back to Sale by kg or is exported bag by bag per product', async ({ page }) => {

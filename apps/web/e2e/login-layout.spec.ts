@@ -48,7 +48,12 @@ test('login shows the brand panel on desktop and stacks on narrow screens', asyn
 
   await page.getByLabel('Tên đăng nhập', { exact: true }).focus();
   await expect(page.getByLabel('Tên đăng nhập', { exact: true })).toBeFocused();
-  expect(
-    await page.locator('.app-logo').evaluate((image: HTMLImageElement) => image.naturalWidth > 0),
-  ).toBe(true);
+  // Client-side login may mount after navigation's load event; wait for image decoding.
+  await expect
+    .poll(() =>
+      page
+        .locator('.app-logo')
+        .evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0),
+    )
+    .toBe(true);
 });

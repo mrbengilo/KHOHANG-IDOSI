@@ -5,6 +5,8 @@ test('store selects a product and short bag code before opening one bag', async 
 }, testInfo) => {
   await page.addInitScript(() => localStorage.setItem('idosi-demo-role:v2', 'STORE_RETAIL'));
   await page.goto('/open-bag');
+  // This route is lazy-loaded after the document load event. Wait for the screen first.
+  await page.getByRole('heading', { name: 'Khui kiện', exact: true }).waitFor();
   if (testInfo.project.name === 'mobile-390') {
     const title = (await page.getByRole('heading', { name: 'Khui kiện' }).boundingBox())!;
     const menu = (await page.locator('.mobile-menu-trigger').boundingBox())!;

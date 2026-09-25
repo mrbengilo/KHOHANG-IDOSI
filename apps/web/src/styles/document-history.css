@@ -1,0 +1,75 @@
+.document-history {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+}
+.document-history table {
+  display: table;
+  width: 100%;
+  min-width: 100%;
+  table-layout: auto;
+  border-collapse: collapse;
+}
+.document-history thead {
+  display: table-header-group;
+  position: static;
+  width: auto;
+  height: auto;
+  clip: auto;
+  overflow: visible;
+}
+.document-history tbody {
+  display: table-row-group;
+}
+.document-history tr {
+  display: table-row;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.document-history th,
+.document-history td {
+  display: table-cell;
+  text-align: left;
+  vertical-align: top;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  min-width: 7rem;
+  max-width: 20rem;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+.document-history td::before {
+  display: none;
+}
+.document-history tbody + tbody {
+  border-top: 2px solid var(--text-secondary);
+}
+.document-history th {
+  background: var(--surface-soft, var(--surface));
+}
+.document-history:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+.document-history p {
+  margin: 0.4rem 0;
+}
+.document-history th {
+  white-space: normal;
+}
+.document-history time {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.transfer-list .document-history td:last-child {
+  min-width: 12rem;
+}
+.transfer-list > .button-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}

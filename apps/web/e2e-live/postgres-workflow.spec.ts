@@ -115,6 +115,12 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   expect((await createGroupResponse).status()).toBe(201);
   await expect(page.getByText(`Đã tạo nhóm ${groupCode}.`)).toBeVisible();
 
+  await page.getByLabel('Tìm nhóm', { exact: true }).fill(groupCode);
+  await page
+    .locator('form')
+    .filter({ has: page.getByLabel('Tìm nhóm', { exact: true }) })
+    .getByRole('button', { name: 'Lọc', exact: true })
+    .click();
   let groupRow = page.getByRole('row').filter({ hasText: groupCode });
   await groupRow.getByRole('button', { name: `Chỉnh sửa nhóm ${groupCode}` }).click();
   await page.locator('#store-group-editor').getByLabel('Tên nhóm').fill(updatedGroupName);
@@ -471,9 +477,8 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
     page.getByText('Đã gửi yêu cầu. Kho chỉ giữ hàng sau khi chạy phân bổ.'),
   ).toBeVisible();
 
-  const orderCard = page.locator('.request-history-card').filter({ hasText: lineNote });
+  const orderCard = page.locator('.document-history tbody').filter({ hasText: lineNote });
   await expect(orderCard).toHaveCount(1);
-  await orderCard.locator('summary').click();
   await expect(orderCard.getByText(lineNote)).toBeVisible();
   await page.setViewportSize({ height: 844, width: 390 });
   await expect

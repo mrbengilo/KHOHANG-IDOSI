@@ -50,8 +50,10 @@ function post(path: string, body: unknown, key: string): Promise<unknown> {
   });
 }
 
-export async function listSortedSaleTransfers() {
-  return SortedSaleTransfersResponseSchema.parse(await request('/sorted-sale-transfers')).data;
+export async function listSortedSaleTransfers(page = 1) {
+  return SortedSaleTransfersResponseSchema.parse(
+    await request('/sorted-sale-transfers?page=' + page + '&pageSize=20'),
+  );
 }
 
 export async function createSortedSaleTransfer(

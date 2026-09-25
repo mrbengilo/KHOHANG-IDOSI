@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { formatKg } from '../../lib/format';
+import { formatDocumentTime } from '../../lib/business-time';
+import { formatKg, formatKgExact } from '../../lib/format';
 import type { Store, StoreTransfer, StoreTransferStatus } from '@idosi/contracts';
 import { ArrowRight, CheckCircle2, CircleCheck, RefreshCw, Truck, XCircle } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -391,31 +392,96 @@ export function ProductionTransfersPage({ role }: AppOutletContext) {
                 title="Chưa có phiếu điều chuyển"
               />
             ) : (
-              <div className="transfer-card-grid">
-                {(transfersQuery.data ?? []).map((transfer) => {
-                  const busy =
-                    actionMutation.isPending &&
-                    actionMutation.variables?.transfer.id === transfer.id;
-                  return (
-                    <TransferCard
-                      busyAction={busy ? actionMutation.variables.action : null}
-                      cancelReason={cancelReasons[transfer.id] ?? ''}
-                      destinationName={storeLabel(allVisibleStores, transfer.destinationStoreId)}
-                      key={transfer.id}
-                      onAction={(input) => {
-                        setNotice(null);
-                        actionMutation.mutate(input);
-                      }}
-                      onCancelReasonChange={(reason) =>
-                        setCancelReasons((current) => ({ ...current, [transfer.id]: reason }))
-                      }
-                      principalStoreId={principalStoreId}
-                      productName={productNames.get(transfer.productId) ?? transfer.productId}
-                      sourceName={storeLabel(allVisibleStores, transfer.sourceStoreId)}
-                      transfer={transfer}
-                    />
-                  );
-                })}
+              <div
+                className="document-history"
+                role="region"
+                aria-label="Lịch sử điều chuyển trước đây"
+                tabIndex={0}
+              >
+                <table>
+                  <thead>
+                    <tr>
+                      {[
+                        'Thời gian',
+                        'Mã phiếu',
+                        'Cửa hàng chuyển',
+                        'Cửa hàng nhận',
+                        'Mặt hàng',
+                        'Số lượng (bao)',
+                        'Khối lượng (kg)',
+                        'Tổng số lượng (bao)',
+                        'Tổng khối lượng (kg)',
+                        'Người thực hiện',
+                        'Trạng thái / Thao tác',
+                      ].map((label) => (
+                        <th scope="col" key={label}>
+                          {label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(transfersQuery.data ?? []).map((transfer) => {
+                      const busy =
+                        actionMutation.isPending &&
+                        actionMutation.variables?.transfer.id === transfer.id;
+                      return (
+                        <tr key={transfer.id}>
+                          <td>
+                            <time dateTime={transfer.createdAt}>
+                              {formatDocumentTime(transfer.createdAt)}
+                            </time>
+                          </td>
+                          <td>{transfer.transferNumber}</td>
+                          <td>{storeLabel(allVisibleStores, transfer.sourceStoreId)}</td>
+                          <td>{storeLabel(allVisibleStores, transfer.destinationStoreId)}</td>
+                          <td>{productNames.get(transfer.productId) ?? transfer.productId}</td>
+                          <td>1</td>
+                          <td>
+                            {formatKgExact(transfer.weightKg)}
+                            <p>Khối lượng điều chuyển từ bao nguồn</p>
+                          </td>
+                          <td>1</td>
+                          <td>{formatKgExact(transfer.weightKg)}</td>
+                          <td>{transfer.createdByDisplayName ?? 'Chưa ghi nhận'}</td>
+                          <td>
+                            <Badge tone={transferStatusCopy[transfer.status].tone}>
+                              {transferStatusCopy[transfer.status].label}
+                            </Badge>
+                            <details>
+                              <summary>Xem phiếu {transfer.transferNumber}</summary>
+                              <TransferCard
+                                busyAction={busy ? actionMutation.variables.action : null}
+                                cancelReason={cancelReasons[transfer.id] ?? ''}
+                                destinationName={storeLabel(
+                                  allVisibleStores,
+                                  transfer.destinationStoreId,
+                                )}
+                                key={transfer.id}
+                                onAction={(input) => {
+                                  setNotice(null);
+                                  actionMutation.mutate(input);
+                                }}
+                                onCancelReasonChange={(reason) =>
+                                  setCancelReasons((current) => ({
+                                    ...current,
+                                    [transfer.id]: reason,
+                                  }))
+                                }
+                                principalStoreId={principalStoreId}
+                                productName={
+                                  productNames.get(transfer.productId) ?? transfer.productId
+                                }
+                                sourceName={storeLabel(allVisibleStores, transfer.sourceStoreId)}
+                                transfer={transfer}
+                              />
+                            </details>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
           </section>

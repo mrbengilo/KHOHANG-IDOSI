@@ -5,6 +5,18 @@ import { groupInboundProducts, InboundReceiptDetails } from './InboundReceiptDet
 import { ProductBagPicker } from '../components/ProductBagPicker';
 
 describe('warehouse receipt history', () => {
+  it('counts three dresses and five jeans as eight documented bags', () => {
+    const bags = [
+      ...Array.from({ length: 3 }, () => ({ productId: 'dress' })),
+      ...Array.from({ length: 5 }, () => ({ productId: 'jeans' })),
+    ];
+    const lines = groupInboundProducts(bags, [
+      { id: 'dress', name: 'Đầm' },
+      { id: 'jeans', name: 'Jeans' },
+    ]);
+    expect(lines.map((line) => line.quantity)).toEqual([3, 5]);
+    expect(lines.reduce((sum, line) => sum + line.quantity, 0)).toBe(8);
+  });
   it('groups every bag by product ID, including inactive catalog entries and equal names', () => {
     const products = [
       { id: 'a', name: 'Đầm' },

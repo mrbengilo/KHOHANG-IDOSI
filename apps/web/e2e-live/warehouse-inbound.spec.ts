@@ -97,7 +97,7 @@ test('Admin selects products and persists exactly the selected bags in the wareh
   expect(replay.status()).toBe(201);
   expect(replay.headers()['idempotency-replayed']).toBe('true');
   expect((await replay.json()).data.id).toBe(receipt.id);
-  const historyRow = page.locator('article').filter({ hasText: reference });
+  const historyRow = page.locator('.document-history tbody').filter({ hasText: reference });
   await expect(historyRow).toBeVisible();
   await expect(historyRow.getByLabel(/VAT/)).toHaveCount(0);
   await expect(historyRow.getByText(/Cập nhật VAT/)).toHaveCount(0);
