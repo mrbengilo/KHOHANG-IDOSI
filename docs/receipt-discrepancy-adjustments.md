@@ -63,6 +63,81 @@ STORE báo ─► PENDING_HTKD ──VERIFY (HTKD được giao | ADMIN)──�
 - Tài khoản `STORE` cũ gắn với cửa hàng loại sỉ giữ nguyên chính sách hiện hành (không mở thêm
   trang nhận hàng); cửa hàng sỉ nhận hàng qua tài khoản `WHOLESALE`.
 
+## Nhãn trạng thái dùng chung
+
+Mọi màn hình (Admin, HTKD, cửa hàng; danh sách, thẻ, chi tiết, lịch sử) lấy nhãn từ một bảng
+duy nhất `adjustmentStatusCopy` (`apps/web/src/features/receipts/adjustments/adjustmentModel.ts`):
+
+| Trạng thái dữ liệu | Nhãn                 |
+| ------------------ | -------------------- |
+| `PENDING_HTKD`     | Chờ HTKD xác minh    |
+| `PENDING_ADMIN`    | Chờ Admin duyệt      |
+| `NEEDS_INFO`       | Cần cửa hàng bổ sung |
+| `APPLIED`          | Đã xử lý             |
+| `REJECTED`         | Bị từ chối           |
+| `CANCELLED`        | Đã hủy               |
+
+“Đã xử lý” nghĩa là Admin **đã áp dụng thành công** điều chỉnh (tiền, phân loại bao, quyền chờ
+bù có hiệu lực). Không có nghĩa hàng trả đã về kho hay hàng bù đã giao: tiến độ phiếu trả và
+quyền chờ bù hiển thị riêng. Từ chối/hủy là kết quả kết thúc khác, không hiển thị như áp dụng.
+Nhãn đọc từ trạng thái thật trong database, không có cờ riêng cho từng vai trò; hồ sơ `applied`
+cũ tự hiện nhãn mới, không cần backfill.
+
+## Màn hình Admin “Tồn kho & lịch sử”
+
+- Tab cấp một: **Kho tổng** (tab con Tồn hiện tại / Kiểm hàng thiếu / Lịch sử xuất), **Kho cửa
+  hàng** (Tồn cửa hàng / Sổ phát sinh), **Phiếu sai lệch**. Chỉ tab đang mở được mount và tải
+  dữ liệu; module Kho tổng và Phiếu sai lệch lazy-load. Nút Làm mới chỉ tải lại tab đang mở.
+- Tab, tab con, bộ lọc, trang và hồ sơ đang mở nằm trên URL theo namespace (`tab`, `kt.*`,
+  `ch.*`, `psl.*`); giá trị sai về mặc định an toàn. Đổi tab/trang/mở hồ sơ tạo mục lịch sử
+  (Back/Forward), sửa bộ lọc thì thay mục hiện tại. Đổi cửa hàng bỏ bao/hồ sơ không chắc thuộc
+  cửa hàng mới.
+- Rời tab hoặc đổi hồ sơ khi biểu mẫu còn nội dung chưa gửi: hỏi “Ở lại / Bỏ nháp và chuyển”;
+  tải lại trang thì trình duyệt hỏi xác nhận.
+- Tab **Phiếu sai lệch** mặc định lọc **Chờ Admin duyệt**; lọc thêm cửa hàng, trạng thái (gồm
+  “Tất cả” và “Đã xử lý (lịch sử)”), mã PSL/mã phiếu nhận, ngày báo hoặc ngày xử lý (ngày Việt Nam,
+  khoảng nửa mở `[từ 00:00, đến+1 00:00)`). Phân trang server 20 dòng, sắp `updated_at desc, id
+desc`; đổi bộ lọc về trang 1; trang trống sau khi xử lý tự lùi về trang cuối có dữ liệu.
+- Mỗi dòng: PSL, phiếu nhận gốc, cửa hàng, người báo/thời điểm, người xác minh gửi Admin/thời
+  điểm, lý do, số bao, chênh lệch tiền hàng (tạm tính hay đã hiệu lực), trạng thái, người quyết
+  định/thời điểm/ghi chú. Tên lấy bằng join trong cùng truy vấn danh sách, không gọi chi tiết
+  từng dòng. Tài khoản/cửa hàng không đọc được hiển thị mã và “Không còn thông tin”.
+- Chi tiết tái sử dụng component của màn nhận hàng; nút theo `allowedActions` từ server.
+
+## Lịch sử xử lý
+
+`GET /api/v1/receipt-adjustments/:adjustmentId/history?page&pageSize` đọc audit bất biến của hồ
+sơ (`entity_type = store_receipt_adjustment`) và của phiếu trả sinh từ hồ sơ
+(`store_receipt_return`), cũ trước mới sau (`created_at, id`), phân trang. Quyền kiểm tra theo cửa
+hàng của chứng từ trước khi đọc audit (Admin mọi cửa hàng, HTKD cửa hàng được giao, cửa hàng/quầy
+sỉ của mình). DTO chỉ gồm: thời gian, loại sự kiện, tên/mã và **vai trò ghi trên audit lúc thao
+tác**, cửa hàng, trạng thái trước/sau, ghi chú và thay đổi nghiệp vụ audit ghi được (nguyên nhân,
+chênh lệch, tổng trước/sau, thứ tự áp dụng, số quyền chờ bù/phiếu trả/bao gỡ giữ); không trả IP,
+request id hay JSON thô. Trường audit cũ không có thì trả `null` và giao diện ghi “Chưa ghi
+nhận”, không suy đoán. Tên người là tên hiện tại của tài khoản (audit không lưu tên tại thời điểm
+thao tác). Không đổi schema, không sửa audit cũ.
+
+## Đồng bộ giữa các phiên
+
+- Trình duyệt thực hiện lệnh: sau khi server xác nhận, invalidate hồ sơ, danh sách, ngữ cảnh,
+  lịch sử, phiếu nhận, phiếu trả, chờ bù, tồn/sổ phát sinh cửa hàng, tồn kho tổng và kiểm hàng
+  thiếu. Query đang hiển thị tải lại; query khác chỉ đánh dấu cũ. Lỗi 409 (người khác thao tác
+  trước) cũng tải lại hồ sơ, không tự gửi lại.
+- Trình duyệt khác: query sai lệch đang hiển thị (hàng chờ, mục sai lệch của phiếu nhận, chi
+  tiết, lịch sử, danh sách Admin) tự tải lại mỗi **15 giây** khi tab hiển thị, và ngay khi quay
+  lại tab hoặc có mạng lại; tab ẩn không polling. Mặc định toàn ứng dụng không đổi. Đây là nhất
+  quán có độ trễ ngắn (≤ 15 giây + thời gian request), không phải realtime tức thì.
+- Biểu mẫu thao tác gắn với phiên bản người dùng bắt đầu nhập. Nếu hồ sơ đổi phiên bản trong lúc
+  có bản nháp, màn hình báo “Hồ sơ vừa được cập nhật” và server sẽ từ chối phiên bản cũ; người
+  dùng chủ động tải biểu mẫu theo phiên bản mới. Không có bản nháp thì biểu mẫu tự theo bản mới.
+- Làm mới nền thất bại (mất mạng, hết quyền): giữ dữ liệu cũ, ghi rõ thời điểm dữ liệu và nút thử
+  lại; lỗi lần tải đầu hiển thị trạng thái lỗi, không hiển thị như danh sách rỗng.
+- Ngữ cảnh phiếu nhận trả số đếm chính xác bằng SQL (`adjustmentCount`, `openCount`); danh sách
+  nhúng chỉ là trang mới nhất (100), phiếu có nhiều hơn thì mục sai lệch chuyển sang danh sách
+  phân trang theo `receiptId`.
+- Không thêm index/migration: danh sách lọc theo `status`/`store_id` và audit theo
+  `(entity_type, entity_id, created_at)` đã có index; bảng hồ sơ nhỏ (vài trăm dòng).
+
 ## Ma trận sự kiện
 
 | Sự kiện                | Chứng từ                                                               | Hàng/tồn cửa hàng                                                                                                               | Kho tổng                                                                                                        | Tiền                                                   | Chờ ưu tiên                              |
@@ -146,6 +221,9 @@ kiến). Không xây kho tệp mới trong phạm vi này.
   app cũ vẫn chặn bán các bao đó (đúng an toàn) nhưng không có màn hình gỡ giữ; ưu tiên
   forward-fix. Không xóa bảng/cột khi rollback.
 - Kiểm tra sau triển khai: `GET /api/v1/receipt-adjustments` trả 200 cho Admin, phiếu nhận đã chốt
-  hiển thị mục “Sai lệch sau khui bao”.
+  hiển thị mục “Sai lệch sau khui bao”; `/inventory?tab=adjustments` hiển thị tab Phiếu sai lệch và
+  `GET /api/v1/receipt-adjustments/:id/history` trả 200 cho hồ sơ trong phạm vi.
+- Tab Phiếu sai lệch, lịch sử và nhãn “Đã xử lý” không đổi schema; rollback bằng image trước chỉ
+  mất màn hình/endpoint mới, dữ liệu giữ nguyên.
 - Mở quyền cho cửa hàng sỉ không đổi schema hay dữ liệu; rollback bằng image trước chỉ làm quầy sỉ
   mất thao tác phía cửa hàng (API trả 403), hồ sơ đã tạo vẫn do HTKD/Admin xử lý tiếp được.
