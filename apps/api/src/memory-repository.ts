@@ -1485,7 +1485,13 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
           right.receivedAt.localeCompare(left.receivedAt) || right.id.localeCompare(left.id),
       );
     return {
-      data: structuredClone(slicePage(values, query.page, query.pageSize)),
+      data: structuredClone(
+        slicePage(values, query.page, query.pageSize).map((receipt) => ({
+          ...receipt,
+          receivedByDisplayName:
+            this.accounts.get(receipt.receivedByAccountId)?.displayName.trim() || null,
+        })),
+      ),
       pagination: pagination(query.page, query.pageSize, values.length),
     };
   }
@@ -1497,7 +1503,11 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     this.assertWarehouseActor(actor);
     const receipt = this.inboundReceipts.get(receiptId);
     if (!receipt) throw notFound('Không tìm thấy phiếu nhập nhà cung cấp');
-    return structuredClone(receipt);
+    return structuredClone({
+      ...receipt,
+      receivedByDisplayName:
+        this.accounts.get(receipt.receivedByAccountId)?.displayName.trim() || null,
+    });
   }
 
   public async receiveSupplierInbound(
@@ -1562,6 +1572,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       cost: null,
       version: 0,
       receivedByAccountId: actor.accountId,
+      receivedByDisplayName: this.accounts.get(actor.accountId)?.displayName.trim() || null,
       receivedAt: input.receivedAt,
       createdAt: now,
       updatedAt: now,
@@ -3925,6 +3936,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
 
   public async listSortedSaleTransfers(
     actor: AuthenticatedPrincipal,
+    page?: { page: number; pageSize: number },
   ): Promise<readonly SortedSaleTransfer[]> {
     return [...this.sortedSaleTransfers.values()]
       .filter(
@@ -3932,9 +3944,29 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
           canAccessStore(actor, transfer.sourceStoreId) ||
           canAccessStore(actor, transfer.destinationStoreId),
       )
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-      .slice(0, 500)
-      .map((transfer) => structuredClone(transfer));
+      .sort(
+        (left, right) =>
+          right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
+      )
+      .slice(page ? (page.page - 1) * page.pageSize : 0, page ? page.page * page.pageSize + 1 : 500)
+      .map((transfer) =>
+        structuredClone({
+          ...transfer,
+          totalBagQuantity: (transfer.lines ?? [transfer]).reduce(
+            (sum, line) => sum + line.bagQuantity,
+            0,
+          ),
+          totalWeightKg: gramsToKilogramsExact(
+            (transfer.lines ?? [transfer]).reduce(
+              (sum, line) => sum + kilogramsToGramsExact(line.weightKg),
+              0n,
+            ),
+          ),
+          createdByDisplayName: transfer.createdByAccountId
+            ? (this.accounts.get(transfer.createdByAccountId)?.displayName ?? null)
+            : null,
+        }),
+      );
   }
 
   public async createSortedSaleTransfer(
@@ -3964,30 +3996,66 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       input.destinationStoreId === input.sourceStoreId
     )
       throw new ApiError('VALIDATION_ERROR', 'Cửa hàng nhận không hợp lệ', 400);
-    const bagGrams = input.bagWeightsKg.map((weight) => kilogramsToGramsExact(weight));
-    if (bagGrams.some((grams) => grams <= 0n))
-      throw new ApiError('VALIDATION_ERROR', 'Khối lượng từng bao phải lớn hơn 0', 400);
-    const movedGrams = bagGrams.reduce((sum, grams) => sum + grams, 0n);
-    const lots = this.productLots(input.sourceStoreId, input.productId);
-    const consumed = takeMemoryWeight(lots, 'saleWeightKg', movedGrams);
-    if (!consumed)
-      throw new ApiError(
-        'INSUFFICIENT_STOCK',
-        'Tổng kg các bao vượt quá kg Sale khả dụng của mặt hàng',
-        409,
+    const requested = 'lines' in input ? input.lines : [input];
+    const prepared = requested.map((line) => {
+      if (this.products.get(line.productId)?.status !== 'ACTIVE')
+        throw new ApiError('VALIDATION_ERROR', 'Mặt hàng không còn hoạt động', 400);
+      const bagGrams = line.bagWeightsKg.map((weight) => kilogramsToGramsExact(weight));
+      if (!bagGrams.length || bagGrams.some((grams) => grams <= 0n))
+        throw new ApiError('VALIDATION_ERROR', 'Khối lượng từng bao phải lớn hơn 0', 400);
+      const movedGrams = bagGrams.reduce((sum, grams) => sum + grams, 0n);
+      const consumed = takeMemoryWeight(
+        this.productLots(input.sourceStoreId, line.productId),
+        'saleWeightKg',
+        movedGrams,
       );
+      if (!consumed)
+        throw new ApiError(
+          'INSUFFICIENT_STOCK',
+          'Tổng kg các bao vượt quá kg Sale khả dụng của mặt hàng',
+          409,
+        );
+      return { line, bagGrams, movedGrams, consumed };
+    });
+    // Validate every line before mutating any stock.
+    if (
+      !prepared.length ||
+      new Set(requested.map((line) => line.productId)).size !== requested.length
+    )
+      throw new ApiError('VALIDATION_ERROR', 'Mặt hàng trùng hoặc phiếu trống', 400);
+    const first = prepared[0]!;
+    const { bagGrams, movedGrams } = first;
+    const consumed = prepared.flatMap((item) => item.consumed);
     const now = this.now().toISOString();
     const transfer: SortedSaleTransfer = {
       id: randomUUID(),
       transferNumber: this.nextDocumentCode('PDC'),
-      sourceStockId: consumed[0]!.lot.id,
+      totalBagQuantity: prepared.reduce((sum, item) => sum + item.bagGrams.length, 0),
+      totalWeightKg: gramsToKilogramsExact(
+        prepared.reduce((sum, item) => sum + item.movedGrams, 0n),
+      ),
+      sourceStockId: first.consumed[0]!.lot.id,
       sourceStoreId: input.sourceStoreId,
       destinationStoreId: input.destinationStoreId,
-      productId: input.productId,
+      productId: first.line.productId,
       bagQuantity: bagGrams.length,
       weightKg: gramsToKilogramsExact(movedGrams),
       enteredWeightKg: gramsToKilogramsExact(movedGrams),
       bagWeightsKg: bagGrams.map((grams) => gramsToKilogramsExact(grams)),
+      lines: prepared.map((item) => ({
+        productId: item.line.productId,
+        sourceStockId: item.consumed[0]!.lot.id,
+        bagQuantity: item.bagGrams.length,
+        weightKg: gramsToKilogramsExact(item.movedGrams),
+        enteredWeightKg: gramsToKilogramsExact(item.movedGrams),
+        bagWeightsKg: item.bagGrams.map(gramsToKilogramsExact),
+        sourceLots: item.consumed.map(({ lot, grams }) => ({
+          stockId: lot.id,
+          weightKg: gramsToKilogramsExact(grams),
+        })),
+      })),
+      createdByAccountId: actor.accountId,
+      createdByDisplayName: this.accounts.get(actor.accountId)?.displayName ?? null,
       status: 'IN_TRANSIT',
       version: 0,
       note: input.note,
@@ -4046,30 +4114,32 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     }
     if (transfer.status !== 'IN_TRANSIT' || transfer.version !== input.expectedVersion)
       throw versionConflict('Phiếu đã được nhận hoặc thay đổi');
-    if (!this.hasMemorySaleBalance(transfer.destinationStoreId, transfer.productId))
-      this.initializeMemorySaleBaseline(transfer.destinationStoreId, transfer.productId);
     const now = this.now().toISOString();
-    const stock: StoreSortedStock = {
-      id: randomUUID(),
-      storeId: transfer.destinationStoreId,
-      productId: transfer.productId,
-      inventoryLotId: transfer.id,
-      bagCode: transfer.transferNumber,
-      saleWeightKg: transfer.weightKg,
-      bagQuantity: 0,
-      charityWeightKg: '0.000',
-      version: 0,
-      updatedAt: now,
-    };
-    this.sortedStocks.set(stock.id, stock);
-    this.sortedSaleCredited.set(stock.id, kilogramsToGramsExact(transfer.weightKg));
-    const creditKey = `${transfer.destinationStoreId}:${transfer.productId}`;
-    if (!this.sortedSaleFirstCreditPeriod.has(creditKey))
-      this.sortedSaleFirstCreditPeriod.set(
-        creditKey,
-        new Date(this.now().getTime() + 7 * 3600000).toISOString().slice(0, 7),
-      );
-    this.settleMemorySaleProduct(transfer.destinationStoreId, transfer.productId);
+    for (const line of transfer.lines ?? [transfer]) {
+      if (!this.hasMemorySaleBalance(transfer.destinationStoreId, line.productId))
+        this.initializeMemorySaleBaseline(transfer.destinationStoreId, line.productId);
+      const stock: StoreSortedStock = {
+        id: randomUUID(),
+        storeId: transfer.destinationStoreId,
+        productId: line.productId,
+        inventoryLotId: transfer.id,
+        bagCode: transfer.transferNumber,
+        saleWeightKg: line.weightKg,
+        bagQuantity: 0,
+        charityWeightKg: '0.000',
+        version: 0,
+        updatedAt: now,
+      };
+      this.sortedStocks.set(stock.id, stock);
+      this.sortedSaleCredited.set(stock.id, kilogramsToGramsExact(line.weightKg));
+      const creditKey = `${transfer.destinationStoreId}:${line.productId}`;
+      if (!this.sortedSaleFirstCreditPeriod.has(creditKey))
+        this.sortedSaleFirstCreditPeriod.set(
+          creditKey,
+          new Date(this.now().getTime() + 7 * 3600000).toISOString().slice(0, 7),
+        );
+      this.settleMemorySaleProduct(transfer.destinationStoreId, line.productId);
+    }
     const updated = { ...transfer, status: 'RECEIVED' as const, version: 1, receivedAt: now };
     this.sortedSaleTransfers.set(transfer.id, updated);
     this.sortedSaleTransferMutations.set(mutationKey, { hash: requestHash, transferId });
@@ -4107,21 +4177,23 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (transfer.status !== 'IN_TRANSIT' || transfer.version !== input.expectedVersion)
       throw versionConflict('Phiếu đã được nhận hoặc thay đổi');
     const now = this.now().toISOString();
-    const stock: StoreSortedStock = {
-      id: randomUUID(),
-      storeId: transfer.sourceStoreId,
-      productId: transfer.productId,
-      inventoryLotId: transfer.id,
-      bagCode: transfer.transferNumber,
-      saleWeightKg: transfer.weightKg,
-      bagQuantity: 0,
-      charityWeightKg: '0.000',
-      version: 0,
-      updatedAt: now,
-    };
-    this.sortedStocks.set(stock.id, stock);
-    this.sortedSaleCredited.set(stock.id, kilogramsToGramsExact(transfer.weightKg));
-    this.settleMemorySaleProduct(transfer.sourceStoreId, transfer.productId);
+    for (const line of transfer.lines ?? [transfer]) {
+      const stock: StoreSortedStock = {
+        id: randomUUID(),
+        storeId: transfer.sourceStoreId,
+        productId: line.productId,
+        inventoryLotId: transfer.id,
+        bagCode: transfer.transferNumber,
+        saleWeightKg: line.weightKg,
+        bagQuantity: 0,
+        charityWeightKg: '0.000',
+        version: 0,
+        updatedAt: now,
+      };
+      this.sortedStocks.set(stock.id, stock);
+      this.sortedSaleCredited.set(stock.id, kilogramsToGramsExact(line.weightKg));
+      this.settleMemorySaleProduct(transfer.sourceStoreId, line.productId);
+    }
     const updated: SortedSaleTransfer = {
       ...transfer,
       status: 'CANCELLED',
@@ -4180,7 +4252,12 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
           right.transferNumber.localeCompare(left.transferNumber),
       );
     return {
-      data: structuredClone(slicePage(values, query.page, query.pageSize)),
+      data: structuredClone(
+        slicePage(values, query.page, query.pageSize).map((row) => ({
+          ...row,
+          createdByDisplayName: this.accounts.get(row.createdByAccountId)?.displayName ?? null,
+        })),
+      ),
       pagination: pagination(query.page, query.pageSize, values.length),
     };
   }

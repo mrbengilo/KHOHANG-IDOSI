@@ -639,8 +639,12 @@
   background: var(--surface-hover, #f1f5f9);
 }
 .bag-opening-history .bag-opening-history__weight {
-  text-align: right;
+  text-align: left;
   font-variant-numeric: tabular-nums;
+}
+.bag-opening-history th + th,
+.bag-opening-history td + td {
+  border-left: 1px solid var(--border);
 }
 .bag-opening-history time {
   white-space: nowrap;

@@ -112,6 +112,7 @@ import {
   CancelStoreTransferRequestSchema,
   StoreTransferParamsSchema,
   CreateSortedSaleTransferRequestSchema,
+  ListSortedSaleTransfersQuerySchema,
   ReceiveSortedSaleTransferRequestSchema,
   CancelSortedSaleTransferRequestSchema,
   ListWarehouseShortageChecksQuerySchema,
@@ -1570,7 +1571,9 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.get('/api/v1/sorted-sale-transfers', async (request) => {
     const session = await authenticate(request, repository);
-    return { data: await repository.listSortedSaleTransfers(session.principal) };
+    const query = ListSortedSaleTransfersQuerySchema.parse(request.query);
+    const rows = await repository.listSortedSaleTransfers(session.principal, query);
+    return { data: rows.slice(0, query.pageSize), hasMore: rows.length > query.pageSize };
   });
 
   app.post('/api/v1/sorted-sale-transfers', async (request, reply) => {
@@ -2753,7 +2756,20 @@ function openApiDocument(): Record<string, unknown> {
       '/api/v1/sorted-sale-transfers': {
         get: {
           security: cookieSecurity,
-          responses: { '200': { description: 'Sorted Sale transfers in caller scope' } },
+          parameters: [
+            { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+            {
+              name: 'pageSize',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+            },
+          ],
+          responses: {
+            '200': {
+              description:
+                'Header-paginated Sale documents in caller scope; data includes lines and creator name, hasMore indicates another page',
+            },
+          },
         },
         post: {
           security: cookieSecurity,
@@ -2761,7 +2777,10 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: {
-            '201': { description: 'Dispatched transfer and deducted source Sale stock' },
+            '201': {
+              description:
+                'Atomically dispatched one document with unique product lines and per-bag weights; legacy productId/bagWeightsKg requests remain supported',
+            },
           },
         },
       },

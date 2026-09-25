@@ -763,6 +763,14 @@ export function ProductionOpenBagPage({ role }: AppOutletContext) {
   const [notice, setNotice] = useState('');
   const [selectedBag, setSelectedBag] = useState<StoreInventoryBag | null>(null);
   const operationKeys = useRef(new Map<string, string>());
+  const openingTrigger = useRef<HTMLButtonElement | null>(null);
+  const unopenedHeading = useRef<HTMLHeadingElement>(null);
+  const restoreOpeningFocus = () => {
+    const target = openingTrigger.current?.isConnected
+      ? openingTrigger.current
+      : unopenedHeading.current;
+    target?.focus();
+  };
   const effectiveStoreId = role === 'STORE' ? defaultStoreId : storeId;
   const filters = {
     ...(effectiveStoreId ? { storeId: effectiveStoreId } : {}),
@@ -820,6 +828,7 @@ export function ProductionOpenBagPage({ role }: AppOutletContext) {
       operationKeys.current.delete(`${submittedBag.id}:${submittedBag.version}`);
       setSelectedBag(null);
       setNotice(openBagNotice(submittedBag, bag));
+      unopenedHeading.current?.focus();
       await Promise.all(
         [
           'store-inventory-bags',
@@ -955,7 +964,9 @@ export function ProductionOpenBagPage({ role }: AppOutletContext) {
       {mutation.error ? <p role="alert">{errorMessage(mutation.error)}</p> : null}
       <section className="panel">
         <div className="section-heading">
-          <h2>Bao chưa khui ({bagsQuery.data?.pagination.totalItems ?? 0})</h2>
+          <h2 ref={unopenedHeading} tabIndex={-1}>
+            Bao chưa khui ({bagsQuery.data?.pagination.totalItems ?? 0})
+          </h2>
           <Button
             tone="secondary"
             busy={bagsQuery.isFetching}
@@ -1001,7 +1012,8 @@ export function ProductionOpenBagPage({ role }: AppOutletContext) {
                 {role === 'STORE' ? (
                   <Button
                     disabled={mutation.isPending || bagsQuery.isFetching}
-                    onClick={() => {
+                    onClick={(event) => {
+                      openingTrigger.current = event.currentTarget;
                       setSelectedBag(bag);
                       mutation.reset();
                     }}
@@ -1035,13 +1047,19 @@ export function ProductionOpenBagPage({ role }: AppOutletContext) {
               .
             </p>
             <OpenBagConfirmation
+              key={selectedBag.id}
               bag={selectedBag}
+              productName={productName(selectedBag.productId)}
+              storeName={storeName(stores, selectedBag.storeId)}
               busy={mutation.isPending}
               canConfirm={
                 !bagsQuery.isFetching &&
                 isOpenBagSelectionCurrent(selectedBag, currentBag, defaultStoreId)
               }
-              onCancel={() => setSelectedBag(null)}
+              onCancel={() => {
+                setSelectedBag(null);
+                restoreOpeningFocus();
+              }}
               onConfirm={() => {
                 if (
                   !mutation.isPending &&

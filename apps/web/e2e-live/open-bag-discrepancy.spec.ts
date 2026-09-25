@@ -127,11 +127,30 @@ test('production opening locks a stale discrepancy form and retains opening hist
         });
     }
     await tab.getByRole('button', { name: 'Khui bao ' + target!.displayCode, exact: true }).click();
+    await expect(tab.getByRole('heading', { name: 'Kiểm tra trước khi khui' })).toBeFocused();
+    await expect(tab.getByRole('heading', { name: 'Kiểm tra trước khi khui' })).toBeInViewport();
+    await tab.getByRole('button', { name: 'Bỏ chọn', exact: true }).click();
+    await expect(
+      tab.getByRole('button', { name: 'Khui bao ' + target!.displayCode, exact: true }),
+    ).toBeFocused();
+    await tab.getByRole('button', { name: 'Khui bao ' + target!.displayCode, exact: true }).click();
     await tab.getByRole('button', { name: 'Khui 1 bao', exact: true }).click();
     await expect(tab.locator('.operation-notice--success')).toBeVisible();
     await expect(tab.getByRole('heading', { name: /Lịch sử khui/ })).toBeVisible();
     const table = tab.getByRole('table', { name: 'Lịch sử khui kiện', exact: true });
     await expect(table.locator('tbody tr')).toHaveCount(1);
+    expect(
+      await table
+        .locator('th,td')
+        .evaluateAll((cells) => cells.every((cell) => getComputedStyle(cell).textAlign === 'left')),
+    ).toBe(true);
+    expect(
+      await table
+        .locator('tbody td+td')
+        .evaluateAll((cells) =>
+          cells.every((cell) => parseFloat(getComputedStyle(cell).borderLeftWidth) > 0),
+        ),
+    ).toBe(true);
     await expect(table.getByRole('columnheader')).toHaveText([
       'Thời gian khui',
       'Mã bao',

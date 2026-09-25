@@ -7,6 +7,7 @@ import {
   getAdminOperationalSettings,
   getAdminHtkdAssignments,
   listActiveStoreChoicesForAssignments,
+  listActiveStoresForAccounts,
   listAdminAccounts,
   listAdminStoreGroupDirectory,
   listAdminStoreGroups,
@@ -59,6 +60,32 @@ afterEach(() => {
 });
 
 describe('admin API client', () => {
+  it('keeps account store choices beyond the first hundred with the same active retail scope', async () => {
+    const laterStore = { ...store, id: '44444444-4444-4444-8444-444444444444', code: 'LATER' };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: [store],
+          pagination: { page: 1, pageSize: 100, totalItems: 101, totalPages: 2 },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: [laterStore],
+          pagination: { page: 2, pageSize: 100, totalItems: 101, totalPages: 2 },
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(listActiveStoresForAccounts()).resolves.toEqual([store, laterStore]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const [index, call] of fetchMock.mock.calls.entries()) {
+      const url = new URL(String(call[0]), 'http://test');
+      expect(url.searchParams.get('page')).toBe(String(index + 1));
+      expect(url.searchParams.get('kind')).toBe('RETAIL');
+      expect(url.searchParams.get('status')).toBe('ACTIVE');
+    }
+  });
   it('queries real paginated accounts without a mock fallback', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       jsonResponse({

@@ -27,6 +27,7 @@ const receipt = {
   cost: null,
   version: 1,
   receivedByAccountId: id(4),
+  receivedByDisplayName: 'Người nhập khác người xem',
   receivedAt: timestamp,
   createdAt: timestamp,
   updatedAt: timestamp,
@@ -78,13 +79,17 @@ test('inbound history preserves product details, required markers and compact re
     route.fulfill({ json: { data: [receipt], pagination } }),
   );
   await page.goto('/warehouse-inbound');
-  const card = page.locator('.inbound-receipt');
+  const card = page.locator('.document-history');
   await expect(card).toContainText('Đầm');
   await expect(card).toContainText(products[1].name);
-  await expect(card.getByRole('row', { name: 'Đầm 2 bao' })).toBeVisible();
-  await expect(card.getByRole('row', { name: 'Tổng · 2 mặt hàng 3 bao' })).toBeVisible();
-  await expect(card.locator('time')).toContainText('01:30');
-  await expect(card.locator('time')).toContainText('21/09/2026');
+  await expect(card.locator('tbody tr')).toHaveCount(2);
+  await expect(card.locator('tbody tr').first().locator('td').nth(4)).toHaveText('2');
+  await expect(card.locator('tbody tr').first().locator('td').nth(5)).toHaveText('3');
+  await expect(card.locator('tbody tr').first().locator('td').nth(0)).toHaveText(
+    '01:30:00 21/09/2026',
+  );
+  await expect(card).toContainText('Người nhập khác người xem');
+  await expect(card.locator('tbody [rowspan="2"]')).toHaveCount(5);
   await expect(page.getByLabel('Nhà cung cấp', { exact: true })).toHaveAttribute('required', '');
   await expect(
     page
@@ -104,42 +109,17 @@ test('inbound history preserves product details, required markers and compact re
   await expect(page.getByLabel(/VAT/)).toHaveCount(0);
   await expect(page.getByRole('button', { name: /VAT/ })).toHaveCount(0);
   await expect(card.getByText(/Cập nhật VAT/)).toHaveCount(0);
-  await card.getByText('Chốt chi phí theo hóa đơn', { exact: true }).click();
-  await expect(card.locator('.inbound-required')).toHaveCount(3);
-  // Money fields show thousands separators while the API still receives plain integers.
-  const invoiceCost = card.getByLabel('Tổng tiền hàng theo hóa đơn (VND)');
-  await invoiceCost.fill('1234567');
-  await expect(invoiceCost).toHaveValue('1,234,567');
-  await card.getByLabel('Phí vận chuyển (VND)').fill('2000');
-  await expect(card.getByLabel('Phí vận chuyển (VND)')).toHaveValue('2,000');
-  await expect(card.getByLabel('Phí bốc vác (VND)')).toHaveValue('0');
-  let submittedCosts: unknown = null;
-  await page.route('**/api/v1/inbound-receipts/*/confirm-costs', (route) => {
-    submittedCosts = route.request().postDataJSON();
-    return route.fulfill({
-      status: 409,
-      json: { error: { code: 'VERSION_CONFLICT', message: 'Kiểm thử định dạng tiền.' } },
-    });
-  });
-  await card.getByRole('button', { name: 'Xác nhận chi phí hóa đơn' }).click();
-  await expect
-    .poll(() => submittedCosts)
-    .toMatchObject({
-      invoiceGoodsCostVnd: 1234567,
-      transportationFeeVnd: 2000,
-      handlingFeeVnd: 0,
-    });
+  await expect(page.getByText('Chốt chi phí theo hóa đơn', { exact: true })).toHaveCount(0);
   for (const width of [360, 375, 390, 412, 768, 1366, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
-    expect(await card.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(
-      true,
-    );
+    await expect(card).toHaveCSS('overflow-x', 'auto');
+    expect((await card.boundingBox())!.width).toBeLessThanOrEqual(width);
     const firstRow = card.locator('tbody tr').first();
-    const nameBox = (await firstRow.locator('th').boundingBox())!;
-    const quantityBox = (await firstRow.locator('td').boundingBox())!;
+    const nameBox = (await firstRow.locator('td').nth(3).boundingBox())!;
+    const quantityBox = (await firstRow.locator('td').nth(4).boundingBox())!;
     expect(Math.abs(nameBox.y - quantityBox.y)).toBeLessThan(2);
     if ([375, 768, 1440].includes(width)) {
       await card.screenshot({ path: testInfo.outputPath(`inbound-history-${width}.png`) });

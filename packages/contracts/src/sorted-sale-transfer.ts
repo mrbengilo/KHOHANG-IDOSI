@@ -6,12 +6,35 @@ import {
   IsoDateTimeSchema,
   PositiveKilogramsDecimalSchema,
   PositiveUnitQuantitySchema,
+  PaginationQuerySchema,
 } from './common.js';
+
+export const SortedSaleTransferLineSchema = z
+  .object({
+    productId: EntityIdSchema,
+    sourceStockId: EntityIdSchema,
+    bagQuantity: PositiveUnitQuantitySchema,
+    weightKg: PositiveKilogramsDecimalSchema,
+    enteredWeightKg: PositiveKilogramsDecimalSchema.nullable(),
+    bagWeightsKg: z.array(PositiveKilogramsDecimalSchema),
+    sourceLots: z
+      .array(
+        z.object({ stockId: EntityIdSchema, weightKg: PositiveKilogramsDecimalSchema }).strict(),
+      )
+      .optional(),
+  })
+  .strict();
+export type SortedSaleTransferLine = z.infer<typeof SortedSaleTransferLineSchema>;
 
 export const SortedSaleTransferSchema = z
   .object({
     id: EntityIdSchema,
     transferNumber: z.string().min(1),
+    lines: z.array(SortedSaleTransferLineSchema).min(1).optional(),
+    totalBagQuantity: PositiveUnitQuantitySchema.optional(),
+    totalWeightKg: PositiveKilogramsDecimalSchema.optional(),
+    createdByAccountId: EntityIdSchema.optional(),
+    createdByDisplayName: z.string().nullable().optional(),
     sourceStockId: EntityIdSchema,
     sourceStoreId: EntityIdSchema,
     destinationStoreId: EntityIdSchema,
@@ -36,18 +59,43 @@ export type SortedSaleTransfer = z.infer<typeof SortedSaleTransferSchema>;
  * A transfer takes weight from the product's whole Sale pool at the source store,
  * oldest sorted lots first. The total of the bag weights must fit that pool.
  */
+const transferLineInput = z
+  .object({ productId: EntityIdSchema, bagWeightsKg: BagWeightsKgSchema })
+  .strict();
+const transferHeaderInput = {
+  sourceStoreId: EntityIdSchema,
+  destinationStoreId: EntityIdSchema,
+  note: z.string().trim().max(500).nullable(),
+};
 export const CreateSortedSaleTransferRequestSchema = z
-  .object({
-    sourceStoreId: EntityIdSchema,
-    destinationStoreId: EntityIdSchema,
-    productId: EntityIdSchema,
-    bagWeightsKg: BagWeightsKgSchema,
-    note: z.string().trim().max(500).nullable(),
-  })
-  .strict()
-  .refine((value) => value.sourceStoreId !== value.destinationStoreId, {
-    path: ['destinationStoreId'],
-    message: 'Stores must differ',
+  .union([
+    z
+      .object({ ...transferHeaderInput, lines: z.array(transferLineInput).min(1).max(100) })
+      .strict(),
+    z
+      .object({
+        ...transferHeaderInput,
+        productId: EntityIdSchema,
+        bagWeightsKg: BagWeightsKgSchema,
+      })
+      .strict(),
+  ])
+  .superRefine((value, context) => {
+    if (value.sourceStoreId === value.destinationStoreId)
+      context.addIssue({
+        code: 'custom',
+        path: ['destinationStoreId'],
+        message: 'Stores must differ',
+      });
+    if (
+      'lines' in value &&
+      new Set(value.lines.map((line) => line.productId)).size !== value.lines.length
+    )
+      context.addIssue({
+        code: 'custom',
+        path: ['lines'],
+        message: 'Mỗi mặt hàng chỉ được chọn một lần.',
+      });
   });
 export type CreateSortedSaleTransferRequest = z.infer<typeof CreateSortedSaleTransferRequestSchema>;
 
@@ -73,6 +121,7 @@ export const SortedSaleTransferParamsSchema = z.object({ transferId: EntityIdSch
 export const SortedSaleTransferResponseSchema = z
   .object({ data: SortedSaleTransferSchema })
   .strict();
+export const ListSortedSaleTransfersQuerySchema = PaginationQuerySchema;
 export const SortedSaleTransfersResponseSchema = z
-  .object({ data: z.array(SortedSaleTransferSchema) })
+  .object({ data: z.array(SortedSaleTransferSchema), hasMore: z.boolean().optional() })
   .strict();

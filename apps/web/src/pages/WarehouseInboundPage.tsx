@@ -1,23 +1,18 @@
 import {
   CreateInboundReceiptRequestSchema,
   type CreateInboundReceiptRequest,
-  type InboundReceipt,
 } from '@idosi/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState, type FormEvent } from 'react';
 import { AdminAccess } from '../features/admin/AdminAccess';
 import { Button } from '../components/Button';
-import { MoneyInput } from '../components/MoneyInput';
 import { PageHeader } from '../components/PageHeader';
 import { ProductBagPicker } from '../components/ProductBagPicker';
-import {
-  createWarehouseInbound,
-  confirmWarehouseInboundCosts,
-  listCatalog,
-  listWarehouseInbounds,
-} from '../lib/api';
+import { createWarehouseInbound, listCatalog, listWarehouseInbounds } from '../lib/api';
 import { formatVnd } from '../lib/format';
-import { InboundReceiptDetails } from './InboundReceiptDetails';
+import { groupInboundProducts } from './InboundReceiptDetails';
+import { formatDocumentTime } from '../lib/business-time';
+import '../styles/document-history.css';
 import './warehouse-inbound.css';
 
 interface DraftProduct {
@@ -223,40 +218,94 @@ function WarehouseInboundContent() {
         ) : null}
         {history.isPending ? <p role="status">Đang tải phiếu nhập…</p> : null}
         {history.data?.data.length === 0 ? <p>Chưa có phiếu nhập.</p> : null}
-        {history.data?.data.map((receipt) => (
-          <article className="inbound-receipt" key={receipt.id}>
-            <div>
-              <strong>
-                {receipt.referenceCode} · {receipt.supplierName}
-              </strong>
-              <InboundReceiptDetails receipt={receipt} products={catalog.data ?? []} />
-              {receipt.vat ? (
-                <span>
-                  {`VAT ghi nhận trước đây: ${formatVnd(receipt.vat.amountVnd)} (${receipt.vat.ratePercent}%)`}
-                </span>
-              ) : null}
-              <span>
-                {receipt.bags.length} bao ·{' '}
-                {receipt.status === 'COST_CONFIRMED'
-                  ? 'Đã xác nhận chi phí'
-                  : receipt.status === 'CANCELLED'
-                    ? 'Đã hủy'
-                    : 'Đã nhập, chờ xác nhận chi phí'}
-              </span>
-              {receipt.status === 'COST_PENDING' ? <InvoiceCostEditor receipt={receipt} /> : null}
-              {receipt.cost ? (
-                <p>
-                  Tiền hàng: {formatVnd(receipt.cost.goodsCostVnd)} · Vận chuyển:{' '}
-                  {formatVnd(receipt.cost.transportationFeeVnd)} · Bốc vác:{' '}
-                  {formatVnd(receipt.cost.handlingFeeVnd)} · Tổng chi phí:{' '}
-                  {receipt.cost.totalCostVnd === null
-                    ? 'Chưa có'
-                    : formatVnd(receipt.cost.totalCostVnd)}
-                </p>
-              ) : null}
-            </div>
-          </article>
-        ))}
+        <p>
+          Chi phí nhận hàng do HTKD chốt tại Nhận hàng / Chi phí sau khi cửa hàng gửi kết quả thực
+          nhận. Tên người nhập là tên tài khoản hiện tại.
+        </p>
+        <div
+          className="document-history"
+          role="region"
+          aria-label="Lịch sử nhập kho tổng"
+          tabIndex={0}
+        >
+          <table>
+            <thead>
+              <tr>
+                {[
+                  'Thời gian',
+                  'Mã phiếu',
+                  'Nhà cung cấp',
+                  'Mặt hàng',
+                  'Số lượng (bao)',
+                  'Tổng số lượng (bao)',
+                  'Người thực hiện',
+                ].map((label) => (
+                  <th scope="col" key={label}>
+                    {label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            {history.data?.data.map((receipt) => {
+              const lines = groupInboundProducts(receipt.bags, catalog.data ?? []);
+              return (
+                <tbody key={receipt.id}>
+                  {lines.map((line, index) => (
+                    <tr key={line.productId}>
+                      {index === 0 ? (
+                        <>
+                          <td rowSpan={lines.length}>
+                            <time dateTime={receipt.receivedAt}>
+                              {formatDocumentTime(receipt.receivedAt)}
+                            </time>
+                          </td>
+                          <td rowSpan={lines.length}>
+                            <details>
+                              <summary>{receipt.referenceCode || 'Chưa ghi nhận mã phiếu'}</summary>
+                              <p>
+                                {receipt.status === 'CANCELLED'
+                                  ? 'Đã hủy'
+                                  : receipt.status === 'COST_CONFIRMED'
+                                    ? 'Đã ghi nhận chi phí nhà cung cấp'
+                                    : 'Chưa ghi nhận chi phí nhà cung cấp'}
+                              </p>
+                              {receipt.cost ? (
+                                <p>
+                                  Tiền hàng: {formatVnd(receipt.cost.goodsCostVnd)} · Vận chuyển:{' '}
+                                  {formatVnd(receipt.cost.transportationFeeVnd)} · Bốc vác:{' '}
+                                  {formatVnd(receipt.cost.handlingFeeVnd)} · Tổng chi phí:{' '}
+                                  {formatVnd(receipt.cost.totalCostVnd)}
+                                </p>
+                              ) : null}
+                              {receipt.vat ? (
+                                <p>
+                                  VAT ghi nhận trước đây: {formatVnd(receipt.vat.amountVnd)} (
+                                  {receipt.vat.ratePercent}%)
+                                </p>
+                              ) : null}
+                            </details>
+                            {receipt.status === 'CANCELLED' ? <strong>Đã hủy</strong> : null}
+                          </td>
+                          <td rowSpan={lines.length}>{receipt.supplierName}</td>
+                        </>
+                      ) : null}
+                      <td>{line.name}</td>
+                      <td>{line.quantity}</td>
+                      {index === 0 ? (
+                        <>
+                          <td rowSpan={lines.length}>{receipt.bags.length}</td>
+                          <td rowSpan={lines.length}>
+                            {receipt.receivedByDisplayName ?? 'Chưa ghi nhận'}
+                          </td>
+                        </>
+                      ) : null}
+                    </tr>
+                  ))}
+                </tbody>
+              );
+            })}
+          </table>
+        </div>
         <div className="button-row">
           <Button
             tone="secondary"
@@ -278,127 +327,5 @@ function WarehouseInboundContent() {
         </div>
       </section>
     </>
-  );
-}
-
-function InvoiceCostEditor({ receipt }: { receipt: InboundReceipt }) {
-  const client = useQueryClient();
-  const [amount, setAmount] = useState('');
-  const [shipping, setShipping] = useState('0');
-  const [handling, setHandling] = useState('0');
-  const [version, setVersion] = useState(receipt.version);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const attempt = useRef<{ key: string; serialized: string } | null>(null);
-  const stale = version !== receipt.version;
-  async function save(event: FormEvent) {
-    event.preventDefault();
-    if (busy || stale) return;
-    if (
-      ![amount, shipping, handling].every(
-        (value) => /^\d+$/.test(value) && Number.isSafeInteger(Number(value)),
-      )
-    ) {
-      setError('Nhập số tiền nguyên VND không âm trong giới hạn an toàn.');
-      return;
-    }
-    const input = {
-      invoiceGoodsCostVnd: Number(amount),
-      productCosts: [],
-      transportationFeeVnd: Number(shipping),
-      handlingFeeVnd: Number(handling),
-      expectedVersion: version,
-    };
-    const serialized = JSON.stringify(input);
-    if (attempt.current?.serialized !== serialized)
-      attempt.current = { key: crypto.randomUUID(), serialized };
-    setBusy(true);
-    setError('');
-    try {
-      await confirmWarehouseInboundCosts(receipt.id, input, attempt.current.key);
-      await Promise.all(
-        ['warehouse-inbounds', 'reports', 'dashboard'].map((key) =>
-          client.invalidateQueries({ queryKey: [key] }),
-        ),
-      );
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Không thể chốt chi phí.');
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <details>
-      <summary>Chốt chi phí theo hóa đơn</summary>
-      <p>
-        Tiền hàng chưa gồm VAT, vận chuyển và bốc vác. VAT do HTKD nhập theo phiếu nhận hàng thực tế
-        của cửa hàng. Không cần khối lượng; không tự phân bổ tiền hàng cho từng bao.
-      </p>
-      <form onSubmit={save} noValidate>
-        <fieldset className="form-grid" disabled={busy}>
-          <label>
-            <span>
-              Tổng tiền hàng theo hóa đơn (VND){' '}
-              <span className="inbound-required" aria-hidden="true">
-                *
-              </span>
-            </span>
-            <MoneyInput
-              required
-              aria-label="Tổng tiền hàng theo hóa đơn (VND)"
-              value={amount}
-              onValueChange={setAmount}
-            />
-          </label>
-          <label>
-            <span>
-              Phí vận chuyển (VND){' '}
-              <span className="inbound-required" aria-hidden="true">
-                *
-              </span>
-            </span>
-            <MoneyInput
-              required
-              aria-label="Phí vận chuyển (VND)"
-              value={shipping}
-              onValueChange={setShipping}
-            />
-          </label>
-          <label>
-            <span>
-              Phí bốc vác (VND){' '}
-              <span className="inbound-required" aria-hidden="true">
-                *
-              </span>
-            </span>
-            <MoneyInput
-              required
-              aria-label="Phí bốc vác (VND)"
-              value={handling}
-              onValueChange={setHandling}
-            />
-          </label>
-          <Button type="submit" busy={busy} disabled={stale}>
-            Xác nhận chi phí hóa đơn
-          </Button>
-        </fieldset>
-      </form>
-      {stale ? (
-        <p role="alert">
-          Phiếu đã thay đổi.{' '}
-          <Button
-            tone="secondary"
-            onClick={() => {
-              setVersion(receipt.version);
-              attempt.current = null;
-              setError('');
-            }}
-          >
-            Dùng phiên bản phiếu mới
-          </Button>
-        </p>
-      ) : null}
-      {error ? <p role="alert">{error}</p> : null}
-    </details>
   );
 }

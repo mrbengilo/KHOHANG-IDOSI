@@ -10,11 +10,11 @@ Trong **Điều chuyển**, cửa hàng nguồn chọn:
 
 1. Cửa hàng nhận.
 2. Mặt hàng Sale (ví dụ Đồ nam). Số kg khả dụng là tổng Sale của mặt hàng đó ở mọi Mã bao đã lọc.
-3. Số lượng bao, rồi nhập kg của từng bao (Bao 1, Bao 2, …).
+3. Bấm Thêm mặt hàng, nhập số lượng bao và kg từng bao (Bao 1, Bao 2, …). Lặp lại cho các mặt hàng khác trong cùng phiếu.
 
 Tổng kg các bao phải lớn hơn 0 và không vượt quá kg Sale khả dụng của mặt hàng. Máy chủ kiểm tra lại dưới khóa cửa hàng. Ví dụ: Đồ nam có 100 kg, điều chuyển 2 bao 20 kg và 30 kg (tổng 50 kg) là hợp lệ.
 
-Khi tạo phiếu, Sale nguồn giảm ngay, lấy từ các Mã bao lọc sớm nhất trước (cùng thứ tự với trừ bán IDOSI). Phiếu lưu kg từng bao (`sorted_sale_transfers.bag_weights_kg`) và hiển thị "Bao 1 · Đồ nam · 20 kg". Phiếu ở trạng thái **Đang vận chuyển**. Cửa hàng đích xác nhận nhận hàng thì Sale đích mới tăng. Cửa hàng đích cần có dữ liệu IDOSI tháng hiện tại để xác lập mốc đối soát Sale trước khi nhận.
+Khi tạo phiếu, Sale nguồn giảm ngay, lấy từ các Mã bao lọc sớm nhất trước (cùng thứ tự với trừ bán IDOSI). Phiếu nhiều mặt hàng lưu các dòng và kg từng bao trong `sorted_sale_transfers.lines`; cột `bag_weights_kg` giữ dòng đầu để tương thích và hiển thị "Bao 1 · Đồ nam · 20 kg". Phiếu ở trạng thái **Đang vận chuyển**. Cửa hàng đích xác nhận nhận hàng thì Sale đích mới tăng. Cửa hàng đích cần có dữ liệu IDOSI tháng hiện tại để xác lập mốc đối soát Sale trước khi nhận.
 
 ## Từ thiện
 
@@ -30,3 +30,7 @@ Mục **Hàng Từ thiện** gom theo mặt hàng, có hai thao tác:
 - Bỏ ràng buộc `store_sorted_stocks_new_sale_bags_with_weight`: số bao trên tồn đã lọc không còn được ghi, các cột số bao cũ chỉ giữ cho dữ liệu lịch sử.
 
 Migration chỉ mở rộng schema và tương thích với image cũ trong lúc triển khai. API cũ `POST /store-sorted-stocks/:id/move-to-sale` và `/export-charity` vẫn hoạt động; trường `bagQuantity` cũ được chấp nhận và bỏ qua. Trước deploy cần backup PostgreSQL. Rollback ứng dụng giữ lại bảng/cột mới; sau rollback cần đối soát `store_sorting_events`, `sorted_sale_transfers`, `store_charity_exports` và tồn đã lọc trước khi phát hành bản sửa tiếp.
+
+## Migration 0030 và phiếu nhiều dòng
+
+Một mã phiếu có nhiều sản phẩm duy nhất; nhận/hủy toàn phiếu nguyên tử. Xem [thiết kế, compatibility, focus và kiểm chứng](document-history-multiline-transfers.md). Tổng số bao/kg tính trên tất cả dòng; legacy thiếu kg từng bao được ghi rõ, không chia đều tổng kg.

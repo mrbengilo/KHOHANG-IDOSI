@@ -21,21 +21,8 @@ const sourceLabels: Record<StoreBagOpening['source'], string> = {
   IDOSI: 'Mở do đồng bộ IDOSI (legacy)',
   LEGACY: 'Chưa ghi nhận',
 };
-const dateTime = new Intl.DateTimeFormat('en-GB', {
-  timeZone: 'Asia/Ho_Chi_Minh',
-  day: '2-digit',
-  month: '2-digit',
-  year: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-  hourCycle: 'h23',
-});
-export function formatOpeningTime(value: string | null): string {
-  if (!value || !Number.isFinite(new Date(value).getTime())) return unknown;
-  const parts = new Map(dateTime.formatToParts(new Date(value)).map((p) => [p.type, p.value]));
-  return `${parts.get('hour')}:${parts.get('minute')}:${parts.get('second')} ${parts.get('day')}/${parts.get('month')}/${parts.get('year')}`;
-}
+export { formatDocumentTime as formatOpeningTime } from '../../lib/business-time';
+import { formatDocumentTime as formatOpeningTime } from '../../lib/business-time';
 const weight = (value: string | null) => (value === null ? unknown : formatKgExact(value));
 const storeLabel = (stores: readonly Store[], id: string) => {
   const store = stores.find((s) => s.id === id);

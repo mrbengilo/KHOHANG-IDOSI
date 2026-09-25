@@ -189,6 +189,10 @@ test('an order approved by the 09:00 allocation reaches the store and can be rec
       .locator('.receipt-scope select')
       .selectOption({ label: `UI_RCV_${token} · Cửa hàng nhận ${token}` });
     const review = page.locator('.receipt-detail');
+    await page.locator('.receipt-card').first().click();
+    await expect(review).toBeFocused();
+    expect((await review.boundingBox())!.y).toBeGreaterThanOrEqual(0);
+    expect((await review.boundingBox())!.y).toBeLessThan(200);
     await expect(review.getByRole('button', { name: /Chốt giá & nhập kho/ })).toBeVisible();
     await review.getByLabel('Giá nhập / kg (VND)').fill('20000');
     await review.getByLabel('Khối lượng bao 1 (kg)').fill('30');

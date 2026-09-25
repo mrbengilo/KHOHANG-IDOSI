@@ -764,7 +764,10 @@ export interface WarehouseRepository {
     context: RequestContext,
   ): Promise<IdempotentResource<CharityExport>>;
 
-  listSortedSaleTransfers(actor: AuthenticatedPrincipal): Promise<readonly SortedSaleTransfer[]>;
+  listSortedSaleTransfers(
+    actor: AuthenticatedPrincipal,
+    page?: { page: number; pageSize: number },
+  ): Promise<readonly SortedSaleTransfer[]>;
   createSortedSaleTransfer(
     actor: AuthenticatedPrincipal,
     input: CreateSortedSaleTransferRequest,

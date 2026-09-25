@@ -1,3 +1,7 @@
+import {
+  CreateSortedSaleTransferRequestSchema,
+  type SortedSaleTransferLine,
+} from '@idosi/contracts';
 import { and, asc, desc, eq, gt, inArray, isNull, ne, or } from 'drizzle-orm';
 
 import type { Database } from './client.js';
@@ -13,6 +17,7 @@ import {
   storeSortingEvents,
   stores,
   users,
+  products,
 } from './schema.js';
 import { initializeSaleBaseline, settleProductSaleProgress } from './store-sale-sync.js';
 import {
@@ -24,7 +29,18 @@ import {
 } from './store-operations.js';
 import { withAdvisoryLock, type Transaction } from './transaction.js';
 
-type Transfer = typeof sortedSaleTransfers.$inferSelect;
+type Transfer = typeof sortedSaleTransfers.$inferSelect & { createdByDisplayName?: string | null };
+const transferLines = (transfer: Transfer): SortedSaleTransferLine[] =>
+  transfer.lines ?? [
+    {
+      productId: transfer.productId,
+      sourceStockId: transfer.sourceStockId,
+      bagQuantity: transfer.bagQuantity,
+      weightKg: transfer.weightKg,
+      enteredWeightKg: transfer.enteredWeightKg,
+      bagWeightsKg: transfer.bagWeightsKg ?? [],
+    },
+  ];
 
 interface CommandContext {
   readonly actorUserId: string;
@@ -36,8 +52,12 @@ interface CommandContext {
 export interface CreateSortedSaleTransferInput extends CommandContext {
   readonly sourceStoreId: string;
   readonly destinationStoreId: string;
-  readonly productId: string;
-  readonly bagWeightsKg: readonly string[];
+  readonly productId?: string;
+  readonly bagWeightsKg?: readonly string[];
+  readonly lines?: readonly {
+    readonly productId: string;
+    readonly bagWeightsKg: readonly string[];
+  }[];
   readonly note: string | null;
 }
 
@@ -63,12 +83,24 @@ export async function listSortedSaleTransfers(
   database: Database,
   storeIds: readonly string[],
   historyLimit = SORTED_SALE_TRANSFER_HISTORY_LIMIT,
+  page?: { page: number; pageSize: number },
 ): Promise<Transfer[]> {
   if (storeIds.length === 0) return [];
   const inScope = or(
     inArray(sortedSaleTransfers.sourceStoreId, [...storeIds]),
     inArray(sortedSaleTransfers.destinationStoreId, [...storeIds]),
   );
+  if (page) {
+    const rows = await database
+      .select({ transfer: sortedSaleTransfers, actorName: users.displayName })
+      .from(sortedSaleTransfers)
+      .leftJoin(users, eq(users.id, sortedSaleTransfers.createdByUserId))
+      .where(inScope)
+      .orderBy(desc(sortedSaleTransfers.createdAt), desc(sortedSaleTransfers.id))
+      .limit(page.pageSize + 1)
+      .offset((page.page - 1) * page.pageSize);
+    return rows.map((row) => ({ ...row.transfer, createdByDisplayName: row.actorName }));
+  }
   const [open, settled] = await Promise.all([
     database
       .select()
@@ -81,10 +113,20 @@ export async function listSortedSaleTransfers(
       .orderBy(desc(sortedSaleTransfers.createdAt), desc(sortedSaleTransfers.id))
       .limit(historyLimit),
   ]);
-  return [...open, ...settled].sort(
-    (left, right) =>
-      right.createdAt.getTime() - left.createdAt.getTime() || right.id.localeCompare(left.id),
-  );
+  const actorIds = [...new Set([...open, ...settled].map((row) => row.createdByUserId))];
+  const actors = actorIds.length
+    ? await database
+        .select({ id: users.id, name: users.displayName })
+        .from(users)
+        .where(inArray(users.id, actorIds))
+    : [];
+  const names = new Map(actors.map((actor) => [actor.id, actor.name]));
+  return [...open, ...settled]
+    .map((row) => ({ ...row, createdByDisplayName: names.get(row.createdByUserId) ?? null }))
+    .sort(
+      (left, right) =>
+        right.createdAt.getTime() - left.createdAt.getTime() || right.id.localeCompare(left.id),
+    );
 }
 
 export async function getSortedSaleTransfer(
@@ -96,20 +138,34 @@ export async function getSortedSaleTransfer(
     .from(sortedSaleTransfers)
     .where(eq(sortedSaleTransfers.id, id))
     .limit(1);
-  return transfer;
+  if (!transfer) return undefined;
+  const [actor] = await database
+    .select({ name: users.displayName })
+    .from(users)
+    .where(eq(users.id, transfer.createdByUserId))
+    .limit(1);
+  return { ...transfer, createdByDisplayName: actor?.name ?? null };
 }
 
 export async function createSortedSaleTransfer(
   database: Database,
   input: CreateSortedSaleTransferInput,
 ): Promise<IdempotencyResult<{ transferId: string }>> {
-  if (input.sourceStoreId === input.destinationStoreId)
-    throw new StoreOperationValidationError('Source and destination stores must differ.');
-  const { bagWeightsKg, totalGrams: movedGrams } = weighBags(input.bagWeightsKg);
+  const parsed = CreateSortedSaleTransferRequestSchema.safeParse({
+    sourceStoreId: input.sourceStoreId,
+    destinationStoreId: input.destinationStoreId,
+    note: input.note,
+    ...(input.lines
+      ? { lines: input.lines }
+      : { productId: input.productId, bagWeightsKg: input.bagWeightsKg }),
+  });
+  if (!parsed.success)
+    throw new StoreOperationValidationError('Kiểm tra cửa hàng, mặt hàng duy nhất và kg từng bao.');
+  const requested = 'lines' in parsed.data ? parsed.data.lines : [parsed.data];
   return withIdempotency(
     database,
     {
-      scope: `sorted-sale.transfer:${input.sourceStoreId}`,
+      scope: 'sorted-sale.transfer:' + input.sourceStoreId,
       key: input.idempotencyKey,
       requestHash: input.requestHash,
     },
@@ -117,89 +173,114 @@ export async function createSortedSaleTransfer(
       withAdvisoryLock(tx, 'store-sorting', input.sourceStoreId, async () => {
         await assertRetailStoreActor(tx, input.actorUserId, input.sourceStoreId);
         await assertActiveRetailStore(tx, input.destinationStoreId);
-        // Same lot order as IDOSI sale consumption: the oldest Sale leaves first.
-        const lots = await tx
-          .select()
-          .from(storeSortedStocks)
-          .where(
-            and(
-              eq(storeSortedStocks.storeId, input.sourceStoreId),
-              eq(storeSortedStocks.productId, input.productId),
-            ),
-          )
-          .orderBy(asc(storeSortedStocks.createdAt), asc(storeSortedStocks.id))
-          .for('update');
-        const availableGrams = lots.reduce(
-          (sum, lot) => sum + kilogramsToGramsExact(lot.saleWeightKg),
-          0n,
-        );
-        if (movedGrams > availableGrams)
-          throw new StoreOperationValidationError(
-            'Total bag weight exceeds the Sale stock of this product.',
-          );
+        const lines: SortedSaleTransferLine[] = [];
         const now = new Date();
-        const consumed: { lot: (typeof lots)[number]; grams: bigint }[] = [];
-        let remaining = movedGrams;
-        for (const lot of lots) {
-          if (remaining === 0n) break;
-          const balance = kilogramsToGramsExact(lot.saleWeightKg);
-          const take = balance < remaining ? balance : remaining;
-          if (take <= 0n) continue;
-          consumed.push({ lot, grams: take });
-          remaining -= take;
-        }
-        const firstLot = consumed[0]?.lot;
-        if (!firstLot || remaining !== 0n)
-          throw new StoreOperationValidationError('Sale stock could not cover the transfer.');
-        const [transfer] = await tx
-          .insert(sortedSaleTransfers)
-          .values({
-            transferNumber: '',
-            sourceStockId: firstLot.id,
-            sourceStoreId: input.sourceStoreId,
-            destinationStoreId: input.destinationStoreId,
-            productId: input.productId,
+        // All consumers serialize on the same source-store lock. Product/lot order is stable.
+        for (const requestedLine of [...requested].sort((a, b) =>
+          a.productId.localeCompare(b.productId),
+        )) {
+          const [product] = await tx
+            .select({ id: products.id })
+            .from(products)
+            .where(
+              and(
+                eq(products.id, requestedLine.productId),
+                isNull(products.deletedAt),
+                eq(products.isActive, true),
+              ),
+            )
+            .limit(1);
+          if (!product) throw new StoreOperationValidationError('Mặt hàng không còn hoạt động.');
+          const { bagWeightsKg, totalGrams: movedGrams } = weighBags(requestedLine.bagWeightsKg);
+          const lots = await tx
+            .select()
+            .from(storeSortedStocks)
+            .where(
+              and(
+                eq(storeSortedStocks.storeId, input.sourceStoreId),
+                eq(storeSortedStocks.productId, requestedLine.productId),
+              ),
+            )
+            .orderBy(asc(storeSortedStocks.createdAt), asc(storeSortedStocks.id))
+            .for('update');
+          const available = lots.reduce(
+            (sum, lot) => sum + kilogramsToGramsExact(lot.saleWeightKg),
+            0n,
+          );
+          if (movedGrams > available)
+            throw new StoreOperationValidationError(
+              'Total bag weight exceeds the Sale stock of this product.',
+            );
+          let remaining = movedGrams;
+          const sourceLots: { stockId: string; weightKg: string }[] = [];
+          for (const lot of lots) {
+            if (remaining === 0n) break;
+            const balance = kilogramsToGramsExact(lot.saleWeightKg);
+            const take = balance < remaining ? balance : remaining;
+            if (take <= 0n) continue;
+            remaining -= take;
+            const after = balance - take;
+            sourceLots.push({ stockId: lot.id, weightKg: gramsToKilogramsExact(take) });
+            const [updated] = await tx
+              .update(storeSortedStocks)
+              .set({
+                saleWeightKg: gramsToKilogramsExact(after),
+                ...(after === 0n ? { bagQuantity: 0 } : {}),
+                transferredOutWeightKg: gramsToKilogramsExact(
+                  kilogramsToGramsExact(lot.transferredOutWeightKg) + take,
+                ),
+                version: lot.version + 1,
+                updatedAt: now,
+              })
+              .where(
+                and(eq(storeSortedStocks.id, lot.id), eq(storeSortedStocks.version, lot.version)),
+              )
+              .returning({ id: storeSortedStocks.id });
+            if (!updated)
+              throw new StoreOperationConflictError('Sale stock changed during transfer.');
+            await tx.insert(storeSortingEvents).values({
+              storeSortedStockId: lot.id,
+              storeInventoryBagId: lot.storeInventoryBagId,
+              storeId: lot.storeId,
+              productId: lot.productId,
+              action: 'sale_transfer_out',
+              weightKg: gramsToKilogramsExact(take),
+              actorUserId: input.actorUserId,
+              occurredAt: now,
+            });
+          }
+          if (!sourceLots[0] || remaining !== 0n)
+            throw new StoreOperationValidationError('Sale stock could not cover the transfer.');
+          lines.push({
+            productId: requestedLine.productId,
+            sourceStockId: sourceLots[0].stockId,
             bagQuantity: bagWeightsKg.length,
             weightKg: gramsToKilogramsExact(movedGrams),
             enteredWeightKg: gramsToKilogramsExact(movedGrams),
             bagWeightsKg,
+            sourceLots,
+          });
+        }
+        const first = lines[0]!;
+        const [transfer] = await tx
+          .insert(sortedSaleTransfers)
+          .values({
+            transferNumber: '',
+            sourceStockId: first.sourceStockId,
+            sourceStoreId: input.sourceStoreId,
+            destinationStoreId: input.destinationStoreId,
+            productId: first.productId,
+            bagQuantity: first.bagQuantity,
+            weightKg: first.weightKg,
+            enteredWeightKg: first.enteredWeightKg,
+            bagWeightsKg: first.bagWeightsKg,
+            lines,
             note: input.note,
             createdByUserId: input.actorUserId,
             createdAt: now,
           })
           .returning({ id: sortedSaleTransfers.id });
         if (!transfer) throw new Error('Transfer insert returned no row.');
-        for (const { lot, grams } of consumed) {
-          const after = kilogramsToGramsExact(lot.saleWeightKg) - grams;
-          const [updated] = await tx
-            .update(storeSortedStocks)
-            .set({
-              saleWeightKg: gramsToKilogramsExact(after),
-              // Legacy lots carried a bag count; it no longer describes an emptied lot.
-              ...(after === 0n ? { bagQuantity: 0 } : {}),
-              transferredOutWeightKg: gramsToKilogramsExact(
-                kilogramsToGramsExact(lot.transferredOutWeightKg) + grams,
-              ),
-              version: lot.version + 1,
-              updatedAt: now,
-            })
-            .where(
-              and(eq(storeSortedStocks.id, lot.id), eq(storeSortedStocks.version, lot.version)),
-            )
-            .returning({ id: storeSortedStocks.id });
-          if (!updated)
-            throw new StoreOperationConflictError('Sale stock changed during transfer.');
-          await tx.insert(storeSortingEvents).values({
-            storeSortedStockId: lot.id,
-            storeInventoryBagId: lot.storeInventoryBagId,
-            storeId: lot.storeId,
-            productId: lot.productId,
-            action: 'sale_transfer_out',
-            weightKg: gramsToKilogramsExact(grams),
-            actorUserId: input.actorUserId,
-            occurredAt: now,
-          });
-        }
         await tx.insert(auditLogs).values({
           requestId: input.requestId,
           actorUserId: input.actorUserId,
@@ -208,18 +289,13 @@ export async function createSortedSaleTransfer(
           action: 'SORTED_SALE_TRANSFER_DISPATCHED',
           entityType: 'sorted_sale_transfer',
           entityId: transfer.id,
-          before: {
-            productId: input.productId,
-            saleWeightKg: gramsToKilogramsExact(availableGrams),
-          },
           after: {
-            saleWeightKg: gramsToKilogramsExact(availableGrams - movedGrams),
             destinationStoreId: input.destinationStoreId,
-            bagWeightsKg,
-            movedWeightKg: gramsToKilogramsExact(movedGrams),
-            lots: consumed.map(({ lot, grams }) => ({
-              stockId: lot.id,
-              weightKg: gramsToKilogramsExact(grams),
+            lines: lines.map((line) => ({
+              productId: line.productId,
+              bagWeightsKg: line.bagWeightsKg,
+              weightKg: line.weightKg,
+              lots: line.sourceLots ?? [],
             })),
           },
         });
@@ -232,126 +308,25 @@ export async function receiveSortedSaleTransfer(
   database: Database,
   input: ReceiveSortedSaleTransferInput,
 ): Promise<IdempotencyResult<{ transferId: string }>> {
-  return withIdempotency(
-    database,
-    {
-      scope: `sorted-sale.receive:${input.transferId}`,
-      key: input.idempotencyKey,
-      requestHash: input.requestHash,
-    },
-    (tx) =>
-      withAdvisoryLock(tx, 'sorted-sale-transfer', input.transferId, async () => {
-        const [transfer] = await tx
-          .select()
-          .from(sortedSaleTransfers)
-          .where(eq(sortedSaleTransfers.id, input.transferId))
-          .for('update')
-          .limit(1);
-        if (!transfer)
-          throw new StoreOperationValidationError('Sorted Sale transfer was not found.');
-        await assertRetailStoreActor(tx, input.actorUserId, transfer.destinationStoreId);
-        if (transfer.status !== 'in_transit' || transfer.version !== input.expectedVersion)
-          throw new StoreOperationConflictError('Transfer was already received or changed.');
-        return withAdvisoryLock(tx, 'store-sorting', transfer.destinationStoreId, async () => {
-          const hasSale = await tx
-            .select({ id: storeSortedStocks.id })
-            .from(storeSortedStocks)
-            .where(
-              and(
-                eq(storeSortedStocks.storeId, transfer.destinationStoreId),
-                eq(storeSortedStocks.productId, transfer.productId),
-                gt(storeSortedStocks.saleCreditedWeightKg, '0.000'),
-              ),
-            )
-            .limit(1);
-          // A first Sale credit needs an IDOSI baseline, as with freshly sorted goods.
-          if (hasSale.length === 0)
-            await initializeSaleBaseline(
-              tx,
-              transfer.destinationStoreId,
-              transfer.productId,
-              new Date(),
-            );
-          const now = new Date();
-          const [stock] = await tx
-            .insert(storeSortedStocks)
-            .values({
-              storeId: transfer.destinationStoreId,
-              productId: transfer.productId,
-              sourceTransferId: transfer.id,
-              saleCreditedWeightKg: transfer.weightKg,
-              saleWeightKg: transfer.weightKg,
-              createdAt: now,
-              updatedAt: now,
-            })
-            .returning({ id: storeSortedStocks.id });
-          if (!stock) throw new Error('Destination Sale stock insert returned no row.');
-          const [updated] = await tx
-            .update(sortedSaleTransfers)
-            .set({
-              status: 'received',
-              destinationStockId: stock.id,
-              receivedByUserId: input.actorUserId,
-              receivedAt: now,
-              version: transfer.version + 1,
-            })
-            .where(
-              and(
-                eq(sortedSaleTransfers.id, transfer.id),
-                eq(sortedSaleTransfers.version, transfer.version),
-              ),
-            )
-            .returning({ id: sortedSaleTransfers.id });
-          if (!updated) throw new StoreOperationConflictError('Transfer changed during receipt.');
-          await tx.insert(storeSortingEvents).values({
-            storeSortedStockId: stock.id,
-            storeInventoryBagId: null,
-            storeId: transfer.destinationStoreId,
-            productId: transfer.productId,
-            action: 'sale_transfer_in',
-            weightKg: transfer.weightKg,
-            actorUserId: input.actorUserId,
-            occurredAt: now,
-          });
-          await settleProductSaleProgress(tx, transfer.destinationStoreId, transfer.productId, now);
-          await tx.insert(auditLogs).values({
-            requestId: input.requestId,
-            actorUserId: input.actorUserId,
-            actorRole: 'store',
-            actorStoreId: transfer.destinationStoreId,
-            action: 'SORTED_SALE_TRANSFER_RECEIVED',
-            entityType: 'sorted_sale_transfer',
-            entityId: transfer.id,
-            before: { status: 'in_transit' },
-            after: {
-              status: 'received',
-              destinationStockId: stock.id,
-              bags: transfer.bagQuantity,
-              weightKg: transfer.weightKg,
-            },
-          });
-          return result({ transferId: transfer.id }, transfer.id);
-        });
-      }),
-  );
+  return settleTransfer(database, input, false);
 }
-
-/**
- * A transfer the destination has not received yet can be called back by the sending store.
- * The weight returns to the sender as a new Sale lot tied to the transfer, the same way the
- * receiving store would have booked it, so outstanding IDOSI sales are settled against it.
- */
 export async function cancelSortedSaleTransfer(
   database: Database,
   input: CancelSortedSaleTransferInput,
 ): Promise<IdempotencyResult<{ transferId: string }>> {
-  const reason = input.reason.trim();
-  if (reason.length < 3)
+  if (input.reason.trim().length < 3)
     throw new StoreOperationValidationError('Cần ghi lý do hủy phiếu tối thiểu 3 ký tự.');
+  return settleTransfer(database, input, true);
+}
+async function settleTransfer(
+  database: Database,
+  input: ReceiveSortedSaleTransferInput | CancelSortedSaleTransferInput,
+  cancel: boolean,
+): Promise<IdempotencyResult<{ transferId: string }>> {
   return withIdempotency(
     database,
     {
-      scope: `sorted-sale.cancel:${input.transferId}`,
+      scope: (cancel ? 'sorted-sale.cancel:' : 'sorted-sale.receive:') + input.transferId,
       key: input.idempotencyKey,
       requestHash: input.requestHash,
     },
@@ -365,32 +340,73 @@ export async function cancelSortedSaleTransfer(
           .limit(1);
         if (!transfer)
           throw new StoreOperationValidationError('Sorted Sale transfer was not found.');
-        await assertRetailStoreActor(tx, input.actorUserId, transfer.sourceStoreId);
+        const targetStoreId = cancel ? transfer.sourceStoreId : transfer.destinationStoreId;
+        await assertRetailStoreActor(tx, input.actorUserId, targetStoreId);
         if (transfer.status !== 'in_transit' || transfer.version !== input.expectedVersion)
           throw new StoreOperationConflictError('Transfer was already received or changed.');
-        return withAdvisoryLock(tx, 'store-sorting', transfer.sourceStoreId, async () => {
+        return withAdvisoryLock(tx, 'store-sorting', targetStoreId, async () => {
           const now = new Date();
-          const [stock] = await tx
-            .insert(storeSortedStocks)
-            .values({
-              storeId: transfer.sourceStoreId,
-              productId: transfer.productId,
-              sourceTransferId: transfer.id,
-              saleCreditedWeightKg: transfer.weightKg,
-              saleWeightKg: transfer.weightKg,
-              createdAt: now,
-              updatedAt: now,
-            })
-            .returning({ id: storeSortedStocks.id });
-          if (!stock) throw new Error('Returned Sale stock insert returned no row.');
+          const lines = transferLines(transfer);
+          const stockIds: string[] = [];
+          for (const line of lines) {
+            if (!cancel) {
+              const hasSale = await tx
+                .select({ id: storeSortedStocks.id })
+                .from(storeSortedStocks)
+                .where(
+                  and(
+                    eq(storeSortedStocks.storeId, targetStoreId),
+                    eq(storeSortedStocks.productId, line.productId),
+                    gt(storeSortedStocks.saleCreditedWeightKg, '0.000'),
+                  ),
+                )
+                .limit(1);
+              if (!hasSale.length)
+                await initializeSaleBaseline(tx, targetStoreId, line.productId, now);
+            }
+            const [stock] = await tx
+              .insert(storeSortedStocks)
+              .values({
+                storeId: targetStoreId,
+                productId: line.productId,
+                sourceTransferId: transfer.id,
+                saleCreditedWeightKg: line.weightKg,
+                saleWeightKg: line.weightKg,
+                createdAt: now,
+                updatedAt: now,
+              })
+              .returning({ id: storeSortedStocks.id });
+            if (!stock) throw new Error('Sale stock insert returned no row.');
+            stockIds.push(stock.id);
+            await tx.insert(storeSortingEvents).values({
+              storeSortedStockId: stock.id,
+              storeInventoryBagId: null,
+              storeId: targetStoreId,
+              productId: line.productId,
+              action: cancel ? 'sale_transfer_return' : 'sale_transfer_in',
+              weightKg: line.weightKg,
+              actorUserId: input.actorUserId,
+              occurredAt: now,
+            });
+            await settleProductSaleProgress(tx, targetStoreId, line.productId, now);
+          }
+          const reason = 'reason' in input ? input.reason.trim() : null;
           const [updated] = await tx
             .update(sortedSaleTransfers)
             .set({
-              status: 'cancelled',
-              cancelledByUserId: input.actorUserId,
-              cancelledAt: now,
-              cancellationReason: reason,
+              status: cancel ? 'cancelled' : 'received',
               version: transfer.version + 1,
+              ...(cancel
+                ? {
+                    cancelledByUserId: input.actorUserId,
+                    cancelledAt: now,
+                    cancellationReason: reason,
+                  }
+                : {
+                    destinationStockId: stockIds[0],
+                    receivedByUserId: input.actorUserId,
+                    receivedAt: now,
+                  }),
             })
             .where(
               and(
@@ -400,32 +416,26 @@ export async function cancelSortedSaleTransfer(
               ),
             )
             .returning({ id: sortedSaleTransfers.id });
-          if (!updated) throw new StoreOperationConflictError('Transfer changed during cancel.');
-          await tx.insert(storeSortingEvents).values({
-            storeSortedStockId: stock.id,
-            storeInventoryBagId: null,
-            storeId: transfer.sourceStoreId,
-            productId: transfer.productId,
-            action: 'sale_transfer_return',
-            weightKg: transfer.weightKg,
-            actorUserId: input.actorUserId,
-            occurredAt: now,
-          });
-          await settleProductSaleProgress(tx, transfer.sourceStoreId, transfer.productId, now);
+          if (!updated)
+            throw new StoreOperationConflictError('Transfer changed during settlement.');
           await tx.insert(auditLogs).values({
             requestId: input.requestId,
             actorUserId: input.actorUserId,
             actorRole: 'store',
-            actorStoreId: transfer.sourceStoreId,
-            action: 'SORTED_SALE_TRANSFER_CANCELLED',
+            actorStoreId: targetStoreId,
+            action: cancel ? 'SORTED_SALE_TRANSFER_CANCELLED' : 'SORTED_SALE_TRANSFER_RECEIVED',
             entityType: 'sorted_sale_transfer',
             entityId: transfer.id,
             before: { status: 'in_transit' },
             after: {
-              status: 'cancelled',
-              returnedStockId: stock.id,
-              weightKg: transfer.weightKg,
+              status: cancel ? 'cancelled' : 'received',
+              stockIds,
               reason,
+              lines: lines.map((line) => ({
+                productId: line.productId,
+                weightKg: line.weightKg,
+                bagQuantity: line.bagQuantity,
+              })),
             },
           });
           return result({ transferId: transfer.id }, transfer.id);

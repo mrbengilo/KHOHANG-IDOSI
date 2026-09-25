@@ -252,8 +252,14 @@ export async function updateAdminOperationalSettings(
 }
 
 export async function listActiveStoresForAccounts(): Promise<readonly Store[]> {
-  const payload = await requestAdminApi('/stores?page=1&pageSize=100&kind=RETAIL&status=ACTIVE');
-  return ListStoresResponseSchema.parse(payload).data;
+  const query = { pageSize: 100, kind: 'RETAIL' as const, status: 'ACTIVE' as const };
+  const firstPage = await listAdminStores({ ...query, page: 1 });
+  const remainingPages = await Promise.all(
+    Array.from({ length: firstPage.pagination.totalPages - 1 }, (_, index) =>
+      listAdminStores({ ...query, page: index + 2 }),
+    ),
+  );
+  return [firstPage, ...remainingPages].flatMap((page) => page.data);
 }
 
 export async function listAdminStores(query: ListStoresQuery): Promise<AdminPage<Store>> {
