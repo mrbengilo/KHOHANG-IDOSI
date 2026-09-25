@@ -34,3 +34,10 @@ còn nguyên (chưa khui) không bị đụng tới.
 
 Trước thay đổi này, đồng bộ có thể đã trừ vào bao nguyên và tự đánh dấu bao đó "đã khui". Không có
 cách biết chắc những bao đó thực tế đã khui hay chưa, nên dữ liệu cũ được giữ nguyên, không backfill.
+
+## Khui bán và báo sai lệch
+
+Xác nhận khui bán khóa quyền báo sai lệch mới ngay cả khi chưa bán gram nào. Báo thắng trước giữ
+bao QUARANTINED nên khui bị từ chối; khui thắng trước thì báo bị 409. Không đổi thuật toán IDOSI,
+khóa store-sorting, optimistic version hay idempotency hiện hữu. Lịch sử khui lưu kg trước khui,
+kg bù bán và kg còn ngay sau thao tác từ audit, kể cả khi bao EMPTY; retry không thêm audit hay trừ lại.

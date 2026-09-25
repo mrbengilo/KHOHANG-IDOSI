@@ -67,7 +67,7 @@ STORE báo ─► PENDING_HTKD ──VERIFY (HTKD được giao | ADMIN)──�
 
 | Sự kiện                | Chứng từ                                                               | Hàng/tồn cửa hàng                                                                                                               | Kho tổng                                                                                                        | Tiền                                                   | Chờ ưu tiên                              |
 | ---------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------- |
-| STORE báo              | `PSL` `pending_htkd`, dòng từng bao, snapshot giá trị đang hiệu lực    | Bao `available/opened` → `quarantined` + ledger `quarantine`; bao khác không đổi                                                | Không đổi                                                                                                       | Không đổi                                              | Chưa tạo                                 |
+| STORE báo              | `PSL` `pending_htkd`, dòng từng bao, snapshot giá trị đang hiệu lực    | Bao `available` chưa từng khui → `quarantined` + ledger `quarantine`; bao khác không đổi                                        | Không đổi                                                                                                       | Không đổi                                              | Chưa tạo                                 |
 | HTKD xác minh          | `pending_admin`, `verification` (trước/sau do server tính), chênh lệch | Vẫn giữ                                                                                                                         | Không đổi                                                                                                       | Tạm tính, chưa hiệu lực                                | Chưa tạo, hiển thị số sẽ phát sinh       |
 | Từ chối/Hủy            | `rejected`/`cancelled` + lý do                                         | Chỉ gỡ giữ bao do chính hồ sơ giữ (ledger `release`)                                                                            | Không đổi                                                                                                       | Không đổi                                              | Không                                    |
 | Admin áp dụng – giữ    | `applied`, `applied_sequence`                                          | Cùng bao vật lý đổi SKU/giá trị/kg: ledger `adjust` ra SKU cũ + `adjust` vào SKU thực tế, rồi `release` về trạng thái trước giữ | Nguyên nhân kho giao nhầm: SKU thực tế −1 on-hand; SKU duyệt +1 on-hand +1 reserved trong phiếu kiểm hàng thiếu | Có hiệu lực ngay                                       | Tạo/bổ sung đúng 1 đơn vị SKU duyệt, P0B |
@@ -105,13 +105,32 @@ STORE báo ─► PENDING_HTKD ──VERIFY (HTKD được giao | ADMIN)──�
 
 ## Hàng đã khui, bán, chuyển
 
-Áp dụng chỉ khi toàn bộ kg của bao còn trên kệ: chưa bán/xuất (kể cả bán IDOSI), chưa lọc phân
-loại, chưa chuyển, không có phiếu xuất chờ duyệt hay phiếu chuyển nháp. Bao đã khui nhưng chưa
-phát sinh giao dịch được hỗ trợ đầy đủ. Các trường hợp còn lại **vẫn được báo và giữ phần còn
-lại**, nhưng Admin bị chặn áp dụng với lý do cụ thể (`BAG_PARTIALLY_CONSUMED`, `BAG_SOLD`,
-`BAG_SORTED`, `BAG_TRANSFERRED`, `BAG_DEPLETED`, `BAG_PENDING_OUTBOUND`, ...). Tách giá vốn đã
-xuất khỏi giá trị tồn còn lại **chưa được hỗ trợ**; các hồ sơ này cần đối soát thủ công rồi từ
-chối/hủy để gỡ giữ.
+Invariant cũ cho phép báo bao đã khui và giữ phần còn lại, chỉ chặn áp dụng khi đã bán/lọc/chuyển.
+Invariant mới: **chỉ được tạo báo mới khi bao AVAILABLE, chưa từng xác nhận khui để bán và không
+có giao dịch/ràng buộc bán, lọc, chuyển không tương thích**. OPEN còn nguyên kg cũng bị chặn.
+Khui vật lý để kiểm tra hàng không phải thao tác xác nhận khui bán trên hệ thống.
+
+Nếu phát hiện sai hàng, hãy báo sai lệch trước khi xác nhận khui kiện để bán.
+
+Server đọc lại trạng thái, openedAt, audit khui và dependencies dưới khóa bao. Payload trộn bao
+hợp lệ/không hợp lệ rollback toàn bộ header, line, hold, audit và idempotency. API trả 409 qua
+error envelope hiện có, details.blockers theo receiptBagId; BAG_ALREADY_OPENED thống nhất domain,
+contract và UI. Context trả canReportDiscrepancy, reportBlockers và openedAt; không nhận client
+eligibility làm căn cứ ghi. Dependencies của context được đọc theo tập hợp, không truy vấn từng bao.
+
+Hồ sơ đang giữ hợp lệ từ AVAILABLE tiếp tục RESUBMIT/VERIFY/APPLY; kiểm tra hold của chính hồ sơ,
+holdPreviousStatus, timestamp và lịch sử. Legacy pending của bao đã khui bị chặn ba lệnh đó,
+giữ CANCEL/REJECT theo quyền để giải phóng hàng. APPLIED/REJECTED/CANCELLED và phiếu trả sau APPLIED
+không tính lại hồi tố. Không tự hủy hồ sơ, không sửa phiếu chốt, ledger hay audit.
+
+Khóa CREATE: idempotency → receipt → bag ID tăng dần → row. RESUBMIT/VERIFY/APPLY thêm khóa bao
+sau khóa header, cùng thứ tự. Khui: idempotency → store-sorting → bag → row → IDOSI settlement.
+Không lấy store-sorting sau bag. Test PostgreSQL dùng barrier khóa advisory và hai request thật
+cho cả thứ tự thắng, không dùng sleep ngẫu nhiên. Bên thắng giữ invariant, bên thua trả conflict.
+
+Form giữ nội dung sau 409, tải lại context, khóa bao mất điều kiện và cho bỏ chọn riêng. Khui
+invalidate tồn, lịch sử, context và IDOSI pending. Khui refetch mỗi 30 giây khi trang hoạt động
+và khi focus; context dùng cơ chế focus của TanStack Query. Không cam kết realtime giữa các tab.
 
 ## Kho tổng
 
