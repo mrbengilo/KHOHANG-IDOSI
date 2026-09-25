@@ -46,6 +46,7 @@ export const causeHint: Record<ReceiptAdjustmentCause, string> = {
 };
 
 export const blockerCopy: Record<ReceiptAdjustmentBlocker, string> = {
+  BAG_ALREADY_OPENED: 'Bao đã khui kiện bán nên không thể báo sai lệch',
   BAG_NOT_HELD: 'Bao không còn được hồ sơ này giữ',
   BAG_STATE_CHANGED: 'Mặt hàng, kg hoặc giá trị bao đã đổi sau khi xác minh',
   BAG_PARTIALLY_CONSUMED: 'Bao đã bán/xuất/phân loại một phần',

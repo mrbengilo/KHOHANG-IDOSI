@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, ilike, isNull, or, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import {
@@ -11,6 +11,13 @@ import {
   outboundRequestLines,
   storeInventoryBags,
   storeInventoryLedgerEntries,
+  storeReceiptBags,
+  storeReceiptLines,
+  storeReceipts,
+  storeTransfers,
+  storePartnerInboundBags,
+  storePartnerInboundLines,
+  storePartnerInbounds,
   storeOutbounds,
   stores,
   users,
@@ -42,6 +49,8 @@ export interface StoreInventoryPageInput {
   readonly productId?: string;
   readonly status?: InventoryBagStatus;
   readonly bagCode?: string;
+  readonly storeIds?: readonly string[];
+  readonly unopenedOnly?: boolean;
 }
 
 export interface StoreInventoryBagRecord {
@@ -51,6 +60,7 @@ export interface StoreInventoryBagRecord {
   readonly storeId: string;
   readonly productId: string;
   readonly sourceStoreReceiptBagId: string | null;
+  readonly sourceDocumentCode?: string | null;
   readonly sourceTransferId: string | null;
   readonly sourceInventoryBagId: string | null;
   readonly sourcePartnerInboundBagId: string | null;
@@ -163,13 +173,14 @@ export async function listStoreInventoryBags(
   const [totals, rows] = await Promise.all([total, rowQuery]);
   const totalItems = totals[0]?.value ?? 0;
   return {
-    data: rows.map(({ bag, outboundRequestId }) => ({
+    data: rows.map(({ bag, outboundRequestId, sourceDocumentCode }) => ({
       id: bag.id,
       bagCode: bag.bagCode,
       displayCode: bag.displayCode,
       storeId: bag.storeId,
       productId: bag.productId,
       sourceStoreReceiptBagId: bag.sourceStoreReceiptBagId,
+      sourceDocumentCode,
       sourceTransferId: bag.sourceTransferId,
       sourceInventoryBagId: bag.sourceInventoryBagId,
       sourcePartnerInboundBagId: bag.sourcePartnerInboundBagId,
@@ -206,6 +217,18 @@ export function buildStoreInventoryBagPageQueries(
       or(ilike(storeInventoryBags.displayCode, search), ilike(storeInventoryBags.bagCode, search))!,
     );
   }
+  if (input.storeIds !== undefined)
+    predicates.push(
+      input.storeIds.length ? inArray(storeInventoryBags.storeId, [...input.storeIds]) : sql`false`,
+    );
+  if (input.unopenedOnly)
+    predicates.push(
+      eq(storeInventoryBags.status, 'available'),
+      isNull(storeInventoryBags.openedAt),
+      sql`not exists (select 1 from audit_logs a where a.entity_type = 'store_inventory_bag' and a.entity_id = ${storeInventoryBags.id} and a.action = 'STORE_INVENTORY_BAG_OPENED')`,
+      sql`not exists (select 1 from store_sorting_events s where s.store_inventory_bag_id = ${storeInventoryBags.id})`,
+      sql`not exists (select 1 from store_inventory_ledger_entries l where l.store_inventory_bag_id = ${storeInventoryBags.id} and l.source_type in ('store_transfer_dispatch', 'store_outbound', 'idosi_normal_sale'))`,
+    );
   const where = predicates.length > 0 ? and(...predicates) : undefined;
   return {
     pagination,
@@ -221,8 +244,30 @@ export function buildStoreInventoryBagPageQueries(
       .select({
         bag: storeInventoryBags,
         outboundRequestId: outboundRequestLines.outboundRequestId,
+        sourceDocumentCode: sql<
+          string | null
+        >`coalesce(${storeReceipts.receiptNumber}, ${storeTransfers.transferNumber}, ${storePartnerInbounds.referenceCode})`,
       })
       .from(storeInventoryBags)
+      .leftJoin(
+        storeReceiptBags,
+        eq(storeReceiptBags.id, storeInventoryBags.sourceStoreReceiptBagId),
+      )
+      .leftJoin(storeReceiptLines, eq(storeReceiptLines.id, storeReceiptBags.storeReceiptLineId))
+      .leftJoin(storeReceipts, eq(storeReceipts.id, storeReceiptLines.storeReceiptId))
+      .leftJoin(storeTransfers, eq(storeTransfers.id, storeInventoryBags.sourceTransferId))
+      .leftJoin(
+        storePartnerInboundBags,
+        eq(storePartnerInboundBags.id, storeInventoryBags.sourcePartnerInboundBagId),
+      )
+      .leftJoin(
+        storePartnerInboundLines,
+        eq(storePartnerInboundLines.id, storePartnerInboundBags.storePartnerInboundLineId),
+      )
+      .leftJoin(
+        storePartnerInbounds,
+        eq(storePartnerInbounds.id, storePartnerInboundLines.storePartnerInboundId),
+      )
       .leftJoin(
         outboundRequestLines,
         eq(outboundRequestLines.id, storeInventoryBags.outboundRequestLineId),
@@ -335,9 +380,42 @@ export async function openStoreInventoryBag(
           if (!bag || bag.storeId !== input.storeId) {
             throw new StoreInventoryAuthorizationError();
           }
-          if (bag.version !== input.expectedVersion || bag.status !== 'available') {
+          if (
+            bag.version !== input.expectedVersion ||
+            bag.status !== 'available' ||
+            bag.openedAt !== null
+          ) {
             throw new StoreOperationConflictError('Inventory bag is stale or cannot be opened.');
           }
+          const priorOpening = await tx
+            .select({ id: auditLogs.id })
+            .from(auditLogs)
+            .where(
+              and(
+                eq(auditLogs.entityType, 'store_inventory_bag'),
+                eq(auditLogs.entityId, bag.id),
+                eq(auditLogs.action, 'STORE_INVENTORY_BAG_OPENED'),
+              ),
+            )
+            .limit(1);
+          if (priorOpening.length) throw new StoreOperationConflictError('Bao đã khui kiện bán.');
+          const history = await tx
+            .select({ id: storeInventoryLedgerEntries.id })
+            .from(storeInventoryLedgerEntries)
+            .where(
+              and(
+                eq(storeInventoryLedgerEntries.storeInventoryBagId, bag.id),
+                inArray(storeInventoryLedgerEntries.sourceType, [
+                  'store_sorting_event',
+                  'store_transfer_dispatch',
+                  'store_outbound',
+                  'idosi_normal_sale',
+                ]),
+              ),
+            )
+            .limit(1);
+          if (history.length)
+            throw new StoreOperationConflictError('Bao đã có lịch sử khui hoặc xuất hàng.');
           const now = new Date();
           const [updated] = await tx
             .update(storeInventoryBags)
@@ -577,6 +655,8 @@ function inventoryBagSnapshot(bag: InventoryBagRow): JsonObject {
   return {
     id: bag.id,
     bagCode: bag.bagCode,
+    displayCode: bag.displayCode,
+    openedAt: bag.openedAt?.toISOString() ?? null,
     storeId: bag.storeId,
     productId: bag.productId,
     status: bag.status,
