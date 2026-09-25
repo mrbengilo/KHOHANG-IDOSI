@@ -36,14 +36,18 @@ test('wholesale desk can load its overview, order form and receiving workspace',
     ).toBeVisible();
     await expect(page.getByText('Không thể tải dashboard')).toHaveCount(0);
 
+    // Wholesale stores order on the same screen as retail stores.
     await page.goto('/requests');
-    await expect(page.getByRole('heading', { name: 'Đặt hàng khách sỉ' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Đặt hàng & kết quả' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Lịch sử đặt hàng' })).toBeVisible();
-    await expect(page.getByText('Ghi chú mặt hàng')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Phiếu chờ và lượt ưu tiên' })).toBeVisible();
 
     await page.goto('/receive');
     await expect(page.getByRole('heading', { name: 'Xác nhận nhận hàng' })).toBeVisible();
     await expect(page.getByText('Bạn không có quyền thực hiện thao tác này')).toHaveCount(0);
+    await expect(page.locator('.receipt-scope select')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Khai phiếu nhận hàng' })).toBeVisible();
+    await expect(page.locator('.receipt-source-count')).toContainText('phiếu chờ nhận hàng');
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/');

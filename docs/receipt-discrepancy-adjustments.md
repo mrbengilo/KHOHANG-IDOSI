@@ -30,6 +30,9 @@ Vì vậy không có đường nào ghi nhận “đã chốt 3 đầm nhưng th
 
 ## State machine và quyền
 
+`STORE` dưới đây là **phía cửa hàng** của quy trình: tài khoản cửa hàng (cửa hàng của mình) hoặc
+tài khoản cửa hàng sỉ `WHOLESALE` (cửa hàng loại sỉ đang hoạt động).
+
 ```text
                  RESUBMIT (STORE)
              ┌───────────────────────┐
@@ -49,7 +52,16 @@ STORE báo ─► PENDING_HTKD ──VERIFY (HTKD được giao | ADMIN)──�
   xóa kết quả xác minh. Admin chỉ duyệt đúng phiên bản HTKD đã xác minh (`expectedVersion`).
 - `APPLY` còn kiểm tra số điều chỉnh đã áp dụng của phiếu bằng `base_applied_count` lúc xác minh;
   nếu phiếu có điều chỉnh khác áp dụng sau đó thì phải xác minh lại.
-- WHOLESALE không có quyền mới; luồng nhận hàng của quầy sỉ giữ nguyên.
+- Cửa hàng sỉ dùng đúng quy trình này. Tài khoản `WHOLESALE` nhận hàng cho mọi cửa hàng sỉ đang
+  hoạt động nên là phía cửa hàng trên chứng từ của các cửa hàng đó: xem ngữ cảnh, báo sai lệch, bổ
+  sung/gửi lại, hủy, bàn giao hoặc hủy phiếu trả, theo dõi quyền nhận bù. Không bao giờ xác minh,
+  duyệt/áp dụng hay xác nhận kho nhận hàng trả. Phạm vi kiểm tra ở cả API (phạm vi cửa hàng sỉ tính
+  lại mỗi request, đọc lại loại cửa hàng của chứng từ) và trong transaction (`resolveActor`: tài
+  khoản `active`, cửa hàng `wholesale` đang hoạt động). Cửa hàng bán lẻ luôn ngoài tầm với.
+- Audit ghi đúng vai trò thật của người thao tác (`actor_role = wholesale`), không ghi thành
+  `store`; phiếu khai nhận (`STORE_RECEIPT_DECLARED`) của quầy sỉ cũng vậy.
+- Tài khoản `STORE` cũ gắn với cửa hàng loại sỉ giữ nguyên chính sách hiện hành (không mở thêm
+  trang nhận hàng); cửa hàng sỉ nhận hàng qua tài khoản `WHOLESALE`.
 
 ## Ma trận sự kiện
 
@@ -135,3 +147,5 @@ kiến). Không xây kho tệp mới trong phạm vi này.
   forward-fix. Không xóa bảng/cột khi rollback.
 - Kiểm tra sau triển khai: `GET /api/v1/receipt-adjustments` trả 200 cho Admin, phiếu nhận đã chốt
   hiển thị mục “Sai lệch sau khui bao”.
+- Mở quyền cho cửa hàng sỉ không đổi schema hay dữ liệu; rollback bằng image trước chỉ làm quầy sỉ
+  mất thao tác phía cửa hàng (API trả 403), hồ sơ đã tạo vẫn do HTKD/Admin xử lý tiếp được.

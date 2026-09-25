@@ -4,6 +4,7 @@ import { after, describe, test } from 'node:test';
 import {
   allocationLines,
   allocationRuns,
+  auditLogs,
   applyWarehouseMovement,
   closeDatabase,
   db,
@@ -25,7 +26,7 @@ import {
   waitTickets,
   withSerializableTransaction,
 } from '@idosi/database';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { createApi } from '../dist/app.js';
 import { PostgresWarehouseRepository } from '../dist/postgres-repository.js';
 
@@ -322,6 +323,202 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
     );
   });
 
+  test('wholesale desk takes the store side on wholesale receipts, never the reviewer side', async () => {
+    const fx = await finalizedReceipt(repository, { wholesale: true });
+    const retail = await finalizedReceipt(repository);
+    assert.equal(fx.store.role, 'WHOLESALE');
+    await assert.rejects(
+      repository.getReceiptAdjustmentContext(fx.store, retail.receiptId),
+      (error) => error.code === 'FORBIDDEN',
+    );
+    await assert.rejects(
+      repository.listReceiptAdjustments(fx.store, {
+        storeId: retail.storeId,
+        page: 1,
+        pageSize: 20,
+      }),
+      (error) => error.code === 'FORBIDDEN',
+    );
+    const contextView = await repository.getReceiptAdjustmentContext(fx.store, fx.receiptId);
+    const bagLine = {
+      receiptBagId: contextView.bags[0].receiptBagId,
+      actualProductId: fx.jeansId,
+      disposition: 'RETURN',
+    };
+    const input = {
+      receiptId: fx.receiptId,
+      reason: 'Cửa hàng sỉ khui bao thấy jeans',
+      evidenceNote: 'Ảnh gửi HTKD',
+      discoveredAt: new Date().toISOString(),
+      lines: [bagLine],
+    };
+    await assert.rejects(
+      repository.createReceiptAdjustment(
+        fx.store,
+        { ...input, receiptId: retail.receiptId },
+        randomUUID(),
+        'h',
+        context(),
+      ),
+      (error) => error.code === 'FORBIDDEN',
+    );
+    const created = await repository.createReceiptAdjustment(
+      fx.store,
+      input,
+      randomUUID(),
+      'hash-w',
+      context(),
+    );
+    assert.equal(created.data.status, 'PENDING_HTKD');
+    assert.deepEqual(created.data.allowedActions, ['CANCEL']);
+    assert.equal(created.data.reportedByAccountId, fx.store.accountId);
+    for (const action of [
+      {
+        action: 'VERIFY',
+        expectedVersion: 0,
+        cause: 'SOURCE_MISCLASSIFICATION',
+        note: 'Tự xác minh',
+        lines: [
+          {
+            receiptBagId: bagLine.receiptBagId,
+            actualProductId: fx.jeansId,
+            weightKg: '20.000',
+            pricePerKgVnd: 1,
+            weightChangeNote: null,
+          },
+        ],
+        freightDeltaVnd: 0,
+        handlingDeltaVnd: 0,
+        vatDeltaVnd: 0,
+      },
+      { action: 'REQUEST_INFO', expectedVersion: 0, note: 'Tự yêu cầu' },
+      { action: 'APPLY', expectedVersion: 0, note: null },
+    ]) {
+      await assert.rejects(
+        repository.actOnReceiptAdjustment(
+          fx.store,
+          created.data.id,
+          action,
+          randomUUID(),
+          'x',
+          context(),
+        ),
+        (error) => error.code === 'FORBIDDEN',
+        action.action,
+      );
+    }
+    const asked = await repository.actOnReceiptAdjustment(
+      fx.htkd,
+      created.data.id,
+      { action: 'REQUEST_INFO', expectedVersion: 0, note: 'Gửi thêm ảnh tem bao' },
+      randomUUID(),
+      'i',
+      context(),
+    );
+    assert.equal(asked.data.status, 'NEEDS_INFO');
+    const queue = await repository.listReceiptAdjustments(fx.store, {
+      status: 'NEEDS_INFO',
+      page: 1,
+      pageSize: 100,
+    });
+    assert.ok(queue.data.some((row) => row.id === created.data.id));
+    assert.ok(queue.data.every((row) => fx.store.assignedStoreIds.includes(row.storeId)));
+    const deskView = await repository.getReceiptAdjustment(fx.store, created.data.id);
+    assert.deepEqual(deskView.allowedActions, ['RESUBMIT', 'CANCEL']);
+    const resubmitted = await repository.actOnReceiptAdjustment(
+      fx.store,
+      created.data.id,
+      {
+        action: 'RESUBMIT',
+        expectedVersion: 1,
+        reason: input.reason,
+        evidenceNote: 'Ảnh tem bao đã gửi',
+        discoveredAt: input.discoveredAt,
+        lines: [bagLine],
+      },
+      randomUUID(),
+      'r',
+      context(),
+    );
+    assert.equal(resubmitted.data.status, 'PENDING_HTKD');
+    await repository.actOnReceiptAdjustment(
+      fx.htkd,
+      created.data.id,
+      {
+        action: 'VERIFY',
+        expectedVersion: 2,
+        cause: 'SOURCE_MISCLASSIFICATION',
+        note: 'Đã đối chiếu ảnh tem bao',
+        lines: [
+          {
+            receiptBagId: bagLine.receiptBagId,
+            actualProductId: fx.jeansId,
+            weightKg: '20.000',
+            pricePerKgVnd: 40_000,
+            weightChangeNote: null,
+          },
+        ],
+        freightDeltaVnd: 0,
+        handlingDeltaVnd: 0,
+        vatDeltaVnd: 0,
+      },
+      randomUUID(),
+      'v',
+      context(),
+    );
+    const applied = await repository.actOnReceiptAdjustment(
+      fx.admin,
+      created.data.id,
+      { action: 'APPLY', expectedVersion: 3, note: null },
+      randomUUID(),
+      'a',
+      context(),
+    );
+    assert.equal(applied.data.status, 'APPLIED');
+    const receipt = await repository.getReceipt(fx.store, fx.receiptId);
+    assert.equal(receipt.status, 'FINALIZED');
+    assert.equal(receipt.adjustmentSummary.original.goodsVnd, 3_000_000);
+    assert.equal(receipt.adjustmentSummary.effective.goodsVnd, 2_800_000);
+    const pending = applied.data.lines[0].returns[0];
+    assert.equal(pending.status, 'PENDING_HANDOVER');
+    const returns = await repository.listReceiptReturns(fx.store, {
+      status: 'PENDING_HANDOVER',
+      page: 1,
+      pageSize: 100,
+    });
+    assert.ok(returns.data.some((row) => row.id === pending.id));
+    await assert.rejects(
+      repository.actOnReceiptReturn(
+        fx.store,
+        pending.id,
+        { action: 'RECEIVE', expectedVersion: 0, outcome: 'RECEIVED', note: null },
+        randomUUID(),
+        'r',
+        context(),
+      ),
+      (error) => error.code === 'FORBIDDEN',
+    );
+    const handed = await repository.actOnReceiptReturn(
+      fx.store,
+      pending.id,
+      { action: 'HANDOVER', expectedVersion: 0 },
+      randomUUID(),
+      'h',
+      context(),
+    );
+    assert.equal(handed.data.status, 'IN_TRANSIT');
+
+    const audits = await db
+      .select({ action: auditLogs.action, actorRole: auditLogs.actorRole })
+      .from(auditLogs)
+      .where(eq(auditLogs.actorUserId, fx.store.accountId));
+    assert.ok(audits.length >= 5);
+    assert.ok(
+      audits.every((row) => row.actorRole === 'wholesale'),
+      JSON.stringify(audits),
+    );
+  });
+
   test('routes require a session and are documented in OpenAPI', async () => {
     // Not closed here: closing the app would close the repository pool the suite still uses.
     const app = await createApi({ repository });
@@ -339,7 +536,11 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
   });
 });
 
-async function finalizedReceipt(repository) {
+/**
+ * `wholesale: true` makes store A a wholesale store received for by a wholesale-desk account
+ * whose scope is derived the way sessions derive it: every active wholesale store.
+ */
+async function finalizedReceipt(repository, { wholesale: wholesaleStore = false } = {}) {
   const token = randomUUID().replaceAll('-', '');
   const [group] = await db.select().from(storeGroups).limit(1);
   const [adminRow] = await db
@@ -352,7 +553,12 @@ async function finalizedReceipt(repository) {
     (
       await db
         .insert(stores)
-        .values({ code: `API-ADJ-${name}-${token.slice(0, 12)}`, name, groupId: group.id })
+        .values({
+          code: `API-ADJ-${name}-${token.slice(0, 12)}`,
+          name,
+          groupId: group.id,
+          kind: wholesaleStore && name === 'A' ? 'wholesale' : 'retail',
+        })
         .returning()
     )[0];
   const store = await newStore('A');
@@ -379,7 +585,9 @@ async function finalizedReceipt(repository) {
         })
         .returning()
     )[0];
-  const storeUser = await newUser('store', store.id);
+  const storeUser = wholesaleStore
+    ? { ...(await newUser('wholesale')), storeId: store.id }
+    : await newUser('store', store.id);
   const otherStoreUser = await newUser('store', other.id);
   const htkd = await newUser('htkd');
   const otherHtkd = await newUser('htkd');
@@ -536,7 +744,22 @@ async function finalizedReceipt(repository) {
   return buildReceipt();
 
   async function buildReceipt() {
-    const storeActor = principal(storeUser, 'STORE', { storeId: storeUser.storeId });
+    const storeActor = wholesaleStore
+      ? principal(storeUser, 'WHOLESALE', {
+          assignedStoreIds: (
+            await db
+              .select({ id: stores.id })
+              .from(stores)
+              .where(
+                and(
+                  eq(stores.kind, 'wholesale'),
+                  eq(stores.isActive, true),
+                  isNull(stores.deletedAt),
+                ),
+              )
+          ).map((row) => row.id),
+        })
+      : principal(storeUser, 'STORE', { storeId: storeUser.storeId });
     const htkdActor = principal(htkd, 'HTKD', { assignedStoreIds: [storeUser.storeId] });
     const lines = [{ productId: dress.id, approvedUnits: 3, receivedUnits: 3 }];
     const declared = await repository.declareStoreReceipt(
@@ -585,6 +808,7 @@ async function finalizedReceipt(repository) {
       htkd: htkdActor,
       otherHtkd: principal(otherHtkd, 'HTKD', { assignedStoreIds: [otherStoreUser.storeId] }),
       admin: principal(adminRow, 'ADMIN'),
+      // A forged desk scope that names a retail store: the store's kind still keeps it out.
       wholesale: principal(wholesale, 'WHOLESALE', { assignedStoreIds: [storeUser.storeId] }),
     };
   }

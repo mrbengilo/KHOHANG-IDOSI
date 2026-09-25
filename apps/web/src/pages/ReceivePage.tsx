@@ -19,8 +19,10 @@ import {
   RefreshCw,
   RotateCcw,
   Send,
+  X,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import clsx from 'clsx';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import type { AppOutletContext } from '../components/AppShell';
 import { Badge } from '../components/Badge';
@@ -33,7 +35,7 @@ import { StatCard } from '../components/StatCard';
 import { HeldAllocationsPanel } from '../features/receipts/HeldAllocationsPanel';
 import { AdjustmentQueue } from '../features/receipts/adjustments/AdjustmentQueue';
 import { ReceiptAdjustmentsSection } from '../features/receipts/adjustments/ReceiptAdjustments';
-import { canUseAdjustments } from '../features/receipts/adjustments/adjustmentModel';
+import { adjustmentAudience } from '../features/receipts/adjustments/adjustmentModel';
 import { listStoreReceiptSources } from '../features/receipts/receiptSourceApi';
 import '../features/receipts/receipt-source.css';
 import {
@@ -101,6 +103,28 @@ const operationNotice: Record<ReceiptOperation['kind'], string> = {
 
 type ReceiptOperationKind = ReceiptOperation['kind'];
 
+/** Asked before a store switch would drop a declaration the user has started. */
+export const DISCARD_DECLARATION_PROMPT =
+  'Phiếu khai nhận đang soạn chưa được lưu. Chuyển cửa hàng sẽ bỏ nội dung này. Tiếp tục?';
+
+/**
+ * The store a receiving account declares for. A store account always receives for its own
+ * store. The wholesale desk covers several wholesale stores and receives for the one it picked,
+ * falling back to the first one; it is never given a retail store. Reviewers declare nothing.
+ */
+export function resolveReceivingStoreId(
+  role: AppOutletContext['role'],
+  principalStoreId: string,
+  wholesaleStoreIds: readonly string[],
+  selectedStoreId: string,
+): string {
+  if (role === 'STORE') return principalStoreId;
+  if (role !== 'WHOLESALE') return '';
+  return wholesaleStoreIds.includes(selectedStoreId)
+    ? selectedStoreId
+    : (wholesaleStoreIds[0] ?? '');
+}
+
 export async function confirmReceiptDeclaration(
   input: DeclareStoreReceiptRequest,
   onDeclare: (request: DeclareStoreReceiptRequest) => Promise<boolean>,
@@ -125,6 +149,7 @@ function ProductionReceivePage({ role }: AppOutletContext) {
   const [selectedReceiptId, setSelectedReceiptId] = useState('');
   const [focusAdjustmentId, setFocusAdjustmentId] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
+  const [declarationDirty, setDeclarationDirty] = useState(false);
   const operationKeys = useRef(new Map<string, string>());
   const operationInFlight = useRef(false);
   const principalStoreId = sessionQuery.data?.principal.storeId ?? '';
@@ -135,13 +160,17 @@ function ProductionReceivePage({ role }: AppOutletContext) {
     queryKey: ['stores', 'accessible'],
     retry: false,
   });
-  const wholesaleStores = (storesQuery.data ?? []).filter((store) => store.kind === 'WHOLESALE');
-  const receivingStoreId =
-    role === 'WHOLESALE'
-      ? wholesaleStores.find((store) => store.id === storeFilter)?.id ||
-        wholesaleStores[0]?.id ||
-        ''
-      : principalStoreId;
+  const stores = storesQuery.data ?? [];
+  const wholesaleStores = stores.filter((store) => store.kind === 'WHOLESALE');
+  const receivingStoreId = resolveReceivingStoreId(
+    role,
+    principalStoreId,
+    wholesaleStores.map((store) => store.id),
+    storeFilter,
+  );
+  // One selector scopes the whole page: the declaration, its pending count and the receipts.
+  const scopeStores = role === 'WHOLESALE' ? wholesaleStores : stores;
+  const selectedScopeStoreId = role === 'WHOLESALE' ? receivingStoreId : storeFilter;
   const catalogQuery = useQuery({ queryFn: listCatalog, queryKey: ['catalog'], retry: false });
   const receiptSourcesQuery = useQuery({
     enabled: isStoreReceiver && Boolean(receivingStoreId),
@@ -168,9 +197,13 @@ function ProductionReceivePage({ role }: AppOutletContext) {
   });
 
   const receipts = receiptsQuery.data ?? [];
-  const effectiveReceiptId = receipts.some((receipt) => receipt.id === selectedReceiptId)
-    ? selectedReceiptId
-    : (receipts[0]?.id ?? '');
+  // A receipt opened from the discrepancy queue may be older than the list window; it stays
+  // selected rather than falling back to another receipt.
+  const effectiveReceiptId =
+    receipts.some((receipt) => receipt.id === selectedReceiptId) ||
+    (focusAdjustmentId !== null && selectedReceiptId !== '')
+      ? selectedReceiptId
+      : (receipts[0]?.id ?? '');
   const detailQuery = useQuery({
     enabled: Boolean(effectiveReceiptId),
     queryFn: () => getStoreReceipt(effectiveReceiptId),
@@ -178,7 +211,7 @@ function ProductionReceivePage({ role }: AppOutletContext) {
     retry: false,
   });
   const selectedReceipt = detailQuery.data ?? null;
-  const stores = storesQuery.data ?? [];
+  const audience = adjustmentAudience(role);
   const productNameById = useMemo(
     () => new Map((catalogQuery.data ?? []).map((product) => [product.id, product.name])),
     [catalogQuery.data],
@@ -226,8 +259,9 @@ function ProductionReceivePage({ role }: AppOutletContext) {
       setSelectedReceiptId(receipt.id);
       queryClient.setQueryData(['store-receipt', receipt.id], receipt);
       if (operation.kind === 'DECLARE') {
+        // Keyed by the store the declaration was for, not the store selected when it returns.
         queryClient.setQueryData<StoreReceiptSource[]>(
-          ['store-receipt-sources', receivingStoreId],
+          ['store-receipt-sources', operation.input.storeId],
           (sources = []) => removeDeclaredReceiptSource(sources, operation.input.outboundRequestId),
         );
       }
@@ -261,6 +295,23 @@ function ProductionReceivePage({ role }: AppOutletContext) {
   };
 
   const pendingOperation = mutation.isPending ? (mutation.variables?.kind ?? null) : null;
+
+  /**
+   * Switching store resets everything scoped to the old one. It is refused while a command is
+   * in flight, and an unsaved declaration is only dropped after the user confirms.
+   */
+  const selectStore = (nextStoreId: string): boolean => {
+    if (nextStoreId === selectedScopeStoreId) return true;
+    if (mutation.isPending || operationInFlight.current) return false;
+    if (declarationDirty && !window.confirm(DISCARD_DECLARATION_PROMPT)) return false;
+    setStoreFilter(nextStoreId);
+    setSelectedReceiptId('');
+    setFocusAdjustmentId(null);
+    setDeclarationDirty(false);
+    setNotice('');
+    mutation.reset();
+    return true;
+  };
 
   const receiptCounts = useMemo(
     () => ({
@@ -320,11 +371,45 @@ function ProductionReceivePage({ role }: AppOutletContext) {
         />
       </div>
 
+      {role !== 'STORE' ? (
+        <section className="filter-card receipt-scope" aria-label="Phạm vi cửa hàng">
+          <label>
+            Cửa hàng
+            <select
+              disabled={mutation.isPending || storesQuery.isPending}
+              onChange={(event) => selectStore(event.target.value)}
+              value={selectedScopeStoreId}
+            >
+              {role !== 'WHOLESALE' ? <option value="">Tất cả phạm vi được giao</option> : null}
+              {role === 'WHOLESALE' && scopeStores.length === 0 ? (
+                <option value="">
+                  {storesQuery.isPending
+                    ? 'Đang tải cửa hàng sỉ…'
+                    : 'Chưa có cửa hàng sỉ đang hoạt động'}
+                </option>
+              ) : null}
+              {scopeStores.map((store) => (
+                <option key={store.id} value={store.id}>
+                  {store.code} · {store.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="receipt-scope__hint">
+            {isStoreReceiver
+              ? 'Lệnh xuất chờ nhận, phiếu khai và hồ sơ sai lệch bên dưới thuộc cửa hàng đang chọn.'
+              : 'Danh sách phiếu nhận bên dưới lọc theo cửa hàng đang chọn.'}
+          </p>
+        </section>
+      ) : null}
+
       {isStoreReceiver && receivingStoreId ? (
         <CreateReceiptForm
           busy={pendingOperation === 'DECLARE'}
           disabled={mutation.isPending}
+          key={receivingStoreId}
           onDeclare={(input) => runOperation({ kind: 'DECLARE', input })}
+          onDirtyChange={setDeclarationDirty}
           onRefresh={() => receiptSourcesQuery.refetch()}
           productNameById={productNameById}
           unexpectedProducts={activeProducts}
@@ -333,6 +418,7 @@ function ProductionReceivePage({ role }: AppOutletContext) {
           sourcesFetching={receiptSourcesQuery.isFetching}
           sourcesPending={receiptSourcesQuery.isPending}
           storeId={receivingStoreId}
+          storeName={storeNameById.get(receivingStoreId) ?? ''}
         />
       ) : null}
 
@@ -345,38 +431,21 @@ function ProductionReceivePage({ role }: AppOutletContext) {
         />
       ) : null}
 
-      {canUseAdjustments(role) ? (
+      {audience ? (
         <AdjustmentQueue
-          onOpen={(receiptId, adjustmentId) => {
-            // The queue can point at a receipt outside the current filter; clear the filter.
+          onOpen={(receiptId, adjustmentId, storeId) => {
+            // Open the document in its own store, whatever store is selected now.
+            if (!selectStore(role === 'STORE' ? storeFilter : storeId)) return;
             setStatusFilter('ALL');
-            setStoreFilter('');
             setSelectedReceiptId(receiptId);
             setFocusAdjustmentId(adjustmentId);
           }}
-          role={role}
+          role={audience}
           storeNameById={storeNameById}
         />
       ) : null}
 
       <section className="filter-card receipt-filters" aria-label="Bộ lọc phiếu nhận hàng">
-        {role !== 'STORE' ? (
-          <label>
-            Cửa hàng
-            <select
-              disabled={mutation.isPending}
-              onChange={(event) => setStoreFilter(event.target.value)}
-              value={role === 'WHOLESALE' ? receivingStoreId : storeFilter}
-            >
-              {role !== 'WHOLESALE' ? <option value="">Tất cả phạm vi được giao</option> : null}
-              {(role === 'WHOLESALE' ? wholesaleStores : stores).map((store) => (
-                <option key={store.id} value={store.id}>
-                  {store.code} · {store.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
         <label>
           Trạng thái
           <select
@@ -423,7 +492,11 @@ function ProductionReceivePage({ role }: AppOutletContext) {
       ) : receipts.length === 0 ? (
         <section className="panel">
           <EmptyState
-            detail="Thay đổi bộ lọc hoặc tạo phiếu từ một lệnh xuất đã giao."
+            detail={
+              isStoreReceiver
+                ? 'Thay đổi bộ lọc hoặc bấm Nhận hàng để khai phiếu từ một lệnh xuất đã giao.'
+                : 'Thay đổi bộ lọc cửa hàng hoặc trạng thái.'
+            }
             title="Chưa có phiếu nhận hàng"
           />
         </section>
@@ -527,10 +600,51 @@ export function removeDeclaredReceiptSource(
   return sources.filter((source) => source.id !== outboundRequestId);
 }
 
+/**
+ * "N phiếu chờ nhận hàng": dispatched shipments of the selected store the server still offers
+ * for a declaration. Loading and failure never read as zero.
+ */
+export function PendingSourceCount({
+  count,
+  error,
+  pending,
+}: {
+  readonly count: number;
+  readonly error: boolean;
+  readonly pending: boolean;
+}) {
+  if (pending) {
+    return (
+      <span className="receipt-source-count receipt-source-count--muted" role="status">
+        <span aria-hidden="true" className="receipt-source-count__spinner" />
+        Đang tải phiếu chờ nhận…
+      </span>
+    );
+  }
+  if (error) {
+    return (
+      <span className="receipt-source-count receipt-source-count--error" role="status">
+        <AlertTriangle aria-hidden="true" size={15} />
+        Chưa tải được phiếu chờ nhận
+      </span>
+    );
+  }
+  return (
+    <span
+      className={clsx('receipt-source-count', count > 0 && 'receipt-source-count--active')}
+      role="status"
+    >
+      <strong className="receipt-source-count__value">{count}</strong>
+      <span>phiếu chờ nhận hàng</span>
+    </span>
+  );
+}
+
 function CreateReceiptForm({
   busy,
   disabled,
   onDeclare,
+  onDirtyChange,
   onRefresh,
   productNameById,
   unexpectedProducts,
@@ -539,10 +653,13 @@ function CreateReceiptForm({
   sourcesFetching,
   sourcesPending,
   storeId,
+  storeName,
 }: {
   readonly busy: boolean;
   readonly disabled: boolean;
   readonly onDeclare: (input: DeclareStoreReceiptRequest) => Promise<boolean>;
+  /** Reports whether a declaration has been started, so a store switch can ask first. */
+  readonly onDirtyChange: (dirty: boolean) => void;
   readonly onRefresh: () => Promise<unknown>;
   readonly productNameById: ReadonlyMap<string, string>;
   readonly unexpectedProducts: readonly { readonly id: string; readonly name: string }[];
@@ -551,8 +668,10 @@ function CreateReceiptForm({
   readonly sourcesFetching: boolean;
   readonly sourcesPending: boolean;
   readonly storeId: string;
+  readonly storeName: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const bodyId = useId();
   const [selectedSourceId, setSelectedSourceId] = useState('');
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [discrepancyNote, setDiscrepancyNote] = useState('');
@@ -567,6 +686,10 @@ function CreateReceiptForm({
     setDiscrepancyNote('');
     setUnexpectedItems([]);
   }, [selectedSource, selectedSourceId]);
+
+  useEffect(() => {
+    onDirtyChange(selectedSourceId !== '');
+  }, [onDirtyChange, selectedSourceId]);
 
   const chooseSource = (source: StoreReceiptSource) => {
     setSelectedSourceId(source.id);
@@ -639,34 +762,56 @@ function CreateReceiptForm({
   };
 
   return (
-    <section className="panel receipt-create">
-      <div className="section-heading section-heading--compact">
+    <section className="panel receipt-create" aria-labelledby={`${bodyId}-title`}>
+      <div className="section-heading section-heading--compact receipt-create__heading">
         <div>
-          <h2>Khai phiếu nhận từ lệnh xuất</h2>
-          <p>Chọn lệnh đã giao từ máy chủ; mặt hàng và số duyệt không thể tự nhập hoặc sửa.</p>
+          <h2 id={`${bodyId}-title`}>Khai phiếu nhận hàng</h2>
+          <p>
+            {storeName ? `${storeName} · ` : ''}Chọn lệnh đã giao từ máy chủ; mặt hàng và số duyệt
+            không thể tự nhập hoặc sửa.
+          </p>
         </div>
         <div className="receipt-source-actions">
-          <span className="receipt-source-count">{sources.length} lệnh chờ nhận</span>
+          <PendingSourceCount
+            count={sources.length}
+            error={Boolean(sourcesError)}
+            pending={sourcesPending}
+          />
           <Button
-            aria-label="Làm mới lệnh xuất chờ nhận"
-            className={sourcesFetching ? 'receipt-source-refreshing' : undefined}
+            aria-busy={sourcesFetching}
+            aria-label="Làm mới phiếu chờ nhận hàng"
+            className={clsx(
+              'receipt-refresh-button',
+              sourcesFetching && 'receipt-source-refreshing',
+            )}
             disabled={disabled || sourcesFetching}
             onClick={() => void onRefresh()}
             tone="secondary"
           >
-            <RefreshCw aria-hidden="true" size={15} /> Làm mới
+            {/* The label stays put while loading so the row never shifts; the icon spins. */}
+            <RefreshCw aria-hidden="true" size={16} /> Làm mới
           </Button>
           <Button
+            aria-controls={bodyId}
+            aria-expanded={expanded}
             disabled={disabled}
             onClick={() => setExpanded((current) => !current)}
-            tone="secondary"
+            tone={expanded ? 'secondary' : 'primary'}
           >
-            <ClipboardCheck aria-hidden="true" size={16} /> {expanded ? 'Đóng' : 'Tạo phiếu'}
+            {expanded ? (
+              <>
+                <X aria-hidden="true" size={16} /> Đóng
+              </>
+            ) : (
+              <>
+                <PackageCheck aria-hidden="true" size={16} /> Nhận hàng
+              </>
+            )}
           </Button>
         </div>
       </div>
       {expanded ? (
-        <div className="receipt-create__body">
+        <div className="receipt-create__body" id={bodyId}>
           {sourcesPending ? (
             <div className="receipt-source-state" role="status">
               <span>
@@ -674,7 +819,8 @@ function CreateReceiptForm({
                 Đang tải lệnh xuất đã giao từ máy chủ…
               </span>
             </div>
-          ) : sourcesError && sources.length === 0 ? (
+          ) : sourcesError ? (
+            // A failed refresh never presents the previous list as current.
             <ErrorNotice error={sourcesError} onRetry={() => void onRefresh()} />
           ) : sources.length === 0 ? (
             <div className="receipt-source-state">
@@ -686,9 +832,6 @@ function CreateReceiptForm({
             </div>
           ) : (
             <>
-              {sourcesError ? (
-                <ErrorNotice error={sourcesError} onRetry={() => void onRefresh()} />
-              ) : null}
               <div className="receipt-source-grid" aria-label="Lệnh xuất đang chờ nhận">
                 {sources.map((source) => (
                   <button
@@ -864,12 +1007,16 @@ function CreateReceiptForm({
                 </div>
               ) : null}
               <div className="receipt-actions">
+                <p className="receipt-actions__hint">
+                  Lưu thành phiếu nháp để kiểm tra rồi gửi HTKD duyệt. Tồn kho chỉ tăng sau khi HTKD
+                  chốt phiếu theo số thực nhận.
+                </p>
                 <Button
                   busy={busy}
                   disabled={disabled || !selectedSource}
                   onClick={() => void submit()}
                 >
-                  <ClipboardCheck aria-hidden="true" size={16} /> Lưu phiếu nháp
+                  <ClipboardCheck aria-hidden="true" size={16} /> Lưu phiếu khai nhận (nháp)
                 </Button>
               </div>
             </>
@@ -905,6 +1052,7 @@ function ReceiptDetail({
 }) {
   const copy = receiptStatusCopy[receipt.status];
   const total = receipt.lines.reduce((sum, line) => sum + line.receivedUnits, 0);
+  const receiptAudience = adjustmentAudience(role);
   return (
     <>
       <div className="receipt-detail__header">
@@ -969,14 +1117,14 @@ function ReceiptDetail({
           />
         </>
       )}
-      {receipt.status === 'FINALIZED' && canUseAdjustments(role) ? (
+      {receipt.status === 'FINALIZED' && receiptAudience ? (
         <ReceiptAdjustmentsSection
           focusAdjustmentId={focusAdjustmentId}
           key={focusAdjustmentId ?? 'none'}
           productNameById={productNameById}
           products={unexpectedProducts}
           receiptId={receipt.id}
-          role={role}
+          role={receiptAudience}
         />
       ) : null}
     </>

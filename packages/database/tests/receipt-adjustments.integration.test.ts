@@ -576,6 +576,150 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
     );
   });
 
+  it('wholesale desk takes the store side on wholesale stores only, audited as wholesale', async () => {
+    const fx = await createFinalizedReceipt({ wholesale: true });
+    const retail = await createFinalizedReceipt();
+    const [target, second] = fx.bags;
+
+    // The desk reaches wholesale stores by kind, never a retail store.
+    await expect(
+      report({ ...retail, storeUserId: fx.storeUserId }, [retail.bags[0]!], 'keep'),
+    ).rejects.toBeInstanceOf(ReceiptAdjustmentAuthorizationError);
+
+    // One report per key, even when the same command races itself.
+    const key = `report-${randomUUID()}`;
+    const reportInput = {
+      receiptId: fx.receiptId,
+      actorUserId: fx.storeUserId,
+      reason: 'Khui bao thấy là jeans',
+      evidenceNote: 'Ảnh lưu trong nhóm cửa hàng sỉ',
+      discoveredAt: new Date(),
+      lines: [
+        {
+          receiptBagId: target!.receiptBagId,
+          actualProductId: fx.jeansId,
+          disposition: 'return' as const,
+        },
+      ],
+      idempotencyKey: key,
+      requestHash: key,
+    };
+    const [first, again] = await Promise.all([
+      createReceiptAdjustment(db, reportInput),
+      createReceiptAdjustment(db, reportInput),
+    ]);
+    expect([first.replayed, again.replayed].sort()).toEqual([false, true]);
+    const created = !first.replayed
+      ? first.value.adjustmentId
+      : !again.replayed
+        ? again.value.adjustmentId
+        : '';
+    expect(
+      await db
+        .select({ id: storeReceiptAdjustments.id })
+        .from(storeReceiptAdjustments)
+        .where(eq(storeReceiptAdjustments.storeReceiptId, fx.receiptId)),
+    ).toHaveLength(1);
+    expect((await bagRow(target!.inventoryBagId)).status).toBe('quarantined');
+
+    // The desk cannot verify or apply its own report.
+    await expect(
+      verify({ ...fx, htkdId: fx.storeUserId }, created, 0, { pricePerKgVnd: 40_000n }),
+    ).rejects.toBeInstanceOf(ReceiptAdjustmentAuthorizationError);
+
+    await transition({
+      adjustmentId: created,
+      expectedVersion: 0,
+      actorUserId: fx.htkdId,
+      action: 'REQUEST_INFO',
+      note: 'Gửi thêm ảnh tem bao',
+    });
+    const record = await getReceiptAdjustment(db, created);
+    expect(record!.status).toBe('needs_info');
+    // A stale version is refused before anything is written.
+    await expect(
+      transition({
+        adjustmentId: created,
+        expectedVersion: 0,
+        actorUserId: fx.storeUserId,
+        action: 'RESUBMIT',
+        reason: 'Đã bổ sung ảnh tem bao',
+        evidenceNote: 'Ảnh tem bao gửi HTKD',
+        discoveredAt: new Date(),
+        lines: reportInput.lines,
+      }),
+    ).rejects.toThrow(/đã thay đổi/);
+    await transition({
+      adjustmentId: created,
+      expectedVersion: 1,
+      actorUserId: fx.storeUserId,
+      action: 'RESUBMIT',
+      reason: 'Đã bổ sung ảnh tem bao',
+      evidenceNote: 'Ảnh tem bao gửi HTKD',
+      discoveredAt: new Date(),
+      lines: reportInput.lines,
+    });
+    await verify(fx, created, 2, { pricePerKgVnd: 40_000n });
+    await expect(
+      transition({
+        adjustmentId: created,
+        expectedVersion: 3,
+        actorUserId: fx.storeUserId,
+        action: 'APPLY',
+        note: null,
+      }),
+    ).rejects.toBeInstanceOf(ReceiptAdjustmentAuthorizationError);
+    await applyAdjustment(created, 3);
+    expect(await activeWaits(fx)).toHaveLength(1);
+    expect(await summary(fx)).toMatchObject({ appliedCount: 1 });
+
+    const [returned] = await db
+      .select()
+      .from(storeReceiptReturns)
+      .where(eq(storeReceiptReturns.storeInventoryBagId, target!.inventoryBagId));
+    expect(returned!.status).toBe('pending_handover');
+    const jeansBefore = await balance(fx.jeansId);
+    // Only the admin books the warehouse receipt of a return.
+    await expect(
+      returnAction(fx.storeUserId, returned!.id, 0, {
+        action: 'RECEIVE',
+        outcome: 'RECEIVED',
+        note: null,
+      }),
+    ).rejects.toBeInstanceOf(ReceiptAdjustmentAuthorizationError);
+    await returnAction(fx.storeUserId, returned!.id, 0, { action: 'HANDOVER' });
+    expect(await bagRow(target!.inventoryBagId)).toMatchObject({ status: 'returned' });
+    expect(await balance(fx.jeansId)).toEqual(jeansBefore);
+    await expectLedgerMatchesBags(fx);
+
+    // A second report the desk cancels itself releases only its own hold.
+    const cancelled = await report(fx, [second!], 'keep');
+    await transition({
+      adjustmentId: cancelled,
+      expectedVersion: 0,
+      actorUserId: fx.storeUserId,
+      action: 'CANCEL',
+      note: 'Báo nhầm bao',
+    });
+    expect((await bagRow(second!.inventoryBagId)).status).toBe('available');
+
+    const audits = await db
+      .select({ action: auditLogs.action, actorRole: auditLogs.actorRole })
+      .from(auditLogs)
+      .where(eq(auditLogs.actorUserId, fx.storeUserId));
+    const roleOf = (action: string) =>
+      audits.filter((row) => row.action === action).map((row) => row.actorRole);
+    expect(roleOf('RECEIPT_ADJUSTMENT_REPORTED')).toEqual(['wholesale', 'wholesale']);
+    expect(audits.length).toBeGreaterThanOrEqual(5);
+    expect(audits.every((row) => row.actorRole === 'wholesale')).toBe(true);
+
+    // A locked desk account is refused even though its store is still in reach.
+    await db.update(users).set({ status: 'locked' }).where(eq(users.id, fx.storeUserId));
+    await expect(report(fx, [fx.bags[2]!], 'keep')).rejects.toBeInstanceOf(
+      ReceiptAdjustmentAuthorizationError,
+    );
+  });
+
   it('refuses a second open report on the same bag and invented legacy VAT', async () => {
     const fx = await createFinalizedReceipt();
     await db
@@ -845,6 +989,8 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
       readonly reuse?: Fixture;
       readonly quantity?: number;
       readonly waitTicketId?: string;
+      /** A wholesale store, received for by a wholesale-desk account instead of a store account. */
+      readonly wholesale?: boolean;
     } = {},
   ): Promise<Fixture> {
     const quantity = options.quantity ?? 3;
@@ -855,7 +1001,12 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
     if (!base) {
       const [store] = await db
         .insert(stores)
-        .values({ code: `ADJ-${token.slice(0, 20)}`, name: 'Adjustment store', groupId: group.id })
+        .values({
+          code: `ADJ-${token.slice(0, 20)}`,
+          name: 'Adjustment store',
+          groupId: group.id,
+          kind: options.wholesale ? 'wholesale' : 'retail',
+        })
         .returning();
       const newProduct = async (name: string) =>
         (
@@ -870,11 +1021,11 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
       const [storeUser] = await db
         .insert(users)
         .values({
-          storeId: store!.id,
+          storeId: options.wholesale ? null : store!.id,
           email: `adj-store-${token}@example.test`,
           passwordHash: 'integration-test-placeholder-hash',
-          displayName: 'Adjustment store user',
-          role: 'store',
+          displayName: options.wholesale ? 'Adjustment wholesale desk' : 'Adjustment store user',
+          role: options.wholesale ? 'wholesale' : 'store',
         })
         .returning();
       const [htkd] = await db

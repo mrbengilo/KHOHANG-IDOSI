@@ -49,10 +49,12 @@ import {
   formatSignedVnd,
   previewAdjustment,
   returnStatusCopy,
+  type AdjustmentAudience,
 } from './adjustmentModel';
 import './receipt-adjustments.css';
 
-type Role = 'ADMIN' | 'HTKD' | 'STORE';
+/** The workflow side, not the account role: the wholesale desk arrives here as STORE. */
+type Role = AdjustmentAudience;
 
 interface ProductOption {
   readonly id: string;

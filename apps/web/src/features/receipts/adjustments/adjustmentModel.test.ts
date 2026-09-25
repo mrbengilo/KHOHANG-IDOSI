@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  canUseAdjustments,
+  adjustmentAudience,
   describeEntitlement,
   formatExactVnd,
   formatSignedVnd,
@@ -93,7 +93,13 @@ describe('receipt adjustment preview', () => {
     expect(describeEntitlement(right)).toBe('Chờ cấp (ưu tiên P0B)');
     expect(describeEntitlement({ ...right, shippingQuantity: 1 })).toBe('Đang giao bù');
     expect(describeEntitlement({ ...right, receivedQuantity: 1 })).toBe('Đã nhận bù');
-    expect(canUseAdjustments('WHOLESALE')).toBe(false);
-    expect(canUseAdjustments('HTKD')).toBe(true);
+  });
+
+  it('puts the wholesale desk on the store side of the workflow, never the reviewer side', () => {
+    expect(adjustmentAudience('WHOLESALE')).toBe('STORE');
+    expect(adjustmentAudience('STORE')).toBe('STORE');
+    expect(adjustmentAudience('HTKD')).toBe('HTKD');
+    expect(adjustmentAudience('ADMIN')).toBe('ADMIN');
+    expect(adjustmentAudience('UNKNOWN')).toBeNull();
   });
 });

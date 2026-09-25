@@ -1,8 +1,12 @@
 import type { DeclareStoreReceiptRequest, StoreReceiptSource } from '@idosi/contracts';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { listStoreReceiptSources } from '../features/receipts/receiptSourceApi';
 import {
   confirmReceiptDeclaration,
+  PendingSourceCount,
+  resolveReceivingStoreId,
   receiptSourceDraftLines,
   removeDeclaredReceiptSource,
   receiptTotalsPreview,
@@ -189,5 +193,56 @@ describe('receipt source selection', () => {
       code: 'NETWORK_ERROR',
       status: 0,
     });
+  });
+});
+
+describe('receiving store scope', () => {
+  const wholesaleA = '20000000-0000-4000-8000-00000000000a';
+  const wholesaleB = '20000000-0000-4000-8000-00000000000b';
+
+  it('keeps a store account on its own store whatever is selected', () => {
+    expect(resolveReceivingStoreId('STORE', 'own', [wholesaleA], wholesaleA)).toBe('own');
+  });
+
+  it('lets the wholesale desk receive for the wholesale store it picked', () => {
+    expect(resolveReceivingStoreId('WHOLESALE', '', [wholesaleA, wholesaleB], wholesaleB)).toBe(
+      wholesaleB,
+    );
+    // Nothing picked yet, or a store outside its reach: the first wholesale store.
+    expect(resolveReceivingStoreId('WHOLESALE', '', [wholesaleA, wholesaleB], '')).toBe(wholesaleA);
+    expect(resolveReceivingStoreId('WHOLESALE', '', [wholesaleA], 'retail-store')).toBe(wholesaleA);
+    expect(resolveReceivingStoreId('WHOLESALE', '', [], '')).toBe('');
+  });
+
+  it('never makes a reviewer a receiver', () => {
+    expect(resolveReceivingStoreId('HTKD', '', [wholesaleA], wholesaleA)).toBe('');
+    expect(resolveReceivingStoreId('ADMIN', '', [wholesaleA], wholesaleA)).toBe('');
+  });
+});
+
+describe('pending receipt count', () => {
+  const render = (props: { count: number; error: boolean; pending: boolean }) =>
+    renderToStaticMarkup(createElement(PendingSourceCount, props));
+
+  it('shows the number of shipments waiting to be received, prominently', () => {
+    const html = render({ count: 3, error: false, pending: false });
+    expect(html).toContain('<strong class="receipt-source-count__value">3</strong>');
+    expect(html).toContain('phiếu chờ nhận hàng');
+    expect(html).toContain('receipt-source-count--active');
+  });
+
+  it('shows an explicit zero only once the server has answered', () => {
+    const html = render({ count: 0, error: false, pending: false });
+    expect(html).toContain('>0</strong>');
+    expect(html).not.toContain('receipt-source-count--active');
+  });
+
+  it('never reads loading or a failed load as zero', () => {
+    const loading = render({ count: 0, error: false, pending: true });
+    expect(loading).toContain('Đang tải phiếu chờ nhận');
+    expect(loading).not.toContain('receipt-source-count__value');
+    const failed = render({ count: 4, error: true, pending: false });
+    expect(failed).toContain('Chưa tải được phiếu chờ nhận');
+    expect(failed).not.toContain('receipt-source-count__value');
   });
 });

@@ -367,7 +367,7 @@ export async function createReceiptAdjustment(
     (tx) =>
       withAdvisoryLock(tx, 'store-receipt-adjustment', input.receiptId, async () => {
         const receipt = await loadFinalizedReceipt(tx, input.receiptId);
-        await resolveActor(tx, input.actorUserId, receipt.storeId, ['STORE']);
+        const actor = await resolveActor(tx, input.actorUserId, receipt.storeId, ['STORE']);
         // Discovery time is entered to the minute, so the finalization minute itself is valid.
         if (
           receipt.finalizedAt &&
@@ -477,7 +477,7 @@ export async function createReceiptAdjustment(
         await tx.insert(auditLogs).values({
           requestId: input.requestId ?? null,
           actorUserId: input.actorUserId,
-          actorRole: 'store',
+          actorRole: actor.databaseRole,
           actorStoreId: receipt.storeId,
           action: 'RECEIPT_ADJUSTMENT_REPORTED',
           entityType: 'store_receipt_adjustment',
@@ -1362,7 +1362,7 @@ export async function createReceiptReturn(
         )
         .limit(1);
       if (!line) throw new StoreOperationValidationError('Không tìm thấy bao trong hồ sơ.');
-      await resolveActor(tx, input.actorUserId, line.adjustment.storeId, ['STORE']);
+      const actor = await resolveActor(tx, input.actorUserId, line.adjustment.storeId, ['STORE']);
       return withAdvisoryLock(
         tx,
         'store-inventory-bag',
@@ -1428,7 +1428,7 @@ export async function createReceiptReturn(
           await tx.insert(auditLogs).values({
             requestId: input.requestId ?? null,
             actorUserId: input.actorUserId,
-            actorRole: 'store',
+            actorRole: actor.databaseRole,
             actorStoreId: bag.storeId,
             action: 'STORE_RECEIPT_RETURN_CREATED',
             entityType: 'store_receipt_return',
@@ -2155,13 +2155,19 @@ type AdjustmentLineRow = typeof storeReceiptAdjustmentLines.$inferSelect;
 
 interface ResolvedActor {
   readonly userId: string;
+  /** The business side the account acts for in this store's workflow. */
   readonly role: ReceiptAdjustmentActorRole;
-  readonly databaseRole: 'admin' | 'htkd' | 'store';
+  /** The account's real role, recorded in audit rows so a wholesale desk is never shown as a store. */
+  readonly databaseRole: 'admin' | 'htkd' | 'store' | 'wholesale';
 }
 
 /**
  * Role, account status, store and HTKD assignment are all re-read inside the transaction, so a
  * locked account or a revoked assignment is refused even with a still-open session.
+ *
+ * The wholesale desk speaks for every active wholesale store (the same reach it has when it
+ * declares a receipt), so on a wholesale store's documents it takes the store side of the
+ * workflow. The store's kind bounds that reach: it can never act on a retail store this way.
  */
 async function resolveActor(
   tx: Transaction,
@@ -2170,7 +2176,7 @@ async function resolveActor(
   roles: readonly ReceiptAdjustmentActorRole[],
 ): Promise<ResolvedActor> {
   const [store] = await tx
-    .select({ id: stores.id })
+    .select({ id: stores.id, kind: stores.kind })
     .from(stores)
     .where(and(eq(stores.id, storeId), eq(stores.isActive, true), isNull(stores.deletedAt)))
     .limit(1);
@@ -2183,6 +2189,7 @@ async function resolveActor(
   let role: ReceiptAdjustmentActorRole | null = null;
   if (user.role === 'admin') role = 'ADMIN';
   else if (user.role === 'store' && user.storeId === storeId) role = 'STORE';
+  else if (user.role === 'wholesale' && store.kind === 'wholesale') role = 'STORE';
   else if (user.role === 'htkd') {
     const [assignment] = await tx
       .select({ id: htkdAssignments.id })
@@ -2198,7 +2205,7 @@ async function resolveActor(
     if (assignment) role = 'HTKD';
   }
   if (role === null || !roles.includes(role)) throw new ReceiptAdjustmentAuthorizationError();
-  return { userId, role, databaseRole: user.role as ResolvedActor['databaseRole'] };
+  return { userId, role, databaseRole: user.role };
 }
 
 function planTransition(

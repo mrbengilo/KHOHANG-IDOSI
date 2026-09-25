@@ -1204,14 +1204,14 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.get('/api/v1/store-receipts/:receiptId/adjustment-context', async (request) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE']);
+    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE']);
     const { receiptId } = ReceiptParamsSchema.parse(request.params);
     return { data: await repository.getReceiptAdjustmentContext(session.principal, receiptId) };
   });
 
   app.get('/api/v1/receipt-adjustments', async (request) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE']);
+    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE']);
     return repository.listReceiptAdjustments(
       session.principal,
       ListReceiptAdjustmentsQuerySchema.parse(request.query),
@@ -1220,14 +1220,14 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.get('/api/v1/receipt-adjustments/:adjustmentId', async (request) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE']);
+    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE']);
     const { adjustmentId } = ReceiptAdjustmentParamsSchema.parse(request.params);
     return { data: await repository.getReceiptAdjustment(session.principal, adjustmentId) };
   });
 
   app.post('/api/v1/receipt-adjustments', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['STORE']);
+    requireRole(session.principal, ['STORE', 'WHOLESALE']);
     const headers = IdempotencyHeadersSchema.parse(request.headers);
     const input = CreateReceiptAdjustmentRequestSchema.parse(request.body);
     const result = await repository.createReceiptAdjustment(
@@ -1249,7 +1249,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.post('/api/v1/receipt-adjustments/:adjustmentId/actions', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE']);
+    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE']);
     const headers = IdempotencyHeadersSchema.parse(request.headers);
     const { adjustmentId } = ReceiptAdjustmentParamsSchema.parse(request.params);
     const input = ReceiptAdjustmentActionRequestSchema.parse(request.body);
@@ -1280,7 +1280,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     '/api/v1/receipt-adjustments/:adjustmentId/lines/:lineId/returns',
     async (request, reply) => {
       const session = await authenticate(request, repository);
-      requireRole(session.principal, ['STORE']);
+      requireRole(session.principal, ['STORE', 'WHOLESALE']);
       const headers = IdempotencyHeadersSchema.parse(request.headers);
       const { adjustmentId, lineId } = ReceiptAdjustmentLineParamsSchema.parse(request.params);
       const input = CreateReceiptReturnRequestSchema.parse(request.body);
@@ -1300,7 +1300,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.get('/api/v1/receipt-returns', async (request) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE']);
+    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE']);
     return repository.listReceiptReturns(
       session.principal,
       ListReceiptReturnsQuerySchema.parse(request.query),
@@ -1309,7 +1309,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.post('/api/v1/receipt-returns/:returnId/actions', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE']);
+    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE']);
     const headers = IdempotencyHeadersSchema.parse(request.headers);
     const { returnId } = ReceiptReturnParamsSchema.parse(request.params);
     const input = ReceiptReturnActionRequestSchema.parse(request.body);
@@ -2523,7 +2523,7 @@ function openApiDocument(): Record<string, unknown> {
           responses: {
             '200': {
               description:
-                'Bags of a finalized receipt with effective SKU/kg/cost, dependencies and adjustments (ADMIN, assigned HTKD, own STORE)',
+                'Bags of a finalized receipt with effective SKU/kg/cost, dependencies and adjustments (ADMIN, assigned HTKD, own STORE, WHOLESALE for wholesale stores)',
             },
           },
         },
@@ -2538,7 +2538,7 @@ function openApiDocument(): Record<string, unknown> {
           responses: {
             '201': {
               description:
-                'STORE reports a post-finalization discrepancy; affected bags are held, money and demand unchanged',
+                'STORE (own store) or WHOLESALE (wholesale store) reports a post-finalization discrepancy; affected bags are held, money and demand unchanged',
             },
           },
         },
@@ -2557,7 +2557,7 @@ function openApiDocument(): Record<string, unknown> {
           responses: {
             '200': {
               description:
-                'RESUBMIT/CANCEL (STORE), VERIFY/REQUEST_INFO/REJECT (HTKD, ADMIN), RETURN_TO_VERIFIER/APPLY (ADMIN); expectedVersion required',
+                'RESUBMIT/CANCEL (STORE, WHOLESALE), VERIFY/REQUEST_INFO/REJECT (HTKD, ADMIN), RETURN_TO_VERIFIER/APPLY (ADMIN); expectedVersion required',
             },
             '409': {
               description: 'Stale version, wrong status or bags blocked by later transactions',
@@ -2568,7 +2568,9 @@ function openApiDocument(): Record<string, unknown> {
       '/api/v1/receipt-adjustments/{adjustmentId}/lines/{lineId}/returns': {
         post: {
           security: cookieSecurity,
-          responses: { '201': { description: 'STORE switches a kept bag to a warehouse return' } },
+          responses: {
+            '201': { description: 'STORE or WHOLESALE switches a kept bag to a warehouse return' },
+          },
         },
       },
       '/api/v1/receipt-returns': {
@@ -2583,7 +2585,7 @@ function openApiDocument(): Record<string, unknown> {
           responses: {
             '200': {
               description:
-                'HANDOVER (STORE), RECEIVE/RESOLVE (ADMIN), CANCEL back to keep (STORE, HTKD, ADMIN)',
+                'HANDOVER (STORE, WHOLESALE), RECEIVE/RESOLVE (ADMIN), CANCEL back to keep (STORE, WHOLESALE, HTKD, ADMIN)',
             },
           },
         },

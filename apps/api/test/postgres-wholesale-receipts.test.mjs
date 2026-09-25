@@ -6,6 +6,8 @@ import {
   outboundRequestLines,
   outboundRequests,
   products,
+  storeInventoryBags,
+  storeReceiptBags,
   storeReceiptLines,
   storeReceipts,
   stores,
@@ -107,19 +109,94 @@ describePostgres('PostgreSQL wholesale receipt scope and discrepancies', () => {
         receivedQuantity: 2,
       });
 
-      const declared = await repository.declareStoreReceipt(
-        actor,
-        {
-          storeId: wholesaleStore.id,
-          outboundRequestId: wholesale.outboundId,
-          lines: [{ productId: catalog[0].id, approvedUnits: 2, receivedUnits: 2 }],
-          unexpectedItems: [{ productId: catalog[1].id, quantity: 3 }],
-          discrepancyNote: 'Dư ba bao mặt hàng khác',
-        },
-        randomUUID(),
-        randomUUID(),
-        { requestId: randomUUID(), ipAddress: null, userAgent: null },
+      const pendingBefore = await repository.listStoreReceiptSources(actor, {
+        storeId: wholesaleStore.id,
+        page: 1,
+        pageSize: 100,
+      });
+      assert.ok(pendingBefore.data.some((source) => source.id === wholesale.outboundId));
+      assert.ok(pendingBefore.data.every((source) => source.storeId === wholesaleStore.id));
+      assert.equal(pendingBefore.pagination.totalItems, pendingBefore.data.length);
+      await assert.rejects(
+        repository.listStoreReceiptSources(actor, {
+          storeId: retailStore.id,
+          page: 1,
+          pageSize: 100,
+        }),
+        (error) => error.statusCode === 403,
       );
+      await assert.rejects(
+        repository.declareStoreReceipt(
+          actor,
+          {
+            storeId: retailStore.id,
+            outboundRequestId: retail.outboundId,
+            lines: [{ productId: catalog[0].id, approvedUnits: 2, receivedUnits: 2 }],
+            discrepancyNote: null,
+          },
+          randomUUID(),
+          randomUUID(),
+          { requestId: randomUUID(), ipAddress: null, userAgent: null },
+        ),
+        (error) => error.statusCode === 403,
+      );
+
+      // Two tabs declaring the same shipment with different keys produce one receipt.
+      const race = await Promise.allSettled(
+        [1, 2].map(() =>
+          repository.declareStoreReceipt(
+            actor,
+            {
+              storeId: wholesaleStore.id,
+              outboundRequestId: wholesale.outboundId,
+              lines: [{ productId: catalog[0].id, approvedUnits: 2, receivedUnits: 2 }],
+              unexpectedItems: [{ productId: catalog[1].id, quantity: 3 }],
+              discrepancyNote: 'Dư ba bao mặt hàng khác',
+            },
+            randomUUID(),
+            randomUUID(),
+            { requestId: randomUUID(), ipAddress: null, userAgent: null },
+          ),
+        ),
+      );
+      const won = race.filter((result) => result.status === 'fulfilled');
+      assert.equal(won.length, 1, JSON.stringify(race.map((result) => result.status)));
+      const declared = won[0].value;
+      const declaredRows = await db
+        .select({ id: storeReceipts.id })
+        .from(storeReceipts)
+        .where(
+          and(
+            eq(storeReceipts.outboundRequestId, wholesale.outboundId),
+            isNull(storeReceipts.deletedAt),
+          ),
+        );
+      assert.equal(declaredRows.length, 1);
+      const pendingAfter = await repository.listStoreReceiptSources(actor, {
+        storeId: wholesaleStore.id,
+        page: 1,
+        pageSize: 100,
+      });
+      assert.ok(pendingAfter.data.every((source) => source.id !== wholesale.outboundId));
+      const replayKey = randomUUID();
+      const replayHash = randomUUID();
+      const declaredAgain = await repository
+        .declareStoreReceipt(
+          actor,
+          {
+            storeId: wholesaleStore.id,
+            outboundRequestId: wholesale.outboundId,
+            lines: [{ productId: catalog[0].id, approvedUnits: 2, receivedUnits: 2 }],
+            unexpectedItems: [{ productId: catalog[1].id, quantity: 3 }],
+            discrepancyNote: 'Dư ba bao mặt hàng khác',
+          },
+          replayKey,
+          replayHash,
+          { requestId: randomUUID(), ipAddress: null, userAgent: null },
+        )
+        .catch((error) => error);
+      // The shipment already has a live receipt: a fresh declaration is refused, not duplicated.
+      assert.ok(declaredAgain instanceof Error);
       receiptIds.push(declared.data.id);
       assert.match(declared.data.receiptNumber, /^PNH-\d{6}$/u);
       assert.deepEqual(declared.data.unexpectedItems, [{ productId: catalog[1].id, quantity: 3 }]);
@@ -137,6 +214,17 @@ describePostgres('PostgreSQL wholesale receipt scope and discrepancies', () => {
         { requestId: randomUUID(), ipAddress: null, userAgent: null },
       );
       assert.equal(submitted.data.status, 'PENDING_HTKD');
+      // Declaring and submitting never books store stock; only HTKD finalization does.
+      const bookedBags = await db
+        .select({ id: storeInventoryBags.id })
+        .from(storeInventoryBags)
+        .innerJoin(
+          storeReceiptBags,
+          eq(storeReceiptBags.id, storeInventoryBags.sourceStoreReceiptBagId),
+        )
+        .innerJoin(storeReceiptLines, eq(storeReceiptLines.id, storeReceiptBags.storeReceiptLineId))
+        .where(eq(storeReceiptLines.storeReceiptId, declared.data.id));
+      assert.equal(bookedBags.length, 0);
       assert.deepEqual(submitted.data.unexpectedItems, [{ productId: catalog[1].id, quantity: 3 }]);
       const visible = await repository.listReceipts(actor, { page: 1, pageSize: 100 });
       assert.ok(visible.data.some((receipt) => receipt.id === declared.data.id));
