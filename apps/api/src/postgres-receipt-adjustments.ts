@@ -30,6 +30,7 @@ import {
   receiptAdjustmentMoneySummary,
   StoreOperationConflictError,
   StoreOperationValidationError,
+  stores,
   transitionReceiptAdjustment,
   transitionReceiptReturn,
   type Database,
@@ -42,6 +43,7 @@ import {
   type ReceiptReturnRecord,
   type ReceiptReturnTransitionInput,
 } from '@idosi/database';
+import { and, eq, isNull } from 'drizzle-orm';
 
 import { ApiError, conflict, forbidden, notFound } from './errors.js';
 import type { IdempotentResource, Page, RequestContext } from './repository.js';
@@ -50,17 +52,41 @@ import { canAccessStore, pagination } from './repository.js';
 type Role = 'ADMIN' | 'HTKD' | 'STORE';
 
 /**
- * Receipt discrepancy adjustments are an Admin/HTKD/store workflow. The wholesale desk keeps
- * its receiving scope and gets no new rights here.
+ * The side of the discrepancy workflow an account takes. The wholesale desk receives for the
+ * wholesale stores, so on their documents it is the store side: it reports, answers, cancels
+ * and hands returns over, and never verifies, applies or receives returns. Its reach is its
+ * live wholesale-store scope (`assignedStoreIds`), and the database re-checks the store's kind
+ * and the account inside every transaction. Audit rows keep the account's real role.
  */
 function adjustmentRole(actor: AuthenticatedPrincipal): Role {
   if (actor.role === 'ADMIN' || actor.role === 'HTKD' || actor.role === 'STORE') return actor.role;
+  if (actor.role === 'WHOLESALE') return 'STORE';
   throw forbidden();
 }
 
-function assertStoreScope(actor: AuthenticatedPrincipal, storeId: string): void {
+async function assertStoreScope(
+  db: Database,
+  actor: AuthenticatedPrincipal,
+  storeId: string,
+): Promise<void> {
   adjustmentRole(actor);
   if (!canAccessStore(actor, storeId)) throw forbidden();
+  if (actor.role !== 'WHOLESALE') return;
+  // The desk's scope is derived from the stores table per request; re-reading the document's
+  // store keeps a retail store out of reach even if a principal were ever built otherwise.
+  const [store] = await db
+    .select({ id: stores.id })
+    .from(stores)
+    .where(
+      and(
+        eq(stores.id, storeId),
+        eq(stores.kind, 'wholesale'),
+        eq(stores.isActive, true),
+        isNull(stores.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (!store) throw forbidden();
 }
 
 function scopedStoreIds(actor: AuthenticatedPrincipal, storeId?: string): string[] | undefined {
@@ -70,7 +96,8 @@ function scopedStoreIds(actor: AuthenticatedPrincipal, storeId?: string): string
     return [storeId];
   }
   if (role === 'ADMIN') return undefined;
-  if (role === 'STORE') return actor.storeId === null ? [] : [actor.storeId];
+  // A store account has one store; the wholesale desk's store scope is a list like HTKD's.
+  if (actor.role === 'STORE') return actor.storeId === null ? [] : [actor.storeId];
   return [...actor.assignedStoreIds];
 }
 
@@ -81,7 +108,7 @@ export async function getAdjustmentContext(
 ): Promise<ReceiptAdjustmentContext> {
   const context = await getReceiptAdjustmentContext(db, receiptId);
   if (!context) throw notFound('Không tìm thấy phiếu nhận hàng');
-  assertStoreScope(actor, context.storeId);
+  await assertStoreScope(db, actor, context.storeId);
   const adjustments = await listReceiptAdjustments(db, {
     receiptId,
     page: 1,
@@ -155,7 +182,7 @@ export async function getAdjustment(
 ): Promise<ReceiptAdjustment> {
   const record = await getReceiptAdjustment(db, adjustmentId);
   if (!record) throw notFound('Không tìm thấy hồ sơ sai lệch');
-  assertStoreScope(actor, record.storeId);
+  await assertStoreScope(db, actor, record.storeId);
   return adjustmentDto(record, adjustmentRole(actor));
 }
 
@@ -167,7 +194,10 @@ export async function createAdjustment(
   requestHash: string,
   context: RequestContext,
 ): Promise<IdempotentResource<ReceiptAdjustment>> {
-  if (actor.role !== 'STORE') throw forbidden('Chỉ tài khoản cửa hàng được báo sai lệch');
+  if (adjustmentRole(actor) !== 'STORE') {
+    throw forbidden('Chỉ tài khoản cửa hàng được báo sai lệch');
+  }
+  // The receipt's store is re-read and authorized inside the create transaction.
   const result = await withAdjustmentErrors(() =>
     createReceiptAdjustment(db, {
       receiptId: input.receiptId,
@@ -212,7 +242,7 @@ export async function actOnAdjustment(
   if (!ACTION_ROLES[input.action].includes(adjustmentRole(actor))) throw forbidden();
   const current = await getReceiptAdjustment(db, adjustmentId);
   if (!current) throw notFound('Không tìm thấy hồ sơ sai lệch');
-  assertStoreScope(actor, current.storeId);
+  await assertStoreScope(db, actor, current.storeId);
   const base = {
     adjustmentId,
     expectedVersion: input.expectedVersion,
@@ -276,10 +306,12 @@ export async function createReturn(
   requestHash: string,
   context: RequestContext,
 ): Promise<IdempotentResource<ReceiptReturn>> {
-  if (actor.role !== 'STORE') throw forbidden('Chỉ tài khoản cửa hàng được tạo phiếu trả');
+  if (adjustmentRole(actor) !== 'STORE') {
+    throw forbidden('Chỉ tài khoản cửa hàng được tạo phiếu trả');
+  }
   const current = await getReceiptAdjustment(db, adjustmentId);
   if (!current) throw notFound('Không tìm thấy hồ sơ sai lệch');
-  assertStoreScope(actor, current.storeId);
+  await assertStoreScope(db, actor, current.storeId);
   const result = await withAdjustmentErrors(() =>
     createReceiptReturn(db, {
       adjustmentId,
@@ -321,7 +353,7 @@ async function getReturn(
 ): Promise<ReceiptReturn> {
   const record = await getReceiptReturn(db, returnId);
   if (!record) throw notFound('Không tìm thấy phiếu trả');
-  assertStoreScope(actor, record.storeId);
+  await assertStoreScope(db, actor, record.storeId);
   return returnDto(record);
 }
 
