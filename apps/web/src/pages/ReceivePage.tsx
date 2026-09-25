@@ -147,6 +147,8 @@ function ProductionReceivePage({ role }: AppOutletContext) {
   const [statusFilter, setStatusFilter] = useState<ReceiptStatus | 'ALL'>('ALL');
   const [storeFilter, setStoreFilter] = useState('');
   const [selectedReceiptId, setSelectedReceiptId] = useState('');
+  const pendingReceiptFocus = useRef<string | null>(null);
+  const receiptPanel = useRef<HTMLElement>(null);
   const [focusAdjustmentId, setFocusAdjustmentId] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
   const [declarationDirty, setDeclarationDirty] = useState(false);
@@ -199,11 +201,7 @@ function ProductionReceivePage({ role }: AppOutletContext) {
   const receipts = receiptsQuery.data ?? [];
   // A receipt opened from the discrepancy queue may be older than the list window; it stays
   // selected rather than falling back to another receipt.
-  const effectiveReceiptId =
-    receipts.some((receipt) => receipt.id === selectedReceiptId) ||
-    (focusAdjustmentId !== null && selectedReceiptId !== '')
-      ? selectedReceiptId
-      : (receipts[0]?.id ?? '');
+  const effectiveReceiptId = selectedReceiptId || receipts[0]?.id || '';
   const detailQuery = useQuery({
     enabled: Boolean(effectiveReceiptId),
     queryFn: () => getStoreReceipt(effectiveReceiptId),
@@ -211,6 +209,12 @@ function ProductionReceivePage({ role }: AppOutletContext) {
     retry: false,
   });
   const selectedReceipt = detailQuery.data ?? null;
+  useEffect(() => {
+    if (!pendingReceiptFocus.current || selectedReceipt?.id !== pendingReceiptFocus.current) return;
+    pendingReceiptFocus.current = null;
+    receiptPanel.current?.scrollIntoView({ block: 'start', behavior: 'instant' });
+    receiptPanel.current?.focus({ preventScroll: true });
+  }, [selectedReceipt?.id]);
   const audience = adjustmentAudience(role);
   const productNameById = useMemo(
     () => new Map((catalogQuery.data ?? []).map((product) => [product.id, product.name])),
@@ -256,6 +260,10 @@ function ProductionReceivePage({ role }: AppOutletContext) {
           ? `Đã tự tạo phiếu chờ ưu tiên cho ${shortage} bao nhận thiếu. HTKD chỉ chốt khối lượng, giá và tồn thực nhận.`
           : operationNotice[operation.kind],
       );
+      if (selectedReceipt?.id === receipt.id) {
+        receiptPanel.current?.scrollIntoView({ block: 'start', behavior: 'instant' });
+        receiptPanel.current?.focus({ preventScroll: true });
+      } else pendingReceiptFocus.current = receipt.id;
       setSelectedReceiptId(receipt.id);
       queryClient.setQueryData(['store-receipt', receipt.id], receipt);
       if (operation.kind === 'DECLARE') {
@@ -521,6 +529,10 @@ function ProductionReceivePage({ role }: AppOutletContext) {
                   disabled={mutation.isPending}
                   key={receipt.id}
                   onClick={() => {
+                    if (selectedReceipt?.id === receipt.id) {
+                      receiptPanel.current?.scrollIntoView({ block: 'start', behavior: 'instant' });
+                      receiptPanel.current?.focus({ preventScroll: true });
+                    } else pendingReceiptFocus.current = receipt.id;
                     setSelectedReceiptId(receipt.id);
                     setFocusAdjustmentId(null);
                   }}
@@ -539,7 +551,13 @@ function ProductionReceivePage({ role }: AppOutletContext) {
             })}
           </section>
 
-          <section className="panel receipt-detail">
+          <section
+            ref={receiptPanel}
+            tabIndex={-1}
+            aria-label="Chi tiết phiếu nhận"
+            style={{ scrollMarginTop: '6rem' }}
+            className="panel receipt-detail"
+          >
             {detailQuery.isError ? (
               <EmptyState
                 detail="Dữ liệu danh sách không được dùng thay cho bản chi tiết khi máy chủ chưa xác minh."

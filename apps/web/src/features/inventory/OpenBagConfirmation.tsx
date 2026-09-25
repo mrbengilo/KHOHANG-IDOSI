@@ -1,4 +1,5 @@
 import type { StoreInventoryBag } from '@idosi/contracts';
+import { useEffect, useRef } from 'react';
 import { Button } from '../../components/Button';
 import { formatKg } from '../../lib/format';
 
@@ -24,21 +25,37 @@ export function isOpenBagSelectionCurrent(
 
 export function OpenBagConfirmation({
   bag,
+  productName,
+  storeName,
   busy,
   canConfirm,
   onCancel,
   onConfirm,
 }: {
   readonly bag: StoreInventoryBag;
+  readonly productName?: string;
+  readonly storeName?: string;
   readonly busy: boolean;
   readonly canConfirm: boolean;
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
 }) {
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    heading.current?.scrollIntoView({ block: 'start', behavior: 'instant' });
+    heading.current?.focus({ preventScroll: true });
+  }, [bag.id]);
   return (
     <section className="open-bag-preview" aria-label={`Kiểm tra bao ${bag.bagCode}`}>
-      <h3>Kiểm tra trước khi khui</h3>
+      <h3 ref={heading} tabIndex={-1} style={{ scrollMarginTop: '6rem' }}>
+        Kiểm tra trước khi khui
+      </h3>
       <p>Thao tác áp dụng cho bao {bag.bagCode}.</p>
+      {productName || storeName ? (
+        <p>
+          {productName} · {storeName}
+        </p>
+      ) : null}
       <dl>
         <div>
           <dt>Trước khi khui</dt>
