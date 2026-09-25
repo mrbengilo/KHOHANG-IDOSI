@@ -4,9 +4,9 @@ import { ClipboardList } from 'lucide-react';
 
 import { Badge } from '../../../components/Badge';
 import { listReceiptAdjustments, listReceiptReturns } from './adjustmentApi';
-import { adjustmentStatusCopy, returnStatusCopy } from './adjustmentModel';
+import { adjustmentStatusCopy, returnStatusCopy, type AdjustmentAudience } from './adjustmentModel';
 
-type Role = 'ADMIN' | 'HTKD' | 'STORE';
+type Role = AdjustmentAudience;
 
 /** What each role has to act on next; the server scopes both lists to the caller. */
 const WAITING_ON: Record<Role, readonly ReceiptAdjustmentStatus[]> = {
@@ -25,7 +25,7 @@ export function AdjustmentQueue({
   role,
   storeNameById,
 }: {
-  readonly onOpen: (receiptId: string, adjustmentId: string) => void;
+  readonly onOpen: (receiptId: string, adjustmentId: string, storeId: string) => void;
   readonly role: Role;
   readonly storeNameById: ReadonlyMap<string, string>;
 }) {
@@ -65,7 +65,7 @@ export function AdjustmentQueue({
             <li key={item.id}>
               <button
                 className="adjustment-card"
-                onClick={() => onOpen(item.receiptId, item.id)}
+                onClick={() => onOpen(item.receiptId, item.id, item.storeId)}
                 type="button"
               >
                 <span className="adjustment-card__identity">
@@ -86,7 +86,7 @@ export function AdjustmentQueue({
             <li key={item.id}>
               <button
                 className="adjustment-card"
-                onClick={() => onOpen(item.receiptId, item.adjustmentId)}
+                onClick={() => onOpen(item.receiptId, item.adjustmentId, item.storeId)}
                 type="button"
               >
                 <span className="adjustment-card__identity">

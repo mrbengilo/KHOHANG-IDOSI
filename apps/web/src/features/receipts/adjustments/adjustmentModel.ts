@@ -68,8 +68,17 @@ export function describeEntitlement(entitlement: ReceiptShortageEntitlement): st
   return 'Phiếu chờ đã đóng – xem lịch sử phiếu chờ';
 }
 
-export function canUseAdjustments(role: string): role is 'ADMIN' | 'HTKD' | 'STORE' {
-  return role === 'ADMIN' || role === 'HTKD' || role === 'STORE';
+export type AdjustmentAudience = 'ADMIN' | 'HTKD' | 'STORE';
+
+/**
+ * The side of the discrepancy workflow a signed-in role works on. The wholesale desk receives
+ * for the wholesale stores, so it is their store side: it reports, answers and hands returns
+ * over, and never verifies or approves. The server applies the same mapping and scope.
+ */
+export function adjustmentAudience(role: string): AdjustmentAudience | null {
+  if (role === 'ADMIN' || role === 'HTKD' || role === 'STORE') return role;
+  if (role === 'WHOLESALE') return 'STORE';
+  return null;
 }
 
 function parseGrams(weightKg: string): bigint | null {
