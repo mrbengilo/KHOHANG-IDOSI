@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
+import { ApiClientError } from '../../lib/api';
 import { normalSalePendingKg, openBagNotice, ProductionOpenBagPage } from './InventoryOperations';
 import { isOpenBagSelectionCurrent, OpenBagConfirmation } from './OpenBagConfirmation';
 
@@ -74,6 +75,47 @@ describe('open bag confirmation', () => {
     );
     expect(pending.match(/disabled=""/g)).toHaveLength(2);
   });
+
+  it.each(['loading', 'empty', 'error', 'forbidden'] as const)(
+    'renders history %s state',
+    (state) => {
+      const client = new QueryClient({
+        defaultOptions: { queries: { staleTime: Infinity, retry: false, retryOnMount: false } },
+      });
+      client.setQueryData(['session'], { principal: { storeId: bag.storeId } });
+      client.setQueryData(['stores', 'accessible'], []);
+      client.setQueryData(['catalog'], []);
+      const key = ['store-bag-openings', { storeId: bag.storeId }, {}, 1];
+      if (state === 'empty')
+        client.setQueryData(key, { data: [], pagination: { totalItems: 0, totalPages: 0 } });
+      if (state === 'error' || state === 'forbidden') {
+        client
+          .getQueryCache()
+          .build(client, { queryKey: key })
+          .setState({
+            status: 'error',
+            error: new ApiClientError('Lỗi tải lịch sử', state === 'forbidden' ? 403 : 500),
+          });
+      }
+      const html = renderToStaticMarkup(
+        createElement(
+          QueryClientProvider,
+          { client },
+          createElement(ProductionOpenBagPage, { role: 'STORE', storeKind: 'RETAIL' }),
+        ),
+      );
+      expect(html).toContain(
+        {
+          loading: 'Đang tải lịch sử khui',
+          empty: 'Chưa có lịch sử khui',
+          error: 'Lỗi tải lịch sử',
+          forbidden: 'Bạn không có quyền xem lịch sử khui',
+        }[state],
+      );
+      if (state === 'error' || state === 'forbidden') expect(html).toContain('Thử lại lịch sử');
+      client.clear();
+    },
+  );
 
   it('renders unopened cards with a separate empty history', () => {
     const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });

@@ -130,7 +130,29 @@ test('production opening locks a stale discrepancy form and retains opening hist
     await tab.getByRole('button', { name: 'Khui 1 bao', exact: true }).click();
     await expect(tab.locator('.operation-notice--success')).toBeVisible();
     await expect(tab.getByRole('heading', { name: /Lịch sử khui/ })).toBeVisible();
-    await expect(tab.getByText('Xác nhận khui bán', { exact: true })).toBeVisible();
+    const table = tab.getByRole('table', { name: 'Lịch sử khui kiện', exact: true });
+    await expect(table.locator('tbody tr')).toHaveCount(1);
+    await expect(table.getByRole('columnheader')).toHaveText([
+      'Thời gian khui',
+      'Mã bao',
+      'Mặt hàng',
+      'Khối lượng',
+      'Người thực hiện',
+      'Trạng thái',
+    ]);
+    await expect(table.locator('tbody tr td').nth(3)).toHaveText('20 kg');
+    await expect(table.locator('tbody tr td').nth(4)).toContainText('Cửa hàng sai lệch');
+    await table.getByRole('button', { name: target!.displayCode!, exact: true }).click();
+    await expect(
+      tab.getByRole('dialog').getByText('Xác nhận khui bán', { exact: true }),
+    ).toBeVisible();
+    await tab.keyboard.press('Escape');
+    await expect(tab.getByRole('dialog')).toHaveCount(0);
+    await expect(
+      table.getByRole('button', { name: target!.displayCode!, exact: true }),
+    ).toBeFocused();
+    await tab.getByRole('button', { name: 'Làm mới lịch sử' }).click();
+    await expect(table.locator('tbody tr')).toHaveCount(1);
     const submit = section.getByRole('button', { name: 'Gửi HTKD xác minh' });
     if (await submit.isEnabled()) {
       const response = page.waitForResponse(
@@ -187,15 +209,130 @@ test('production opening locks a stale discrepancy form and retains opening hist
       ).toHaveCount(0);
     }
     await expect(tab.getByText('Không có bao chờ khui', { exact: true })).toBeVisible();
-    await expect(tab.getByText('Xác nhận khui bán', { exact: true })).toHaveCount(3);
-    for (const width of [390, 1440]) {
+    await expect(table.locator('tbody tr')).toHaveCount(3);
+    await tab.reload();
+    await expect(table.locator('tbody tr')).toHaveCount(3);
+    for (const width of [360, 390, 412, 768, 1366, 1440]) {
       await tab.setViewportSize({ width, height: 900 });
+      expect(await tab.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      await expect(table.locator('thead')).toBeVisible();
+      expect(
+        await table
+          .locator('tbody tr')
+          .first()
+          .evaluate((el) => getComputedStyle(el).display),
+      ).toBe('table-row');
+      const cells = await table
+        .locator('tbody tr')
+        .first()
+        .locator('td')
+        .evaluateAll((els) => els.map((el) => el.getBoundingClientRect().y));
+      expect(new Set(cells).size).toBe(1);
+      const scroll = tab.locator('.bag-opening-history__scroll');
+      if (width <= 768) {
+        expect(await scroll.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+        await scroll.evaluate((el) => {
+          el.scrollLeft = el.scrollWidth;
+        });
+        expect(await scroll.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
+        await scroll.evaluate((el) => {
+          el.scrollLeft = 0;
+        });
+      }
       await tab.screenshot({
         path: testInfo.outputPath('history-' + width + '.png'),
         fullPage: true,
         animations: 'disabled',
       });
     }
+
+    // The supervisor sees the store actor, never their own account.
+    await tab.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
+    await expect(tab).toHaveURL(/\/login/);
+    await login(tab, htkdLogin);
+    await tab.goto('/open-bag');
+    await expect(table.locator('tbody tr')).toHaveCount(3);
+    await expect(table.locator('tbody tr').first()).toContainText('Cửa hàng sai lệch');
+    await expect(table.locator('tbody tr').first()).not.toContainText('HTKD sai lệch');
+    await tab.getByRole('combobox', { name: 'Mặt hàng', exact: true }).selectOption(jeans!.id);
+    await expect(tab.getByText('Chưa có lịch sử khui', { exact: true })).toBeVisible();
+    await tab.getByRole('combobox', { name: 'Mặt hàng', exact: true }).selectOption(dress!.id);
+    await expect(table.locator('tbody tr')).toHaveCount(3);
+    // Control just the history response to exercise otherwise rare server states and pagination.
+    const response = await tabApi(tab).get(api + '/store-bag-openings?storeId=' + store.id);
+    const sample = (await response.json()).data[0];
+    const samples = Array.from({ length: 21 }, (_, i) => ({
+      ...sample,
+      id: randomUUID(),
+      bagId: randomUUID(),
+      bagCode: 'MB-TEST-' + i,
+      actorDisplayName: 'NGUYỄN DUY THÀNH VỚI TÊN RẤT DÀI KHÔNG ĐƯỢC CẮT MẤT THÔNG TIN',
+      actorRole: 'HTKD',
+      openedAt: '2026-09-25T09:00:23Z',
+    }));
+    let mode = 'rows';
+    let lastQuery = new URLSearchParams();
+    await tab.route('**/api/v1/store-bag-openings?**', async (route) => {
+      lastQuery = new URL(route.request().url()).searchParams;
+      if (mode === 'error' || mode === 'forbidden') {
+        await route.fulfill({
+          status: mode === 'forbidden' ? 403 : 500,
+          json: {
+            error: {
+              code: mode === 'forbidden' ? 'FORBIDDEN' : 'INTERNAL_ERROR',
+              message: 'Không tải được lịch sử',
+              requestId: 'history-e2e-error',
+            },
+          },
+        });
+      } else {
+        const pageNumber = Number(lastQuery.get('page') ?? 1);
+        await route.fulfill({
+          json: {
+            data: samples.slice((pageNumber - 1) * 20, pageNumber * 20),
+            pagination: { page: pageNumber, pageSize: 20, totalItems: 21, totalPages: 2 },
+          },
+        });
+      }
+    });
+    await tab.getByRole('button', { name: 'Làm mới lịch sử' }).click();
+    await expect(table.locator('tbody tr')).toHaveCount(20);
+    const historySection = tab
+      .locator('section.panel')
+      .filter({ has: tab.getByRole('heading', { name: 'Lịch sử khui', exact: true }) });
+    await historySection.getByRole('button', { name: 'Trang sau' }).click();
+    await expect(table.locator('tbody tr')).toHaveCount(1);
+    expect(lastQuery.get('page')).toBe('2');
+    await tab.getByLabel('Từ ngày (Việt Nam)').fill('2026-09-25');
+    await tab.getByLabel('Đến hết ngày (Việt Nam)').fill('2026-09-25');
+    await expect.poll(() => lastQuery.get('from')).toBe('2026-09-24T17:00:00.000Z');
+    await expect.poll(() => lastQuery.get('to')).toBe('2026-09-25T17:00:00.000Z');
+    expect(lastQuery.get('page')).toBe('1');
+    await expect(table.locator('tbody tr').first()).toContainText('16:00:23 25/09/2026');
+    for (const width of [360, 390, 412, 768, 1366, 1440]) {
+      await tab.setViewportSize({ width, height: 900 });
+      expect(await tab.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      const actor = table.locator('tbody tr').first().locator('.bag-opening-history__actor');
+      expect(await actor.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+      const name = (await actor.locator('span').first().boundingBox())!;
+      const badge = (await actor.locator('.badge').boundingBox())!;
+      expect(name.y + name.height <= badge.y || name.x + name.width <= badge.x).toBe(true);
+    }
+    mode = 'error';
+    await tab.getByRole('button', { name: 'Làm mới lịch sử' }).click();
+    await expect(historySection.getByRole('alert')).toContainText('Không tải được lịch sử');
+    mode = 'rows';
+    await tab.getByRole('button', { name: 'Thử lại lịch sử' }).click();
+    await expect(table.locator('tbody tr')).toHaveCount(20);
+    mode = 'forbidden';
+    await tab.getByRole('button', { name: 'Làm mới lịch sử' }).click();
+    await expect(historySection.getByRole('alert')).toContainText(
+      'Bạn không có quyền xem lịch sử khui',
+    );
     await tab.close();
   } finally {
     await client.close();

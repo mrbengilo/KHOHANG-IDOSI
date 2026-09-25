@@ -352,6 +352,8 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
       weightBeforeKg: '20.000',
       normalSaleAppliedKg: '0.000',
       actorAccountId: fx.storeUserId,
+      actorDisplayName: expect.any(String),
+      actorRole: 'STORE',
       productId: fx.dressId,
     });
     await db
@@ -370,6 +372,132 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
     await expect(openStoreInventoryBag(db, { ...input, requestHash: 'changed' })).rejects.toThrow(
       /different request/,
     );
+  });
+
+  it('projects one first opening per bag with stable pages, audit roles and nullable legacy actors', async () => {
+    const fx = await createFinalizedReceipt();
+    const at = '2026-09-24T17:00:00.000Z';
+    const ids = fx.bags.map((bag) => bag.inventoryBagId);
+    for (const id of ids) {
+      await db
+        .update(storeInventoryBags)
+        .set({ status: 'opened', openedAt: new Date(at) })
+        .where(eq(storeInventoryBags.id, id));
+    }
+    // Multiple audits must not multiply the physical bag; the first event owns its actor.
+    for (const [index, id] of ids.slice(0, 2).entries()) {
+      await db.insert(auditLogs).values([
+        {
+          actorUserId: fx.storeUserId,
+          actorRole: index === 0 ? 'store' : null,
+          entityType: 'store_inventory_bag',
+          entityId: id,
+          action: 'STORE_INVENTORY_BAG_OPENED',
+          before: {
+            displayCode: 'MB-0000' + (index + 1),
+            storeId: fx.storeId,
+            productId: fx.dressId,
+            currentWeightKg: '20.125',
+          },
+          after: { openedAt: at, currentWeightKg: '0.000', normalSaleAppliedKg: '20.125' },
+          createdAt: new Date(at),
+        },
+        {
+          actorUserId: adminId,
+          actorRole: 'admin',
+          entityType: 'store_inventory_bag',
+          entityId: id,
+          action: 'STORE_INVENTORY_BAG_OPENED',
+          createdAt: new Date('2026-09-25T01:00:00Z'),
+        },
+      ]);
+    }
+    await db
+      .update(users)
+      .set({ displayName: 'Tên hiện tại đã đổi', status: 'locked', deletedAt: new Date() })
+      .where(eq(users.id, fx.storeUserId));
+    const query = { page: 1, pageSize: 1, from: at, to: '2026-09-25T17:00:00.000Z' };
+    const pages = await Promise.all(
+      [1, 2, 3].map((page) => listStoreBagOpenings(db, { ...query, page }, [fx.storeId])),
+    );
+    const rows = pages.flatMap((page) => page.data);
+    expect(rows).toHaveLength(3);
+    expect(new Set(rows.map((row) => row.bagId)).size).toBe(3);
+    for (const page of pages)
+      expect(page.pagination).toMatchObject({ totalItems: 3, totalPages: 3 });
+    expect((await listStoreBagOpenings(db, query, [fx.storeId])).data).toEqual(pages[0]!.data);
+    expect(rows.find((row) => row.bagId === ids[0])).toMatchObject({
+      actorAccountId: fx.storeUserId,
+      actorDisplayName: 'Tên hiện tại đã đổi',
+      actorRole: 'STORE',
+      weightBeforeKg: '20.125',
+      weightAfterKg: '0.000',
+    });
+    expect(rows.find((row) => row.bagId === ids[1])).toMatchObject({
+      actorDisplayName: 'Tên hiện tại đã đổi',
+      actorRole: null,
+    });
+    expect(rows.find((row) => row.bagId === ids[2])).toMatchObject({
+      actorAccountId: null,
+      actorDisplayName: null,
+      actorRole: null,
+      weightBeforeKg: null,
+    });
+    expect(
+      (await listStoreBagOpenings(db, { page: 1, pageSize: 20, to: at }, [fx.storeId])).data,
+    ).toEqual([]);
+    expect(
+      (await listStoreBagOpenings(db, { page: 1, pageSize: 20, from: query.to }, [fx.storeId]))
+        .data,
+    ).toEqual([]);
+    expect((await listStoreBagOpenings(db, query, [])).pagination.totalItems).toBe(0);
+    expect(
+      (await listStoreBagOpenings(db, { ...query, storeId: fx.storeId }, [randomUUID()])).data,
+    ).toEqual([]);
+    expect((await listStoreBagOpenings(db, { ...query, page: 4 }, [fx.storeId])).data).toEqual([]);
+    const sourceId = randomUUID();
+    await db.insert(storeInventoryLedgerEntries).values(
+      [1, 2].map((eventSequence) => ({
+        eventSequence,
+        storeInventoryBagId: ids[2]!,
+        storeId: fx.storeId,
+        productId: fx.dressId,
+        eventType: 'adjust' as const,
+        weightBeforeKg: '20.000',
+        weightAfterKg: '19.000',
+        sourceType: 'store_sorting_event',
+        reason: 'History projection fixture',
+        sourceId,
+        actorUserId: fx.storeUserId,
+        occurredAt: new Date(at),
+      })),
+    );
+    await db.insert(auditLogs).values([
+      {
+        entityType: 'store_sorting_event',
+        entityId: sourceId,
+        action: 'STORE_SORTING_RECORDED',
+        actorUserId: adminId,
+        actorRole: 'admin',
+        createdAt: new Date('2026-09-24T16:00:00Z'),
+      },
+      {
+        entityType: 'store_sorting_event',
+        entityId: sourceId,
+        action: 'STORE_SORTING_RECORDED',
+        actorUserId: fx.storeUserId,
+        actorRole: 'store',
+        createdAt: new Date(at),
+      },
+    ]);
+    const withLedger = await listStoreBagOpenings(db, { ...query, pageSize: 20 }, [fx.storeId]);
+    expect(withLedger.pagination.totalItems).toBe(3);
+    expect(withLedger.data.find((row) => row.bagId === ids[2])).toMatchObject({
+      source: 'SORTING',
+      actorRole: 'STORE',
+      actorDisplayName: 'Tên hiện tại đã đổi',
+      weightBeforeKg: '20.000',
+    });
   });
 
   it('keep branch: 2 dresses + 1 jeans, money changes at apply, one P0B dress wait, jeans sellable', async () => {

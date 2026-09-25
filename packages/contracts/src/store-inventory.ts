@@ -11,6 +11,7 @@ import {
   PositiveKilogramsDecimalSchema,
 } from './common.js';
 import { kilogramsToGramsForRefinement } from './refinement-values.js';
+import { AccountRoleSchema } from './identity.js';
 
 export const StoreInventoryBagStatusSchema = z.enum([
   'IN_TRANSIT',
@@ -285,6 +286,10 @@ export const StoreBagOpeningSchema = z
     normalSaleAppliedKg: KilogramsDecimalSchema.nullable(),
     weightAfterKg: KilogramsDecimalSchema.nullable(),
     actorAccountId: EntityIdSchema.nullable(),
+    // Current account name; the opening audit does not snapshot display names.
+    actorDisplayName: z.string().nullable(),
+    // Role recorded by the opening audit, never inferred from the current account.
+    actorRole: AccountRoleSchema.nullable(),
     openedAt: IsoDateTimeSchema.nullable(),
     source: z.enum(['BUTTON', 'SORTING', 'TRANSFER', 'OUTBOUND', 'IDOSI', 'LEGACY']),
     currentStatus: StoreInventoryBagStatusSchema,

@@ -71,6 +71,38 @@ describe('inventory API client', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('validates actor identity from the history response without extra account requests', async () => {
+    const row = {
+      id: bag.id,
+      bagId: bag.id,
+      storeId: bag.storeId,
+      productId: bag.productId,
+      bagCode: 'MB-00003',
+      weightBeforeKg: '60.000',
+      normalSaleAppliedKg: '50.000',
+      weightAfterKg: '10.000',
+      actorAccountId: '70000000-0000-4000-8000-000000000001',
+      actorDisplayName: 'Người đã khui',
+      actorRole: 'STORE',
+      openedAt: '2026-09-25T09:00:23Z',
+      source: 'BUTTON',
+      currentStatus: 'EMPTY',
+    };
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            data: [row],
+            pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 },
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    expect((await listBagOpenings({ page: 1, pageSize: 20 })).data).toEqual([row]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('loads scoped bags with credentials and exact decimal strings', async () => {
     const fetchMock = vi.fn((_input: string | URL | Request, _init?: RequestInit) =>
       Promise.resolve(
