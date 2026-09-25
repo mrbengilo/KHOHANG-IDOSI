@@ -53,10 +53,10 @@ describe('open bag confirmation', () => {
         onConfirm,
       }),
     );
-    expect(html.match(/5,01 kg/g)).toHaveLength(2);
+    expect(html.match(/5,01 kg/g)).toHaveLength(1);
     expect(html).toContain('MB-00001');
     expect(html).toContain('Chưa khui');
-    expect(html).toContain('Đang bán tại CH');
+    expect(html).toContain('IDOSI đang chờ');
     expect(html).toContain('Khui 1 bao');
     expect(html).not.toContain('disabled=""');
     expect(onConfirm).not.toHaveBeenCalled();
@@ -75,12 +75,19 @@ describe('open bag confirmation', () => {
     expect(pending.match(/disabled=""/g)).toHaveLength(2);
   });
 
-  it('asks for a product before showing its available bags', () => {
+  it('renders unopened cards with a separate empty history', () => {
     const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
     client.setQueryData(['session'], { principal: { storeId: bag.storeId } });
     client.setQueryData(['stores', 'accessible'], []);
     client.setQueryData(['catalog'], [{ id: bag.productId, name: 'Đầm' }]);
-    client.setQueryData(['store-inventory-bags', bag.storeId, 'AVAILABLE'], [bag]);
+    client.setQueryData(['store-inventory-bags', 'unopened', { storeId: bag.storeId }, 1], {
+      data: [bag],
+      pagination: { totalItems: 1, totalPages: 1 },
+    });
+    client.setQueryData(['store-bag-openings', { storeId: bag.storeId }, {}, 1], {
+      data: [],
+      pagination: { totalItems: 0, totalPages: 0 },
+    });
     const html = renderToStaticMarkup(
       createElement(
         QueryClientProvider,
@@ -88,10 +95,11 @@ describe('open bag confirmation', () => {
         createElement(ProductionOpenBagPage, { role: 'STORE', storeKind: 'RETAIL' }),
       ),
     );
-    expect(html).toContain('Chọn mặt hàng');
+    expect(html).toContain('Tất cả mặt hàng');
     expect(html).toContain('Đầm');
-    expect(html).toContain('Bao khả dụng');
-    expect(html).not.toContain('MB-00001');
+    expect(html).toContain('Bao chưa khui');
+    expect(html).toContain('Lịch sử khui');
+    expect(html).toContain('MB-00001');
     expect(html).not.toContain('Khui 1 bao');
     client.clear();
   });

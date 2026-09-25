@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createStoreOutbound,
   listInventoryBags,
+  listUnopenedInventoryPage,
+  listBagOpenings,
   listStoreSortingHistory,
   openInventoryBag,
   reviewStoreOutbound,
@@ -44,6 +46,30 @@ const outbound = {
 
 describe('inventory API client', () => {
   afterEach(() => vi.unstubAllGlobals());
+
+  it('fetches only one server page for unopened stock and history', async () => {
+    const fetchMock = vi.fn((_input: string | URL | Request) =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            data: [],
+            pagination: { page: 2, pageSize: 20, totalItems: 100, totalPages: 5 },
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    await listUnopenedInventoryPage({ page: 2, storeId: bag.storeId });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('unopenedOnly=true');
+    await listBagOpenings({
+      page: 2,
+      pageSize: 20,
+      from: '2026-09-24T17:00:00.000Z',
+      to: '2026-09-25T17:00:00.000Z',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 
   it('loads scoped bags with credentials and exact decimal strings', async () => {
     const fetchMock = vi.fn((_input: string | URL | Request, _init?: RequestInit) =>

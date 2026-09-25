@@ -2,6 +2,8 @@ export { allowedReceiptAdjustmentActions } from '@idosi/domain';
 import {
   applyReceiptMoneyDeltas,
   assessReceiptAdjustmentBag,
+  assessReceiptDiscrepancy,
+  type ReceiptDiscrepancyFacts,
   canHoldReceiptAdjustmentBag,
   DomainError,
   OPEN_RECEIPT_ADJUSTMENT_STATUSES,
@@ -11,7 +13,6 @@ import {
   type ReceiptAdjustmentAction,
   type ReceiptAdjustmentActorRole,
   type ReceiptAdjustmentBagBlocker,
-  type ReceiptAdjustmentBagFacts,
   type ReceiptAdjustmentStatus,
   type ReceiptMoneyDelta,
   type ReceiptMoneyState,
@@ -85,7 +86,9 @@ export class ReceiptAdjustmentBlockedError extends Error {
   public constructor(
     public readonly blockers: Readonly<Record<string, readonly ReceiptAdjustmentBagBlocker[]>>,
   ) {
-    super('Chưa thể áp dụng: có bao đã phát sinh giao dịch cần đối soát trước.');
+    super(
+      'Không thể tiếp tục: bao đã khui bán, đang được giữ hoặc có giao dịch không tương thích.',
+    );
     this.name = 'ReceiptAdjustmentBlockedError';
   }
 }
@@ -323,8 +326,11 @@ export interface ReceiptAdjustmentContextBag {
   readonly shortageGranted: boolean;
   readonly openAdjustmentId: string | null;
   readonly openReturnId: string | null;
-  /** Transactions already booked on the bag; reported now, enforced when applying. */
+  /** Transactions already booked on the bag; retained separately from create eligibility. */
   readonly dependencies: readonly ReceiptAdjustmentBagBlocker[];
+  readonly openedAt: Date | null;
+  readonly canReportDiscrepancy: boolean;
+  readonly reportBlockers: readonly ReceiptAdjustmentBagBlocker[];
 }
 
 export interface ReceiptAdjustmentContext {
@@ -428,7 +434,13 @@ export async function createReceiptAdjustment(
               verifiedPricePerKgVnd: state.effectivePricePerKgVnd,
               shortageAlreadyGranted: state.shortageGranted,
             });
-            const hold = canHoldReceiptAdjustmentBag(bag.status);
+            const eligibility = assessReceiptDiscrepancy(await bagFactsFor(tx, bag, null));
+            if (!eligibility.canReportDiscrepancy) {
+              throw new ReceiptAdjustmentBlockedError({
+                [state.receiptBagId]: eligibility.reportBlockers,
+              });
+            }
+            const hold = true;
             const [inserted] = await tx
               .insert(storeReceiptAdjustmentLines)
               .values({
@@ -542,6 +554,26 @@ export async function transitionReceiptAdjustment(
           throw new StoreOperationConflictError('Hồ sơ sai lệch đã thay đổi; hãy tải lại.');
         }
         const next = planTransition(adjustment.status, input.action, actor.role);
+        if (['RESUBMIT', 'VERIFY', 'APPLY'].includes(input.action)) {
+          const blocked: Record<string, ReceiptAdjustmentBagBlocker[]> = {};
+          for (const line of await loadLines(tx, adjustment.id)) {
+            await withAdvisoryLock(
+              tx,
+              'store-inventory-bag',
+              line.storeInventoryBagId,
+              async () => {
+                const bag = await lockInventoryBag(tx, line.storeInventoryBagId);
+                const result = assessReceiptDiscrepancy(
+                  await bagFactsFor(tx, bag, line, adjustment.id),
+                  true,
+                );
+                if (!result.canReportDiscrepancy)
+                  blocked[line.storeReceiptBagId] = result.reportBlockers;
+              },
+            );
+          }
+          if (Object.keys(blocked).length) throw new ReceiptAdjustmentBlockedError(blocked);
+        }
         const now = new Date();
         const context: TransitionContext = { tx, adjustment, actor, now, next, input };
         switch (input.action) {
@@ -1684,11 +1716,25 @@ export async function getReceiptAdjustmentContext(
   if (!receipt) return null;
   const states =
     receipt.status === 'finalized' ? await loadEffectiveBagStates(database, receipt.id) : [];
+  const dependenciesByBag = await loadBagDependencies(
+    database,
+    states.flatMap((state) => (state.inventoryBagId ? [state.inventoryBagId] : [])),
+  );
   const bags: ReceiptAdjustmentContextBag[] = [];
   for (const state of states) {
     let dependencies: ReceiptAdjustmentBagBlocker[] = [];
+    let eligibility = {
+      canReportDiscrepancy: false,
+      reportBlockers: ['BAG_STATE_CHANGED'] as ReceiptAdjustmentBagBlocker[],
+    };
     if (state.inventoryBagId && state.bag) {
-      const facts = await bagFactsFor(database, state.bag, null);
+      const facts = await bagFactsFor(database, state.bag, null, undefined, dependenciesByBag);
+      eligibility = assessReceiptDiscrepancy(facts);
+      if (state.openAdjustmentId || state.openReturnId)
+        eligibility = {
+          canReportDiscrepancy: false,
+          reportBlockers: [...new Set([...eligibility.reportBlockers, 'BAG_NOT_HELD' as const])],
+        };
       dependencies = assessReceiptAdjustmentBag({
         ...facts,
         heldByThisAdjustment: true,
@@ -1712,6 +1758,8 @@ export async function getReceiptAdjustmentContext(
       openAdjustmentId: state.openAdjustmentId,
       openReturnId: state.openReturnId,
       dependencies,
+      openedAt: state.bag?.openedAt ?? null,
+      ...eligibility,
     });
   }
   const summary = await receiptAdjustmentMoneySummary(database, receipt);
@@ -1910,7 +1958,8 @@ export async function getReceiptAdjustment(
       shortageQuantity: line.shortageQuantity,
       holdState: line.holdState,
       blockers: open
-        ? assessReceiptAdjustmentBag(await bagFactsFor(database, bag, line, adjustment.id))
+        ? assessReceiptDiscrepancy(await bagFactsFor(database, bag, line, adjustment.id), true)
+            .reportBlockers
         : [],
       entitlement: entitlements.get(line.id) ?? null,
       returns: returns.filter((item) => item.adjustmentLineId === line.id),
@@ -2380,7 +2429,7 @@ async function assertBagNotInOpenDocument(
     )
     .limit(1);
   if (open) {
-    throw new StoreOperationConflictError(`Bao đang nằm trong hồ sơ sai lệch ${open.code}.`);
+    throw new ReceiptAdjustmentBlockedError({ [receiptBagId]: ['BAG_NOT_HELD'] });
   }
   const [returning] = await tx
     .select({ id: storeReceiptAdjustmentLines.id })
@@ -2392,7 +2441,7 @@ async function assertBagNotInOpenDocument(
       ),
     )
     .limit(1);
-  if (returning) throw new StoreOperationConflictError('Bao đang được giữ chờ trả kho.');
+  if (returning) throw new ReceiptAdjustmentBlockedError({ [receiptBagId]: ['BAG_NOT_HELD'] });
 }
 
 async function lockInventoryBag(tx: Transaction, bagId: string): Promise<InventoryBagRow> {
@@ -2448,7 +2497,7 @@ async function bagFacts(
   tx: Reader,
   line: AdjustmentLineRow,
   adjustmentId: string | null,
-): Promise<ReceiptAdjustmentBagFacts> {
+): Promise<ReceiptDiscrepancyFacts> {
   const [bag] = await tx
     .select()
     .from(storeInventoryBags)
@@ -2458,40 +2507,131 @@ async function bagFacts(
   return bagFactsFor(tx, bag, line, adjustmentId ?? undefined);
 }
 
+interface BagDependencies {
+  approvedOutboundCount: number;
+  pendingOutboundCount: number;
+  completedTransferCount: number;
+  draftTransferCount: number;
+  sortingEventCount: number;
+  hasOpeningEvidence: boolean;
+}
+
+async function loadBagDependencies(
+  tx: Reader,
+  ids: readonly string[],
+): Promise<Map<string, BagDependencies>> {
+  const result = new Map(
+    ids.map((id) => [
+      id,
+      {
+        approvedOutboundCount: 0,
+        pendingOutboundCount: 0,
+        completedTransferCount: 0,
+        draftTransferCount: 0,
+        sortingEventCount: 0,
+        hasOpeningEvidence: false,
+      },
+    ]),
+  );
+  if (!ids.length) return result;
+  const [outbounds, transfers, sorting, openings, movements] = await Promise.all([
+    tx
+      .select({
+        bagId: storeOutbounds.storeInventoryBagId,
+        status: storeOutbounds.status,
+        value: count(),
+      })
+      .from(storeOutbounds)
+      .where(
+        and(
+          inArray(storeOutbounds.storeInventoryBagId, [...ids]),
+          isNull(storeOutbounds.deletedAt),
+        ),
+      )
+      .groupBy(storeOutbounds.storeInventoryBagId, storeOutbounds.status),
+    tx
+      .select({
+        bagId: storeTransfers.sourceInventoryBagId,
+        status: storeTransfers.status,
+        value: count(),
+      })
+      .from(storeTransfers)
+      .where(inArray(storeTransfers.sourceInventoryBagId, [...ids]))
+      .groupBy(storeTransfers.sourceInventoryBagId, storeTransfers.status),
+    tx
+      .select({ bagId: storeSortingEvents.storeInventoryBagId, value: count() })
+      .from(storeSortingEvents)
+      .where(inArray(storeSortingEvents.storeInventoryBagId, [...ids]))
+      .groupBy(storeSortingEvents.storeInventoryBagId),
+    tx
+      .select({ bagId: auditLogs.entityId })
+      .from(auditLogs)
+      .where(
+        and(
+          inArray(auditLogs.entityId, [...ids]),
+          eq(auditLogs.entityType, 'store_inventory_bag'),
+          eq(auditLogs.action, 'STORE_INVENTORY_BAG_OPENED'),
+        ),
+      )
+      .groupBy(auditLogs.entityId),
+    tx
+      .select({ bagId: storeInventoryLedgerEntries.storeInventoryBagId })
+      .from(storeInventoryLedgerEntries)
+      .where(
+        and(
+          inArray(storeInventoryLedgerEntries.storeInventoryBagId, [...ids]),
+          sql`(${storeInventoryLedgerEntries.sourceType} in ('store_sorting_event', 'store_transfer_dispatch', 'store_outbound', 'idosi_normal_sale')
+          or ${storeInventoryLedgerEntries.metadata}->>'statusBefore' = 'opened'
+          or ${storeInventoryLedgerEntries.metadata}->>'statusAfter' = 'opened')`,
+        ),
+      )
+      .groupBy(storeInventoryLedgerEntries.storeInventoryBagId),
+  ]);
+  for (const row of outbounds) {
+    const item = result.get(row.bagId);
+    if (!item) continue;
+    if (row.status === 'approved') item.approvedOutboundCount = row.value;
+    if (row.status === 'pending') item.pendingOutboundCount = row.value;
+  }
+  for (const row of transfers) {
+    const item = result.get(row.bagId);
+    if (!item) continue;
+    if (row.status === 'in_transit' || row.status === 'received')
+      item.completedTransferCount += row.value;
+    if (row.status === 'draft') item.draftTransferCount = row.value;
+  }
+  for (const row of sorting) {
+    const item = row.bagId ? result.get(row.bagId) : undefined;
+    if (item) item.sortingEventCount = row.value;
+  }
+  for (const row of openings) {
+    const item = row.bagId ? result.get(row.bagId) : undefined;
+    if (item) item.hasOpeningEvidence = true;
+  }
+  for (const row of movements) {
+    const item = result.get(row.bagId);
+    if (item) item.hasOpeningEvidence = true;
+  }
+  return result;
+}
+
 async function bagFactsFor(
   tx: Reader,
   bag: InventoryBagRow,
   line: AdjustmentLineRow | null,
   adjustmentId?: string,
-): Promise<ReceiptAdjustmentBagFacts> {
-  const [outbounds, transfers, sorting] = await Promise.all([
-    tx
-      .select({ status: storeOutbounds.status, value: count() })
-      .from(storeOutbounds)
-      .where(and(eq(storeOutbounds.storeInventoryBagId, bag.id), isNull(storeOutbounds.deletedAt)))
-      .groupBy(storeOutbounds.status),
-    tx
-      .select({ status: storeTransfers.status, value: count() })
-      .from(storeTransfers)
-      .where(eq(storeTransfers.sourceInventoryBagId, bag.id))
-      .groupBy(storeTransfers.status),
-    tx
-      .select({ value: count() })
-      .from(storeSortingEvents)
-      .where(eq(storeSortingEvents.storeInventoryBagId, bag.id)),
-  ]);
-  const byStatus = <T extends string>(rows: { status: T; value: number }[], status: T) =>
-    rows.find((row) => row.status === status)?.value ?? 0;
+  dependencies?: ReadonlyMap<string, BagDependencies>,
+): Promise<ReceiptDiscrepancyFacts> {
+  const dependencyMap = dependencies ?? (await loadBagDependencies(tx, [bag.id]));
+  const dependency = dependencyMap.get(bag.id)!;
   return {
+    openedAt: bag.openedAt,
+    holdPreviousStatus: line?.holdPreviousStatus ?? null,
     status: bag.status,
     initialGrams: kilogramsToGramsExact(bag.initialWeightKg),
     currentGrams: kilogramsToGramsExact(bag.currentWeightKg),
     normalSaleConsumedGrams: kilogramsToGramsExact(bag.normalSaleConsumedKg),
-    approvedOutboundCount: byStatus(outbounds, 'approved'),
-    pendingOutboundCount: byStatus(outbounds, 'pending'),
-    completedTransferCount: byStatus(transfers, 'in_transit') + byStatus(transfers, 'received'),
-    draftTransferCount: byStatus(transfers, 'draft'),
-    sortingEventCount: sorting[0]?.value ?? 0,
+    ...dependency,
     heldByThisAdjustment:
       line !== null &&
       adjustmentId !== undefined &&

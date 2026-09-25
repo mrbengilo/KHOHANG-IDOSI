@@ -6,6 +6,7 @@ import {
   applyReceiptMoneyDeltas,
   assertReceiptAdjustmentApplicable,
   assessReceiptAdjustmentBag,
+  assessReceiptDiscrepancy,
   canHoldReceiptAdjustmentBag,
   DomainError,
   planReceiptAdjustmentLine,
@@ -21,6 +22,57 @@ import {
 const DRESS = 'product-dress';
 const JEANS = 'product-jeans';
 const COAT = 'product-coat';
+
+describe('never-opened report policy', () => {
+  const facts = () => ({
+    ...intactBag,
+    status: 'available' as const,
+    openedAt: null,
+    hasOpeningEvidence: false,
+    holdPreviousStatus: null,
+  });
+  it('accepts intact available stock and its own hold without changing return policy', () => {
+    expect(assessReceiptDiscrepancy(facts()).canReportDiscrepancy).toBe(true);
+    expect(
+      assessReceiptDiscrepancy(
+        { ...facts(), status: 'quarantined', holdPreviousStatus: 'available' },
+        true,
+      ).canReportDiscrepancy,
+    ).toBe(true);
+    expect(canHoldReceiptAdjustmentBag('opened')).toBe(true);
+  });
+  it.each(['opened', 'depleted', 'returned', 'lost', 'in_transit', 'quarantined'] as const)(
+    'rejects %s regardless of remaining kg',
+    (status) => {
+      expect(assessReceiptDiscrepancy({ ...facts(), status }).canReportDiscrepancy).toBe(false);
+    },
+  );
+  it('rejects timestamp, audit evidence and legacy opened hold independently', () => {
+    for (const changed of [
+      { openedAt: new Date() },
+      { hasOpeningEvidence: true },
+      { holdPreviousStatus: 'opened' as const },
+    ]) {
+      expect(assessReceiptDiscrepancy({ ...facts(), ...changed }).reportBlockers).toContain(
+        'BAG_ALREADY_OPENED',
+      );
+    }
+    expect(
+      assessReceiptDiscrepancy({ ...facts(), pendingOutboundCount: 1 }).reportBlockers,
+    ).toContain('BAG_PENDING_OUTBOUND');
+    expect(
+      assessReceiptDiscrepancy(
+        {
+          ...facts(),
+          status: 'quarantined',
+          holdPreviousStatus: 'available',
+          heldByThisAdjustment: false,
+        },
+        true,
+      ).canReportDiscrepancy,
+    ).toBe(false);
+  });
+});
 
 const intactBag: ReceiptAdjustmentBagFacts = {
   status: 'quarantined',

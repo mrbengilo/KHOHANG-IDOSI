@@ -17,6 +17,7 @@ import {
   listSortedSaleTransfers,
   moveProductCharityToSale,
   openStoreInventoryBag,
+  listStoreBagOpenings,
   products,
   recordIdosiStatisticsSuccess,
   receiveSortedSaleTransfer,
@@ -609,6 +610,19 @@ describePostgres('sorted sale and charity stock with IDOSI reconciliation', () =
     const openedSmall = await open(small!.id);
     expect(openedSmall).toMatchObject({ status: 'depleted', normalSaleAppliedKg: '4.000' });
     expect(await pending()).toEqual(['3.000']);
+    const history = await listStoreBagOpenings(db, { page: 1, pageSize: 20 }, [store!.id]);
+    expect(history.data.find((row) => row.bagId === small!.id)).toMatchObject({
+      weightBeforeKg: '4.000',
+      normalSaleAppliedKg: '4.000',
+      weightAfterKg: '0.000',
+      currentStatus: 'EMPTY',
+    });
+    expect(history.data.find((row) => row.bagId === large!.id)).toMatchObject({
+      weightBeforeKg: '10.000',
+      normalSaleAppliedKg: '7.000',
+      weightAfterKg: '3.000',
+      currentStatus: 'EMPTY',
+    });
   });
 
   it('takes regular-price sales only from opened bags and leaves the rest to sort', async () => {

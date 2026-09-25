@@ -29,6 +29,7 @@ export const StoreInventoryBagSchema = z
     storeId: EntityIdSchema,
     productId: EntityIdSchema,
     sourceReceiptBagId: EntityIdSchema.nullable(),
+    sourceDocumentCode: z.string().nullable().optional(),
     outboundOrderId: EntityIdSchema.nullable(),
     sourceTransferId: EntityIdSchema.nullable().default(null),
     sourceInventoryBagId: EntityIdSchema.nullable().default(null),
@@ -43,6 +44,7 @@ export const StoreInventoryBagSchema = z
     remainingWeightKg: KilogramsDecimalSchema,
     status: StoreInventoryBagStatusSchema,
     version: z.number().int().nonnegative(),
+    openedAt: IsoDateTimeSchema.nullable().optional(),
     receivedAt: IsoDateTimeSchema.nullable(),
     updatedAt: IsoDateTimeSchema,
   })
@@ -154,6 +156,7 @@ export const StoreInventoryBagResponseSchema = z.object({ data: StoreInventoryBa
 export type StoreInventoryBagResponse = z.infer<typeof StoreInventoryBagResponseSchema>;
 
 export const ListStoreInventoryBagsQuerySchema = PaginationQuerySchema.extend({
+  unopenedOnly: z.enum(['true', 'false']).optional(),
   storeId: EntityIdSchema.optional(),
   productId: EntityIdSchema.optional(),
   status: StoreInventoryBagStatusSchema.optional(),
@@ -269,4 +272,38 @@ export type ListStoreNormalSalePendingQuery = z.infer<typeof ListStoreNormalSale
 
 export const ListStoreNormalSalePendingResponseSchema = z
   .object({ data: z.array(StoreNormalSalePendingSchema) })
+  .strict();
+
+export const StoreBagOpeningSchema = z
+  .object({
+    id: EntityIdSchema,
+    bagId: EntityIdSchema,
+    bagCode: z.string().nullable(),
+    storeId: EntityIdSchema,
+    productId: EntityIdSchema.nullable(),
+    weightBeforeKg: KilogramsDecimalSchema.nullable(),
+    normalSaleAppliedKg: KilogramsDecimalSchema.nullable(),
+    weightAfterKg: KilogramsDecimalSchema.nullable(),
+    actorAccountId: EntityIdSchema.nullable(),
+    openedAt: IsoDateTimeSchema.nullable(),
+    source: z.enum(['BUTTON', 'SORTING', 'TRANSFER', 'OUTBOUND', 'IDOSI', 'LEGACY']),
+    currentStatus: StoreInventoryBagStatusSchema,
+  })
+  .strict();
+export type StoreBagOpening = z.infer<typeof StoreBagOpeningSchema>;
+export const ListStoreBagOpeningsQuerySchema = PaginationQuerySchema.extend({
+  storeId: EntityIdSchema.optional(),
+  productId: EntityIdSchema.optional(),
+  bagCode: z.string().trim().min(1).max(100).optional(),
+  from: IsoDateTimeSchema.optional(),
+  to: IsoDateTimeSchema.optional(),
+})
+  .strict()
+  .refine((q) => !q.from || !q.to || q.from < q.to, 'Khoảng ngày không hợp lệ');
+export type ListStoreBagOpeningsQuery = z.infer<typeof ListStoreBagOpeningsQuerySchema>;
+export const ListStoreBagOpeningsResponseSchema = z
+  .object({
+    data: z.array(StoreBagOpeningSchema),
+    pagination: PaginationMetaSchema,
+  })
   .strict();

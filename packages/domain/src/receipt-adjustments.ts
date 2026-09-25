@@ -2,7 +2,7 @@ import { DomainError, invariant } from './errors.js';
 
 /**
  * Post-finalization discrepancy on a store receipt: a bag booked as one SKU turns out to be
- * another once opened. The finalized receipt is never reopened; an adjustment document records
+ * another on physical inspection, before confirming opening for sale. The finalized receipt is never reopened; an adjustment document records
  * what was verified and, once applied, the effective values are "original + applied deltas".
  */
 
@@ -259,6 +259,7 @@ export function planReceiptAdjustmentMoney(
 }
 
 export const RECEIPT_ADJUSTMENT_BAG_BLOCKERS = [
+  'BAG_ALREADY_OPENED',
   'BAG_NOT_HELD',
   'BAG_STATE_CHANGED',
   'BAG_PARTIALLY_CONSUMED',
@@ -314,6 +315,43 @@ export function assessReceiptAdjustmentBag(
   if (!facts.heldByThisAdjustment) blockers.add('BAG_NOT_HELD');
   if (!facts.matchesRecordedState) blockers.add('BAG_STATE_CHANGED');
   return RECEIPT_ADJUSTMENT_BAG_BLOCKERS.filter((code) => blockers.has(code));
+}
+
+export interface ReceiptDiscrepancyFacts extends ReceiptAdjustmentBagFacts {
+  readonly openedAt: Date | null;
+  readonly hasOpeningEvidence: boolean;
+  readonly holdPreviousStatus: StoreBagStatus | null;
+}
+
+/** Separate from return/apply costing: reporting requires a never-opened physical bag. */
+export function assessReceiptDiscrepancy(
+  facts: ReceiptDiscrepancyFacts,
+  existing = false,
+): {
+  readonly canReportDiscrepancy: boolean;
+  readonly reportBlockers: ReceiptAdjustmentBagBlocker[];
+} {
+  const blockers = new Set(
+    assessReceiptAdjustmentBag({
+      ...facts,
+      heldByThisAdjustment: existing ? facts.heldByThisAdjustment : true,
+    }),
+  );
+  if (
+    facts.openedAt !== null ||
+    facts.hasOpeningEvidence ||
+    facts.status === 'opened' ||
+    facts.holdPreviousStatus === 'opened'
+  )
+    blockers.add('BAG_ALREADY_OPENED');
+  const validStatus = existing
+    ? facts.status === 'quarantined' &&
+      facts.heldByThisAdjustment &&
+      facts.holdPreviousStatus === 'available'
+    : facts.status === 'available';
+  if (!validStatus) blockers.add('BAG_STATE_CHANGED');
+  const reportBlockers = RECEIPT_ADJUSTMENT_BAG_BLOCKERS.filter((code) => blockers.has(code));
+  return { canReportDiscrepancy: reportBlockers.length === 0, reportBlockers };
 }
 
 /** A bag can be quarantined for the report only while it is still sellable stock. */

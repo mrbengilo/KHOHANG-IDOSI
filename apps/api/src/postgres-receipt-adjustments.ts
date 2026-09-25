@@ -143,6 +143,9 @@ export async function getAdjustmentContext(
       openAdjustmentId: bag.openAdjustmentId,
       openReturnId: bag.openReturnId,
       dependencies: [...bag.dependencies],
+      openedAt: bag.openedAt?.toISOString() ?? null,
+      canReportDiscrepancy: bag.canReportDiscrepancy,
+      reportBlockers: [...bag.reportBlockers],
     })),
     adjustments: adjustments.data.map(listItemDto),
   };
