@@ -92,7 +92,8 @@ cũ tự hiện nhãn mới, không cần backfill.
   `ch.*`, `psl.*`); giá trị sai về mặc định an toàn. Đổi tab/trang/mở hồ sơ tạo mục lịch sử
   (Back/Forward), sửa bộ lọc thì thay mục hiện tại. Đổi cửa hàng bỏ bao/hồ sơ không chắc thuộc
   cửa hàng mới.
-- Rời tab hoặc đổi hồ sơ khi biểu mẫu còn nội dung chưa gửi: hỏi “Ở lại / Bỏ nháp và chuyển”;
+- Rời tab hoặc đổi hồ sơ khi biểu mẫu còn nội dung chưa gửi: hỏi “Ở lại / Bỏ nháp và chuyển”,
+  kể cả khi đổi bộ lọc cửa hàng làm đóng hồ sơ. Chọn “Ở lại” giữ nguyên bộ lọc và ghi chú;
   tải lại trang thì trình duyệt hỏi xác nhận.
 - Tab **Phiếu sai lệch** mặc định lọc **Chờ Admin duyệt**; lọc thêm cửa hàng, trạng thái (gồm
   “Tất cả” và “Đã xử lý (lịch sử)”), mã PSL/mã phiếu nhận, ngày báo hoặc ngày xử lý (ngày Việt Nam,

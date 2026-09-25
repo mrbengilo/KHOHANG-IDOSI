@@ -424,6 +424,33 @@ test('admin tab lists every store document; applying shows "Đã xử lý" to HT
     await expect(detail).toContainText('Xác minh, gửi Admin duyệt');
     await expect(detail.locator('.adjustment-timeline')).toContainText(`HTKD ${token} · HTKD`);
     await assertWorkspaceFits(adminPage, testInfo.outputPath('admin-adjustments-pending'));
+    // Changing store also closes the document: guard the draft on this navigation path.
+    const note = detail.getByRole('textbox', { name: 'Ghi chú (bắt buộc khi từ chối/trả lại)' });
+    await note.fill('Đang đối chiếu chứng từ');
+    const storeFilter = adminPage.getByRole('combobox', { name: 'Cửa hàng', exact: true });
+    const otherStoreId = await storeFilter
+      .locator('option')
+      .evaluateAll(
+        (options, currentId) =>
+          options
+            .map((option) => (option as HTMLOptionElement).value)
+            .find((id) => id !== '' && id !== currentId),
+        store.id,
+      );
+    expect(otherStoreId).toBeTruthy();
+    await storeFilter.selectOption(otherStoreId!);
+    const draftDialog = adminPage.getByRole('alertdialog', { name: 'Bản nháp chưa gửi' });
+    await expect(draftDialog).toBeVisible();
+    await draftDialog.getByRole('button', { name: 'Ở lại' }).click();
+    await expect(note).toHaveValue('Đang đối chiếu chứng từ');
+    await expect(storeFilter).toHaveValue(store.id);
+    await storeFilter.selectOption(otherStoreId!);
+    await draftDialog.getByRole('button', { name: 'Bỏ nháp và chuyển' }).click();
+    await expect(detail).toHaveCount(0);
+    await expect(storeFilter).toHaveValue(otherStoreId!);
+    await storeFilter.selectOption(store.id);
+    await list.getByRole('button', { name: `Xem chi tiết ${created.code}` }).click();
+    await expect(note).toHaveValue('');
     await detail.getByRole('button', { name: 'Duyệt và áp dụng' }).click();
     await expect(detail.locator('.adjustment-detail__header')).toContainText('Đã xử lý');
     await expect(detail.locator('.adjustment-timeline')).toContainText('Admin duyệt và áp dụng');

@@ -82,7 +82,10 @@ export function AdminAdjustmentWorkspace() {
   const [draftTo, setDraftTo] = useState(filters.to);
   const [formError, setFormError] = useState('');
   const [detailDirty, setDetailDirty] = useState(false);
-  const [pendingOpen, setPendingOpen] = useState<string | null>(null);
+  const [pendingNavigation, setPendingNavigation] = useState<{
+    params: URLSearchParams;
+    push: boolean;
+  } | null>(null);
   const detailRef = useRef<HTMLElement>(null);
 
   // Back/Forward or a shared link changes the URL under the form: show what is applied.
@@ -174,15 +177,18 @@ export function AdminAdjustmentWorkspace() {
   const selectedStore = filters.storeId ? storeById.get(filters.storeId) : undefined;
   const opened = openQuery.data;
 
-  const update = (next: URLSearchParams, push = false) => setParams(next, { replace: !push });
-  const openDocument = (id: string | null) => {
-    if (detailDirty && id !== filters.openId) {
-      setPendingOpen(id ?? '');
+  const update = (next: URLSearchParams, push = false) => {
+    // Store filters can also close the open document. Guard every local URL change that
+    // replaces it, preserving both the draft and the current filters until confirmed.
+    if (detailDirty && (next.get(KEYS.adjustmentOpen) ?? '') !== filters.openId) {
+      setPendingNavigation({ params: next, push });
       return;
     }
-    setPendingOpen(null);
-    update(withParams(params, { [KEYS.adjustmentOpen]: id }), true);
+    setPendingNavigation(null);
+    setParams(next, { replace: !push });
   };
+  const openDocument = (id: string | null) =>
+    update(withParams(params, { [KEYS.adjustmentOpen]: id }), true);
   const applyTextFilters = () => {
     if (draftFrom && draftTo && draftFrom > draftTo) {
       setFormError('Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.');
@@ -483,7 +489,7 @@ export function AdminAdjustmentWorkspace() {
         )}
       </section>
 
-      {pendingOpen !== null ? (
+      {pendingNavigation !== null ? (
         <div
           className="receipt-review-note adjustment-outdated"
           role="alertdialog"
@@ -493,15 +499,15 @@ export function AdminAdjustmentWorkspace() {
             <strong>Hồ sơ đang mở có nội dung chưa gửi.</strong>
             Chuyển hồ sơ sẽ bỏ bản nháp này.
           </span>
-          <Button onClick={() => setPendingOpen(null)} tone="secondary">
+          <Button onClick={() => setPendingNavigation(null)} tone="secondary">
             Ở lại
           </Button>
           <Button
             onClick={() => {
-              const target = pendingOpen;
-              setPendingOpen(null);
+              const target = pendingNavigation;
+              setPendingNavigation(null);
               setDetailDirty(false);
-              update(withParams(params, { [KEYS.adjustmentOpen]: target || null }), true);
+              setParams(target.params, { replace: !target.push });
             }}
             tone="danger"
           >
