@@ -106,6 +106,8 @@ export const InboundReceiptSchema = z
     cost: ReceiptCostConfirmationSchema.nullable(),
     version: z.number().int().nonnegative(),
     receivedByAccountId: EntityIdSchema,
+    /** Current display name of the receiver, not a historical snapshot. */
+    receivedByDisplayName: z.string().nullable().optional(),
     receivedAt: IsoDateTimeSchema,
     createdAt: IsoDateTimeSchema,
     updatedAt: IsoDateTimeSchema,

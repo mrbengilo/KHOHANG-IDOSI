@@ -1511,7 +1511,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       .limit(query.pageSize)
       .offset((query.page - 1) * query.pageSize);
     return {
-      data: await Promise.all(rows.map((row) => this.inboundReceiptDto(row.id))),
+      data: await this.inboundReceiptDtos(rows.map((row) => row.id)),
       pagination: pagination(query.page, query.pageSize, totalRow?.value ?? 0),
     };
   }
@@ -3474,9 +3474,12 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
 
   public async listSortedSaleTransfers(
     actor: AuthenticatedPrincipal,
+    page?: { page: number; pageSize: number },
   ): Promise<readonly SortedSaleTransfer[]> {
     const ids = await this.retailScopeStoreIds(actor);
-    return (await listDatabaseSortedSaleTransfers(db, ids)).map(sortedSaleTransferDto);
+    return (await listDatabaseSortedSaleTransfers(db, ids, undefined, page)).map(
+      sortedSaleTransferDto,
+    );
   }
 
   public async createSortedSaleTransfer(
@@ -4063,126 +4066,137 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
   }
 
   private async inboundReceiptDto(receiptId: string): Promise<InboundReceipt> {
-    const [receipt] = await db
-      .select()
+    const [receipt] = await this.inboundReceiptDtos([receiptId]);
+    if (!receipt) throw notFound('Không tìm thấy phiếu nhập nhà cung cấp');
+    return receipt;
+  }
+
+  private async inboundReceiptDtos(receiptIds: string[]): Promise<InboundReceipt[]> {
+    if (receiptIds.length === 0) return [];
+    const headers = await db
+      .select({ receipt: receipts, actorName: users.displayName })
       .from(receipts)
-      .where(and(eq(receipts.id, receiptId), isNull(receipts.deletedAt)))
-      .limit(1);
-    if (!receipt || receipt.supplierName === null || receipt.receivedAt === null) {
-      throw notFound('Không tìm thấy phiếu nhập nhà cung cấp');
-    }
-    const itemRows = await db
+      .leftJoin(users, eq(users.id, receipts.createdByUserId))
+      .where(and(inArray(receipts.id, receiptIds), isNull(receipts.deletedAt)));
+    const allItems = await db
       .select()
       .from(receiptItems)
-      .where(eq(receiptItems.receiptId, receipt.id))
+      .where(inArray(receiptItems.receiptId, receiptIds))
       .orderBy(asc(receiptItems.productId));
-    if (itemRows.length === 0) throw new Error('Supplier receipt has no product lines.');
-    const bagRows = await db
-      .select({
-        id: receiptBagWeights.id,
-        receiptItemId: receiptBagWeights.receiptItemId,
-        labelCode: receiptBagWeights.labelCode,
-        netWeightKg: receiptBagWeights.netWeightKg,
-        createdAt: receiptBagWeights.createdAt,
-      })
-      .from(receiptBagWeights)
-      .where(
-        inArray(
-          receiptBagWeights.receiptItemId,
-          itemRows.map((item) => item.id),
-        ),
-      )
-      .orderBy(asc(receiptBagWeights.receiptItemId), asc(receiptBagWeights.bagNumber));
-    const itemById = new Map(itemRows.map((item) => [item.id, item]));
-    let totalWeightGrams = 0n;
-    const bags = bagRows.map((bag) => {
-      const item = itemById.get(bag.receiptItemId);
-      if (!item || bag.labelCode === null) {
-        throw new Error('Supplier receipt bag evidence is incomplete.');
-      }
-      if (bag.netWeightKg !== null) totalWeightGrams += kilogramsToGramsExact(bag.netWeightKg);
-      return {
-        id: bag.id,
-        receiptId: receipt.id,
-        productId: item.productId,
-        bagCode: bag.labelCode,
-        weightKg:
-          bag.netWeightKg === null
-            ? null
-            : gramsToKilogramsExact(kilogramsToGramsExact(bag.netWeightKg)),
-        createdAt: bag.createdAt.toISOString(),
-      };
-    });
-    if (bags.length === 0) throw new Error('Supplier receipt has no bag evidence.');
-
-    const isConfirmed = receipt.status === 'confirmed';
-    const totalCostVnd =
-      receipt.totalGoodsCostVnd +
-      receipt.totalShippingCostVnd +
-      receipt.totalHandlingCostVnd +
-      receipt.totalOtherCostVnd +
-      (receipt.vatAmountVnd ?? 0n);
-    if (isConfirmed && receipt.totalOtherCostVnd !== 0n) {
-      throw new Error('Inbound receipt contract cannot represent legacy other costs.');
-    }
-    if (isConfirmed && (receipt.confirmedByUserId === null || receipt.confirmedAt === null)) {
-      throw new Error('Confirmed supplier receipt is missing reviewer evidence.');
-    }
-    const invoiceCosts = isConfirmed
+    const allBags = allItems.length
       ? await db
-          .select({ amountVnd: receiptCosts.amountVnd })
-          .from(receiptCosts)
+          .select()
+          .from(receiptBagWeights)
           .where(
-            and(
-              eq(receiptCosts.receiptId, receipt.id),
-              eq(receiptCosts.costType, 'goods'),
-              isNull(receiptCosts.receiptItemId),
+            inArray(
+              receiptBagWeights.receiptItemId,
+              allItems.map((item) => item.id),
             ),
           )
+          .orderBy(asc(receiptBagWeights.receiptItemId), asc(receiptBagWeights.bagNumber))
       : [];
-    const invoicePriced =
-      invoiceCosts.length === 1 && invoiceCosts[0]!.amountVnd === receipt.totalGoodsCostVnd;
-    const productCosts =
-      isConfirmed && !invoicePriced
-        ? itemRows.map((item) => {
-            if (item.pricePerKgVnd === null) {
-              throw new Error('Confirmed supplier receipt item is missing its price.');
-            }
-            return { productId: item.productId, priceVndPerKg: safeVnd(item.pricePerKgVnd) };
-          })
-        : [];
+    const allInvoiceCosts = await db
+      .select()
+      .from(receiptCosts)
+      .where(
+        and(
+          inArray(receiptCosts.receiptId, receiptIds),
+          eq(receiptCosts.costType, 'goods'),
+          isNull(receiptCosts.receiptItemId),
+        ),
+      );
+    const byId = new Map(headers.map((header) => [header.receipt.id, header]));
+    return receiptIds.map((id) => {
+      const header = byId.get(id);
+      if (!header || header.receipt.supplierName === null || header.receipt.receivedAt === null)
+        throw notFound('Không tìm thấy phiếu nhập nhà cung cấp');
+      const receipt = header.receipt;
+      const itemRows = allItems.filter((item) => item.receiptId === id);
+      const itemIds = new Set(itemRows.map((item) => item.id));
+      const bagRows = allBags.filter((bag) => itemIds.has(bag.receiptItemId));
+      const itemById = new Map(itemRows.map((item) => [item.id, item]));
+      let totalWeightGrams = 0n;
+      const bags = bagRows.map((bag) => {
+        const item = itemById.get(bag.receiptItemId);
+        if (!item || bag.labelCode === null) {
+          throw new Error('Supplier receipt bag evidence is incomplete.');
+        }
+        if (bag.netWeightKg !== null) totalWeightGrams += kilogramsToGramsExact(bag.netWeightKg);
+        return {
+          id: bag.id,
+          receiptId: receipt.id,
+          productId: item.productId,
+          bagCode: bag.labelCode,
+          weightKg:
+            bag.netWeightKg === null
+              ? null
+              : gramsToKilogramsExact(kilogramsToGramsExact(bag.netWeightKg)),
+          createdAt: bag.createdAt.toISOString(),
+        };
+      });
+      if (bags.length === 0) throw new Error('Supplier receipt has no bag evidence.');
 
-    return {
-      id: receipt.id,
-      referenceCode: receipt.receiptNumber,
-      supplierName: receipt.supplierName,
-      vat:
-        receipt.vatAmountVnd === null
+      const isConfirmed = receipt.status === 'confirmed';
+      const totalCostVnd =
+        receipt.totalGoodsCostVnd +
+        receipt.totalShippingCostVnd +
+        receipt.totalHandlingCostVnd +
+        receipt.totalOtherCostVnd +
+        (receipt.vatAmountVnd ?? 0n);
+      if (isConfirmed && receipt.totalOtherCostVnd !== 0n) {
+        throw new Error('Inbound receipt contract cannot represent legacy other costs.');
+      }
+      if (isConfirmed && (receipt.confirmedByUserId === null || receipt.confirmedAt === null)) {
+        throw new Error('Confirmed supplier receipt is missing reviewer evidence.');
+      }
+      const invoiceCosts = isConfirmed
+        ? allInvoiceCosts.filter((cost) => cost.receiptId === id)
+        : [];
+      const invoicePriced =
+        invoiceCosts.length === 1 && invoiceCosts[0]!.amountVnd === receipt.totalGoodsCostVnd;
+      const productCosts =
+        isConfirmed && !invoicePriced
+          ? itemRows.map((item) => {
+              if (item.pricePerKgVnd === null) {
+                throw new Error('Confirmed supplier receipt item is missing its price.');
+              }
+              return { productId: item.productId, priceVndPerKg: safeVnd(item.pricePerKgVnd) };
+            })
+          : [];
+
+      return {
+        id: receipt.id,
+        referenceCode: receipt.receiptNumber,
+        supplierName: receipt.supplierName!,
+        vat:
+          receipt.vatAmountVnd === null
+            ? null
+            : { amountVnd: safeVnd(receipt.vatAmountVnd), ratePercent: 8 },
+        status: inboundReceiptStatus(receipt.status),
+        bags,
+        totalWeightKg: bags.some((bag) => bag.weightKg === null)
           ? null
-          : { amountVnd: safeVnd(receipt.vatAmountVnd), ratePercent: 8 },
-      status: inboundReceiptStatus(receipt.status),
-      bags,
-      totalWeightKg: bags.some((bag) => bag.weightKg === null)
-        ? null
-        : gramsToKilogramsExact(totalWeightGrams),
-      cost: isConfirmed
-        ? {
-            productCosts,
-            transportationFeeVnd: safeVnd(receipt.totalShippingCostVnd),
-            handlingFeeVnd: safeVnd(receipt.totalHandlingCostVnd),
-            vatAmountVnd: receipt.vatAmountVnd === null ? null : safeVnd(receipt.vatAmountVnd),
-            goodsCostVnd: safeVnd(receipt.totalGoodsCostVnd),
-            totalCostVnd: safeVnd(totalCostVnd),
-            confirmedByAccountId: receipt.confirmedByUserId as string,
-            confirmedAt: (receipt.confirmedAt as Date).toISOString(),
-          }
-        : null,
-      version: receipt.version,
-      receivedByAccountId: receipt.createdByUserId,
-      receivedAt: receipt.receivedAt.toISOString(),
-      createdAt: receipt.createdAt.toISOString(),
-      updatedAt: receipt.updatedAt.toISOString(),
-    };
+          : gramsToKilogramsExact(totalWeightGrams),
+        cost: isConfirmed
+          ? {
+              productCosts,
+              transportationFeeVnd: safeVnd(receipt.totalShippingCostVnd),
+              handlingFeeVnd: safeVnd(receipt.totalHandlingCostVnd),
+              vatAmountVnd: receipt.vatAmountVnd === null ? null : safeVnd(receipt.vatAmountVnd),
+              goodsCostVnd: safeVnd(receipt.totalGoodsCostVnd),
+              totalCostVnd: safeVnd(totalCostVnd),
+              confirmedByAccountId: receipt.confirmedByUserId as string,
+              confirmedAt: (receipt.confirmedAt as Date).toISOString(),
+            }
+          : null,
+        version: receipt.version,
+        receivedByAccountId: receipt.createdByUserId,
+        receivedByDisplayName: header.actorName?.trim() || null,
+        receivedAt: receipt.receivedAt!.toISOString(),
+        createdAt: receipt.createdAt.toISOString(),
+        updatedAt: receipt.updatedAt.toISOString(),
+      };
+    });
   }
 
   private async receiptDto(receiptId: string): Promise<Receipt> {
@@ -4637,10 +4651,24 @@ function warehouseShortageCheckDto(record: WarehouseShortageCheckRecord): Wareho
   };
 }
 
-function sortedSaleTransferDto(row: typeof sortedSaleTransfers.$inferSelect): SortedSaleTransfer {
+function sortedSaleTransferDto(
+  row: typeof sortedSaleTransfers.$inferSelect & { createdByDisplayName?: string | null },
+): SortedSaleTransfer {
   return {
     id: row.id,
     transferNumber: row.transferNumber,
+    lines: row.lines ?? [
+      {
+        productId: row.productId,
+        sourceStockId: row.sourceStockId,
+        bagQuantity: row.bagQuantity,
+        weightKg: row.weightKg,
+        enteredWeightKg: row.enteredWeightKg,
+        bagWeightsKg: row.bagWeightsKg ?? [],
+      },
+    ],
+    createdByAccountId: row.createdByUserId,
+    createdByDisplayName: row.createdByDisplayName ?? null,
     sourceStockId: row.sourceStockId,
     sourceStoreId: row.sourceStoreId,
     destinationStoreId: row.destinationStoreId,
@@ -4704,10 +4732,24 @@ function storeTransferDto(row: typeof storeTransfers.$inferSelect): StoreTransfe
   };
 }
 
-function storeTransferPage(
+async function storeTransferPage(
   page: Awaited<ReturnType<typeof listDatabaseStoreTransfers>>,
-): Page<StoreTransfer> {
-  return { data: page.data.map(storeTransferDto), pagination: page.pagination };
+): Promise<Page<StoreTransfer>> {
+  const ids = [...new Set(page.data.map((row) => row.createdByUserId))];
+  const actors = ids.length
+    ? await db
+        .select({ id: users.id, name: users.displayName })
+        .from(users)
+        .where(inArray(users.id, ids))
+    : [];
+  const names = new Map(actors.map((actor) => [actor.id, actor.name]));
+  return {
+    data: page.data.map((row) => ({
+      ...storeTransferDto(row),
+      createdByDisplayName: names.get(row.createdByUserId) ?? null,
+    })),
+    pagination: page.pagination,
+  };
 }
 
 async function listAssignedStoreOutbounds(

@@ -1,3 +1,4 @@
+import type { SortedSaleTransferLine } from '@idosi/contracts';
 import { sql } from 'drizzle-orm';
 import {
   bigint,
@@ -2385,7 +2386,10 @@ export const storeSortedStocks = pgTable(
   },
   (table) => [
     uniqueIndex('store_sorted_stocks_bag_uidx').on(table.storeInventoryBagId),
-    uniqueIndex('store_sorted_stocks_source_transfer_uidx').on(table.sourceTransferId),
+    uniqueIndex('store_sorted_stocks_source_transfer_product_uidx').on(
+      table.sourceTransferId,
+      table.productId,
+    ),
     index('store_sorted_stocks_store_product_idx').on(table.storeId, table.productId),
     check('store_sorted_stocks_sale_nonnegative', sql`${table.saleWeightKg} >= 0`),
     check(
@@ -2419,6 +2423,7 @@ export const sortedSaleTransfers = pgTable(
   {
     id: uuid('id').defaultRandom().primaryKey(),
     transferNumber: text('transfer_number').notNull().unique(),
+    lines: jsonb('lines').$type<SortedSaleTransferLine[]>(),
     sourceStockId: uuid('source_stock_id')
       .notNull()
       .references(() => storeSortedStocks.id, { onDelete: 'restrict' }),
@@ -2465,6 +2470,10 @@ export const sortedSaleTransfers = pgTable(
     check(
       'sorted_sale_transfers_distinct_stores',
       sql`${table.sourceStoreId} <> ${table.destinationStoreId}`,
+    ),
+    check(
+      'sorted_sale_transfer_lines_array',
+      sql`${table.lines} IS NULL OR (jsonb_typeof(${table.lines}) = 'array' AND jsonb_array_length(${table.lines}) > 0)`,
     ),
     check('sorted_sale_transfers_bags_positive', sql`${table.bagQuantity} > 0`),
     check('sorted_sale_transfers_weight_positive', sql`${table.weightKg} > 0`),

@@ -35,6 +35,7 @@ export const StoreTransferSchema = z
     cancellationReason: AuditReasonSchema.nullable(),
     version: z.number().int().nonnegative(),
     createdByAccountId: EntityIdSchema,
+    createdByDisplayName: z.string().nullable().optional(),
     dispatchedByAccountId: EntityIdSchema.nullable(),
     receivedByAccountId: EntityIdSchema.nullable(),
     createdAt: IsoDateTimeSchema,
