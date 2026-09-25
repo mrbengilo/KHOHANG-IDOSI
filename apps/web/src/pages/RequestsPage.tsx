@@ -268,6 +268,8 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
     () => new Map(catalogProducts.map((product) => [product.id, product.name])),
     [catalogProducts],
   );
+  // Wholesale stores order through exactly the same form, quota and history as retail stores;
+  // only the scope card tells the desk which store-floor work it does not do.
   const isWholesale = role === 'WHOLESALE' || (role === 'STORE' && storeKind === 'WHOLESALE');
   const historyQuery = useQuery({
     enabled: Boolean(effectiveStoreId),
@@ -412,7 +414,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
             ? `${selectedStore?.name ?? 'Phạm vi cửa hàng'} • Đặt hàng 24/7 · đợt phân bổ ${activeSession.businessDate}`
             : 'Đặt hàng 24/7 · chọn cửa hàng để chuẩn bị đợt phân bổ kế tiếp'
         }
-        title={isWholesale ? 'Đặt hàng khách sỉ' : 'Đặt hàng & kết quả'}
+        title="Đặt hàng & kết quả"
       />
 
       {loadError ? (
@@ -524,9 +526,9 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
 
       {isWholesale ? (
         <section className="permission-card">
-          <strong>Quyền hạn khách sỉ</strong>
-          <span>Đặt hàng • xem phân bổ • phiếu chờ</span>
-          <small>Nhận hàng theo lệnh xuất; không khui, bán lẻ hoặc điều chuyển</small>
+          <strong>Quyền hạn cửa hàng sỉ</strong>
+          <span>Đặt hàng • phân bổ • phiếu chờ • nhận hàng • báo sai lệch</span>
+          <small>Không khui bao, bán lẻ, lọc hàng hoặc chuyển cửa hàng</small>
         </section>
       ) : null}
 
@@ -561,30 +563,24 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
               );
               resetMutationKey();
             }}
-            {...(isWholesale
-              ? {}
-              : {
-                  renderDetails: (productId: string) => (
-                    <label>
-                      Ghi chú mặt hàng — {productNameById.get(productId)}
-                      <textarea
-                        maxLength={500}
-                        rows={2}
-                        value={draftLines.find((line) => line.productId === productId)?.note ?? ''}
-                        onChange={(event) => {
-                          setDraftLines((current) =>
-                            current.map((line) =>
-                              line.productId === productId
-                                ? { ...line, note: event.target.value }
-                                : line,
-                            ),
-                          );
-                          resetMutationKey();
-                        }}
-                      />
-                    </label>
-                  ),
-                })}
+            renderDetails={(productId: string) => (
+              <label>
+                Ghi chú mặt hàng — {productNameById.get(productId)}
+                <textarea
+                  maxLength={500}
+                  rows={2}
+                  value={draftLines.find((line) => line.productId === productId)?.note ?? ''}
+                  onChange={(event) => {
+                    setDraftLines((current) =>
+                      current.map((line) =>
+                        line.productId === productId ? { ...line, note: event.target.value } : line,
+                      ),
+                    );
+                    resetMutationKey();
+                  }}
+                />
+              </label>
+            )}
           />
         </section>
 
@@ -601,7 +597,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
               <div>
                 <strong>{productNameById.get(line.productId) ?? line.productId}</strong>
                 <span>
-                  {line.quantity} bao{isWholesale ? '' : ` • ${line.note || 'Không có ghi chú'}`}
+                  {line.quantity} bao • {line.note || 'Không có ghi chú'}
                 </span>
               </div>
               <button
@@ -721,7 +717,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
                 {request.lines.map((line) => (
                   <li key={line.productId}>
                     <strong>{productNameById.get(line.productId) ?? line.productId}</strong>
-                    {!isWholesale ? <span>{line.note || 'Không có ghi chú'}</span> : null}
+                    <span>{line.note || 'Không có ghi chú'}</span>
                   </li>
                 ))}
               </ul>
