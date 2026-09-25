@@ -417,6 +417,7 @@ export {
   getReceiptAdjustment,
   getReceiptAdjustmentContext,
   getReceiptReturn,
+  listReceiptAdjustmentHistory,
   listReceiptAdjustments,
   listReceiptReturns,
   ReceiptAdjustmentAuthorizationError,
@@ -426,6 +427,7 @@ export {
   transitionReceiptReturn,
 } from './store-receipt-adjustments.js';
 export type {
+  AdjustmentAccountRef,
   CreateReceiptAdjustmentInput,
   CreateReceiptReturnInput,
   EntitlementProgress,
@@ -434,6 +436,7 @@ export type {
   ReceiptAdjustmentContext,
   ReceiptAdjustmentContextBag,
   ReceiptAdjustmentDatabaseStatus,
+  ReceiptAdjustmentHistoryRecord,
   ReceiptAdjustmentLineRecord,
   ReceiptAdjustmentMoneySummary,
   ReceiptAdjustmentMutationResult,

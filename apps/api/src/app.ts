@@ -7,6 +7,7 @@ import {
   ListReceiptAdjustmentsQuerySchema,
   ListReceiptReturnsQuerySchema,
   ReceiptAdjustmentActionRequestSchema,
+  ReceiptAdjustmentHistoryQuerySchema,
   ReceiptAdjustmentLineParamsSchema,
   ReceiptAdjustmentParamsSchema,
   ReceiptReturnActionRequestSchema,
@@ -1223,6 +1224,17 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE']);
     const { adjustmentId } = ReceiptAdjustmentParamsSchema.parse(request.params);
     return { data: await repository.getReceiptAdjustment(session.principal, adjustmentId) };
+  });
+
+  app.get('/api/v1/receipt-adjustments/:adjustmentId/history', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE']);
+    const { adjustmentId } = ReceiptAdjustmentParamsSchema.parse(request.params);
+    return repository.listReceiptAdjustmentHistory(
+      session.principal,
+      adjustmentId,
+      ReceiptAdjustmentHistoryQuerySchema.parse(request.query),
+    );
   });
 
   app.post('/api/v1/receipt-adjustments', async (request, reply) => {
@@ -2531,7 +2543,12 @@ function openApiDocument(): Record<string, unknown> {
       '/api/v1/receipt-adjustments': {
         get: {
           security: cookieSecurity,
-          responses: { '200': { description: 'Scoped receipt discrepancy adjustments' } },
+          responses: {
+            '200': {
+              description:
+                'Scoped receipt discrepancy adjustments, one server page (updatedAt desc, id desc) with store, reporter, verifier and decider; filters storeId, receiptId, status, q (PSL code or receipt number), dateField REPORTED|DECIDED with inclusive Vietnam dates from/to',
+            },
+          },
         },
         post: {
           security: cookieSecurity,
@@ -2548,6 +2565,18 @@ function openApiDocument(): Record<string, unknown> {
           security: cookieSecurity,
           responses: {
             '200': { description: 'Adjustment with before/after, blockers and rights' },
+          },
+        },
+      },
+      '/api/v1/receipt-adjustments/{adjustmentId}/history': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': {
+              description:
+                'Paginated immutable audit trail of the adjustment and its returns (oldest first): actor, role at the time, store, status before/after, note and recorded changes',
+            },
+            '403': { description: 'The document belongs to a store outside the caller scope' },
           },
         },
       },

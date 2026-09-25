@@ -10,6 +10,8 @@ import type {
   ReceiptAdjustment,
   ReceiptAdjustmentActionRequest,
   ReceiptAdjustmentContext,
+  ReceiptAdjustmentHistoryEvent,
+  ReceiptAdjustmentHistoryQuery,
   ReceiptAdjustmentListItem,
   ReceiptReturn,
   ReceiptReturnActionRequest,
@@ -312,6 +314,7 @@ import {
   createReturn,
   getAdjustment,
   getAdjustmentContext,
+  listAdjustmentHistory,
   listAdjustments,
   listReturns,
   receiptAdjustmentSummary,
@@ -2998,6 +3001,14 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     adjustmentId: string,
   ): Promise<ReceiptAdjustment> {
     return getAdjustment(db, actor, adjustmentId);
+  }
+
+  public async listReceiptAdjustmentHistory(
+    actor: AuthenticatedPrincipal,
+    adjustmentId: string,
+    query: ReceiptAdjustmentHistoryQuery,
+  ): Promise<Page<ReceiptAdjustmentHistoryEvent>> {
+    return listAdjustmentHistory(db, actor, adjustmentId, query);
   }
 
   public async createReceiptAdjustment(

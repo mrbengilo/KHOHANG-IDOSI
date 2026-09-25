@@ -1,4 +1,5 @@
 import type {
+  AdjustmentAccount,
   AuthenticatedPrincipal,
   CreateReceiptAdjustmentRequest,
   CreateReceiptReturnRequest,
@@ -7,6 +8,8 @@ import type {
   ReceiptAdjustment,
   ReceiptAdjustmentActionRequest,
   ReceiptAdjustmentContext,
+  ReceiptAdjustmentHistoryEvent,
+  ReceiptAdjustmentHistoryQuery,
   ReceiptAdjustmentListItem,
   ReceiptAdjustmentSummary,
   ReceiptMoney,
@@ -23,6 +26,7 @@ import {
   getReceiptReturn,
   IdempotencyConflictError,
   IdempotencyInProgressError,
+  listReceiptAdjustmentHistory,
   listReceiptAdjustments,
   listReceiptReturns,
   ReceiptAdjustmentAuthorizationError,
@@ -30,11 +34,15 @@ import {
   receiptAdjustmentMoneySummary,
   StoreOperationConflictError,
   StoreOperationValidationError,
+  storeReceiptAdjustments,
   stores,
   transitionReceiptAdjustment,
   transitionReceiptReturn,
+  type AdjustmentAccountRef,
   type Database,
+  type JsonObject,
   type ReceiptAdjustmentDatabaseStatus,
+  type ReceiptAdjustmentHistoryRecord,
   type ReceiptAdjustmentMoneySummary,
   type ReceiptAdjustmentRecord,
   type ReceiptAdjustmentSummaryRecord,
@@ -48,6 +56,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { ApiError, conflict, forbidden, notFound } from './errors.js';
 import type { IdempotentResource, Page, RequestContext } from './repository.js';
 import { canAccessStore, pagination } from './repository.js';
+import { asiaHoChiMinhDateRange } from './time.js';
 
 type Role = 'ADMIN' | 'HTKD' | 'STORE';
 
@@ -109,6 +118,8 @@ export async function getAdjustmentContext(
   const context = await getReceiptAdjustmentContext(db, receiptId);
   if (!context) throw notFound('Không tìm thấy phiếu nhận hàng');
   await assertStoreScope(db, actor, context.storeId);
+  // The embedded list is the most recent page only; counts come from SQL over every document
+  // of the receipt so a long history is never under-counted.
   const adjustments = await listReceiptAdjustments(db, {
     receiptId,
     page: 1,
@@ -121,9 +132,8 @@ export async function getAdjustmentContext(
     finalizedAt: context.finalizedAt?.toISOString() ?? null,
     summary: summaryDto({
       appliedCount: context.appliedCount,
-      openCount: adjustments.data.filter((row) =>
-        ['pending_htkd', 'needs_info', 'pending_admin'].includes(row.status),
-      ).length,
+      openCount: context.openCount,
+      totalCount: context.adjustmentCount,
       original: context.money.original,
       effective: context.money.effective,
     }),
@@ -145,6 +155,7 @@ export async function getAdjustmentContext(
       dependencies: [...bag.dependencies],
     })),
     adjustments: adjustments.data.map(listItemDto),
+    adjustmentCount: context.adjustmentCount,
   };
 }
 
@@ -162,15 +173,62 @@ export async function listAdjustments(
   query: ListReceiptAdjustmentsQuery,
 ): Promise<Page<ReceiptAdjustmentListItem>> {
   const storeIds = scopedStoreIds(actor, query.storeId);
+  const period = listPeriod(query);
   const result = await listReceiptAdjustments(db, {
     ...(storeIds === undefined ? {} : { storeIds }),
     ...(query.receiptId === undefined ? {} : { receiptId: query.receiptId }),
     ...(query.status === undefined ? {} : { status: databaseStatus(query.status) }),
+    ...(query.q === undefined ? {} : { search: query.q }),
+    ...(period === undefined ? {} : { period }),
     page: query.page,
     pageSize: query.pageSize,
   });
   return {
     data: result.data.map(listItemDto),
+    pagination: pagination(query.page, query.pageSize, result.totalItems),
+  };
+}
+
+/** Inclusive Vietnam business dates as the half-open instant window the database filters on. */
+function listPeriod(
+  query: ListReceiptAdjustmentsQuery,
+): { field: 'reported' | 'decided'; from?: Date; to?: Date } | undefined {
+  if (query.from === undefined && query.to === undefined) return undefined;
+  return {
+    field: query.dateField === 'DECIDED' ? 'decided' : 'reported',
+    ...(query.from === undefined
+      ? {}
+      : { from: asiaHoChiMinhDateRange(query.from, query.from).start }),
+    ...(query.to === undefined
+      ? {}
+      : { to: asiaHoChiMinhDateRange(query.to, query.to).endExclusive }),
+  };
+}
+
+/**
+ * The immutable audit trail of one adjustment (and its returns). The document's store is
+ * authorized first, so no role ever reads audit rows outside its own scope.
+ */
+export async function listAdjustmentHistory(
+  db: Database,
+  actor: AuthenticatedPrincipal,
+  adjustmentId: string,
+  query: ReceiptAdjustmentHistoryQuery,
+): Promise<Page<ReceiptAdjustmentHistoryEvent>> {
+  const [document] = await db
+    .select({ storeId: storeReceiptAdjustments.storeId })
+    .from(storeReceiptAdjustments)
+    .where(eq(storeReceiptAdjustments.id, adjustmentId))
+    .limit(1);
+  if (!document) throw notFound('Không tìm thấy hồ sơ sai lệch');
+  await assertStoreScope(db, actor, document.storeId);
+  const result = await listReceiptAdjustmentHistory(db, {
+    adjustmentId,
+    page: query.page,
+    pageSize: query.pageSize,
+  });
+  return {
+    data: result.data.map(historyEventDto),
     pagination: pagination(query.page, query.pageSize, result.totalItems),
   };
 }
@@ -501,6 +559,22 @@ function summaryDto(summary: ReceiptAdjustmentMoneySummary): ReceiptAdjustmentSu
   };
 }
 
+function accountDto(account: AdjustmentAccountRef): AdjustmentAccount {
+  return {
+    accountId: account.userId,
+    displayName: account.displayName,
+    username: account.username,
+  };
+}
+
+function causeDto(cause: string | null | undefined): ReceiptAdjustment['cause'] {
+  if (cause === 'warehouse_mispick' || cause === 'WAREHOUSE_MISPICK') return 'WAREHOUSE_MISPICK';
+  if (cause === 'source_misclassification' || cause === 'SOURCE_MISCLASSIFICATION') {
+    return 'SOURCE_MISCLASSIFICATION';
+  }
+  return null;
+}
+
 function listItemDto(row: ReceiptAdjustmentSummaryRecord): ReceiptAdjustmentListItem {
   return {
     id: row.id,
@@ -508,15 +582,158 @@ function listItemDto(row: ReceiptAdjustmentSummaryRecord): ReceiptAdjustmentList
     receiptId: row.receiptId,
     receiptNumber: row.receiptNumber,
     storeId: row.storeId,
+    storeCode: row.storeCode,
+    storeName: row.storeName,
     status: STATUS_DTO[row.status],
     version: row.version,
     reason: row.reason,
+    cause: causeDto(row.cause),
     lineCount: row.lineCount,
     shortageQuantity: row.shortageQuantity,
     goodsDeltaVnd: safe(row.goodsDeltaVnd),
+    reportedBy: accountDto(row.reportedBy),
     reportedAt: row.reportedAt.toISOString(),
+    verifiedBy: row.verifiedBy === null ? null : accountDto(row.verifiedBy),
+    verifiedAt: row.verifiedAt?.toISOString() ?? null,
+    decidedBy: row.decidedBy === null ? null : accountDto(row.decidedBy),
+    decidedAt: row.decidedAt?.toISOString() ?? null,
+    decisionNote: row.decisionNote,
     appliedAt: row.appliedAt?.toISOString() ?? null,
     updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// History: audit rows → a selected, stable DTO. Audit JSON differs by version and action, so
+// every field is read defensively; anything the row did not record stays null.
+// ---------------------------------------------------------------------------------------------
+
+const HISTORY_TYPES: Record<string, ReceiptAdjustmentHistoryEvent['type']> = {
+  RECEIPT_ADJUSTMENT_REPORTED: 'REPORTED',
+  RECEIPT_ADJUSTMENT_RESUBMITTED: 'RESUBMITTED',
+  RECEIPT_ADJUSTMENT_VERIFIED: 'VERIFIED',
+  RECEIPT_ADJUSTMENT_INFO_REQUESTED: 'INFO_REQUESTED',
+  RECEIPT_ADJUSTMENT_RETURNED_TO_VERIFIER: 'RETURNED_TO_VERIFIER',
+  RECEIPT_ADJUSTMENT_REJECTED: 'REJECTED',
+  RECEIPT_ADJUSTMENT_CANCELLED: 'CANCELLED',
+  RECEIPT_ADJUSTMENT_APPLIED: 'APPLIED',
+  STORE_RECEIPT_RETURN_CREATED: 'RETURN_CREATED',
+  STORE_RECEIPT_RETURN_HANDED_OVER: 'RETURN_HANDED_OVER',
+  STORE_RECEIPT_RETURN_RECEIVED: 'RETURN_RECEIVED',
+  STORE_RECEIPT_RETURN_DISPUTED: 'RETURN_DISPUTED',
+  STORE_RECEIPT_RETURN_RECEIVED_AFTER_RECONCILIATION: 'RETURN_RECEIVED_AFTER_RECONCILIATION',
+  STORE_RECEIPT_RETURN_LOST: 'RETURN_LOST',
+  STORE_RECEIPT_RETURN_CANCELLED: 'RETURN_CANCELLED',
+};
+
+const AUDIT_ROLE_DTO: Record<string, ReceiptAdjustmentHistoryEvent['actor']['role']> = {
+  admin: 'ADMIN',
+  htkd: 'HTKD',
+  store: 'STORE',
+  wholesale: 'WHOLESALE',
+};
+
+function jsonField(object: JsonObject | null, key: string): unknown {
+  return object !== null && Object.hasOwn(object, key) ? object[key] : undefined;
+}
+
+function jsonText(object: JsonObject | null, key: string): string | null {
+  const value = jsonField(object, key);
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function jsonObject(object: JsonObject | null, key: string): JsonObject | null {
+  const value = jsonField(object, key);
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as JsonObject)
+    : null;
+}
+
+function jsonCount(object: JsonObject | null, key: string): number | null {
+  const value = jsonField(object, key);
+  return Array.isArray(value) ? value.length : null;
+}
+
+/** Money is stored as decimal strings (bigint) in audit JSON; anything else is not recorded. */
+function jsonMoney(object: JsonObject | null, key: string): number | null {
+  const value = jsonField(object, key);
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const text = String(value);
+  if (!/^-?\d{1,16}$/.test(text)) return null;
+  const amount = BigInt(text);
+  return amount > BigInt(Number.MAX_SAFE_INTEGER) || amount < BigInt(Number.MIN_SAFE_INTEGER)
+    ? null
+    : Number(amount);
+}
+
+function nonNegative(value: number | null): number | null {
+  return value === null || value < 0 ? null : value;
+}
+
+function historyStatus(
+  subject: ReceiptAdjustmentHistoryEvent['subject'],
+  value: unknown,
+): ReceiptAdjustmentHistoryEvent['statusAfter'] {
+  if (typeof value !== 'string') return null;
+  if (subject === 'ADJUSTMENT') {
+    return STATUS_DTO[value as ReceiptAdjustmentDatabaseStatus] ?? null;
+  }
+  return RETURN_STATUS_DTO[value as ReceiptReturnDatabaseStatus] ?? null;
+}
+
+function historyEventDto(row: ReceiptAdjustmentHistoryRecord): ReceiptAdjustmentHistoryEvent {
+  const subject = row.entityType === 'store_receipt_return' ? 'RETURN' : 'ADJUSTMENT';
+  const after = row.after;
+  const money = jsonObject(after, 'money');
+  const moneyBefore = jsonObject(money, 'before');
+  const moneyAfter = jsonObject(money, 'after');
+  const delta = jsonObject(money, 'delta');
+  const appliedSequence = jsonField(after, 'appliedSequence');
+  const releasedBagCount = jsonCount(after, 'releasedInventoryBagIds');
+  return {
+    id: row.id,
+    occurredAt: row.createdAt.toISOString(),
+    type: HISTORY_TYPES[row.action] ?? 'OTHER',
+    action: row.action,
+    subject,
+    returnCode: subject === 'RETURN' ? row.returnCode || null : null,
+    actor: {
+      accountId: row.actorUserId,
+      displayName: row.actorDisplayName,
+      username: row.actorUsername,
+      role: row.actorRole === null ? null : (AUDIT_ROLE_DTO[row.actorRole] ?? null),
+    },
+    store: { storeId: row.actorStoreId, code: row.storeCode, name: row.storeName },
+    statusBefore: historyStatus(subject, jsonField(row.before, 'status')),
+    statusAfter: historyStatus(subject, jsonField(after, 'status')),
+    note:
+      jsonText(after, 'note') ??
+      jsonText(after, 'receiveNote') ??
+      jsonText(after, 'resolutionNote') ??
+      jsonText(after, 'cancellationReason'),
+    changes: {
+      reason: jsonText(after, 'reason'),
+      evidenceNote: jsonText(after, 'evidenceNote'),
+      cause: causeDto(jsonText(after, 'cause')),
+      lineCount: jsonCount(after, 'lines'),
+      goodsDeltaVnd: jsonMoney(delta, 'goodsVnd'),
+      freightDeltaVnd: jsonMoney(delta, 'freightVnd'),
+      handlingDeltaVnd: jsonMoney(delta, 'handlingVnd'),
+      vatDeltaVnd: jsonMoney(delta, 'vatVnd'),
+      totalBeforeVnd: nonNegative(jsonMoney(moneyBefore, 'totalVnd')),
+      totalAfterVnd: nonNegative(jsonMoney(moneyAfter, 'totalVnd')),
+      costBeforeVnd: nonNegative(jsonMoney(moneyBefore, 'costVnd')),
+      costAfterVnd: nonNegative(jsonMoney(moneyAfter, 'costVnd')),
+      appliedSequence:
+        typeof appliedSequence === 'number' &&
+        Number.isSafeInteger(appliedSequence) &&
+        appliedSequence > 0
+          ? appliedSequence
+          : null,
+      releasedBagCount,
+      returnCount: jsonCount(after, 'returns'),
+      entitlementCount: jsonCount(after, 'entitlements'),
+    },
   };
 }
 
@@ -553,12 +770,15 @@ function adjustmentDto(record: ReceiptAdjustmentRecord, role: Role): ReceiptAdju
       after: record.money.after === null ? null : moneyDto(record.money.after),
     },
     reportedByAccountId: record.reportedByUserId,
+    reportedBy: accountDto(record.reportedBy),
     reportedAt: record.reportedAt.toISOString(),
     verifiedByAccountId: record.verifiedByUserId,
+    verifiedBy: record.verifiedBy === null ? null : accountDto(record.verifiedBy),
     verifiedAt: record.verifiedAt?.toISOString() ?? null,
     verificationNote: record.verificationNote,
     infoRequestNote: record.infoRequestNote,
     decidedByAccountId: record.decidedByUserId,
+    decidedBy: record.decidedBy === null ? null : accountDto(record.decidedBy),
     decidedAt: record.decidedAt?.toISOString() ?? null,
     decisionNote: record.decisionNote,
     appliedAt: record.appliedAt?.toISOString() ?? null,

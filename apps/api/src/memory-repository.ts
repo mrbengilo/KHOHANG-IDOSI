@@ -6,6 +6,7 @@ import type {
   ListReceiptReturnsQuery,
   ReceiptAdjustment,
   ReceiptAdjustmentContext,
+  ReceiptAdjustmentHistoryEvent,
   ReceiptAdjustmentListItem,
   ReceiptReturn,
   WarehouseInventoryQuery,
@@ -2903,6 +2904,11 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   }
 
   public async getReceiptAdjustment(): Promise<ReceiptAdjustment> {
+    throw notFound('Không tìm thấy hồ sơ sai lệch');
+  }
+
+  // No adjustment exists in memory, so there is no history to read either.
+  public async listReceiptAdjustmentHistory(): Promise<Page<ReceiptAdjustmentHistoryEvent>> {
     throw notFound('Không tìm thấy hồ sơ sai lệch');
   }
 

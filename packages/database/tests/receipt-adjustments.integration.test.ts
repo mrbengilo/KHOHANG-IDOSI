@@ -741,6 +741,81 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
     expect(record?.money.after).toMatchObject({ vatVnd: null, totalVnd: null });
   });
 
+  it('a failure late in APPLY rolls back every part: status, bag, ledger, money, wait and audit', async () => {
+    const fx = await createFinalizedReceipt();
+    const created = await report(fx, [fx.bags[0]!], 'keep');
+    await verify(fx, created, 0, { pricePerKgVnd: 40_000n, cause: 'warehouse_mispick' });
+    // Every unreserved jeans unit is taken after verification, so the mispick correction, the
+    // last step of APPLY after the bag, ledger and P0B right were already written, must fail.
+    const jeans = await balance(fx.jeansId);
+    const available = jeans.onHand - jeans.reserved;
+    await withSerializableTransaction(db, (tx) =>
+      applyWarehouseMovement(tx, {
+        productId: fx.jeansId,
+        eventType: 'reservation',
+        onHandDelta: 0,
+        reservedDelta: available,
+        sourceType: 'adjustment-rollback-fixture',
+        sourceId: randomUUID(),
+      }),
+    );
+    const bagBefore = await bagRow(fx.bags[0]!.inventoryBagId);
+    const moneyBefore = await summary(fx);
+    await expect(applyAdjustment(created, 1)).rejects.toThrow(/Kho tổng không còn hàng/u);
+
+    const [header] = await db
+      .select()
+      .from(storeReceiptAdjustments)
+      .where(eq(storeReceiptAdjustments.id, created));
+    expect(header).toMatchObject({ status: 'pending_admin', version: 1, appliedAt: null });
+    expect(await bagRow(fx.bags[0]!.inventoryBagId)).toEqual(bagBefore);
+    const lineLedger = await db
+      .select({ id: storeInventoryLedgerEntries.id })
+      .from(storeInventoryLedgerEntries)
+      .where(
+        and(
+          eq(storeInventoryLedgerEntries.storeInventoryBagId, fx.bags[0]!.inventoryBagId),
+          eq(storeInventoryLedgerEntries.eventType, 'adjust'),
+        ),
+      );
+    expect(lineLedger).toEqual([]);
+    expect(await summary(fx)).toEqual(moneyBefore);
+    expect(await activeWaits(fx)).toEqual([]);
+    const rights = await db
+      .select({ id: receiptShortageEntitlements.id })
+      .from(receiptShortageEntitlements)
+      .where(eq(receiptShortageEntitlements.storeReceiptBagId, fx.bags[0]!.receiptBagId));
+    expect(rights).toEqual([]);
+    const appliedAudits = await db
+      .select({ id: auditLogs.id })
+      .from(auditLogs)
+      .where(
+        and(eq(auditLogs.entityId, created), eq(auditLogs.action, 'RECEIPT_ADJUSTMENT_APPLIED')),
+      );
+    expect(appliedAudits).toEqual([]);
+    expect(await balance(fx.jeansId)).toEqual({
+      onHand: jeans.onHand,
+      reserved: jeans.reserved + available,
+    });
+    await expectLedgerMatchesBags(fx);
+
+    // Once the stock is free again the same verified version applies exactly once.
+    await withSerializableTransaction(db, (tx) =>
+      applyWarehouseMovement(tx, {
+        productId: fx.jeansId,
+        eventType: 'reservation_release',
+        onHandDelta: 0,
+        reservedDelta: -available,
+        sourceType: 'adjustment-rollback-fixture',
+        sourceId: randomUUID(),
+      }),
+    );
+    await applyAdjustment(created, 1);
+    expect((await summary(fx)).appliedCount).toBe(1);
+    expect(await activeWaits(fx)).toHaveLength(1);
+    await expectLedgerMatchesBags(fx);
+  });
+
   it('warehouse mispick: shipped SKU leaves warehouse on-hand, approved unit held for a shelf check', async () => {
     const fx = await createFinalizedReceipt();
     const created = await report(fx, [fx.bags[0]!], 'keep');
