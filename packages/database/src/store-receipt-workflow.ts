@@ -258,7 +258,11 @@ export async function declareStoreReceiptInTransaction(
       );
     }
 
-    await assertStoreAccountMayDeclare(tx, input.declaredByUserId, input.storeId);
+    const declaringRole = await assertStoreAccountMayDeclare(
+      tx,
+      input.declaredByUserId,
+      input.storeId,
+    );
 
     const [existingReceipt] = await tx
       .select({ id: storeReceipts.id })
@@ -347,7 +351,7 @@ export async function declareStoreReceiptInTransaction(
     await tx.insert(auditLogs).values({
       requestId: input.requestId ?? null,
       actorUserId: input.declaredByUserId,
-      actorRole: 'store',
+      actorRole: declaringRole,
       actorStoreId: outbound.storeId,
       action: 'STORE_RECEIPT_DECLARED',
       entityType: 'store_receipt',
