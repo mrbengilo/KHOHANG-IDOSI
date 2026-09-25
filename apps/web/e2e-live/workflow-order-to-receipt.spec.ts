@@ -549,7 +549,7 @@ test('a wholesale store orders, receives, is finalized and reports a discrepancy
       .click();
     const applied = page.locator('.adjustment-detail');
     await applied.getByRole('button', { name: 'Duyệt và áp dụng' }).click();
-    await expect(applied).toContainText('Đã áp dụng');
+    await expect(applied).toContainText('Đã xử lý');
     // 30 kg × 20.000 = 600.000 became 30 kg × 16.000 = 480.000: 1.100.000 → 980.000.
     await expect(page.locator('.adjustment-money__effective')).toContainText('980.000');
 

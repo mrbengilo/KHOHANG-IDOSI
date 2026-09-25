@@ -21,6 +21,7 @@ import {
   reservations,
   storeInventoryBags,
   storeReceiptAdjustments,
+  storeReceipts,
   submitStoreReceipt,
   users,
   waitTickets,
@@ -168,7 +169,7 @@ test('store reports a mixed-up bag, HTKD verifies, admin applies: money, stock a
       .click();
     const adminDetail = page.locator('.adjustment-detail');
     await adminDetail.getByRole('button', { name: 'Duyệt và áp dụng' }).click();
-    await expect(adminDetail).toContainText('Đã áp dụng');
+    await expect(adminDetail).toContainText('Đã xử lý');
     await expect(adminDetail).toContainText('Sau điều chỉnh (đã có hiệu lực)');
     await expect(adminDetail).toContainText('Chờ cấp (ưu tiên P0B)');
     await expect(page.locator('.adjustment-money__effective')).toContainText('2.800.000');
@@ -276,6 +277,236 @@ test('store reports a mixed-up bag, HTKD verifies, admin applies: money, stock a
     await client.close();
   }
 });
+
+test('admin tab lists every store document; applying shows "Đã xử lý" to HTKD and store without reload', async ({
+  browser,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const databaseUrl = process.env.DATABASE_URL;
+  test.skip(!databaseUrl, 'Requires the live PostgreSQL database.');
+  const client = createDatabase({ connectionString: databaseUrl, max: 2 });
+  // Three independent browsers: nothing is shared between the sessions but the server.
+  const contexts = await Promise.all([
+    browser.newContext(),
+    browser.newContext(),
+    browser.newContext(),
+  ]);
+  try {
+    const [adminPage, htkdPage, storePage] = await Promise.all(
+      contexts.map((context) => context.newPage()),
+    );
+    const token = randomUUID().slice(0, 8);
+    const storeName = `Cửa hàng đồng bộ ${token}`;
+
+    await login(adminPage, { username: adminUsername, password: adminPassword });
+    const adminApi = tabApi(adminPage);
+    const groups = await adminApi.get(`${api}/store-groups?status=ACTIVE&pageSize=100`);
+    const store = (
+      await (
+        await adminApi.post(`${api}/stores`, {
+          headers: { 'idempotency-key': randomUUID() },
+          data: {
+            code: `UI_SYNC_${token}`,
+            name: storeName,
+            kind: 'RETAIL',
+            groupId: (await groups.json()).data[0].id,
+          },
+        })
+      ).json()
+    ).data as { id: string };
+    const storeLogin = { username: `store.sync.${token}`, password: `Test-only-${randomUUID()}!` };
+    const htkdLogin = { username: `htkd.sync.${token}`, password: `Test-only-${randomUUID()}!` };
+    const storeAccount = await adminApi.post(`${api}/admin/accounts`, {
+      data: { ...storeLogin, displayName: `Cửa hàng ${token}`, role: 'STORE', storeId: store.id },
+    });
+    expect(storeAccount.status()).toBe(201);
+    const htkdAccount = await adminApi.post(`${api}/admin/accounts`, {
+      data: { ...htkdLogin, displayName: `HTKD ${token}`, role: 'HTKD' },
+    });
+    expect(htkdAccount.status()).toBe(201);
+    const htkdId = (await htkdAccount.json()).data.id as string;
+    expect(
+      (
+        await adminApi.put(`${api}/admin/accounts/${htkdId}/assignments`, {
+          data: { expectedSessionVersion: 0, storeIds: [store.id], reason: 'Kiểm thử đồng bộ' },
+        })
+      ).status(),
+    ).toBe(200);
+    const [adminRow] = await client.db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.role, 'admin'), eq(users.status, 'active')))
+      .limit(1);
+    const [dress] = await client.db
+      .insert(products)
+      .values({ sku: `E2E-SDAM-${token}`, slug: `e2e-sdam-${token}`, name: `Đầm ${token}` })
+      .returning();
+    const [jeans] = await client.db
+      .insert(products)
+      .values({ sku: `E2E-SJEANS-${token}`, slug: `e2e-sjeans-${token}`, name: `Jeans ${token}` })
+      .returning();
+    await finalizedReceipt(client, {
+      adminId: adminRow!.id,
+      storeId: store.id,
+      storeUserId: (await storeAccount.json()).data.id as string,
+      htkdId,
+      productId: dress!.id,
+    });
+    const [receipt] = await client.db
+      .select({ id: storeReceipts.id })
+      .from(storeReceipts)
+      .where(eq(storeReceipts.storeId, store.id));
+
+    // Store reports and HTKD verifies through the API; the UI of those steps is covered above.
+    await login(storePage, storeLogin);
+    const storeApi = tabApi(storePage);
+    const contextView = (
+      await (await storeApi.get(`${api}/store-receipts/${receipt!.id}/adjustment-context`)).json()
+    ).data;
+    const created = (
+      await (
+        await storeApi.post(`${api}/receipt-adjustments`, {
+          headers: { 'idempotency-key': randomUUID() },
+          data: {
+            receiptId: receipt!.id,
+            reason: 'Khui bao thấy jeans',
+            evidenceNote: null,
+            discoveredAt: new Date().toISOString(),
+            lines: [
+              {
+                receiptBagId: contextView.bags[0].receiptBagId,
+                actualProductId: jeans!.id,
+                disposition: 'KEEP',
+              },
+            ],
+          },
+        })
+      ).json()
+    ).data as { id: string; code: string };
+    await login(htkdPage, htkdLogin);
+    const verified = await tabApi(htkdPage).post(
+      `${api}/receipt-adjustments/${created.id}/actions`,
+      {
+        headers: { 'idempotency-key': randomUUID() },
+        data: {
+          action: 'VERIFY',
+          expectedVersion: 0,
+          cause: 'SOURCE_MISCLASSIFICATION',
+          note: 'HTKD đã đối chiếu ảnh',
+          lines: [
+            {
+              receiptBagId: contextView.bags[0].receiptBagId,
+              actualProductId: jeans!.id,
+              weightKg: '20.000',
+              pricePerKgVnd: 40_000,
+              weightChangeNote: null,
+            },
+          ],
+        },
+      },
+    );
+    expect(verified.status()).toBe(200);
+
+    // HTKD and store keep the receipt open; they will not reload.
+    for (const page of [storePage, htkdPage]) {
+      await page.goto('/receive');
+      await expect(page.locator('.adjustment-section')).toContainText(created.code);
+      await expect(page.locator('.adjustment-section')).toContainText('Chờ Admin duyệt');
+    }
+
+    // Admin: only the open tab loads. The discrepancy tab never downloads warehouse data.
+    const requested: string[] = [];
+    adminPage.on('request', (request) => requested.push(new URL(request.url()).pathname));
+    await adminPage.goto(`/inventory?tab=adjustments&psl.store=${store.id}`);
+    const tabs = adminPage.getByRole('tablist', { name: 'Phạm vi tồn kho' });
+    await expect(tabs.getByRole('tab', { name: 'Phiếu sai lệch' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    const list = adminPage.getByRole('region', { name: 'Danh sách phiếu sai lệch' });
+    await expect(list).toContainText(created.code);
+    await expect(list).toContainText(`HTKD ${token}`);
+    await expect(list).toContainText('Tạm tính, chưa hiệu lực');
+    await expect(adminPage.getByText(/Đang xem: Chờ Admin duyệt/)).toBeVisible();
+    expect(requested.filter((path) => path.includes('/warehouse-'))).toEqual([]);
+    expect(requested.filter((path) => path.endsWith('/store-inventory-bags'))).toEqual([]);
+    expect(
+      requested.filter((path) => new RegExp(`/receipt-adjustments/${created.id}$`).test(path)),
+    ).toEqual([]);
+
+    await list.getByRole('button', { name: `Xem chi tiết ${created.code}` }).click();
+    const detail = adminPage.getByRole('region', { name: 'Chi tiết hồ sơ sai lệch' });
+    await expect(detail).toContainText('Xác minh, gửi Admin duyệt');
+    await expect(detail.locator('.adjustment-timeline')).toContainText(`HTKD ${token} · HTKD`);
+    await assertWorkspaceFits(adminPage, testInfo.outputPath('admin-adjustments-pending'));
+    await detail.getByRole('button', { name: 'Duyệt và áp dụng' }).click();
+    await expect(detail.locator('.adjustment-detail__header')).toContainText('Đã xử lý');
+    await expect(detail.locator('.adjustment-timeline')).toContainText('Admin duyệt và áp dụng');
+
+    // The other two sessions show the same tag by themselves within one poll interval.
+    for (const page of [storePage, htkdPage]) {
+      await expect(page.locator('.adjustment-section')).toContainText('Đã xử lý', {
+        timeout: 25_000,
+      });
+      await expect(page.locator('.adjustment-section')).not.toContainText('Chờ Admin duyệt');
+    }
+
+    // The processed document leaves the pending slice but stays in the history.
+    await expect(list).not.toContainText(created.code);
+    await adminPage
+      .getByRole('combobox', { name: 'Trạng thái' })
+      .selectOption({ label: 'Đã xử lý (lịch sử)' });
+    await expect(list).toContainText(created.code);
+    await expect(list).toContainText('Đã có hiệu lực');
+
+    // The URL restores the tab, filters and the opened document after a reload.
+    await adminPage.reload();
+    await expect(adminPage.getByRole('region', { name: 'Chi tiết hồ sơ sai lệch' })).toContainText(
+      created.code,
+    );
+    await assertWorkspaceFits(adminPage, testInfo.outputPath('admin-adjustments-applied'));
+
+    // Switching tab loads that tab's data only now.
+    await tabs.getByRole('tab', { name: 'Kho tổng' }).click();
+    await expect(
+      adminPage.getByRole('region', { name: 'Tồn kho tổng theo mặt hàng' }),
+    ).toBeVisible();
+    expect(requested.some((path) => path.endsWith('/warehouse-inventory'))).toBe(true);
+    expect(requested.some((path) => path.endsWith('/warehouse-outbound-history'))).toBe(false);
+    await adminPage.goBack();
+    await expect(tabs.getByRole('tab', { name: 'Phiếu sai lệch' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+  } finally {
+    await Promise.all(contexts.map((context) => context.close()));
+    await client.close();
+  }
+});
+
+async function assertWorkspaceFits(page: Page, screenshotPrefix: string) {
+  for (const width of widths) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+      .toBe(true);
+    const clipped = await page.evaluate(
+      () =>
+        [...document.querySelectorAll('.adjustment-workspace .button, .tabs__tab')].filter(
+          (element) => element.scrollWidth > element.clientWidth + 1,
+        ).length,
+    );
+    expect(clipped).toBe(0);
+    if (width === 390 || width === 1440) {
+      await page.screenshot({
+        path: `${screenshotPrefix}-${width}.png`,
+        fullPage: true,
+        animations: 'disabled',
+      });
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
 
 async function login(page: Page, credentials: { username: string; password: string }) {
   await page.goto('/login');

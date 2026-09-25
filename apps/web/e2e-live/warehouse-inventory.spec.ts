@@ -12,6 +12,8 @@ test('admin warehouse inventory reconciles with PostgreSQL balances and remains 
     .getByLabel('Mật khẩu', { exact: true })
     .fill(process.env.LIVE_E2E_ADMIN_PASSWORD ?? 'ci-bootstrap-password-not-for-production');
   await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
+  const requested: string[] = [];
+  page.on('request', (request) => requested.push(new URL(request.url()).pathname));
   const inventoryResponse = page.waitForResponse((response) =>
     new URL(response.url()).pathname.endsWith('/warehouse-inventory'),
   );
@@ -33,8 +35,25 @@ test('admin warehouse inventory reconciles with PostgreSQL balances and remains 
     expect(row.onHandBags).toBe(row.availableBags + row.reservedBags);
     expect(row.dispatchedBags).toBeGreaterThanOrEqual(0);
   }
-  await expect(page.getByRole('heading', { name: 'Tồn kho tổng & lịch sử xuất' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Tồn kho & lịch sử', level: 1 })).toBeVisible();
+  await expect(
+    page.getByRole('tablist', { name: 'Phạm vi tồn kho' }).getByRole('tab', { name: 'Kho tổng' }),
+  ).toHaveAttribute('aria-selected', 'true');
+  // Sub-tabs mount one at a time: the dispatch history and shortage checks load on demand.
+  await expect(page.getByRole('region', { name: 'Lịch sử phiếu xuất kho tổng' })).toHaveCount(0);
+  expect(requested.some((path) => path.endsWith('/warehouse-outbound-history'))).toBe(false);
+  expect(requested.some((path) => path.includes('/warehouse-shortage-checks'))).toBe(false);
+  const subTabs = page.getByRole('tablist', { name: 'Nội dung kho tổng' });
+  await subTabs.getByRole('tab', { name: 'Lịch sử xuất' }).click();
   await expect(page.getByRole('region', { name: 'Lịch sử phiếu xuất kho tổng' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Tồn kho tổng theo mặt hàng' })).toHaveCount(0);
+  await expect(page).toHaveURL(/kt=history/);
+  await subTabs.getByRole('tab', { name: 'Kiểm hàng thiếu' }).click();
+  await expect(page.getByRole('region', { name: 'Hàng thiếu chờ kho xác nhận' })).toBeVisible();
+  // Keyboard: arrows move between tabs and the URL follows.
+  await subTabs.getByRole('tab', { name: 'Kiểm hàng thiếu' }).press('ArrowLeft');
+  await expect(subTabs.getByRole('tab', { name: 'Tồn hiện tại' })).toBeFocused();
+  await expect(page.getByRole('region', { name: 'Tồn kho tổng theo mặt hàng' })).toBeVisible();
   for (const width of [375, 768, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await expect

@@ -1,7 +1,11 @@
 import type {
+  AdjustmentAccount,
+  AuditActorRole,
   ReceiptAdjustment,
   ReceiptAdjustmentBlocker,
   ReceiptAdjustmentCause,
+  ReceiptAdjustmentHistoryEventType,
+  ReceiptAdjustmentListItem,
   ReceiptAdjustmentStatus,
   ReceiptMoney,
   ReceiptReturnStatus,
@@ -10,6 +14,11 @@ import type {
 
 import type { StatusTone } from '../../../lib/types';
 
+/**
+ * The one label set for a document's status on every screen and role. "Đã xử lý" means the
+ * admin applied the adjustment successfully; a return still travelling or a make-up unit still
+ * owed is shown as its own progress, and rejected/cancelled are other final outcomes.
+ */
 export const adjustmentStatusCopy: Record<
   ReceiptAdjustmentStatus,
   { readonly label: string; readonly tone: StatusTone }
@@ -17,10 +26,91 @@ export const adjustmentStatusCopy: Record<
   PENDING_HTKD: { label: 'Chờ HTKD xác minh', tone: 'warning' },
   NEEDS_INFO: { label: 'Cần cửa hàng bổ sung', tone: 'info' },
   PENDING_ADMIN: { label: 'Chờ Admin duyệt', tone: 'priority' },
-  APPLIED: { label: 'Đã áp dụng', tone: 'success' },
+  APPLIED: { label: 'Đã xử lý', tone: 'success' },
   REJECTED: { label: 'Bị từ chối', tone: 'danger' },
   CANCELLED: { label: 'Đã hủy', tone: 'neutral' },
 };
+
+export const ADJUSTMENT_STATUSES = Object.keys(adjustmentStatusCopy) as ReceiptAdjustmentStatus[];
+
+export const historyEventCopy: Record<ReceiptAdjustmentHistoryEventType, string> = {
+  REPORTED: 'Cửa hàng báo sai lệch',
+  RESUBMITTED: 'Cửa hàng bổ sung và gửi lại',
+  VERIFIED: 'Xác minh, gửi Admin duyệt',
+  INFO_REQUESTED: 'Yêu cầu cửa hàng bổ sung',
+  RETURNED_TO_VERIFIER: 'Admin trả HTKD xác minh lại',
+  REJECTED: 'Từ chối hồ sơ',
+  CANCELLED: 'Hủy hồ sơ',
+  APPLIED: 'Admin duyệt và áp dụng',
+  RETURN_CREATED: 'Tạo phiếu trả kho',
+  RETURN_HANDED_OVER: 'Bàn giao hàng trả',
+  RETURN_RECEIVED: 'Kho tổng nhận hàng trả',
+  RETURN_DISPUTED: 'Kho tổng nhận thiếu/sai – đối soát',
+  RETURN_RECEIVED_AFTER_RECONCILIATION: 'Đối soát xong – kho đã nhận',
+  RETURN_LOST: 'Đối soát xong – thất lạc',
+  RETURN_CANCELLED: 'Hủy phiếu trả, giữ bán',
+  OTHER: 'Thao tác khác',
+};
+
+export const auditRoleCopy: Record<AuditActorRole, string> = {
+  ADMIN: 'Admin',
+  HTKD: 'HTKD',
+  STORE: 'Cửa hàng',
+  WHOLESALE: 'Quầy sỉ',
+};
+
+export const NOT_RECORDED = 'Chưa ghi nhận';
+const NO_LONGER_AVAILABLE = 'Không còn thông tin';
+
+function shortId(id: string): string {
+  return `${id.slice(0, 8)}…`;
+}
+
+/** Name of an account on a document; an unreadable account keeps its id, never a guess. */
+export function accountLabel(
+  account: Pick<AdjustmentAccount, 'displayName' | 'username'> & {
+    readonly accountId: string | null;
+  },
+): string {
+  if (account.displayName) return account.displayName;
+  if (account.username) return account.username;
+  return account.accountId
+    ? `Tài khoản ${shortId(account.accountId)} · ${NO_LONGER_AVAILABLE}`
+    : NOT_RECORDED;
+}
+
+export function storeLabel(store: {
+  readonly storeId: string | null;
+  readonly code: string | null;
+  readonly name: string | null;
+}): string {
+  if (store.code && store.name) return `${store.code} · ${store.name}`;
+  if (store.name || store.code) return (store.name ?? store.code)!;
+  return store.storeId
+    ? `Cửa hàng ${shortId(store.storeId)} · ${NO_LONGER_AVAILABLE}`
+    : NOT_RECORDED;
+}
+
+/**
+ * The goods delta of a list row, labelled by whether it is in force: verified figures are only
+ * a draft until the admin applies them, and closed documents never took effect.
+ */
+export function listMoneyCopy(item: Pick<ReceiptAdjustmentListItem, 'status' | 'goodsDeltaVnd'>): {
+  readonly label: string;
+  readonly value: string | null;
+} {
+  switch (item.status) {
+    case 'APPLIED':
+      return { label: 'Đã có hiệu lực', value: formatSignedVnd(item.goodsDeltaVnd) };
+    case 'PENDING_ADMIN':
+      return { label: 'Tạm tính, chưa hiệu lực', value: formatSignedVnd(item.goodsDeltaVnd) };
+    case 'REJECTED':
+    case 'CANCELLED':
+      return { label: 'Không phát sinh', value: null };
+    default:
+      return { label: 'Chờ HTKD xác minh giá', value: null };
+  }
+}
 
 export const returnStatusCopy: Record<
   ReceiptReturnStatus,

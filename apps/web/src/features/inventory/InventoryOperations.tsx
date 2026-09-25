@@ -1,4 +1,10 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useIsFetching,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import type {
   OutboundReason,
   NewOutboundReason,
@@ -20,7 +26,8 @@ import {
   ShoppingBag,
   XCircle,
 } from 'lucide-react';
-import { useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useId, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { AppOutletContext } from '../../components/AppShell';
 import { Badge } from '../../components/Badge';
 import { BagWeightsInput } from '../../components/BagWeightsInput';
@@ -30,9 +37,11 @@ import { MoneyInput } from '../../components/MoneyInput';
 import { PageHeader } from '../../components/PageHeader';
 import { DashboardSkeleton } from '../../components/Skeleton';
 import { StatCard } from '../../components/StatCard';
+import { TabPanel, Tabs, type TabItem } from '../../components/Tabs';
 import { ApiClientError, listAccessibleStores, listCatalog } from '../../lib/api';
 import { useSession } from '../../lib/auth';
 import { checkBagWeights } from '../../lib/bag-weights';
+import { DraftScope, useBeforeUnloadWhile } from '../../lib/draft-guard';
 import { businessDate } from '../../lib/business-time';
 import { formatKg, formatKgExact, formatVnd } from '../../lib/format';
 import { IdosiSalesWorkspace } from '../idosi/IdosiSalesWorkspace';
@@ -53,7 +62,16 @@ import {
   reviewStoreOutbound,
 } from './inventoryApi';
 import './inventory-operations.css';
-import { WarehouseInventory } from './WarehouseInventory';
+import {
+  KEYS,
+  matchesQueryPrefix,
+  readInventoryNavigation,
+  refreshQueryKeys,
+  withParams,
+  withStoreScope,
+  type InventoryTab,
+  type StoreTab,
+} from './inventoryNavigation';
 
 const statusCopy: Record<
   StoreInventoryBagStatus,
@@ -233,48 +251,182 @@ function useInventorySources(role: AppOutletContext['role']) {
   return { catalogQuery, defaultStoreId, principalStoreId, sessionQuery, stores, storesQuery };
 }
 
+const WarehouseInventory = lazy(() =>
+  import('./WarehouseInventory').then((module) => ({ default: module.WarehouseInventory })),
+);
+const AdminAdjustmentWorkspace = lazy(() =>
+  import('../receipts/adjustments/AdminAdjustmentWorkspace').then((module) => ({
+    default: module.AdminAdjustmentWorkspace,
+  })),
+);
+
+const INVENTORY_TAB_ITEMS: readonly TabItem<InventoryTab>[] = [
+  { id: 'warehouse', label: 'Kho tổng' },
+  { id: 'store', label: 'Kho cửa hàng' },
+  { id: 'adjustments', label: 'Phiếu sai lệch' },
+];
+
+const STORE_TAB_ITEMS: readonly TabItem<StoreTab>[] = [
+  { id: 'stock', label: 'Tồn cửa hàng' },
+  { id: 'ledger', label: 'Sổ phát sinh' },
+];
+
 export function ProductionInventoryPage({ role }: AppOutletContext) {
-  const [scope, setScope] = useState<'WAREHOUSE' | 'STORE'>('WAREHOUSE');
   if (role !== 'ADMIN') return <StoreInventoryPage role={role} storeKind={null} />;
-  const navigation = (
-    <div className="inventory-actions inventory-scope-tabs" aria-label="Phạm vi tồn kho">
-      <Button
-        tone={scope === 'WAREHOUSE' ? 'primary' : 'secondary'}
-        aria-pressed={scope === 'WAREHOUSE'}
-        onClick={() => setScope('WAREHOUSE')}
-      >
-        Kho tổng
-      </Button>
-      <Button
-        tone={scope === 'STORE' ? 'primary' : 'secondary'}
-        aria-pressed={scope === 'STORE'}
-        onClick={() => setScope('STORE')}
-      >
-        Kho cửa hàng
-      </Button>
-    </div>
-  );
+  return <AdminInventoryWorkspace />;
+}
+
+/**
+ * Admin "Tồn kho & lịch sử": a stable header and tab bar; only the open tab is mounted (and its
+ * module lazily loaded), so a closed tab neither renders nor fetches. The tab, sub-tab, filters
+ * and opened document live in the URL, so reload, Back/Forward and shared links land on the
+ * same content. Leaving a tab that holds an unsent draft asks first instead of dropping it.
+ */
+function AdminInventoryWorkspace() {
+  const queryClient = useQueryClient();
+  const [params, setParams] = useSearchParams();
+  const navigation = readInventoryNavigation(params);
+  const refreshKeys = refreshQueryKeys(navigation);
+  const refreshing = useIsFetching({
+    predicate: (query) => matchesQueryPrefix(query.queryKey, refreshKeys),
+  });
+  const [hasDraft, setHasDraft] = useState(false);
+  const [pendingTab, setPendingTab] = useState<InventoryTab | null>(null);
+  useBeforeUnloadWhile(hasDraft);
+  const goTo = (tab: InventoryTab) => {
+    setPendingTab(null);
+    setParams(withParams(params, { [KEYS.tab]: tab }));
+  };
   return (
     <>
-      {scope === 'WAREHOUSE' ? (
-        <WarehouseInventory navigation={navigation} />
-      ) : (
-        <StoreInventoryPage role={role} storeKind={null} navigation={navigation} />
-      )}
+      <PageHeader
+        actions={
+          <Button
+            busy={refreshing > 0}
+            onClick={() =>
+              void Promise.all(
+                refreshKeys.map((queryKey) =>
+                  queryClient.refetchQueries({ queryKey: [...queryKey], type: 'active' }),
+                ),
+              )
+            }
+            tone="secondary"
+          >
+            <RefreshCw aria-hidden="true" size={16} /> Làm mới
+          </Button>
+        }
+        description="Kho tổng, kho cửa hàng và phiếu sai lệch sau chốt; số dư đối soát được với sổ phát sinh bất biến."
+        title="Tồn kho & lịch sử"
+      />
+      <Tabs
+        active={navigation.tab}
+        idPrefix="inventory"
+        items={INVENTORY_TAB_ITEMS}
+        label="Phạm vi tồn kho"
+        onChange={(tab) => (hasDraft ? setPendingTab(tab) : goTo(tab))}
+      />
+      {pendingTab !== null ? (
+        <div className="panel draft-confirm" role="alert">
+          <span>
+            <strong>Tab đang mở có nội dung chưa gửi.</strong> Chuyển sang “
+            {INVENTORY_TAB_ITEMS.find((item) => item.id === pendingTab)?.label}” sẽ bỏ bản nháp.
+          </span>
+          <div className="inventory-actions">
+            <Button onClick={() => setPendingTab(null)} tone="secondary">
+              Ở lại
+            </Button>
+            <Button onClick={() => goTo(pendingTab)} tone="danger">
+              Bỏ nháp và chuyển
+            </Button>
+          </div>
+        </div>
+      ) : null}
+      <TabPanel idPrefix="inventory" tab={navigation.tab}>
+        <DraftScope onDirtyChange={setHasDraft}>
+          <Suspense fallback={<DashboardSkeleton />}>
+            {navigation.tab === 'warehouse' ? (
+              <WarehouseInventory />
+            ) : navigation.tab === 'store' ? (
+              <StoreInventoryPage embedded role="ADMIN" storeKind={null} />
+            ) : (
+              <AdminAdjustmentWorkspace />
+            )}
+          </Suspense>
+        </DraftScope>
+      </TabPanel>
     </>
   );
 }
 
+const ledgerTime = new Intl.DateTimeFormat('vi-VN', {
+  dateStyle: 'short',
+  timeStyle: 'medium',
+  timeZone: 'Asia/Ho_Chi_Minh',
+});
+
+/** Ledger of one bag; mounted only on the "Sổ phát sinh" sub-tab, so it is never fetched elsewhere. */
+function BagLedger({ bagId }: { readonly bagId: string }) {
+  const ledgerQuery = useQuery({
+    queryFn: () => listInventoryLedger(bagId),
+    queryKey: ['store-inventory-ledger', bagId],
+    retry: false,
+  });
+  return (
+    <div aria-live="polite">
+      {ledgerQuery.isPending ? (
+        <p>Đang tải sổ phát sinh…</p>
+      ) : !ledgerQuery.data ? (
+        <div role="alert">
+          <p>{errorMessage(ledgerQuery.error)}</p>
+          <Button
+            busy={ledgerQuery.isFetching}
+            onClick={() => void ledgerQuery.refetch()}
+            tone="secondary"
+          >
+            Thử lại
+          </Button>
+        </div>
+      ) : ledgerQuery.data.length === 0 ? (
+        <p>Chưa có phát sinh cho Mã bao này.</p>
+      ) : (
+        <ol>
+          {ledgerQuery.data.map((entry) => (
+            <li key={entry.id}>
+              <span>
+                <strong>{ledgerOperationCopy[entry.operation]}</strong>
+                <time dateTime={entry.createdAt}>
+                  {ledgerTime.format(new Date(entry.createdAt))}
+                </time>
+              </span>
+              <b>
+                {formatKg(entry.beforeWeightKg)} → {formatKg(entry.afterWeightKg)}
+              </b>
+              <small>{entry.reason}</small>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Store stock by bag, with two sub-tabs: the bag list with its totals, and the ledger of one
+ * bag. Filters and the chosen bag are in the URL; changing store drops a bag of another store.
+ */
 function StoreInventoryPage({
+  embedded = false,
   role,
-  navigation,
-}: AppOutletContext & { readonly navigation?: ReactNode }) {
+}: AppOutletContext & { readonly embedded?: boolean }) {
   const { catalogQuery, defaultStoreId, sessionQuery, stores, storesQuery } =
     useInventorySources(role);
-  const [storeId, setStoreId] = useState('');
-  const [status, setStatus] = useState<StoreInventoryBagStatus | 'ALL'>('ALL');
-  const [query, setQuery] = useState('');
-  const [selectedBagId, setSelectedBagId] = useState('');
+  const queryClient = useQueryClient();
+  const [params, setParams] = useSearchParams();
+  const { store: navigation } = readInventoryNavigation(params);
+  const storeId = navigation.storeId;
+  const status = navigation.status;
+  const query = navigation.bagCode;
+  const tab = navigation.tab;
   const effectiveStoreId = role === 'STORE' ? defaultStoreId : storeId;
   const bagsQuery = useQuery({
     enabled: role !== 'STORE' || Boolean(effectiveStoreId),
@@ -288,21 +440,16 @@ function StoreInventoryPage({
     retry: false,
   });
   const sortedQuery = useQuery({
-    enabled: role !== 'STORE' || Boolean(effectiveStoreId),
+    enabled: tab === 'stock' && (role !== 'STORE' || Boolean(effectiveStoreId)),
     queryFn: () => listStoreSortedStocks(effectiveStoreId || undefined),
     queryKey: ['store-sorted-stocks', effectiveStoreId],
     retry: false,
   });
   const bags = bagsQuery.data ?? [];
-  const effectiveBagId = bags.some((bag) => bag.id === selectedBagId)
-    ? selectedBagId
+  const effectiveBagId = bags.some((bag) => bag.id === navigation.bagId)
+    ? navigation.bagId
     : (bags[0]?.id ?? '');
-  const ledgerQuery = useQuery({
-    enabled: Boolean(effectiveBagId),
-    queryFn: () => listInventoryLedger(effectiveBagId),
-    queryKey: ['store-inventory-ledger', effectiveBagId],
-    retry: false,
-  });
+  const selectedBag = bags.find((bag) => bag.id === effectiveBagId) ?? null;
   const productNames = useMemo(
     () => new Map((catalogQuery.data ?? []).map((product) => [product.id, product.name])),
     [catalogQuery.data],
@@ -331,7 +478,13 @@ function StoreInventoryPage({
     storesQuery.error ??
     catalogQuery.error ??
     bagsQuery.error ??
-    sortedQuery.error;
+    (tab === 'stock' ? sortedQuery.error : null);
+  const fetching =
+    sessionQuery.isFetching ||
+    storesQuery.isFetching ||
+    catalogQuery.isFetching ||
+    bagsQuery.isFetching ||
+    sortedQuery.isFetching;
 
   const retry = async () => {
     await Promise.all([
@@ -339,155 +492,170 @@ function StoreInventoryPage({
       storesQuery.refetch(),
       catalogQuery.refetch(),
       bagsQuery.refetch(),
-      sortedQuery.refetch(),
-      ...(effectiveBagId ? [ledgerQuery.refetch()] : []),
+      ...(tab === 'stock' ? [sortedQuery.refetch()] : []),
+      ...(tab === 'ledger' && effectiveBagId
+        ? [queryClient.refetchQueries({ queryKey: ['store-inventory-ledger', effectiveBagId] })]
+        : []),
     ]);
   };
+  const update = (changes: Readonly<Record<string, string | null>>, push = false) =>
+    setParams((current) => withParams(current, changes), { replace: !push });
+  const exportButton = (
+    <Button
+      disabled={bags.length === 0 || tab !== 'stock'}
+      onClick={() => downloadInventoryCsv(bags, visibleSortedStocks, productNames, stores)}
+      tone="secondary"
+    >
+      <ArrowDownToLine aria-hidden="true" size={16} /> Xuất đối soát
+    </Button>
+  );
 
   return (
     <>
-      <PageHeader
-        actions={
-          <div className="inventory-actions">
-            <Button
-              disabled={bags.length === 0}
-              onClick={() => downloadInventoryCsv(bags, visibleSortedStocks, productNames, stores)}
-              tone="secondary"
-            >
-              <ArrowDownToLine aria-hidden="true" size={16} /> Xuất đối soát
-            </Button>
-            <Button
-              busy={
-                sessionQuery.isFetching ||
-                storesQuery.isFetching ||
-                catalogQuery.isFetching ||
-                bagsQuery.isFetching ||
-                sortedQuery.isFetching ||
-                ledgerQuery.isFetching
-              }
-              onClick={() => void retry()}
-              tone="secondary"
-            >
-              <RefreshCw aria-hidden="true" size={16} /> Làm mới
-            </Button>
-          </div>
-        }
-        description="Số dư lấy trực tiếp từ sổ phát sinh bất biến; mọi thay đổi đều có phiên bản và người thao tác"
-        title="Tồn kho & lịch sử"
+      {embedded ? null : (
+        <PageHeader
+          actions={
+            <div className="inventory-actions">
+              {exportButton}
+              <Button busy={fetching} onClick={() => void retry()} tone="secondary">
+                <RefreshCw aria-hidden="true" size={16} /> Làm mới
+              </Button>
+            </div>
+          }
+          description="Số dư lấy trực tiếp từ sổ phát sinh bất biến; mọi thay đổi đều có phiên bản và người thao tác"
+          title="Tồn kho & lịch sử"
+        />
+      )}
+
+      <Tabs
+        active={tab}
+        idPrefix="store-inventory"
+        items={STORE_TAB_ITEMS}
+        label="Nội dung kho cửa hàng"
+        onChange={(next) => update({ [KEYS.storeTab]: next }, true)}
+        size="secondary"
       />
 
-      {navigation}
-
-      {loadError ? (
-        <section className="panel source-error" role="alert">
-          <strong>Không thể tải tồn kho</strong>
-          <p>{errorMessage(loadError)}</p>
-          <Button
-            busy={
-              sessionQuery.isFetching ||
-              storesQuery.isFetching ||
-              catalogQuery.isFetching ||
-              bagsQuery.isFetching ||
-              sortedQuery.isFetching ||
-              ledgerQuery.isFetching
-            }
-            onClick={() => void retry()}
-            tone="secondary"
-          >
-            Thử lại
-          </Button>
-        </section>
-      ) : bagsQuery.isPending ||
-        sortedQuery.isPending ||
-        catalogQuery.isPending ||
-        storesQuery.isPending ? (
-        <DashboardSkeleton />
-      ) : (
-        <>
-          <div className="stats-grid stats-grid--small">
-            <StatCard
-              detail={`${bags.filter((bag) => bag.status === 'AVAILABLE').length} Mã bao`}
-              label="Hàng chưa khui"
-              tone="info"
-              value={formatKg(gramsToKilograms(availableGrams))}
-            />
-            <StatCard
-              detail={`${bags.filter((bag) => bag.status === 'OPEN').length} Mã bao`}
-              label="Đang bán tại CH"
-              value={formatKg(gramsToKilograms(openedGrams))}
-            />
-            <StatCard
-              detail="Từ nguồn API tồn kho"
-              label="Tổng còn lại"
-              tone="success"
-              value={formatKg(gramsToKilograms(totalGrams + sortedSaleGrams + sortedCharityGrams))}
-            />
-            <StatCard
-              detail="Đã lọc, chưa bán hết"
-              label="Sale còn"
-              tone="info"
-              value={formatKg(gramsToKilograms(sortedSaleGrams))}
-            />
-            <StatCard
-              detail="Đã lọc, chưa xuất hết"
-              label="Từ thiện còn"
-              tone="warning"
-              value={formatKg(gramsToKilograms(sortedCharityGrams))}
-            />
-            <StatCard
-              detail="Không cho sửa/xóa giao dịch"
-              label="Nguồn đối soát"
-              tone="success"
-              value="Sổ cái"
-            />
-          </div>
-          <section className="panel inventory-panel">
-            <div className="inventory-toolbar">
-              {role !== 'STORE' ? (
-                <label>
-                  Cửa hàng
-                  <select onChange={(event) => setStoreId(event.target.value)} value={storeId}>
-                    <option value="">Tất cả cửa hàng được phân quyền</option>
-                    {stores.map((store) => (
-                      <option key={store.id} value={store.id}>
-                        {store.code} · {store.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
+      <TabPanel idPrefix="store-inventory" tab={tab}>
+        <section className="panel inventory-panel">
+          <div className="inventory-toolbar">
+            {role !== 'STORE' ? (
               <label>
-                Trạng thái
+                Cửa hàng
                 <select
                   onChange={(event) =>
-                    setStatus(event.target.value as StoreInventoryBagStatus | 'ALL')
+                    setParams(
+                      (current) =>
+                        withStoreScope(
+                          current,
+                          KEYS.store,
+                          event.target.value,
+                          selectedBag?.storeId ?? null,
+                        ),
+                      { replace: true },
+                    )
                   }
-                  value={status}
+                  value={storeId}
                 >
-                  <option value="ALL">Tất cả</option>
-                  {Object.entries(statusCopy).map(([value, copy]) => (
-                    <option key={value} value={value}>
-                      {copy.label}
+                  <option value="">Tất cả cửa hàng được phân quyền</option>
+                  {stores.map((store) => (
+                    <option key={store.id} value={store.id}>
+                      {store.code} · {store.name}
                     </option>
                   ))}
                 </select>
               </label>
-              <label>
-                Tìm Mã bao
-                <input
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Nhập Mã bao"
-                  value={query}
-                />
-              </label>
-            </div>
-            {bags.length === 0 ? (
-              <EmptyState
-                detail="Không có Mã bao phù hợp với phạm vi và bộ lọc hiện tại."
-                title="Chưa có tồn kho"
+            ) : null}
+            <label>
+              Trạng thái
+              <select
+                onChange={(event) => update({ [KEYS.bagStatus]: event.target.value })}
+                value={status}
+              >
+                <option value="ALL">Tất cả</option>
+                {Object.entries(statusCopy).map(([value, copy]) => (
+                  <option key={value} value={value}>
+                    {copy.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Tìm Mã bao
+              <input
+                maxLength={60}
+                onChange={(event) => update({ [KEYS.bagCode]: event.target.value })}
+                placeholder="Nhập Mã bao"
+                value={query}
               />
-            ) : (
-              <div className="inventory-master-detail">
+            </label>
+            {embedded && tab === 'stock' ? (
+              <div className="inventory-toolbar__action">{exportButton}</div>
+            ) : null}
+          </div>
+        </section>
+
+        {loadError ? (
+          <section className="panel source-error" role="alert">
+            <strong>Không thể tải tồn kho</strong>
+            <p>{errorMessage(loadError)}</p>
+            <Button busy={fetching} onClick={() => void retry()} tone="secondary">
+              Thử lại
+            </Button>
+          </section>
+        ) : bagsQuery.isPending ||
+          (tab === 'stock' && sortedQuery.isPending) ||
+          catalogQuery.isPending ||
+          storesQuery.isPending ? (
+          <DashboardSkeleton />
+        ) : tab === 'stock' ? (
+          <>
+            <div className="stats-grid stats-grid--small">
+              <StatCard
+                detail={`${bags.filter((bag) => bag.status === 'AVAILABLE').length} Mã bao`}
+                label="Hàng chưa khui"
+                tone="info"
+                value={formatKg(gramsToKilograms(availableGrams))}
+              />
+              <StatCard
+                detail={`${bags.filter((bag) => bag.status === 'OPEN').length} Mã bao`}
+                label="Đang bán tại CH"
+                value={formatKg(gramsToKilograms(openedGrams))}
+              />
+              <StatCard
+                detail="Từ nguồn API tồn kho"
+                label="Tổng còn lại"
+                tone="success"
+                value={formatKg(
+                  gramsToKilograms(totalGrams + sortedSaleGrams + sortedCharityGrams),
+                )}
+              />
+              <StatCard
+                detail="Đã lọc, chưa bán hết"
+                label="Sale còn"
+                tone="info"
+                value={formatKg(gramsToKilograms(sortedSaleGrams))}
+              />
+              <StatCard
+                detail="Đã lọc, chưa xuất hết"
+                label="Từ thiện còn"
+                tone="warning"
+                value={formatKg(gramsToKilograms(sortedCharityGrams))}
+              />
+              <StatCard
+                detail="Không cho sửa/xóa giao dịch"
+                label="Nguồn đối soát"
+                tone="success"
+                value="Sổ cái"
+              />
+            </div>
+            <section className="panel inventory-panel" aria-label="Tồn kho cửa hàng theo Mã bao">
+              {bags.length === 0 ? (
+                <EmptyState
+                  detail="Không có Mã bao phù hợp với phạm vi và bộ lọc hiện tại."
+                  title="Chưa có tồn kho"
+                />
+              ) : (
                 <div className="responsive-table">
                   <table>
                     <thead>
@@ -517,10 +685,13 @@ function StoreInventoryPage({
                             </Badge>
                           </td>
                           <td data-label="Còn lại">{formatKg(bag.remainingWeightKg)}</td>
-                          <td>
+                          <td data-label="Thao tác">
                             <button
+                              aria-label={`Xem sổ phát sinh ${bag.bagCode}`}
                               className="link-button"
-                              onClick={() => setSelectedBagId(bag.id)}
+                              onClick={() =>
+                                update({ [KEYS.bag]: bag.id, [KEYS.storeTab]: 'ledger' }, true)
+                              }
                               type="button"
                             >
                               Xem sổ
@@ -531,47 +702,38 @@ function StoreInventoryPage({
                     </tbody>
                   </table>
                 </div>
-                <aside className="inventory-ledger" aria-live="polite">
-                  <h2>Sổ phát sinh Mã bao</h2>
-                  {!effectiveBagId ? (
-                    <p>Chọn một Mã bao để xem lịch sử.</p>
-                  ) : ledgerQuery.isPending ? (
-                    <p>Đang tải sổ phát sinh…</p>
-                  ) : ledgerQuery.isError ? (
-                    <div role="alert">
-                      <p>{errorMessage(ledgerQuery.error)}</p>
-                      <Button
-                        busy={ledgerQuery.isFetching}
-                        onClick={() => void ledgerQuery.refetch()}
-                        tone="secondary"
-                      >
-                        Thử lại
-                      </Button>
-                    </div>
-                  ) : (ledgerQuery.data ?? []).length === 0 ? (
-                    <p>Chưa có phát sinh cho Mã bao này.</p>
-                  ) : (
-                    <ol>
-                      {(ledgerQuery.data ?? []).map((entry) => (
-                        <li key={entry.id}>
-                          <span>
-                            <strong>{ledgerOperationCopy[entry.operation]}</strong>
-                            <time>{new Date(entry.createdAt).toLocaleString('vi-VN')}</time>
-                          </span>
-                          <b>
-                            {formatKg(entry.beforeWeightKg)} → {formatKg(entry.afterWeightKg)}
-                          </b>
-                          <small>{entry.reason}</small>
-                        </li>
-                      ))}
-                    </ol>
-                  )}
-                </aside>
-              </div>
+              )}
+            </section>
+          </>
+        ) : (
+          <section className="panel inventory-ledger" aria-label="Sổ phát sinh Mã bao">
+            <h2>Sổ phát sinh Mã bao</h2>
+            {bags.length === 0 ? (
+              <p>Không có Mã bao phù hợp với phạm vi và bộ lọc hiện tại.</p>
+            ) : (
+              <label className="inventory-ledger__picker">
+                Mã bao
+                <select
+                  onChange={(event) => update({ [KEYS.bag]: event.target.value })}
+                  value={effectiveBagId}
+                >
+                  {bags.map((bag) => (
+                    <option key={bag.id} value={bag.id}>
+                      {bag.bagCode} · {productNames.get(bag.productId) ?? bag.productId} ·{' '}
+                      {storeName(stores, bag.storeId)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {effectiveBagId ? (
+              <BagLedger bagId={effectiveBagId} />
+            ) : (
+              <p>Chọn một Mã bao để xem lịch sử.</p>
             )}
           </section>
-        </>
-      )}
+        )}
+      </TabPanel>
     </>
   );
 }

@@ -23,23 +23,28 @@ import {
   Truck,
   XCircle,
 } from 'lucide-react';
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 import { Badge } from '../../../components/Badge';
 import { Button } from '../../../components/Button';
 import { MoneyInput } from '../../../components/MoneyInput';
 import { DashboardSkeleton } from '../../../components/Skeleton';
 import { ApiClientError } from '../../../lib/api';
+import { DraftScope, useDraftGuard } from '../../../lib/draft-guard';
 import { formatKg } from '../../../lib/format';
 import {
   actOnReceiptAdjustment,
   actOnReceiptReturn,
+  adjustmentSyncOptions,
   createReceiptAdjustment,
   createReceiptReturn,
   getReceiptAdjustment,
   getReceiptAdjustmentContext,
+  listReceiptAdjustmentsPage,
 } from './adjustmentApi';
+import { AdjustmentHistory } from './AdjustmentHistory';
 import {
+  accountLabel,
   adjustmentStatusCopy,
   blockerCopy,
   causeCopy,
@@ -51,6 +56,7 @@ import {
   returnStatusCopy,
   type AdjustmentAudience,
 } from './adjustmentModel';
+import { SyncNotice } from './SyncNotice';
 import './receipt-adjustments.css';
 
 /** The workflow side, not the account role: the wholesale desk arrives here as STORE. */
@@ -74,11 +80,17 @@ interface SharedProps {
 function useCommand<TInput, TResult>(
   run: (input: TInput, idempotencyKey: string) => Promise<TResult>,
   onDone: (result: TResult) => Promise<void> | void,
+  onConflict?: () => Promise<void>,
 ) {
   const keys = useRef(new Map<string, string>());
   const mutation = useMutation({
     mutationFn: ({ input, key }: { input: TInput; key: string }) => run(input, key),
     onSuccess: async (result) => onDone(result),
+    // Another session changed the document first: reload it so the message about reloaded
+    // data is true. Nothing is retried automatically against the newer version.
+    onError: async (error) => {
+      if (error instanceof ApiClientError && error.status === 409) await onConflict?.();
+    },
   });
   return {
     error: mutation.error,
@@ -100,18 +112,32 @@ function useCommand<TInput, TResult>(
   };
 }
 
-function useInvalidateAdjustments(receiptId: string) {
+/**
+ * Every screen a discrepancy command can change. Only mounted (active) queries refetch now;
+ * the rest are marked stale and reload when next opened, so nothing is fetched in bulk.
+ */
+export const ADJUSTMENT_AFFECTED_QUERY_KEYS = [
+  ['receipt-adjustment'],
+  ['receipt-adjustments'],
+  ['receipt-adjustment-history'],
+  ['receipt-returns'],
+  ['store-receipts'],
+  ['wait-tickets'],
+  ['store-inventory-bags'],
+  ['store-inventory-ledger'],
+  ['warehouse-inventory'],
+  ['warehouse-shortage-checks'],
+] as const;
+
+export function useInvalidateAdjustments(receiptId: string) {
   const queryClient = useQueryClient();
   return async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['receipt-adjustment-context', receiptId] }),
-      queryClient.invalidateQueries({ queryKey: ['receipt-adjustment'] }),
-      queryClient.invalidateQueries({ queryKey: ['receipt-adjustments'] }),
-      queryClient.invalidateQueries({ queryKey: ['receipt-returns'] }),
       queryClient.invalidateQueries({ queryKey: ['store-receipt', receiptId] }),
-      queryClient.invalidateQueries({ queryKey: ['store-receipts'] }),
-      queryClient.invalidateQueries({ queryKey: ['wait-tickets'] }),
-      queryClient.invalidateQueries({ queryKey: ['store-inventory-bags'] }),
+      ...ADJUSTMENT_AFFECTED_QUERY_KEYS.map((queryKey) =>
+        queryClient.invalidateQueries({ queryKey }),
+      ),
     ]);
   };
 }
@@ -128,6 +154,18 @@ export function ReceiptAdjustmentsSection({
     queryFn: () => getReceiptAdjustmentContext(receiptId),
     queryKey: ['receipt-adjustment-context', receiptId],
     retry: false,
+    ...adjustmentSyncOptions,
+  });
+  const [listPage, setListPage] = useState(1);
+  // The context embeds the most recent page only; a longer history is paged from the list API.
+  const paged =
+    (contextQuery.data?.adjustmentCount ?? 0) > (contextQuery.data?.adjustments.length ?? 0);
+  const pagedQuery = useQuery({
+    enabled: paged,
+    queryFn: () => listReceiptAdjustmentsPage({ receiptId, page: listPage, pageSize: 20 }),
+    queryKey: ['receipt-adjustments', 'receipt', receiptId, listPage],
+    retry: false,
+    ...adjustmentSyncOptions,
   });
   const invalidate = useInvalidateAdjustments(receiptId);
   const create = useCommand(
@@ -143,6 +181,7 @@ export function ReceiptAdjustmentsSection({
   );
   const context = contextQuery.data;
   const headingId = useId();
+  const listed = paged ? (pagedQuery.data?.data ?? []) : (context?.adjustments ?? []);
 
   return (
     <section aria-labelledby={headingId} className="adjustment-section">
@@ -172,10 +211,11 @@ export function ReceiptAdjustmentsSection({
 
       {contextQuery.isPending ? (
         <DashboardSkeleton />
-      ) : contextQuery.isError ? (
+      ) : contextQuery.isError && !context ? (
         <CommandError error={contextQuery.error} onRetry={() => void contextQuery.refetch()} />
       ) : context ? (
         <>
+          <SyncNotice query={contextQuery} />
           <MoneySummary context={context} />
           {reporting ? (
             <ReportForm
@@ -191,11 +231,15 @@ export function ReceiptAdjustmentsSection({
               products={shared.products}
             />
           ) : null}
-          {context.adjustments.length === 0 ? (
+          {context.adjustmentCount === 0 ? (
             <p className="adjustment-empty">Chưa có hồ sơ sai lệch cho phiếu này.</p>
+          ) : paged && pagedQuery.isPending ? (
+            <DashboardSkeleton />
+          ) : paged && pagedQuery.isError && !pagedQuery.data ? (
+            <CommandError error={pagedQuery.error} onRetry={() => void pagedQuery.refetch()} />
           ) : (
             <ul className="adjustment-list" aria-label="Hồ sơ sai lệch của phiếu">
-              {context.adjustments.map((item) => {
+              {listed.map((item) => {
                 const copy = adjustmentStatusCopy[item.status];
                 return (
                   <li key={item.id}>
@@ -230,6 +274,28 @@ export function ReceiptAdjustmentsSection({
               })}
             </ul>
           )}
+          {paged && pagedQuery.data ? (
+            <div className="adjustment-pager">
+              <Button
+                disabled={listPage <= 1}
+                onClick={() => setListPage(listPage - 1)}
+                tone="secondary"
+              >
+                Trang trước
+              </Button>
+              <span>
+                Trang {listPage}/{Math.max(1, pagedQuery.data.pagination.totalPages)} ·{' '}
+                {context.adjustmentCount} hồ sơ
+              </span>
+              <Button
+                disabled={listPage >= pagedQuery.data.pagination.totalPages}
+                onClick={() => setListPage(listPage + 1)}
+                tone="secondary"
+              >
+                Trang sau
+              </Button>
+            </div>
+          ) : null}
           {selected ? (
             <AdjustmentDetail
               adjustmentId={selected}
@@ -261,8 +327,8 @@ function MoneySummary({ context }: { readonly context: ReceiptAdjustmentContext 
           {changed ? formatSignedVnd(BigInt(effective.costVnd) - BigInt(original.costVnd)) : '0 ₫'}
         </strong>
         <small>
-          {context.summary.appliedCount} điều chỉnh đã áp dụng · {context.summary.openCount} đang xử
-          lý
+          {context.summary.appliedCount} điều chỉnh đã xử lý · {context.summary.openCount} đang chờ
+          xử lý
         </small>
       </div>
       <div className="adjustment-money__effective">
@@ -318,6 +384,8 @@ function ReportForm({
     toLocalInput(initial?.discoveredAt ?? new Date().toISOString()),
   );
   const [formError, setFormError] = useState('');
+  const [initialDraft] = useState(() => JSON.stringify({ lines, reason, evidence, discoveredAt }));
+  useDraftGuard(JSON.stringify({ lines, reason, evidence, discoveredAt }) !== initialDraft);
   const editingExisting = initial !== undefined;
   const selectedBags = context.bags.filter((bag) => lines[bag.receiptBagId]);
   const shortagePreview = selectedBags.filter(
@@ -542,6 +610,28 @@ function ReportForm({
   );
 }
 
+/**
+ * One document for any screen (receipt page, admin workspace): the header and table always show
+ * the latest server state, polled while visible. The action forms are pinned to the version the
+ * user started from, so a draft is never silently re-targeted at a version someone else just
+ * produced: the server refuses the old version, and the user chooses to load the new one.
+ */
+export function AdjustmentDetailPanel({
+  adjustmentId,
+  receiptId,
+  ...shared
+}: SharedProps & { readonly adjustmentId: string; readonly receiptId: string }) {
+  const invalidate = useInvalidateAdjustments(receiptId);
+  return (
+    <AdjustmentDetail
+      adjustmentId={adjustmentId}
+      onChanged={invalidate}
+      receiptId={receiptId}
+      {...shared}
+    />
+  );
+}
+
 function AdjustmentDetail({
   adjustmentId,
   onChanged,
@@ -558,30 +648,45 @@ function AdjustmentDetail({
     queryFn: () => getReceiptAdjustment(adjustmentId),
     queryKey: ['receipt-adjustment', adjustmentId],
     retry: false,
+    ...adjustmentSyncOptions,
   });
+  // Only the store side resubmits, and only resubmission needs the receipt's bag context.
   const contextQuery = useQuery({
+    enabled: role === 'STORE',
     queryFn: () => getReceiptAdjustmentContext(receiptId),
     queryKey: ['receipt-adjustment-context', receiptId],
     retry: false,
   });
   const [notice, setNotice] = useState('');
+  const [pinned, setPinned] = useState<ReceiptAdjustment | null>(null);
+  const [formsDirty, setFormsDirty] = useState(false);
   const act = useCommand(
     (input: ReceiptAdjustmentActionRequest, key: string) =>
       actOnReceiptAdjustment(adjustmentId, input, key),
     async (adjustment) => {
       setNotice(actionNotice(adjustment));
+      setPinned(adjustment);
       await onChanged();
     },
+    onChanged,
   );
   const adjustment = query.data;
+  const outdated =
+    pinned !== null && adjustment !== undefined && pinned.version !== adjustment.version;
+  useEffect(() => {
+    if (!adjustment) return;
+    // Pin the first version seen; follow newer versions only while no form holds a draft.
+    if (pinned === null || (outdated && !formsDirty && !act.pending)) setPinned(adjustment);
+  }, [act.pending, adjustment, formsDirty, outdated, pinned]);
   if (query.isPending) return <DashboardSkeleton />;
-  if (query.isError || !adjustment) {
+  if (!adjustment) {
     return <CommandError error={query.error} onRetry={() => void query.refetch()} />;
   }
+  const form = pinned ?? adjustment;
   const name = (id: string | null) => (id ? (productNameById.get(id) ?? 'Mặt hàng') : '—');
   const copy = adjustmentStatusCopy[adjustment.status];
   const verified = adjustment.money.after !== null;
-  const allowed = new Set(adjustment.allowedActions);
+  const allowed = new Set(form.allowedActions);
 
   return (
     <article className="adjustment-detail" aria-label={`Hồ sơ ${adjustment.code}`}>
@@ -599,6 +704,24 @@ function AdjustmentDetail({
         </div>
         <Badge tone={copy.tone}>{copy.label}</Badge>
       </header>
+
+      <SyncNotice query={query} />
+      {outdated ? (
+        <div className="receipt-review-note adjustment-outdated" role="status">
+          <RotateCcw aria-hidden="true" size={17} />
+          <span>
+            <strong>
+              Hồ sơ vừa được cập nhật: {adjustmentStatusCopy[adjustment.status].label}
+            </strong>
+            Biểu mẫu bên dưới vẫn theo phiên bản bạn đang nhập nên máy chủ sẽ từ chối nếu gửi. Hãy
+            xem thay đổi rồi tải biểu mẫu theo phiên bản mới (bản nháp hiện tại sẽ bỏ).
+          </span>
+          <Button onClick={() => setPinned(adjustment)} tone="secondary">
+            Tải phiên bản mới
+          </Button>
+        </div>
+      ) : null}
+      <AccountabilityLine adjustment={adjustment} />
 
       {adjustment.infoRequestNote && adjustment.status === 'NEEDS_INFO' ? (
         <div className="receipt-review-note">
@@ -754,60 +877,97 @@ function AdjustmentDetail({
       ) : null}
       {act.error ? <CommandError error={act.error} /> : null}
 
-      {allowed.has('VERIFY') ? (
-        <VerifyForm
-          adjustment={adjustment}
-          busy={act.pending}
-          name={name}
-          onVerify={(input) => act.execute(input)}
-          products={products}
-        />
-      ) : null}
-      {allowed.has('RESUBMIT') && contextQuery.data ? (
-        <ReportForm
-          busy={act.pending}
-          context={{
-            ...contextQuery.data,
-            bags: contextQuery.data.bags.filter((bag) =>
-              adjustment.lines.some((line) => line.receiptBagId === bag.receiptBagId),
-            ),
-          }}
-          error={null}
-          initial={{
-            reason: adjustment.reason,
-            evidenceNote: adjustment.evidenceNote,
-            discoveredAt: adjustment.discoveredAt,
-            lines: Object.fromEntries(
-              adjustment.lines.map((line) => [
-                line.receiptBagId,
-                { actualProductId: line.actualProductId, disposition: line.disposition },
-              ]),
-            ),
-          }}
-          onCancel={() => undefined}
-          onSubmit={(input) =>
-            act.execute({
-              action: 'RESUBMIT',
-              expectedVersion: adjustment.version,
-              reason: input.reason,
-              evidenceNote: input.evidenceNote,
-              discoveredAt: input.discoveredAt,
-              lines: input.lines,
-            })
-          }
-          productNameById={productNameById}
-          products={products}
-          submitLabel="Gửi lại HTKD"
-        />
-      ) : null}
-      <DecisionBar
-        adjustment={adjustment}
-        allowed={allowed}
-        busy={act.pending}
-        onAct={(input) => act.execute(input)}
-      />
-      <ReturnsPanel adjustment={adjustment} name={name} onChanged={onChanged} role={role} />
+      <DraftScope onDirtyChange={setFormsDirty}>
+        <div className="adjustment-forms" key={form.version}>
+          {allowed.has('VERIFY') ? (
+            <VerifyForm
+              adjustment={form}
+              busy={act.pending}
+              name={name}
+              onVerify={(input) => act.execute(input)}
+              products={products}
+            />
+          ) : null}
+          {allowed.has('RESUBMIT') && contextQuery.data ? (
+            <ReportForm
+              busy={act.pending}
+              context={{
+                ...contextQuery.data,
+                bags: contextQuery.data.bags.filter((bag) =>
+                  form.lines.some((line) => line.receiptBagId === bag.receiptBagId),
+                ),
+              }}
+              error={null}
+              initial={{
+                reason: form.reason,
+                evidenceNote: form.evidenceNote,
+                discoveredAt: form.discoveredAt,
+                lines: Object.fromEntries(
+                  form.lines.map((line) => [
+                    line.receiptBagId,
+                    { actualProductId: line.actualProductId, disposition: line.disposition },
+                  ]),
+                ),
+              }}
+              onCancel={() => undefined}
+              onSubmit={(input) =>
+                act.execute({
+                  action: 'RESUBMIT',
+                  expectedVersion: form.version,
+                  reason: input.reason,
+                  evidenceNote: input.evidenceNote,
+                  discoveredAt: input.discoveredAt,
+                  lines: input.lines,
+                })
+              }
+              productNameById={productNameById}
+              products={products}
+              submitLabel="Gửi lại HTKD"
+            />
+          ) : null}
+          <DecisionBar
+            adjustment={form}
+            allowed={allowed}
+            busy={act.pending}
+            onAct={(input) => act.execute(input)}
+          />
+        </div>
+        <ReturnsPanel adjustment={adjustment} name={name} onChanged={onChanged} role={role} />
+      </DraftScope>
+      <AdjustmentHistory adjustmentId={adjustment.id} />
     </article>
+  );
+}
+
+/** Who reported, verified and closed the document, and when, straight from the header. */
+function AccountabilityLine({ adjustment }: { readonly adjustment: ReceiptAdjustment }) {
+  return (
+    <dl className="adjustment-people">
+      <div>
+        <dt>Cửa hàng báo</dt>
+        <dd>
+          {accountLabel(adjustment.reportedBy)} · {formatDateTime(adjustment.reportedAt)}
+        </dd>
+      </div>
+      <div>
+        <dt>Xác minh, gửi Admin</dt>
+        <dd>
+          {adjustment.verifiedBy && adjustment.verifiedAt
+            ? `${accountLabel(adjustment.verifiedBy)} · ${formatDateTime(adjustment.verifiedAt)}`
+            : 'Chưa xác minh'}
+        </dd>
+      </div>
+      <div>
+        <dt>Quyết định</dt>
+        <dd>
+          {adjustment.decidedBy && adjustment.decidedAt
+            ? `${accountLabel(adjustment.decidedBy)} · ${formatDateTime(adjustment.decidedAt)} · ${
+                adjustmentStatusCopy[adjustment.status].label
+              }`
+            : 'Chưa có'}
+        </dd>
+      </div>
+    </dl>
   );
 }
 
@@ -933,6 +1093,15 @@ function VerifyForm({
   const [vat, setVat] = useState('0');
   const [note, setNote] = useState('');
   const [formError, setFormError] = useState('');
+  const [initialLines] = useState(() => JSON.stringify(lines));
+  useDraftGuard(
+    note.trim() !== '' ||
+      freight !== '0' ||
+      handling !== '0' ||
+      vat !== '0' ||
+      cause !== (adjustment.cause ?? '') ||
+      JSON.stringify(lines) !== initialLines,
+  );
   const preview = previewAdjustment(adjustment.money.before, lines, { freight, handling, vat });
 
   const submit = async () => {
@@ -1155,6 +1324,7 @@ function DecisionBar({
 }) {
   const [note, setNote] = useState('');
   const [formError, setFormError] = useState('');
+  useDraftGuard(note.trim() !== '');
   const noteActions = (['REQUEST_INFO', 'RETURN_TO_VERIFIER', 'REJECT', 'CANCEL'] as const).filter(
     (action) => allowed.has(action),
   );
@@ -1265,6 +1435,7 @@ function ReturnsPanel({
     },
   );
   const [notes, setNotes] = useState<Record<string, string>>({});
+  useDraftGuard(Object.values(notes).some((value) => value.trim() !== ''));
   if (adjustment.status !== 'APPLIED') return null;
   const busy = act.pending || switchToReturn.pending;
   const rows = adjustment.lines.flatMap((line) => line.returns.map((row) => ({ line, row })));
@@ -1471,7 +1642,7 @@ function actionNotice(adjustment: ReceiptAdjustment): string {
     case 'PENDING_ADMIN':
       return `Đã xác minh ${adjustment.code}; số sau điều chỉnh là tạm tính cho tới khi Admin duyệt.`;
     case 'APPLIED':
-      return `Đã áp dụng ${adjustment.code}: tiền, phân loại bao và quyền chờ ưu tiên đã có hiệu lực.`;
+      return `Đã xử lý ${adjustment.code}: tiền, phân loại bao và quyền chờ ưu tiên đã có hiệu lực; tiến độ trả/bù theo dõi riêng bên dưới.`;
     case 'NEEDS_INFO':
       return `Đã yêu cầu cửa hàng bổ sung ${adjustment.code}.`;
     case 'PENDING_HTKD':

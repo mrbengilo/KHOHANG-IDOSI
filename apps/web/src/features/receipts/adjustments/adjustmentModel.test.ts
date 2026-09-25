@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  accountLabel,
   adjustmentAudience,
+  adjustmentStatusCopy,
   describeEntitlement,
   formatExactVnd,
   formatSignedVnd,
+  listMoneyCopy,
   previewAdjustment,
+  storeLabel,
 } from './adjustmentModel';
 
 const before = {
@@ -101,5 +105,56 @@ describe('receipt adjustment preview', () => {
     expect(adjustmentAudience('HTKD')).toBe('HTKD');
     expect(adjustmentAudience('ADMIN')).toBe('ADMIN');
     expect(adjustmentAudience('UNKNOWN')).toBeNull();
+  });
+
+  it('labels every status with the one shared vocabulary; APPLIED reads "Đã xử lý"', () => {
+    expect(
+      Object.fromEntries(
+        Object.entries(adjustmentStatusCopy).map(([status, copy]) => [status, copy.label]),
+      ),
+    ).toEqual({
+      PENDING_HTKD: 'Chờ HTKD xác minh',
+      PENDING_ADMIN: 'Chờ Admin duyệt',
+      NEEDS_INFO: 'Cần cửa hàng bổ sung',
+      APPLIED: 'Đã xử lý',
+      REJECTED: 'Bị từ chối',
+      CANCELLED: 'Đã hủy',
+    });
+    // Rejected and cancelled are different final outcomes, never shown as a success.
+    expect(adjustmentStatusCopy.APPLIED.tone).toBe('success');
+    expect(adjustmentStatusCopy.REJECTED.tone).not.toBe('success');
+    expect(adjustmentStatusCopy.CANCELLED.tone).not.toBe('success');
+  });
+
+  it('names people and stores, keeping the id when the record is gone', () => {
+    const accountId = '00000000-0000-4000-8000-00000000000a';
+    expect(accountLabel({ accountId, displayName: 'HTKD Lan', username: 'htkd.lan' })).toBe(
+      'HTKD Lan',
+    );
+    expect(accountLabel({ accountId, displayName: null, username: 'htkd.lan' })).toBe('htkd.lan');
+    expect(accountLabel({ accountId, displayName: null, username: null })).toBe(
+      'Tài khoản 00000000… · Không còn thông tin',
+    );
+    expect(accountLabel({ accountId: null, displayName: null, username: null })).toBe(
+      'Chưa ghi nhận',
+    );
+    expect(storeLabel({ storeId: accountId, code: 'Q1', name: 'Quận 1' })).toBe('Q1 · Quận 1');
+    expect(storeLabel({ storeId: accountId, code: null, name: null })).toBe(
+      'Cửa hàng 00000000… · Không còn thông tin',
+    );
+  });
+
+  it('tells a draft delta from an effective one in list rows', () => {
+    expect(listMoneyCopy({ status: 'PENDING_ADMIN', goodsDeltaVnd: -200_000 })).toEqual({
+      label: 'Tạm tính, chưa hiệu lực',
+      value: formatSignedVnd(-200_000),
+    });
+    expect(listMoneyCopy({ status: 'APPLIED', goodsDeltaVnd: -200_000 }).label).toBe(
+      'Đã có hiệu lực',
+    );
+    expect(listMoneyCopy({ status: 'REJECTED', goodsDeltaVnd: 0 }).value).toBeNull();
+    expect(listMoneyCopy({ status: 'PENDING_HTKD', goodsDeltaVnd: 0 }).label).toBe(
+      'Chờ HTKD xác minh giá',
+    );
   });
 });
