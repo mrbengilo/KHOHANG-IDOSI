@@ -82,6 +82,7 @@ function useCommand<TInput, TResult>(
   onDone: (result: TResult) => Promise<void> | void,
   onConflict?: () => Promise<void>,
 ) {
+  const queryClient = useQueryClient();
   const keys = useRef(new Map<string, string>());
   const mutation = useMutation({
     mutationFn: ({ input, key }: { input: TInput; key: string }) => run(input, key),
@@ -105,7 +106,11 @@ function useCommand<TInput, TResult>(
         await mutation.mutateAsync({ input, key });
         keys.current.delete(fingerprint);
         return true;
-      } catch {
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 409) {
+          await queryClient.invalidateQueries({ queryKey: ['receipt-adjustment-context'] });
+          await queryClient.invalidateQueries({ queryKey: ['receipt-adjustment'] });
+        }
         return false;
       }
     },
@@ -124,6 +129,8 @@ export const ADJUSTMENT_AFFECTED_QUERY_KEYS = [
   ['store-receipts'],
   ['wait-tickets'],
   ['store-inventory-bags'],
+  ['store-bag-openings'],
+  ['store-normal-sale-pending'],
   ['store-inventory-ledger'],
   ['warehouse-inventory'],
   ['warehouse-shortage-checks'],
@@ -219,7 +226,7 @@ export function ReceiptAdjustmentsSection({
           <MoneySummary context={context} />
           {reporting ? (
             <ReportForm
-              busy={create.pending}
+              busy={create.pending || contextQuery.isFetching}
               context={context}
               error={create.error}
               onCancel={() => {
@@ -351,7 +358,7 @@ interface DraftLine {
   readonly disposition: 'KEEP' | 'RETURN';
 }
 
-function ReportForm({
+export function ReportForm({
   busy,
   context,
   error,
@@ -387,6 +394,9 @@ function ReportForm({
   const [initialDraft] = useState(() => JSON.stringify({ lines, reason, evidence, discoveredAt }));
   useDraftGuard(JSON.stringify({ lines, reason, evidence, discoveredAt }) !== initialDraft);
   const editingExisting = initial !== undefined;
+  const invalidSelection =
+    !editingExisting &&
+    context.bags.some((bag) => lines[bag.receiptBagId] && !bag.canReportDiscrepancy);
   const selectedBags = context.bags.filter((bag) => lines[bag.receiptBagId]);
   const shortagePreview = selectedBags.filter(
     (bag) =>
@@ -397,6 +407,10 @@ function ReportForm({
   );
 
   const submit = async () => {
+    if (invalidSelection) {
+      setFormError('Bao đã mất điều kiện báo sai lệch; bỏ chọn bao bị khóa trước khi gửi.');
+      return;
+    }
     if (selectedBags.length === 0) {
       setFormError('Chọn ít nhất một bao bị sai.');
       return;
@@ -440,11 +454,11 @@ function ReportForm({
     <div className="adjustment-form" role="group" aria-label="Báo sai lệch sau khui bao">
       <fieldset>
         <legend>Chọn bao bị sai và loại thực tế</legend>
+        <p>Nếu phát hiện sai hàng, hãy báo sai lệch trước khi xác nhận khui kiện để bán.</p>
         <div className="adjustment-bags">
           {context.bags.map((bag) => {
             const line = lines[bag.receiptBagId];
-            const unavailable =
-              !editingExisting && (bag.openAdjustmentId !== null || bag.openReturnId !== null);
+            const unavailable = !editingExisting && !bag.canReportDiscrepancy;
             const lockedByEdit = editingExisting && !line;
             return (
               <div
@@ -471,14 +485,31 @@ function ReportForm({
                   <span>
                     <strong>{bagLabel(bag, productNameById)}</strong>
                     <small>
-                      {unavailable
-                        ? 'Đang nằm trong hồ sơ hoặc phiếu trả khác'
-                        : bag.dependencies.length > 0
-                          ? `Đã phát sinh: ${bag.dependencies.map((code) => blockerCopy[code]).join('; ')}. Vẫn báo được, nhưng Admin chưa thể áp dụng tới khi đối soát.`
+                      {bag.reportBlockers.includes('BAG_ALREADY_OPENED')
+                        ? 'Bao đã khui kiện bán' +
+                          (bag.openedAt ? ' lúc ' + formatDateTime(bag.openedAt) : '') +
+                          ' nên không thể báo sai lệch'
+                        : unavailable
+                          ? bag.reportBlockers.map((code) => blockerCopy[code]).join('; ')
                           : 'Chưa phát sinh giao dịch khác trên bao'}
                     </small>
                   </span>
                 </label>
+                {unavailable && line ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      setLines((current) => {
+                        const next = { ...current };
+                        delete next[bag.receiptBagId];
+                        return next;
+                      })
+                    }
+                  >
+                    Bỏ chọn bao mất điều kiện
+                  </button>
+                ) : null}
                 {line ? (
                   <div className="adjustment-bag__fields">
                     <label>
@@ -602,7 +633,11 @@ function ReportForm({
         <Button disabled={busy} onClick={onCancel} tone="secondary">
           Đóng
         </Button>
-        <Button busy={busy} onClick={() => void submit()}>
+        <Button
+          busy={busy}
+          disabled={invalidSelection || selectedBags.length === 0}
+          onClick={() => void submit()}
+        >
           <Send aria-hidden="true" size={16} /> {submitLabel}
         </Button>
       </div>
@@ -1695,6 +1730,8 @@ function formatDateTime(value: string): string {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    second: '2-digit',
+    year: 'numeric',
     month: '2-digit',
     timeZone: 'Asia/Ho_Chi_Minh',
   }).format(new Date(value));

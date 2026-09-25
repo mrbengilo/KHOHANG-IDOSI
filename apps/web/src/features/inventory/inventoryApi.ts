@@ -1,4 +1,8 @@
 import {
+  ListStoreBagOpeningsResponseSchema,
+  type ListStoreBagOpeningsQuery,
+} from '@idosi/contracts';
+import {
   WarehouseInventoryResponseSchema,
   ListWarehouseOutboundRequestsResponseSchema,
   CreateStoreOutboundRequestSchema,
@@ -325,4 +329,21 @@ export async function createCharityExport(
       body: JSON.stringify(parsed),
     }),
   ).data;
+}
+
+export async function listUnopenedInventoryPage(filters: InventoryFilters & { page: number }) {
+  const query = new URLSearchParams({
+    page: String(filters.page),
+    pageSize: '20',
+    unopenedOnly: 'true',
+  });
+  for (const [key, value] of Object.entries(filters)) if (value) query.set(key, String(value));
+  return ListStoreInventoryBagsResponseSchema.parse(
+    await request('/store-inventory-bags?' + query),
+  );
+}
+export async function listBagOpenings(filters: ListStoreBagOpeningsQuery) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) if (value) query.set(key, String(value));
+  return ListStoreBagOpeningsResponseSchema.parse(await request('/store-bag-openings?' + query));
 }

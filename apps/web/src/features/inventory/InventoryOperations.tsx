@@ -19,7 +19,6 @@ import type {
 import {
   ArrowDownToLine,
   CheckCircle2,
-  PackageOpen,
   RefreshCw,
   Scale,
   ShieldCheck,
@@ -52,6 +51,8 @@ import {
   createStoreSorting,
   listCharityExports,
   listInventoryBags,
+  listUnopenedInventoryPage,
+  listBagOpenings,
   listInventoryLedger,
   listStoreNormalSalePending,
   listStoreSortedStocks,
@@ -765,41 +766,57 @@ export function ProductionOpenBagPage({ role }: AppOutletContext) {
   const { catalogQuery, defaultStoreId, stores, storesQuery } = useInventorySources(role);
   const [storeId, setStoreId] = useState('');
   const [productId, setProductId] = useState('');
+  const [bagCode, setBagCode] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [page, setPage] = useState(1);
+  const [historyPage, setHistoryPage] = useState(1);
   const [notice, setNotice] = useState('');
-  const [mutationError, setMutationError] = useState('');
   const [selectedBag, setSelectedBag] = useState<StoreInventoryBag | null>(null);
   const operationKeys = useRef(new Map<string, string>());
   const effectiveStoreId = role === 'STORE' ? defaultStoreId : storeId;
+  const filters = {
+    ...(effectiveStoreId ? { storeId: effectiveStoreId } : {}),
+    ...(productId ? { productId } : {}),
+    ...(bagCode.trim() ? { bagCode: bagCode.trim() } : {}),
+  };
+  const enabled = role !== 'STORE' || Boolean(effectiveStoreId);
+  const resetPages = () => {
+    setPage(1);
+    setHistoryPage(1);
+    setSelectedBag(null);
+  };
   const bagsQuery = useQuery({
-    enabled: role !== 'STORE' || Boolean(effectiveStoreId),
-    queryFn: () =>
-      listInventoryBags({
-        ...(effectiveStoreId ? { storeId: effectiveStoreId } : {}),
-        status: 'AVAILABLE',
-      }),
-    queryKey: ['store-inventory-bags', effectiveStoreId, 'AVAILABLE'],
+    enabled,
+    queryFn: () => listUnopenedInventoryPage({ ...filters, page }),
+    queryKey: ['store-inventory-bags', 'unopened', filters, page],
     retry: false,
+    refetchOnWindowFocus: 'always',
+    refetchInterval: 30_000,
+  });
+  const datesValid = !fromDate || !toDate || fromDate <= toDate;
+  const dateRange = {
+    ...(fromDate ? { from: new Date(fromDate + 'T00:00:00+07:00').toISOString() } : {}),
+    ...(toDate
+      ? { to: new Date(new Date(toDate + 'T00:00:00+07:00').getTime() + 86400000).toISOString() }
+      : {}),
+  };
+  const historyQuery = useQuery({
+    enabled: enabled && datesValid,
+    queryFn: () => listBagOpenings({ ...filters, ...dateRange, page: historyPage, pageSize: 20 }),
+    queryKey: ['store-bag-openings', filters, dateRange, historyPage],
+    retry: false,
+    refetchOnWindowFocus: 'always',
+    refetchInterval: 30_000,
   });
   const pendingQuery = useQuery({
-    enabled: role !== 'STORE' || Boolean(effectiveStoreId),
+    enabled,
     queryFn: () => listStoreNormalSalePending(effectiveStoreId || undefined),
     queryKey: ['store-normal-sale-pending', effectiveStoreId],
     retry: false,
   });
-  const availableBags = bagsQuery.data ?? [];
-  const products = (catalogQuery.data ?? []).filter((product) =>
-    availableBags.some((bag) => bag.productId === product.id),
-  );
-  const productBags = availableBags
-    .filter((bag) => bag.productId === productId)
-    .sort((left, right) => left.bagCode.localeCompare(right.bagCode));
+  const availableBags = bagsQuery.data?.data ?? [];
   const currentBag = availableBags.find((bag) => bag.id === selectedBag?.id);
-  const selectedProduct = products.find((product) => product.id === productId);
-  const pendingForProduct = normalSalePendingKg(
-    pendingQuery.data ?? [],
-    productId,
-    role === 'STORE' ? defaultStoreId : storeId || undefined,
-  );
   const mutation = useMutation({
     mutationFn: async (bag: StoreInventoryBag) => {
       const signature = `${bag.id}:${bag.version}`;
@@ -807,175 +824,227 @@ export function ProductionOpenBagPage({ role }: AppOutletContext) {
       operationKeys.current.set(signature, key);
       return openInventoryBag(bag.id, { expectedVersion: bag.version }, key);
     },
-    onError: (error) => setMutationError(errorMessage(error)),
+    onError: async () => {
+      await bagsQuery.refetch();
+    },
     onSuccess: async (bag, submittedBag) => {
       operationKeys.current.delete(`${submittedBag.id}:${submittedBag.version}`);
       setSelectedBag(null);
-      setMutationError('');
-      if (productBags.length === 1) setProductId('');
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['store-inventory-bags'] }),
-        queryClient.invalidateQueries({ queryKey: ['store-normal-sale-pending'] }),
-      ]);
       setNotice(openBagNotice(submittedBag, bag));
+      await Promise.all(
+        [
+          'store-inventory-bags',
+          'store-normal-sale-pending',
+          'store-bag-openings',
+          'receipt-adjustment-context',
+        ].map((key) => queryClient.invalidateQueries({ queryKey: [key] })),
+      );
     },
   });
-
-  const loadError = storesQuery.error ?? catalogQuery.error ?? bagsQuery.error;
+  const productName = (id: string | null) =>
+    catalogQuery.data?.find((p) => p.id === id)?.name ?? 'Chưa ghi nhận';
+  const timestamp = (value: string | null) =>
+    value
+      ? new Intl.DateTimeFormat('en-GB', {
+          timeZone: 'Asia/Ho_Chi_Minh',
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hourCycle: 'h23',
+        })
+          .format(new Date(value))
+          .replace(',', '')
+      : 'Chưa ghi nhận';
+  const pager = (
+    value: number,
+    total: number,
+    fetching: boolean,
+    change: (page: number) => void,
+  ) => (
+    <nav className="inventory-actions" aria-label="Phân trang">
+      <Button tone="secondary" disabled={value <= 1 || fetching} onClick={() => change(value - 1)}>
+        Trang trước
+      </Button>
+      <span>
+        Trang {value} / {Math.max(1, total)}
+      </span>
+      <Button
+        tone="secondary"
+        disabled={value >= total || fetching}
+        onClick={() => change(value + 1)}
+      >
+        Trang sau
+      </Button>
+    </nav>
+  );
   return (
     <>
       <PageHeader
-        actions={
-          <Button
-            busy={bagsQuery.isFetching}
-            onClick={() => void bagsQuery.refetch()}
-            tone="secondary"
-          >
-            <RefreshCw aria-hidden="true" size={16} /> Làm mới
-          </Button>
-        }
-        description="Chọn mặt hàng và bao khả dụng để khui; tổng khối lượng tồn kho không đổi"
         title="Khui kiện"
+        description="Xác nhận khui kiện để bán và tra cứu lịch sử khui."
       />
-      {role !== 'STORE' ? (
-        <section className="panel scope-notice">
-          <ShieldCheck aria-hidden="true" />
-          <div>
-            <strong>Chế độ giám sát</strong>
-            <p>
-              Admin/HTKD có thể xem bao chưa khui; chỉ tài khoản cửa hàng sở hữu mới được xác nhận
-              khui.
-            </p>
-          </div>
-        </section>
-      ) : null}
+      <section className="panel">
+        <p>Nếu phát hiện sai hàng, hãy báo sai lệch trước khi xác nhận khui kiện để bán.</p>
+        <p>
+          Khui vật lý để kiểm tra hàng khác với xác nhận khui bán trên hệ thống. Dữ liệu được tải
+          lại khi quay về trang và mỗi 30 giây.
+        </p>
+        {role !== 'STORE' ? (
+          <p>Chế độ giám sát: chỉ tài khoản cửa hàng sở hữu được xác nhận khui.</p>
+        ) : null}
+        <div className="opening-filters">
+          {role !== 'STORE' ? (
+            <label>
+              Cửa hàng
+              <select
+                value={storeId}
+                onChange={(e) => {
+                  setStoreId(e.target.value);
+                  resetPages();
+                }}
+              >
+                <option value="">Tất cả cửa hàng được phân quyền</option>
+                {stores.map((s) => (
+                  <option value={s.id} key={s.id}>
+                    {s.code} · {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <label>
+            Mặt hàng
+            <select
+              value={productId}
+              onChange={(e) => {
+                setProductId(e.target.value);
+                resetPages();
+              }}
+            >
+              <option value="">Tất cả mặt hàng</option>
+              {(catalogQuery.data ?? []).map((p) => (
+                <option value={p.id} key={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Tìm mã bao
+            <input
+              value={bagCode}
+              onChange={(e) => {
+                setBagCode(e.target.value);
+                resetPages();
+              }}
+            />
+          </label>
+        </div>
+        {catalogQuery.error || storesQuery.error ? (
+          <p role="alert">
+            Không tải được danh mục.{' '}
+            <Button
+              tone="secondary"
+              onClick={() => {
+                void catalogQuery.refetch();
+                void storesQuery.refetch();
+              }}
+            >
+              Thử lại danh mục
+            </Button>
+          </p>
+        ) : null}
+      </section>
       {notice ? (
         <div className="operation-notice operation-notice--success" role="status">
           {notice}
         </div>
       ) : null}
-      {mutationError ? (
-        <div className="operation-notice operation-notice--error" role="alert">
-          {mutationError}
-        </div>
-      ) : null}
-      {role !== 'STORE' ? (
-        <label className="panel inventory-scope-select">
-          Cửa hàng
-          <select
-            onChange={(event) => {
-              setStoreId(event.target.value);
-              setProductId('');
-              setSelectedBag(null);
-            }}
-            value={storeId}
-          >
-            <option value="">Tất cả cửa hàng được phân quyền</option>
-            {stores.map((store) => (
-              <option key={store.id} value={store.id}>
-                {store.code} · {store.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
-      {loadError ? (
-        <section className="panel source-error" role="alert">
-          <strong>Không thể tải bao khả dụng</strong>
-          <p>{errorMessage(loadError)}</p>
+      {mutation.error ? <p role="alert">{errorMessage(mutation.error)}</p> : null}
+      <section className="panel">
+        <div className="section-heading">
+          <h2>Bao chưa khui ({bagsQuery.data?.pagination.totalItems ?? 0})</h2>
           <Button
+            tone="secondary"
             busy={bagsQuery.isFetching}
             onClick={() => void bagsQuery.refetch()}
-            tone="secondary"
           >
-            Thử lại
+            Làm mới bao
           </Button>
-        </section>
-      ) : bagsQuery.isPending || catalogQuery.isPending ? (
-        <DashboardSkeleton />
-      ) : availableBags.length === 0 ? (
-        <section className="panel">
+        </div>
+        {bagsQuery.error ? (
+          <p role="alert">
+            {errorMessage(bagsQuery.error)}{' '}
+            <Button onClick={() => void bagsQuery.refetch()}>Thử lại danh sách</Button>
+          </p>
+        ) : bagsQuery.isPending ? (
+          <DashboardSkeleton />
+        ) : availableBags.length === 0 ? (
           <EmptyState
-            detail="Chưa có bao khả dụng trong phạm vi hiện tại."
             title="Không có bao chờ khui"
+            detail="Không có bao chưa khui phù hợp bộ lọc."
           />
-        </section>
-      ) : (
-        <section className="panel open-bag-form">
-          <div className="section-heading section-heading--compact">
-            <div>
-              <h2>Chọn bao để khui</h2>
-              <p>{availableBags.length} bao chưa khui trong phạm vi đang xem</p>
-            </div>
-            <PackageOpen aria-hidden="true" />
+        ) : (
+          <div className="opening-cards">
+            {availableBags.map((bag) => (
+              <article className="opening-card" key={bag.id}>
+                <h3>
+                  {bag.bagCode} · {productName(bag.productId)}
+                </h3>
+                <p>{role !== 'STORE' ? storeName(stores, bag.storeId) + ' · ' : ''}Chưa khui</p>
+                <p>
+                  Kg lúc nhận: {formatKg(bag.receivedWeightKg)} · Còn lại:{' '}
+                  {formatKg(bag.remainingWeightKg)}
+                </p>
+                <p>Nhận lúc {timestamp(bag.receivedAt)}</p>
+                <p className="opening-reference">
+                  Nguồn:{' '}
+                  {bag.sourceReceiptBagId
+                    ? 'Nhận kho tổng'
+                    : bag.sourceTransferId
+                      ? 'Chuyển cửa hàng'
+                      : 'Nhập đối tác'}{' '}
+                  · {bag.sourceDocumentCode ?? 'Chưa ghi nhận mã chứng từ'}
+                </p>
+                {role === 'STORE' ? (
+                  <Button
+                    disabled={mutation.isPending || bagsQuery.isFetching}
+                    onClick={() => {
+                      setSelectedBag(bag);
+                      mutation.reset();
+                    }}
+                  >
+                    Khui bao {bag.bagCode}
+                  </Button>
+                ) : null}
+              </article>
+            ))}
           </div>
-          <div className="open-bag-fields">
-            <label>
-              Mặt hàng
-              <select
-                disabled={mutation.isPending}
-                onChange={(event) => {
-                  setProductId(event.target.value);
-                  setSelectedBag(null);
-                  setMutationError('');
-                }}
-                value={selectedProduct ? productId : ''}
-              >
-                <option value="">Chọn mặt hàng</option>
-                {products.map((product) => (
-                  <option key={product.id} value={product.id}>
-                    {product.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Bao khả dụng
-              <select
-                disabled={!selectedProduct || mutation.isPending}
-                onChange={(event) => {
-                  setSelectedBag(productBags.find((bag) => bag.id === event.target.value) ?? null);
-                  setMutationError('');
-                }}
-                value={
-                  selectedBag && productBags.some((bag) => bag.id === selectedBag.id)
-                    ? selectedBag.id
-                    : ''
-                }
-              >
-                <option value="">Chọn bao</option>
-                {productBags.map((bag) => (
-                  <option key={bag.id} value={bag.id}>
-                    {bag.bagCode} · {formatKg(bag.remainingWeightKg)}
-                    {role === 'STORE' ? '' : ` · ${storeName(stores, bag.storeId)}`}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          {selectedProduct ? (
-            <p className="open-bag-availability">
-              {selectedProduct.name}: {productBags.length} bao chưa khui ·{' '}
-              {formatKg(
-                gramsToKilograms(
-                  productBags.reduce(
-                    (sum, bag) => sum + kilogramsToGrams(bag.remainingWeightKg),
-                    0n,
-                  ),
-                ),
-              )}
+        )}
+        {pager(page, bagsQuery.data?.pagination.totalPages ?? 0, bagsQuery.isFetching, (p) => {
+          setPage(p);
+          setSelectedBag(null);
+        })}
+        {selectedBag && role === 'STORE' ? (
+          <>
+            <p>
+              Bán thường IDOSI chờ trừ:{' '}
+              {pendingQuery.isPending
+                ? 'Đang tải…'
+                : pendingQuery.error
+                  ? 'Chưa tải được; máy chủ sẽ tính lại khi xác nhận.'
+                  : formatKg(
+                      normalSalePendingKg(
+                        pendingQuery.data ?? [],
+                        selectedBag.productId,
+                        selectedBag.storeId,
+                      ) ?? '0.000',
+                    )}
+              .
             </p>
-          ) : null}
-          {selectedProduct && pendingForProduct !== null ? (
-            <p className="open-bag-availability" role="status">
-              Bán thường IDOSI chưa trừ: {formatKg(pendingForProduct)}. Khi khui, hệ thống trừ phần
-              này vào bao trước; phần còn lại là tồn để bán hoặc lọc.
-            </p>
-          ) : null}
-          {role === 'STORE' &&
-          selectedBag &&
-          selectedProduct &&
-          selectedBag.productId === productId ? (
             <OpenBagConfirmation
               bag={selectedBag}
               busy={mutation.isPending}
@@ -989,14 +1058,109 @@ export function ProductionOpenBagPage({ role }: AppOutletContext) {
                   !mutation.isPending &&
                   !bagsQuery.isFetching &&
                   isOpenBagSelectionCurrent(selectedBag, currentBag, defaultStoreId)
-                ) {
+                )
                   mutation.mutate(selectedBag);
-                }
               }}
             />
-          ) : null}
-        </section>
-      )}
+          </>
+        ) : null}
+      </section>
+      <section className="panel">
+        <div className="section-heading">
+          <h2>Lịch sử khui</h2>
+          <Button
+            tone="secondary"
+            busy={historyQuery.isFetching}
+            disabled={!datesValid}
+            onClick={() => void historyQuery.refetch()}
+          >
+            Làm mới lịch sử
+          </Button>
+        </div>
+        <div className="opening-filters">
+          <label>
+            Từ ngày (Việt Nam)
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => {
+                setFromDate(e.target.value);
+                setHistoryPage(1);
+              }}
+            />
+          </label>
+          <label>
+            Đến hết ngày (Việt Nam)
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => {
+                setToDate(e.target.value);
+                setHistoryPage(1);
+              }}
+            />
+          </label>
+        </div>
+        {!datesValid ? (
+          <p role="alert">Ngày kết thúc phải từ ngày bắt đầu trở đi.</p>
+        ) : historyQuery.error ? (
+          <p role="alert">
+            {errorMessage(historyQuery.error)}{' '}
+            <Button onClick={() => void historyQuery.refetch()}>Thử lại lịch sử</Button>
+          </p>
+        ) : historyQuery.isPending ? (
+          <DashboardSkeleton />
+        ) : historyQuery.data?.data.length === 0 ? (
+          <EmptyState
+            title="Chưa có lịch sử khui"
+            detail="Không có lần khui được ghi nhận trong bộ lọc này."
+          />
+        ) : (
+          <div className="opening-cards">
+            {historyQuery.data?.data.map((row) => (
+              <article className="opening-card" key={row.id}>
+                <h3>
+                  {row.bagCode ?? 'Chưa ghi nhận'} · {timestamp(row.openedAt)}
+                </h3>
+                <p>
+                  {
+                    {
+                      BUTTON: 'Xác nhận khui bán',
+                      SORTING: 'Mở do lọc hàng',
+                      TRANSFER: 'Mở do xuất chuyển',
+                      OUTBOUND: 'Mở do duyệt xuất hàng',
+                      IDOSI: 'Mở do đồng bộ IDOSI (legacy)',
+                      LEGACY: 'Nguồn mở chưa ghi nhận',
+                    }[row.source]
+                  }
+                </p>
+                <p>
+                  {storeName(stores, row.storeId)} · Mặt hàng (tên danh mục hiện tại):{' '}
+                  {productName(row.productId)}
+                </p>
+                <p>
+                  Kg trước khui:{' '}
+                  {row.weightBeforeKg ? formatKg(row.weightBeforeKg) : 'Chưa ghi nhận'} · Bù bán
+                  IDOSI:{' '}
+                  {row.normalSaleAppliedKg ? formatKg(row.normalSaleAppliedKg) : 'Chưa ghi nhận'} ·
+                  Kg sau thao tác:{' '}
+                  {row.weightAfterKg ? formatKg(row.weightAfterKg) : 'Chưa ghi nhận'}
+                </p>
+                <p className="opening-reference">
+                  Người thực hiện (ID): {row.actorAccountId ?? 'Chưa ghi nhận'}
+                </p>
+                <p>Trạng thái hiện tại: {statusCopy[row.currentStatus].label}</p>
+              </article>
+            ))}
+          </div>
+        )}
+        {pager(
+          historyPage,
+          historyQuery.data?.pagination.totalPages ?? 0,
+          historyQuery.isFetching || !datesValid,
+          setHistoryPage,
+        )}
+      </section>
     </>
   );
 }

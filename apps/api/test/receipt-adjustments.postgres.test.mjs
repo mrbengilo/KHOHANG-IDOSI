@@ -1052,6 +1052,73 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
     assert.ok(!JSON.stringify(history).includes('10.0.0.1'));
   });
 
+  test('opened intact bags return structured 409 and history respects store scope', async () => {
+    const fx = await finalizedReceipt(repository);
+    const view = await repository.getReceiptAdjustmentContext(fx.store, fx.receiptId);
+    const target = view.bags[0];
+    const inventory = await repository.listStoreInventoryBags(fx.store, {
+      page: 1,
+      pageSize: 20,
+      unopenedOnly: 'true',
+    });
+    const bag = inventory.data.find((b) => b.id === target.inventoryBagId);
+    const key = randomUUID();
+    await repository.openStoreInventoryBag(
+      fx.store,
+      bag.id,
+      { expectedVersion: bag.version },
+      key,
+      'opening',
+      context(),
+    );
+    await assert.rejects(
+      repository.createReceiptAdjustment(
+        fx.store,
+        {
+          receiptId: fx.receiptId,
+          reason: 'Sai hàng sau khui',
+          evidenceNote: null,
+          discoveredAt: new Date().toISOString(),
+          lines: [
+            { receiptBagId: target.receiptBagId, actualProductId: fx.jeansId, disposition: 'KEEP' },
+          ],
+        },
+        randomUUID(),
+        'blocked',
+        context(),
+      ),
+      (error) =>
+        error.statusCode === 409 &&
+        error.details.blockers[target.receiptBagId].includes('BAG_ALREADY_OPENED'),
+    );
+    const history = await repository.listStoreBagOpenings(fx.store, { page: 1, pageSize: 20 });
+    assert.equal(history.data.length, 1);
+    assert.equal(history.data[0].source, 'BUTTON');
+    assert.equal(history.data[0].bagId, bag.id);
+    assert.equal(
+      (
+        await repository.listStoreInventoryBags(fx.store, {
+          page: 1,
+          pageSize: 20,
+          unopenedOnly: 'true',
+        })
+      ).pagination.totalItems,
+      2,
+    );
+    await assert.rejects(
+      repository.listStoreBagOpenings(fx.otherStore, {
+        page: 1,
+        pageSize: 20,
+        storeId: bag.storeId,
+      }),
+      (e) => e.code === 'FORBIDDEN',
+    );
+    await assert.rejects(
+      repository.listStoreBagOpenings(fx.wholesale, { page: 1, pageSize: 20 }),
+      (e) => e.code === 'FORBIDDEN',
+    );
+  });
+
   test('routes require a session and are documented in OpenAPI', async () => {
     // Not closed here: closing the app would close the repository pool the suite still uses.
     const app = await createApi({ repository });

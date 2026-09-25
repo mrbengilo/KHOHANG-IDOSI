@@ -1,3 +1,5 @@
+import { listStoreBagOpenings } from '@idosi/database';
+import type { ListStoreBagOpeningsQuery, StoreBagOpening } from '@idosi/contracts';
 import {
   loadIdosiStatisticsStates,
   prepareOrderingContext as prepareDatabaseOrdering,
@@ -3083,26 +3085,40 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       ...(query.status === undefined ? {} : { status: databaseInventoryStatus(query.status) }),
       ...(query.bagCode === undefined ? {} : { bagCode: query.bagCode }),
     };
-    if (actor.role === 'ADMIN') {
-      return inventoryBagPage(
-        await listDatabaseStoreInventoryBags(db, {
-          ...filters,
-          ...(query.storeId === undefined ? {} : { storeId: query.storeId }),
-        }),
-      );
-    }
-    if (actor.role === 'STORE') {
-      if (actor.storeId === null) return emptyPage(query.page, query.pageSize);
-      return inventoryBagPage(
-        await listDatabaseStoreInventoryBags(db, { ...filters, storeId: actor.storeId }),
-      );
-    }
-    if (query.storeId !== undefined) {
-      return inventoryBagPage(
-        await listDatabaseStoreInventoryBags(db, { ...filters, storeId: query.storeId }),
-      );
-    }
-    return listAssignedStoreInventoryBags(actor.assignedStoreIds, query);
+    const storeIds = query.storeId
+      ? [query.storeId]
+      : actor.role === 'ADMIN'
+        ? undefined
+        : actor.role === 'STORE'
+          ? actor.storeId
+            ? [actor.storeId]
+            : []
+          : [...actor.assignedStoreIds];
+    return inventoryBagPage(
+      await listDatabaseStoreInventoryBags(db, {
+        ...filters,
+        unopenedOnly: query.unopenedOnly === 'true',
+        ...(storeIds ? { storeIds } : {}),
+      }),
+    );
+  }
+
+  public async listStoreBagOpenings(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreBagOpeningsQuery,
+  ): Promise<Page<StoreBagOpening>> {
+    if (!['ADMIN', 'HTKD', 'STORE'].includes(actor.role)) throw forbidden();
+    if (query.storeId && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const storeIds = query.storeId
+      ? [query.storeId]
+      : actor.role === 'ADMIN'
+        ? undefined
+        : actor.role === 'STORE'
+          ? actor.storeId
+            ? [actor.storeId]
+            : []
+          : [...actor.assignedStoreIds];
+    return listStoreBagOpenings(db, query, storeIds);
   }
 
   public async listStoreInventoryBagLedger(
@@ -4448,6 +4464,7 @@ function inventoryBagDto(record: StoreInventoryBagRecord): StoreInventoryBag {
     storeId: record.storeId,
     productId: record.productId,
     sourceReceiptBagId: record.sourceStoreReceiptBagId,
+    sourceDocumentCode: record.sourceDocumentCode ?? null,
     outboundOrderId: record.outboundRequestId,
     sourceTransferId: record.sourceTransferId,
     sourceInventoryBagId: record.sourceInventoryBagId,
@@ -4460,6 +4477,7 @@ function inventoryBagDto(record: StoreInventoryBagRecord): StoreInventoryBag {
     remainingWeightKg: record.currentWeightKg,
     status: inventoryBagStatus(record.status),
     version: record.version,
+    openedAt: record.openedAt?.toISOString() ?? null,
     receivedAt: record.receivedAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   };
@@ -4690,31 +4708,6 @@ function storeTransferPage(
   page: Awaited<ReturnType<typeof listDatabaseStoreTransfers>>,
 ): Page<StoreTransfer> {
   return { data: page.data.map(storeTransferDto), pagination: page.pagination };
-}
-
-async function listAssignedStoreInventoryBags(
-  assignedStoreIds: readonly string[],
-  query: ListStoreInventoryBagsQuery,
-): Promise<Page<StoreInventoryBag>> {
-  return listAssignedStorePages(
-    assignedStoreIds,
-    query.page,
-    query.pageSize,
-    async (storeId, page, pageSize) =>
-      inventoryBagPage(
-        await listDatabaseStoreInventoryBags(db, {
-          storeId,
-          page,
-          pageSize,
-          ...(query.productId === undefined ? {} : { productId: query.productId }),
-          ...(query.status === undefined ? {} : { status: databaseInventoryStatus(query.status) }),
-          ...(query.bagCode === undefined ? {} : { bagCode: query.bagCode }),
-        }),
-      ),
-    (left, right) =>
-      (right.receivedAt ?? '').localeCompare(left.receivedAt ?? '') ||
-      left.bagCode.localeCompare(right.bagCode),
-  );
 }
 
 async function listAssignedStoreOutbounds(

@@ -1,3 +1,4 @@
+import type { ListStoreBagOpeningsQuery, StoreBagOpening } from '@idosi/contracts';
 import { randomUUID } from 'node:crypto';
 import { nextOrderingWindow, type OrderingContext } from '@idosi/contracts';
 
@@ -376,6 +377,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     string,
     { readonly requestHash: string; readonly response: StorePartnerInbound }
   >();
+  private readonly bagOpenings = new Map<string, StoreBagOpening>();
   private readonly inventoryBags = new Map<string, StoreInventoryBag>();
   private readonly inventoryBagCosts = new Map<string, bigint>();
   private readonly inventoryLedger = new Map<string, StoreInventoryBagLedgerEntry>();
@@ -3022,6 +3024,33 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     return { data: structuredClone(updated), replayed: false };
   }
 
+  public async listStoreBagOpenings(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreBagOpeningsQuery,
+  ): Promise<Page<StoreBagOpening>> {
+    this.assertRequestedStoreScope(actor, query.storeId);
+    if (!['ADMIN', 'HTKD', 'STORE'].includes(actor.role)) throw forbidden();
+    const values = [...this.bagOpenings.values()]
+      .filter((row) => canAccessStore(actor, row.storeId))
+      .filter((row) => !query.storeId || row.storeId === query.storeId)
+      .filter((row) => !query.productId || row.productId === query.productId)
+      .filter(
+        (row) => !query.bagCode || row.bagCode?.toLowerCase().includes(query.bagCode.toLowerCase()),
+      )
+      .filter((row) => !query.from || (row.openedAt !== null && row.openedAt >= query.from))
+      .filter((row) => !query.to || (row.openedAt !== null && row.openedAt < query.to))
+      .sort(
+        (a, b) => (b.openedAt ?? '').localeCompare(a.openedAt ?? '') || b.id.localeCompare(a.id),
+      )
+      .map((row) => ({
+        ...row,
+        currentStatus: this.inventoryBags.get(row.bagId)?.status ?? row.currentStatus,
+      }));
+    return {
+      data: structuredClone(slicePage(values, query.page, query.pageSize)),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
+  }
   public async listStoreInventoryBags(
     actor: AuthenticatedPrincipal,
     query: ListStoreInventoryBagsQuery,
@@ -3032,6 +3061,9 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       .filter((bag) => query.storeId === undefined || bag.storeId === query.storeId)
       .filter((bag) => query.productId === undefined || bag.productId === query.productId)
       .filter((bag) => query.status === undefined || bag.status === query.status)
+      .filter(
+        (bag) => query.unopenedOnly !== 'true' || (bag.status === 'AVAILABLE' && !bag.openedAt),
+      )
       .filter(
         (bag) =>
           query.bagCode === undefined ||
@@ -3088,16 +3120,35 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (replay) return { data: replay as StoreInventoryBag, replayed: true };
     const current = this.requireInventoryBag(bagId);
     if (current.storeId !== actor.storeId) throw forbidden();
-    if (current.version !== input.expectedVersion || current.status !== 'AVAILABLE') {
+    if (
+      current.version !== input.expectedVersion ||
+      current.status !== 'AVAILABLE' ||
+      current.openedAt
+    ) {
       throw versionConflict('Bao tồn kho đã thay đổi hoặc không thể mở');
     }
     const updated: StoreInventoryBag = {
       ...current,
       status: 'OPEN',
+      openedAt: this.now().toISOString(),
       updatedAt: this.now().toISOString(),
       version: current.version + 1,
     };
     this.inventoryBags.set(updated.id, updated);
+    this.bagOpenings.set(updated.id, {
+      id: updated.id,
+      bagId: updated.id,
+      bagCode: updated.bagCode,
+      storeId: updated.storeId,
+      productId: updated.productId,
+      weightBeforeKg: current.remainingWeightKg,
+      normalSaleAppliedKg: '0.000',
+      weightAfterKg: updated.remainingWeightKg,
+      actorAccountId: actor.accountId,
+      openedAt: updated.openedAt!,
+      source: 'BUTTON',
+      currentStatus: updated.status,
+    });
     this.rememberInventoryMutation(scopedKey, requestHash, 'STORE_INVENTORY_BAG', updated);
     this.appendAudit(
       actor,

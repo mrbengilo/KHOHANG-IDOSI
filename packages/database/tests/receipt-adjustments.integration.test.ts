@@ -7,6 +7,10 @@ import {
   allocationRuns,
   applyWarehouseMovement,
   auditLogs,
+  openStoreInventoryBag,
+  listStoreBagOpenings,
+  pool,
+  storeReceiptAdjustmentLines,
   closeDatabase,
   dailyPriorityOffers,
   createReceiptAdjustment,
@@ -20,6 +24,7 @@ import {
   getReceiptAdjustmentContext,
   htkdAssignments,
   inventorySnapshots,
+  idempotencyKeys,
   loadMonthlyOperationalReport,
   mergedOrderItems,
   mergedOrders,
@@ -101,6 +106,270 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
       await db.update(orderSessions).set({ deletedAt: new Date() }).where(eq(orderSessions.id, id));
     }
     await closeDatabase();
+  });
+
+  it.each(['opened', 'timestamp', 'audit'] as const)(
+    'rejects %s evidence, including mixed payloads, without partial holds',
+    async (evidence) => {
+      const fx = await createFinalizedReceipt();
+      const target = [...fx.bags]
+        .sort((a, b) => a.inventoryBagId.localeCompare(b.inventoryBagId))
+        .at(-1)!;
+      const untouched = fx.bags.find((bag) => bag.inventoryBagId !== target.inventoryBagId)!;
+      if (evidence === 'audit')
+        await db.insert(auditLogs).values({
+          action: 'STORE_INVENTORY_BAG_OPENED',
+          entityType: 'store_inventory_bag',
+          entityId: target.inventoryBagId,
+        });
+      else
+        await db
+          .update(storeInventoryBags)
+          .set(evidence === 'opened' ? { status: 'opened' } : { openedAt: new Date() })
+          .where(eq(storeInventoryBags.id, target.inventoryBagId));
+      await expect(report(fx, fx.bags, 'keep')).rejects.toBeInstanceOf(
+        ReceiptAdjustmentBlockedError,
+      );
+      expect(
+        await db
+          .select()
+          .from(storeReceiptAdjustments)
+          .where(eq(storeReceiptAdjustments.storeReceiptId, fx.receiptId)),
+      ).toHaveLength(0);
+      expect((await bagRow(untouched.inventoryBagId)).status).toBe('available');
+      expect(
+        await db
+          .select()
+          .from(idempotencyKeys)
+          .where(eq(idempotencyKeys.scope, `receipt-adjustment.create:${fx.receiptId}`)),
+      ).toHaveLength(0);
+      expect(
+        await db
+          .select()
+          .from(storeInventoryLedgerEntries)
+          .where(
+            and(
+              eq(storeInventoryLedgerEntries.storeId, fx.storeId),
+              eq(storeInventoryLedgerEntries.eventType, 'quarantine'),
+            ),
+          ),
+      ).toHaveLength(0);
+      expect(
+        await db
+          .select()
+          .from(auditLogs)
+          .where(
+            and(
+              eq(auditLogs.actorStoreId, fx.storeId),
+              eq(auditLogs.action, 'RECEIPT_ADJUSTMENT_REPORTED'),
+            ),
+          ),
+      ).toHaveLength(0);
+      const context = await getReceiptAdjustmentContext(db, fx.receiptId);
+      expect(context?.bags.find((b) => b.inventoryBagId === target.inventoryBagId)).toMatchObject({
+        canReportDiscrepancy: false,
+        reportBlockers: expect.arrayContaining(['BAG_ALREADY_OPENED']),
+      });
+    },
+  );
+
+  it('legacy pending opened holds cannot verify/resubmit/apply but rejection releases them', async () => {
+    const fx = await createFinalizedReceipt();
+    const id = await report(fx, [fx.bags[0]!], 'keep');
+    await db
+      .update(storeReceiptAdjustmentLines)
+      .set({ holdPreviousStatus: 'opened' })
+      .where(eq(storeReceiptAdjustmentLines.adjustmentId, id));
+    await expect(verify(fx, id, 0, { pricePerKgVnd: 40_000n })).rejects.toBeInstanceOf(
+      ReceiptAdjustmentBlockedError,
+    );
+    await transition({
+      adjustmentId: id,
+      expectedVersion: 0,
+      actorUserId: adminId,
+      action: 'REJECT',
+      note: 'Legacy đã khui, giải phóng giữ',
+    });
+    expect((await bagRow(fx.bags[0]!.inventoryBagId)).status).toBe('opened');
+  });
+
+  it('legacy opening evidence blocks resubmit and apply without rewriting documents', async () => {
+    const fx = await createFinalizedReceipt();
+    const applying = await report(fx, [fx.bags[0]!], 'keep');
+    await verify(fx, applying, 0, { pricePerKgVnd: 40_000n });
+    await db
+      .update(storeInventoryBags)
+      .set({ openedAt: new Date() })
+      .where(eq(storeInventoryBags.id, fx.bags[0]!.inventoryBagId));
+    await expect(applyAdjustment(applying, 1)).rejects.toBeInstanceOf(
+      ReceiptAdjustmentBlockedError,
+    );
+    expect((await getReceiptAdjustment(db, applying))?.status).toBe('pending_admin');
+    const resubmitting = await report(fx, [fx.bags[1]!], 'keep');
+    await transition({
+      adjustmentId: resubmitting,
+      actorUserId: adminId,
+      expectedVersion: 0,
+      action: 'REQUEST_INFO',
+      note: 'Bổ sung bằng chứng',
+    });
+    await db
+      .update(storeReceiptAdjustmentLines)
+      .set({ holdPreviousStatus: 'opened' })
+      .where(eq(storeReceiptAdjustmentLines.adjustmentId, resubmitting));
+    await expect(
+      transition({
+        adjustmentId: resubmitting,
+        actorUserId: fx.storeUserId,
+        expectedVersion: 1,
+        action: 'RESUBMIT',
+        reason: 'Bổ sung bằng chứng thực tế',
+        evidenceNote: null,
+        discoveredAt: new Date(),
+        lines: [
+          {
+            receiptBagId: fx.bags[1]!.receiptBagId,
+            actualProductId: fx.jeansId,
+            disposition: 'keep',
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(ReceiptAdjustmentBlockedError);
+    await transition({
+      adjustmentId: resubmitting,
+      actorUserId: fx.storeUserId,
+      expectedVersion: 1,
+      action: 'CANCEL',
+      note: 'Hủy để đối soát',
+    });
+    expect((await bagRow(fx.bags[1]!.inventoryBagId)).status).toBe('opened');
+  });
+
+  it('concurrent opens with one version produce one event; legacy unknown time stays unknown', async () => {
+    const fx = await createFinalizedReceipt();
+    const bag = await bagRow(fx.bags[0]!.inventoryBagId);
+    const input = {
+      bagId: bag.id,
+      storeId: fx.storeId,
+      actorUserId: fx.storeUserId,
+      expectedVersion: bag.version,
+      requestHash: 'concurrent-open',
+    };
+    const result = await Promise.allSettled([
+      openStoreInventoryBag(db, { ...input, idempotencyKey: randomUUID() }),
+      openStoreInventoryBag(db, { ...input, idempotencyKey: randomUUID() }),
+    ]);
+    expect(result.filter((item) => item.status === 'fulfilled')).toHaveLength(1);
+    await db
+      .update(storeInventoryBags)
+      .set({ status: 'opened' })
+      .where(eq(storeInventoryBags.id, fx.bags[1]!.inventoryBagId));
+    const history = await listStoreBagOpenings(db, { page: 1, pageSize: 20 }, [fx.storeId]);
+    expect(history.data).toHaveLength(2);
+    expect(history.data[0]?.bagId).toBe(bag.id);
+    expect(history.data[1]).toMatchObject({
+      openedAt: null,
+      actorAccountId: null,
+      source: 'LEGACY',
+      weightBeforeKg: null,
+    });
+  });
+
+  it.each(['report', 'open'] as const)(
+    'deterministic two-connection race: %s queues first',
+    async (winner) => {
+      const fx = await createFinalizedReceipt();
+      const target = fx.bags[0]!;
+      const bag = await bagRow(target.inventoryBagId);
+      const barrier = await pool.connect();
+      const lockName = `store-inventory-bag:${bag.id}`;
+      await barrier.query('begin');
+      await barrier.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [lockName]);
+      const opening = () =>
+        openStoreInventoryBag(db, {
+          bagId: bag.id,
+          storeId: fx.storeId,
+          actorUserId: fx.storeUserId,
+          expectedVersion: bag.version,
+          idempotencyKey: randomUUID(),
+          requestHash: 'open-race',
+        });
+      const reporting = () => report(fx, [target], 'keep');
+      const settled = (p: Promise<unknown>) =>
+        p.then(
+          (value) => ({ ok: true, value }),
+          (error) => ({ ok: false, error }),
+        );
+      const queued = async (expected: number) => {
+        const deadline = Date.now() + 5_000;
+        while (Date.now() < deadline) {
+          const result = await barrier.query(
+            `select count(*)::int as n from pg_locks where locktype = 'advisory' and not granted
+          and classid = ((hashtextextended($1, 0) >> 32) & 4294967295)::oid
+          and objid = (hashtextextended($1, 0) & 4294967295)::oid`,
+            [lockName],
+          );
+          if (result.rows[0].n >= expected) return;
+        }
+        throw new Error('Commands did not reach the bag-lock barrier');
+      };
+      try {
+        const first = settled(winner === 'report' ? reporting() : opening());
+        await queued(1);
+        const second = settled(winner === 'report' ? opening() : reporting());
+        await queued(2);
+        await barrier.query('commit');
+        expect((await first).ok).toBe(true);
+        expect((await second).ok).toBe(false);
+        const history = await listStoreBagOpenings(db, { page: 1, pageSize: 20 }, [fx.storeId]);
+        expect(history.data).toHaveLength(winner === 'open' ? 1 : 0);
+        expect((await bagRow(bag.id)).status).toBe(winner === 'open' ? 'opened' : 'quarantined');
+        await expectLedgerMatchesBags(fx);
+      } finally {
+        await barrier.query('rollback');
+        barrier.release();
+      }
+    },
+  );
+
+  it('opening replay preserves one immutable history row after status and product changes', async () => {
+    const fx = await createFinalizedReceipt();
+    const bag = await bagRow(fx.bags[0]!.inventoryBagId);
+    const input = {
+      bagId: bag.id,
+      storeId: fx.storeId,
+      actorUserId: fx.storeUserId,
+      expectedVersion: bag.version,
+      idempotencyKey: randomUUID(),
+      requestHash: 'history',
+    };
+    await openStoreInventoryBag(db, input);
+    expect((await openStoreInventoryBag(db, input)).replayed).toBe(true);
+    const before = await listStoreBagOpenings(db, { page: 1, pageSize: 20 }, [fx.storeId]);
+    expect(before.data).toHaveLength(1);
+    expect(before.data[0]).toMatchObject({
+      source: 'BUTTON',
+      weightBeforeKg: '20.000',
+      normalSaleAppliedKg: '0.000',
+      actorAccountId: fx.storeUserId,
+      productId: fx.dressId,
+    });
+    await db
+      .update(storeInventoryBags)
+      .set({ status: 'quarantined', productId: fx.coatId })
+      .where(eq(storeInventoryBags.id, bag.id));
+    const after = await listStoreBagOpenings(db, { page: 1, pageSize: 20 }, [fx.storeId]);
+    expect(after.data[0]).toEqual({ ...before.data[0], currentStatus: 'QUARANTINED' });
+    expect(
+      (
+        await listStoreBagOpenings(db, { page: 1, pageSize: 20, to: before.data[0]!.openedAt! }, [
+          fx.storeId,
+        ])
+      ).data,
+    ).toHaveLength(0);
+    await expect(openStoreInventoryBag(db, { ...input, requestHash: 'changed' })).rejects.toThrow(
+      /different request/,
+    );
   });
 
   it('keep branch: 2 dresses + 1 jeans, money changes at apply, one P0B dress wait, jeans sellable', async () => {
@@ -443,7 +712,7 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
     ).toEqual([{ status: 'fulfilled' }]);
   });
 
-  it('blocks application for a partly sold bag, and rejection frees only its own hold', async () => {
+  it('rejects a new report after sale without writing a header or hold', async () => {
     const fx = await createFinalizedReceipt();
     const target = fx.bags[0]!;
     const bag = await bagRow(target.inventoryBagId);
@@ -467,31 +736,18 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
       idempotencyKey: `review-${randomUUID()}`,
       requestHash: 'review',
     });
-    const created = await report(fx, [target], 'keep');
-    expect((await bagRow(bag.id)).status).toBe('quarantined');
-    const context = await getReceiptAdjustmentContext(db, fx.receiptId);
-    expect(context?.bags.find((row) => row.receiptBagId === target.receiptBagId)).toMatchObject({
-      openAdjustmentId: created,
-    });
-    await verify(fx, created, 0, { pricePerKgVnd: 40_000n });
-    const blocked = await applyAdjustment(created, 1).catch((error: unknown) => error);
-    expect(blocked).toBeInstanceOf(ReceiptAdjustmentBlockedError);
-    expect((blocked as ReceiptAdjustmentBlockedError).blockers[target.receiptBagId]).toEqual([
-      'BAG_PARTIALLY_CONSUMED',
-      'BAG_SOLD',
-    ]);
+    await expect(report(fx, [target], 'keep')).rejects.toBeInstanceOf(
+      ReceiptAdjustmentBlockedError,
+    );
+    expect((await bagRow(bag.id)).status).toBe('opened');
+    expect(
+      await db
+        .select()
+        .from(storeReceiptAdjustments)
+        .where(eq(storeReceiptAdjustments.storeReceiptId, fx.receiptId)),
+    ).toHaveLength(0);
     expect(await activeWaits(fx)).toEqual([]);
     expect((await summary(fx)).effective.goodsVnd).toBe(3_000_000n);
-
-    await transition({
-      adjustmentId: created,
-      expectedVersion: 1,
-      actorUserId: adminId,
-      action: 'REJECT',
-      note: 'Cần đối soát giá vốn đã bán thủ công',
-    });
-    expect((await bagRow(bag.id)).status).toBe('opened');
-    expect((await bagRow(fx.bags[1]!.inventoryBagId)).status).toBe('available');
   });
 
   it('a report racing a sale approval leaves one consistent outcome and a balanced ledger', async () => {
@@ -521,9 +777,9 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
         requestHash: 'review',
       }),
     ]);
-    expect(reported.status).toBe('fulfilled');
+    expect(reported.status).toBe('rejected');
     const after = await bagRow(bag.id);
-    expect(after.status).toBe('quarantined');
+    expect(after.status).toBe('opened');
     // Either the sale landed before the hold (bag now 18 kg, apply will be blocked) or the
     // hold won and the sale was refused; never both a sale and an intact bag.
     if (approved.status === 'fulfilled') expect(after.currentWeightKg).toBe('18.000');
@@ -732,7 +988,9 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
       report(fx, [fx.bags[1]!], 'keep'),
     ]);
     expect(reports.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
-    await expect(report(fx, [fx.bags[0]!], 'keep')).rejects.toThrow(/đang nằm trong hồ sơ/);
+    await expect(report(fx, [fx.bags[0]!], 'keep')).rejects.toBeInstanceOf(
+      ReceiptAdjustmentBlockedError,
+    );
     await expect(
       verify(fx, created, 0, { pricePerKgVnd: 40_000n, vatDeltaVnd: 100n }),
     ).rejects.toThrow(/chưa ghi nhận VAT/);

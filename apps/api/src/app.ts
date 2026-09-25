@@ -1,3 +1,4 @@
+import { ListStoreBagOpeningsQuerySchema } from '@idosi/contracts';
 import { randomUUID } from 'node:crypto';
 import { isRetryableTransactionError } from '@idosi/database';
 
@@ -1337,6 +1338,15 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return reply.send({ data: result.data });
   });
 
+  app.get('/api/v1/store-bag-openings', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE']);
+    return repository.listStoreBagOpenings(
+      session.principal,
+      ListStoreBagOpeningsQuerySchema.parse(request.query),
+    );
+  });
+
   app.get('/api/v1/store-inventory-bags', async (request) => {
     const session = await authenticate(request, repository);
     const query = ListStoreInventoryBagsQuerySchema.parse(request.query);
@@ -2616,6 +2626,23 @@ function openApiDocument(): Record<string, unknown> {
               description:
                 'HANDOVER (STORE, WHOLESALE), RECEIVE/RESOLVE (ADMIN), CANCEL back to keep (STORE, WHOLESALE, HTKD, ADMIN)',
             },
+          },
+        },
+      },
+      '/api/v1/store-bag-openings': {
+        get: {
+          security: cookieSecurity,
+          description:
+            'Scoped immutable opening snapshots; from inclusive / to exclusive UTC timestamps. STORE own store, HTKD current assignments, ADMIN all.',
+          parameters: ['storeId', 'productId', 'bagCode', 'from', 'to', 'page', 'pageSize'].map(
+            (name) => ({ name, in: 'query', schema: { type: 'string' } }),
+          ),
+          responses: {
+            '200': {
+              description:
+                'Opening history with server pagination; independent of current inventory status',
+            },
+            '403': { description: 'Outside permitted store scope' },
           },
         },
       },

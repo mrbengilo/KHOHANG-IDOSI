@@ -14,7 +14,8 @@ import {
 import { StoreInventoryBagStatusSchema } from './store-inventory.js';
 
 /**
- * Post-finalization discrepancy ("báo sai lệch sau khui bao"). The finalized receipt is never
+ * Post-finalization discrepancy, before confirming opening for sale. Physical inspection is
+ * distinct from the system's sale-opening command. The finalized receipt is never
  * reopened: an adjustment document records the verified reality and, once an admin applies
  * it, the effective receipt values are the original plus every applied delta.
  */
@@ -38,6 +39,7 @@ export const ReceiptAdjustmentCauseSchema = z.enum([
 export type ReceiptAdjustmentCause = z.infer<typeof ReceiptAdjustmentCauseSchema>;
 
 export const ReceiptAdjustmentBlockerSchema = z.enum([
+  'BAG_ALREADY_OPENED',
   'BAG_NOT_HELD',
   'BAG_STATE_CHANGED',
   'BAG_PARTIALLY_CONSUMED',
@@ -296,6 +298,9 @@ export const ReceiptAdjustmentContextBagSchema = z
     openAdjustmentId: EntityIdSchema.nullable(),
     openReturnId: EntityIdSchema.nullable(),
     dependencies: z.array(ReceiptAdjustmentBlockerSchema),
+    openedAt: IsoDateTimeSchema.nullable(),
+    canReportDiscrepancy: z.boolean(),
+    reportBlockers: z.array(ReceiptAdjustmentBlockerSchema),
   })
   .strict();
 export type ReceiptAdjustmentContextBag = z.infer<typeof ReceiptAdjustmentContextBagSchema>;

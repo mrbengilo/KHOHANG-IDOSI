@@ -16,7 +16,9 @@ export function isOpenBagSelectionCurrent(
     selected.version === current.version &&
     selected.remainingWeightKg === current.remainingWeightKg &&
     selected.status === 'AVAILABLE' &&
-    current.status === 'AVAILABLE',
+    current.status === 'AVAILABLE' &&
+    !selected.openedAt &&
+    !current.openedAt,
   );
 }
 
@@ -44,10 +46,13 @@ export function OpenBagConfirmation({
         </div>
         <div>
           <dt>Sau khi khui</dt>
-          <dd>Đang bán tại CH · 1 bao · {formatKg(bag.remainingWeightKg)}</dd>
+          <dd>Đang bán hoặc hết hàng sau khi trừ bán thường IDOSI đang chờ</dd>
         </div>
       </dl>
-      <p>Tồn chưa khui giảm 1 bao, tồn đang bán tăng 1 bao. Tổng kg và giá vốn không đổi.</p>
+      <p>
+        Khui thuần không đổi tổng kg và giá vốn. Nếu có bán thường IDOSI đang chờ, hệ thống trừ
+        lượng đó đúng một lần; bao có thể hết ngay sau khi khui.
+      </p>
       {!canConfirm && !busy ? (
         <p role="alert">
           Dữ liệu đã thay đổi hoặc đang được tải lại. Hãy kiểm tra và chọn lại bao trước khi xác

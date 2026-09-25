@@ -450,3 +450,5 @@ export type {
   ReportedAdjustmentLineInput,
   VerifiedAdjustmentLineInput,
 } from './store-receipt-adjustments.js';
+
+export * from './store-bag-openings.js';

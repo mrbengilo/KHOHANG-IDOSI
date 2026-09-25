@@ -1,3 +1,4 @@
+import type { ListStoreBagOpeningsQuery, StoreBagOpening } from '@idosi/contracts';
 import type {
   CreateReceiptAdjustmentRequest,
   CreateReceiptReturnRequest,
@@ -668,6 +669,10 @@ export interface WarehouseRepository {
     context: RequestContext,
   ): Promise<IdempotentResource<ReceiptReturn>>;
 
+  listStoreBagOpenings(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreBagOpeningsQuery,
+  ): Promise<Page<StoreBagOpening>>;
   listStoreInventoryBags(
     actor: AuthenticatedPrincipal,
     query: ListStoreInventoryBagsQuery,
