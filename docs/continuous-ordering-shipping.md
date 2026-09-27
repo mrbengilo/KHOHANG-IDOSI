@@ -1,5 +1,9 @@
 # Continuous ordering and combined shipments
 
+The consolidated order and allocation-result UI is described in
+[store/session documents](store-session-documents.md). Previously allocated goods
+shipped in the current cycle remain separate from newly allocated quantities.
+
 ## Business rules
 
 - Ordering is available at any time. Server configuration determines the next snapshot/allocation date; the submission window may start on the preceding date.

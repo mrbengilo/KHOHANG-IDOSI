@@ -1,5 +1,9 @@
 # Allocation result compatibility
 
+The document UI additionally uses `GET /api/v1/session-documents`, paginated at
+store/session header level with complete sources. This separate endpoint does not
+change either wire format below. See [document semantics](store-session-documents.md).
+
 `GET /api/v1/allocations` retains its original response shape by default, including
 the source request's `priority` and persistence coordinates. Existing clients use
 strict response validation, so adding fields to that shape would break open tabs.
