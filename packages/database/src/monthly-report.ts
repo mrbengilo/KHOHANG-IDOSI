@@ -459,7 +459,11 @@ export function summarizeMonthlyReport(
       costDeltaVnd,
       totalDeltaVnd: costDeltaVnd + adjustmentDelta.vatDeltaVnd,
       adjustedLandedInboundCostVnd:
-        rows.inboundSource === 'STORE_RECEIPTS' ? landedInboundCostVnd + costDeltaVnd : null,
+        rows.inboundSource === 'STORE_RECEIPTS'
+          ? landedInboundCostVnd +
+            costDeltaVnd -
+            sum(rows.receiptReturns ?? [], (row) => row.costVnd)
+          : null,
       adjustedVatCostVnd: adjustmentVatComplete ? vatCostVnd + adjustmentDelta.vatDeltaVnd : null,
       returnsHandedOverCount: uniqueCount((rows.receiptReturns ?? []).map((row) => row.returnId)),
       returnsHandedOverValueVnd: sum(rows.receiptReturns ?? [], (row) => row.costVnd),
@@ -651,8 +655,14 @@ async function loadReceiptAdjustmentRows(
       .innerJoin(stores, eq(storeReceiptReturns.storeId, stores.id))
       .where(
         and(
-          gte(storeReceiptReturns.handedOverAt, period.start),
-          lt(storeReceiptReturns.handedOverAt, period.endExclusive),
+          gte(
+            sql`coalesce(${storeReceiptReturns.autoCompletedAt}, ${storeReceiptReturns.handedOverAt})`,
+            period.start,
+          ),
+          lt(
+            sql`coalesce(${storeReceiptReturns.autoCompletedAt}, ${storeReceiptReturns.handedOverAt})`,
+            period.endExclusive,
+          ),
           scopeFilter,
         ),
       ),

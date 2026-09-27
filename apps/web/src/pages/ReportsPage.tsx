@@ -181,10 +181,10 @@ export function buildMonthlyReportCsv(report: MonthlyOperationalReport): string 
       ['Chênh lệch bốc xếp', adjustments.handlingDeltaVnd, 'VND'],
       ['Chênh lệch VAT', adjustments.vatDeltaVnd, 'VND'],
       ['Chênh lệch tổng (gồm VAT)', adjustments.totalDeltaVnd, 'VND'],
-      ['Giá vốn nhập sau điều chỉnh', adjustments.adjustedLandedInboundCostVnd ?? '', 'VND'],
+      ['Giá vốn sau điều chỉnh và trả hàng', adjustments.adjustedLandedInboundCostVnd ?? '', 'VND'],
       ['VAT đầu vào sau điều chỉnh', adjustments.adjustedVatCostVnd ?? '', 'VND'],
-      ['Phiếu trả kho đã bàn giao', adjustments.returnsHandedOverCount, 'phiếu'],
-      ['Giá trị hàng trả đã bàn giao', adjustments.returnsHandedOverValueVnd, 'VND'],
+      ['Phiếu trả kho đã có hiệu lực', adjustments.returnsHandedOverCount, 'phiếu'],
+      ['Giá trị hàng trả đã có hiệu lực', adjustments.returnsHandedOverValueVnd, 'VND'],
     );
   }
   rows.push(
@@ -720,7 +720,7 @@ function AdjustmentsPanel({
           <dd>{signedExactVnd(adjustments.vatDeltaVnd)}</dd>
         </div>
         <div>
-          <dt>Giá vốn nhập sau điều chỉnh</dt>
+          <dt>Giá vốn sau điều chỉnh và trả hàng</dt>
           <dd>
             {adjustments.adjustedLandedInboundCostVnd === null
               ? 'Không áp dụng cho toàn hệ thống (nguồn phiếu nhập kho tổng)'
@@ -736,7 +736,7 @@ function AdjustmentsPanel({
           </dd>
         </div>
         <div>
-          <dt>Hàng trả đã bàn giao</dt>
+          <dt>Hàng trả đã có hiệu lực</dt>
           <dd>
             {adjustments.returnsHandedOverCount} phiếu ·{' '}
             {exactVnd(adjustments.returnsHandedOverValueVnd)}

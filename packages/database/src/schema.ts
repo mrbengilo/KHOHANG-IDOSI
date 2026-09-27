@@ -2009,6 +2009,10 @@ export const storeReceiptReturns = pgTable(
       onDelete: 'restrict',
     }),
     handedOverAt: timestamp('handed_over_at', { withTimezone: true }),
+    autoCompletedAt: timestamp('auto_completed_at', { withTimezone: true }),
+    autoCompletedByUserId: uuid('auto_completed_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
     receivedByUserId: uuid('received_by_user_id').references(() => users.id, {
       onDelete: 'restrict',
     }),
@@ -2052,11 +2056,15 @@ export const storeReceiptReturns = pgTable(
     ),
     check(
       'store_receipt_returns_handover_state',
-      sql`${table.status} IN ('pending_handover', 'cancelled') OR (${table.handedOverByUserId} IS NOT NULL AND ${table.handedOverAt} IS NOT NULL)`,
+      sql`${table.autoCompletedAt} IS NOT NULL OR ${table.status} IN ('pending_handover', 'cancelled') OR (${table.handedOverByUserId} IS NOT NULL AND ${table.handedOverAt} IS NOT NULL)`,
     ),
     check(
       'store_receipt_returns_receive_state',
-      sql`${table.status} IN ('pending_handover', 'in_transit', 'cancelled') OR (${table.receivedByUserId} IS NOT NULL AND ${table.receivedAt} IS NOT NULL AND ${table.receivedQuantity} IS NOT NULL)`,
+      sql`${table.autoCompletedAt} IS NOT NULL OR ${table.status} IN ('pending_handover', 'in_transit', 'cancelled') OR (${table.receivedByUserId} IS NOT NULL AND ${table.receivedAt} IS NOT NULL AND ${table.receivedQuantity} IS NOT NULL)`,
+    ),
+    check(
+      'store_receipt_returns_auto_completion',
+      sql`(${table.autoCompletedAt} IS NULL AND ${table.autoCompletedByUserId} IS NULL) OR (${table.autoCompletedAt} IS NOT NULL AND ${table.autoCompletedByUserId} IS NOT NULL AND ${table.status} = 'received' AND ${table.receivedQuantity} IS NOT NULL AND ${table.receivedQuantity} = ${table.quantity} AND ${table.handedOverAt} IS NULL AND ${table.handedOverByUserId} IS NULL AND ${table.receivedAt} IS NULL AND ${table.receivedByUserId} IS NULL)`,
     ),
     check(
       'store_receipt_returns_received_quantity',

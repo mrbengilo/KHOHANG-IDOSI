@@ -51,6 +51,29 @@ describe('receipt adjustment preview', () => {
     ).toEqual([501n]);
   });
 
+  it('previews immediate return without removing unchanged fees or VAT', () => {
+    const preview = previewAdjustment(
+      { ...before, freightVnd: 100_000, handlingVnd: 30_000, vatVnd: 50_000 },
+      [
+        {
+          disposition: 'RETURN',
+          recordedCostVnd: 1_000_000,
+          weightKg: '20.000',
+          pricePerKgVnd: '40000',
+        },
+      ],
+      { freight: '0', handling: '0', vat: '0' },
+    );
+    expect(preview.lineCosts).toEqual([800_000n]);
+    expect(preview.after).toMatchObject({
+      goods: 2_000_000n,
+      freight: 100_000n,
+      handling: 30_000n,
+      vat: 50_000n,
+      total: 2_180_000n,
+    });
+  });
+
   it('keeps legacy unknown VAT unknown and flags negative results', () => {
     const legacy = { ...before, vatVnd: null, totalVnd: null };
     const kept = previewAdjustment(

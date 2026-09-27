@@ -128,7 +128,7 @@ describe('monthly report UI helpers', () => {
       ],
     });
     expect(csv).toContain('"Chênh lệch tiền hàng","-200000","VND"');
-    expect(csv).toContain('"Giá vốn nhập sau điều chỉnh","2800000","VND"');
+    expect(csv).toContain('"Giá vốn sau điều chỉnh và trả hàng","2800000","VND"');
     expect(csv).toContain('"-20000","-1000000"');
     expect(csv).not.toContain("'-200000");
   });

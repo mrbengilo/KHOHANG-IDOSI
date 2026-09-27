@@ -582,11 +582,175 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
     expect(outbound.replayed).toBe(false);
   });
 
-  it('return branch: P0B wait at apply, stock leaves store at handover, warehouse only on confirmed receipt', async () => {
+  it('approval returns the exact bag immediately, with one warehouse entry, net money and P0B right', async () => {
     const fx = await createFinalizedReceipt();
     const target = fx.bags[0]!;
-    const created = await report(fx, [target], 'return');
+    const before = await balance(fx.jeansId);
+    const untouched = await Promise.all(
+      fx.bags.slice(1).map((item) => bagRow(item.inventoryBagId)),
+    );
+    const id = await report(fx, [target], 'return');
+    const key = randomUUID();
+    const results = await Promise.all([
+      verify(fx, id, 0, { pricePerKgVnd: 40_000n }, key),
+      verify(fx, id, 0, { pricePerKgVnd: 40_000n }, key),
+    ]);
+    expect(results.map((r) => r.replayed).sort()).toEqual([false, true]);
+    expect((await getReceiptAdjustment(db, id))!).toMatchObject({
+      status: 'applied',
+      goodsDeltaVnd: -1_000_000n,
+    });
+    expect(await bagRow(target.inventoryBagId)).toMatchObject({
+      productId: fx.jeansId,
+      status: 'returned',
+      currentWeightKg: '0.000',
+    });
+    expect(await Promise.all(fx.bags.slice(1).map((item) => bagRow(item.inventoryBagId)))).toEqual(
+      untouched,
+    );
+    const [row] = await db
+      .select()
+      .from(storeReceiptReturns)
+      .where(eq(storeReceiptReturns.storeInventoryBagId, target.inventoryBagId));
+    expect(row).toMatchObject({
+      status: 'received',
+      productId: fx.jeansId,
+      costVnd: 800_000n,
+      autoCompletedByUserId: fx.htkdId,
+      autoCompletedAt: expect.any(Date),
+      receivedQuantity: 1,
+      handedOverAt: null,
+      handedOverByUserId: null,
+      receivedByUserId: null,
+      receivedAt: null,
+    });
+    expect(await balance(fx.jeansId)).toEqual({
+      onHand: before.onHand + 1,
+      reserved: before.reserved,
+    });
+    expect((await summary(fx)).effective.goodsVnd).toBe(2_000_000n);
+    expect((await summary(fx)).original.goodsVnd).toBe(3_000_000n);
+    expect(await activeWaits(fx)).toEqual([
+      expect.objectContaining({ originalQuantity: 1, remainingQuantity: 1 }),
+    ]);
+    for (const action of ['HANDOVER', 'CANCEL', 'RECEIVE', 'RESOLVE'] as const) {
+      await expect(
+        returnAction(action === 'HANDOVER' ? fx.storeUserId : adminId, row!.id, 0, {
+          action,
+          outcome: 'RECEIVED',
+          note: 'Stale client',
+        } as Parameters<typeof returnAction>[3]),
+      ).rejects.toThrow();
+    }
+    expect(await balance(fx.jeansId)).toEqual({
+      onHand: before.onHand + 1,
+      reserved: before.reserved,
+    });
+    expect((await summary(fx)).effective.goodsVnd).toBe(2_000_000n);
+    await expectLedgerMatchesBags(fx);
+  });
+
+  it.each(['warehouse', 'entitlement', 'finalize'] as const)(
+    'return rollback when %s write fails',
+    async (stage) => {
+      const fx = await createFinalizedReceipt();
+      const id = await report(fx, [fx.bags[0]!], 'return');
+      const bagBefore = await bagRow(fx.bags[0]!.inventoryBagId);
+      const warehouseBefore = await balance(fx.jeansId);
+      const moneyBefore = await summary(fx);
+      const table =
+        stage === 'warehouse'
+          ? 'warehouse_ledger_entries'
+          : stage === 'entitlement'
+            ? 'receipt_shortage_entitlements'
+            : 'store_receipt_adjustments';
+      const predicate =
+        stage === 'warehouse'
+          ? `NEW.product_id = '${fx.jeansId}'::uuid AND NEW.event_type = 'return'`
+          : stage === 'entitlement'
+            ? `NEW.store_receipt_bag_id = '${fx.bags[0]!.receiptBagId}'::uuid`
+            : `NEW.id = '${id}'::uuid AND NEW.status = 'applied'`;
+      await db.execute(
+        sql.raw(
+          `CREATE FUNCTION test_return_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF ${predicate} THEN RAISE EXCEPTION 'forced return failure'; END IF; RETURN NEW; END $$`,
+        ),
+      );
+      try {
+        await db.execute(
+          sql.raw(
+            `CREATE TRIGGER test_return_failure BEFORE INSERT OR UPDATE ON ${table} FOR EACH ROW EXECUTE FUNCTION test_return_failure()`,
+          ),
+        );
+        await expect(verify(fx, id, 0, { pricePerKgVnd: 40_000n })).rejects.toThrow();
+        expect(await bagRow(fx.bags[0]!.inventoryBagId)).toEqual(bagBefore);
+        expect(await balance(fx.jeansId)).toEqual(warehouseBefore);
+        expect(await summary(fx)).toEqual(moneyBefore);
+        expect(await activeWaits(fx)).toEqual([]);
+        expect(
+          await db
+            .select()
+            .from(storeReceiptReturns)
+            .where(eq(storeReceiptReturns.storeId, fx.storeId)),
+        ).toEqual([]);
+        expect((await getReceiptAdjustment(db, id))!).toMatchObject({
+          status: 'pending_htkd',
+          version: 0,
+          verifiedAt: null,
+        });
+        expect(
+          await db
+            .select()
+            .from(auditLogs)
+            .where(
+              and(eq(auditLogs.entityId, id), eq(auditLogs.action, 'RECEIPT_ADJUSTMENT_APPLIED')),
+            ),
+        ).toEqual([]);
+        await expectLedgerMatchesBags(fx);
+      } finally {
+        await db.execute(sql.raw(`DROP TRIGGER IF EXISTS test_return_failure ON ${table}`));
+        await db.execute(sql.raw('DROP FUNCTION test_return_failure()'));
+      }
+    },
+  );
+
+  it('mispick plus immediate return offsets jeans exactly once and never releases unverified dresses', async () => {
+    const fx = await createFinalizedReceipt();
+    const id = await report(fx, [fx.bags[0]!], 'return');
+    const jeansBefore = await balance(fx.jeansId);
+    const dressBefore = await balance(fx.dressId);
+    await verify(fx, id, 0, { pricePerKgVnd: 40_000n, cause: 'warehouse_mispick' });
+    expect(await balance(fx.jeansId)).toEqual(jeansBefore);
+    expect(await balance(fx.dressId)).toEqual({
+      onHand: dressBefore.onHand + 1,
+      reserved: dressBefore.reserved + 1,
+    });
+    const movements = await db.execute(
+      sql`SELECT event_type, on_hand_delta FROM warehouse_ledger_entries WHERE product_id = ${fx.jeansId} AND source_type IN ('store_receipt_adjustment_line', 'store_receipt_return')`,
+    );
+    expect(movements.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ event_type: 'adjustment', on_hand_delta: -1 }),
+        expect.objectContaining({ event_type: 'return', on_hand_delta: 1 }),
+      ]),
+    );
+    expect((await summary(fx)).effective.goodsVnd).toBe(2_000_000n);
+    await expectLedgerMatchesBags(fx);
+  });
+
+  it('legacy standalone return preserves handover, disputed arrival and idempotent reconciliation', async () => {
+    const fx = await createFinalizedReceipt();
+    const target = fx.bags[0]!;
+    const created = await report(fx, [target], 'keep');
     await verify(fx, created, 0, { pricePerKgVnd: 40_000n });
+    const record = (await getReceiptAdjustment(db, created))!;
+    await createReceiptReturn(db, {
+      adjustmentId: created,
+      adjustmentLineId: record.lines[0]!.id,
+      actorUserId: fx.storeUserId,
+      reason: 'Trả sau khi giữ bán',
+      idempotencyKey: randomUUID(),
+      requestHash: 'legacy-return',
+    });
     const jeansBefore = await balance(fx.jeansId);
 
     expect(await activeWaits(fx)).toHaveLength(1);
@@ -660,8 +824,17 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
   it('switching keep ↔ return keeps the one dress right and is audited', async () => {
     const fx = await createFinalizedReceipt();
     const target = fx.bags[0]!;
-    const created = await report(fx, [target], 'return');
+    const created = await report(fx, [target], 'keep');
     await verify(fx, created, 0, { pricePerKgVnd: 40_000n });
+    const initial = (await getReceiptAdjustment(db, created))!;
+    await createReceiptReturn(db, {
+      adjustmentId: created,
+      adjustmentLineId: initial.lines[0]!.id,
+      actorUserId: fx.storeUserId,
+      reason: 'Trả sau khi giữ bán',
+      idempotencyKey: randomUUID(),
+      requestHash: 'legacy-return',
+    });
     const [pending] = await db
       .select()
       .from(storeReceiptReturns)
@@ -797,35 +970,74 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
     await expect(report(fx, [first!], 'keep', fx.dressId)).rejects.toThrow(/quyền chờ bù/);
   });
 
-  it('HTKD re-verifies a stale legacy snapshot and applies it in one version', async () => {
+  it.each(['keep', 'return'] as const)(
+    'HTKD re-verifies stale legacy %s and applies it in one version',
+    async (disposition) => {
+      const fx = await createFinalizedReceipt();
+      const id = await report(fx, [fx.bags[0]!], disposition);
+      await legacyVerify(fx, id, 0, { pricePerKgVnd: 40_000n });
+      await db
+        .update(storeReceiptAdjustments)
+        .set({ baseAppliedCount: 99, goodsDeltaVnd: -999n })
+        .where(eq(storeReceiptAdjustments.id, id));
+      await expect(verify(fx, id, 0, { pricePerKgVnd: 45_000n })).rejects.toThrow(/đã thay đổi/);
+      expect(await verify(fx, id, 1, { pricePerKgVnd: 45_000n })).toMatchObject({
+        status: 'applied',
+        version: 2,
+      });
+      const record = await getReceiptAdjustment(db, id);
+      expect(record?.money.after?.goodsVnd).toBe(
+        disposition === 'return' ? 2_000_000n : 2_900_000n,
+      );
+      expect((await bagRow(fx.bags[0]!.inventoryBagId)).costVnd).toBe(900_000n);
+      const events = await db.select().from(auditLogs).where(eq(auditLogs.entityId, id));
+      expect(events.filter((event) => event.action === 'RECEIPT_ADJUSTMENT_APPLIED')).toEqual([
+        expect.objectContaining({
+          actorUserId: fx.htkdId,
+          actorRole: 'htkd',
+          before: { status: 'pending_admin', version: 1 },
+          after: expect.objectContaining({ status: 'applied', version: 2 }),
+        }),
+      ]);
+      await expectLedgerMatchesBags(fx);
+    },
+  );
+
+  it('legacy APPLY rebuilds retained money without fabricating physical handover actors', async () => {
     const fx = await createFinalizedReceipt();
-    const id = await report(fx, [fx.bags[0]!], 'keep');
+    const id = await report(fx, [fx.bags[0]!], 'return');
     await legacyVerify(fx, id, 0, { pricePerKgVnd: 40_000n });
-    await db
-      .update(storeReceiptAdjustments)
-      .set({ baseAppliedCount: 99, goodsDeltaVnd: -999n })
-      .where(eq(storeReceiptAdjustments.id, id));
-    await expect(verify(fx, id, 0, { pricePerKgVnd: 45_000n })).rejects.toThrow(/đã thay đổi/);
-    expect(await verify(fx, id, 1, { pricePerKgVnd: 45_000n })).toMatchObject({
-      status: 'applied',
-      version: 2,
-    });
-    const record = await getReceiptAdjustment(db, id);
-    expect(record?.money.after?.goodsVnd).toBe(2_900_000n);
-    expect((await bagRow(fx.bags[0]!.inventoryBagId)).costVnd).toBe(900_000n);
-    const events = await db.select().from(auditLogs).where(eq(auditLogs.entityId, id));
-    expect(events.filter((event) => event.action === 'RECEIPT_ADJUSTMENT_APPLIED')).toEqual([
-      expect.objectContaining({
-        actorUserId: fx.htkdId,
-        actorRole: 'htkd',
-        before: { status: 'pending_admin', version: 1 },
-        after: expect.objectContaining({ status: 'applied', version: 2 }),
-      }),
-    ]);
-    await expectLedgerMatchesBags(fx);
+    await applyAdjustment(id, 1);
+    const record = (await getReceiptAdjustment(db, id))!;
+    expect(record.money.after?.goodsVnd).toBe(2_000_000n);
+    expect(record.goodsDeltaVnd).toBe(-1_000_000n);
+    expect(record.lines[0]!.returns[0]!.status).toBe('received');
   });
 
-  it('mixed keep and return lines apply atomically and create only one pending return', async () => {
+  it.each(['keep', 'return'] as const)(
+    '%s preserves unrelated freight, handling and captured VAT',
+    async (disposition) => {
+      const fx = await createFinalizedReceipt({ fees: true });
+      const id = await report(fx, [fx.bags[0]!], disposition);
+      await verify(fx, id, 0, { pricePerKgVnd: 40_000n });
+      const money = await summary(fx);
+      expect(money.original).toMatchObject({
+        goodsVnd: 3_000_000n,
+        freightVnd: 100_000n,
+        handlingVnd: 30_000n,
+        vatVnd: 50_000n,
+      });
+      expect(money.effective).toMatchObject({
+        goodsVnd: disposition === 'return' ? 2_000_000n : 2_800_000n,
+        freightVnd: 100_000n,
+        handlingVnd: 30_000n,
+        vatVnd: 50_000n,
+        totalVnd: disposition === 'return' ? 2_180_000n : 2_980_000n,
+      });
+    },
+  );
+
+  it('mixed keep and return lines apply atomically and create only one completed return', async () => {
     const fx = await createFinalizedReceipt();
     const id = await report(fx, [fx.bags[0]!, fx.bags[1]!], 'keep');
     await db
@@ -841,13 +1053,16 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
     const result = await verify(fx, id, 0, { pricePerKgVnd: 40_000n }, 'mixed-approval');
     expect(result).toMatchObject({ status: 'applied', version: 1 });
     expect((await bagRow(fx.bags[0]!.inventoryBagId)).status).toBe('available');
-    expect((await bagRow(fx.bags[1]!.inventoryBagId)).status).toBe('quarantined');
+    expect((await bagRow(fx.bags[1]!.inventoryBagId)).status).toBe('returned');
     const record = (await getReceiptAdjustment(db, id))!;
     expect(record.lines.flatMap((line) => line.returns)).toEqual([
-      expect.objectContaining({ status: 'pending_handover' }),
+      expect.objectContaining({ status: 'received' }),
     ]);
-    expect(await balance(fx.jeansId)).toEqual(warehouseBefore);
-    expect((await summary(fx)).effective.goodsVnd).toBe(2_600_000n);
+    expect(await balance(fx.jeansId)).toEqual({
+      onHand: warehouseBefore.onHand + 1,
+      reserved: warehouseBefore.reserved,
+    });
+    expect((await summary(fx)).effective.goodsVnd).toBe(1_800_000n);
     expect(await activeWaits(fx)).toEqual([expect.objectContaining({ originalQuantity: 2 })]);
     expect((await verify(fx, id, 0, { pricePerKgVnd: 40_000n }, 'mixed-approval')).replayed).toBe(
       true,
@@ -886,36 +1101,43 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
     expect(record?.lines[0]?.entitlement).toMatchObject({ waitMode: 'merged', quantity: 1 });
   });
 
-  it('resupply of the owed dress books stock and money once and settles the right; 3.0M → 2.8M → 3.8M', async () => {
-    const fx = await createFinalizedReceipt();
-    const created = await report(fx, [fx.bags[0]!], 'keep');
-    await verify(fx, created, 0, { pricePerKgVnd: 40_000n });
-    const [wait] = await activeWaits(fx);
+  it.each(['keep', 'return'] as const)(
+    'resupply after %s books its own money and settles the original right',
+    async (disposition) => {
+      const fx = await createFinalizedReceipt();
+      const created = await report(fx, [fx.bags[0]!], disposition);
+      await verify(fx, created, 0, { pricePerKgVnd: 40_000n });
+      const [wait] = await activeWaits(fx);
 
-    // Allocation of the P0B wait (what the worker does) ships one dress on a new outbound.
-    const resupply = await createFinalizedReceipt({
-      reuse: fx,
-      quantity: 1,
-      waitTicketId: wait!.id,
-    });
-    const record = await getReceiptAdjustment(db, created);
-    expect(record?.lines[0]?.entitlement).toMatchObject({ receivedQuantity: 1 });
-    const firstMoney = await summary(fx);
-    const resupplyMoney = await summary(resupply);
-    expect(firstMoney.effective.goodsVnd).toBe(2_800_000n);
-    expect(resupplyMoney.effective.goodsVnd).toBe(1_000_000n);
-    expect(firstMoney.effective.goodsVnd + resupplyMoney.effective.goodsVnd).toBe(3_800_000n);
-    expect(await storeProductWeights(fx)).toEqual({
-      [fx.dressId]: 60_000n,
-      [fx.jeansId]: 20_000n,
-    });
-    expect(
-      await db
-        .select({ status: waitTickets.status })
-        .from(waitTickets)
-        .where(eq(waitTickets.id, wait!.id)),
-    ).toEqual([{ status: 'fulfilled' }]);
-  });
+      // Allocation of the P0B wait (what the worker does) ships one dress on a new outbound.
+      const resupply = await createFinalizedReceipt({
+        reuse: fx,
+        quantity: 1,
+        waitTicketId: wait!.id,
+      });
+      const record = await getReceiptAdjustment(db, created);
+      expect(record?.lines[0]?.entitlement).toMatchObject({ receivedQuantity: 1 });
+      const firstMoney = await summary(fx);
+      const resupplyMoney = await summary(resupply);
+      expect(firstMoney.effective.goodsVnd).toBe(
+        disposition === 'return' ? 2_000_000n : 2_800_000n,
+      );
+      expect(resupplyMoney.effective.goodsVnd).toBe(1_000_000n);
+      expect(firstMoney.effective.goodsVnd + resupplyMoney.effective.goodsVnd).toBe(
+        disposition === 'return' ? 3_000_000n : 3_800_000n,
+      );
+      expect(await storeProductWeights(fx)).toEqual({
+        [fx.dressId]: 60_000n,
+        ...(disposition === 'keep' ? { [fx.jeansId]: 20_000n } : {}),
+      });
+      expect(
+        await db
+          .select({ status: waitTickets.status })
+          .from(waitTickets)
+          .where(eq(waitTickets.id, wait!.id)),
+      ).toEqual([{ status: 'fulfilled' }]);
+    },
+  );
 
   it('rejects a new report after sale without writing a header or hold', async () => {
     const fx = await createFinalizedReceipt();
@@ -1133,7 +1355,7 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
       .select()
       .from(storeReceiptReturns)
       .where(eq(storeReceiptReturns.storeInventoryBagId, target!.inventoryBagId));
-    expect(returned!.status).toBe('pending_handover');
+    expect(returned!.status).toBe('received');
     const jeansBefore = await balance(fx.jeansId);
     // Only the admin books the warehouse receipt of a return.
     await expect(
@@ -1143,7 +1365,9 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
         note: null,
       }),
     ).rejects.toBeInstanceOf(ReceiptAdjustmentAuthorizationError);
-    await returnAction(fx.storeUserId, returned!.id, 0, { action: 'HANDOVER' });
+    await expect(
+      returnAction(fx.storeUserId, returned!.id, 0, { action: 'HANDOVER' }),
+    ).rejects.toThrow();
     expect(await bagRow(target!.inventoryBagId)).toMatchObject({ status: 'returned' });
     expect(await balance(fx.jeansId)).toEqual(jeansBefore);
     await expectLedgerMatchesBags(fx);
@@ -1340,34 +1564,42 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
     });
   });
 
-  it('keeps the monthly report on original documents and shows adjustments on their own date', async () => {
-    const fx = await createFinalizedReceipt();
-    const created = await report(fx, [fx.bags[0]!], 'keep');
-    await verify(fx, created, 0, { pricePerKgVnd: 40_000n });
-    const now = new Date();
-    const formatter = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Ho_Chi_Minh',
-      year: 'numeric',
-      month: '2-digit',
-    });
-    const [year, month] = formatter.format(now).split('-').map(Number);
-    const monthly = await loadMonthlyOperationalReport(db, {
-      year: year!,
-      month: month!,
-      scope: { kind: 'STORE', id: fx.storeId },
-    });
-    expect(monthly.totals.inboundGoodsCostVnd.value).toBe(3_000_000n);
-    expect(monthly.adjustments).toMatchObject({
-      appliedCount: 1,
-      goodsDeltaVnd: -200_000n,
-      totalDeltaVnd: -200_000n,
-    });
-    expect(monthly.adjustments.adjustedLandedInboundCostVnd).toBe(2_800_000n);
-    expect(monthly.products.find((row) => row.productId === fx.jeansId)).toMatchObject({
-      adjustmentWeightDeltaGrams: 20_000n,
-      adjustmentGoodsDeltaVnd: 800_000n,
-    });
-  });
+  it.each(['keep', 'return'] as const)(
+    'monthly report keeps original documents and accounts for %s on its effective date',
+    async (disposition) => {
+      const fx = await createFinalizedReceipt();
+      const created = await report(fx, [fx.bags[0]!], disposition);
+      await verify(fx, created, 0, { pricePerKgVnd: 40_000n });
+      const now = new Date();
+      const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        year: 'numeric',
+        month: '2-digit',
+      });
+      const [year, month] = formatter.format(now).split('-').map(Number);
+      const monthly = await loadMonthlyOperationalReport(db, {
+        year: year!,
+        month: month!,
+        scope: { kind: 'STORE', id: fx.storeId },
+      });
+      expect(monthly.totals.inboundGoodsCostVnd.value).toBe(3_000_000n);
+      expect(monthly.adjustments).toMatchObject({
+        appliedCount: 1,
+        goodsDeltaVnd: -200_000n,
+        totalDeltaVnd: -200_000n,
+      });
+      expect(monthly.adjustments.adjustedLandedInboundCostVnd).toBe(
+        disposition === 'return' ? 2_000_000n : 2_800_000n,
+      );
+      expect(monthly.adjustments.returnsHandedOverValueVnd).toBe(
+        disposition === 'return' ? 800_000n : 0n,
+      );
+      expect(monthly.products.find((row) => row.productId === fx.jeansId)).toMatchObject({
+        adjustmentWeightDeltaGrams: 20_000n,
+        adjustmentGoodsDeltaVnd: 800_000n,
+      });
+    },
+  );
 
   // ---------------------------------------------------------------------------------------------
 
@@ -1591,6 +1823,7 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
   async function createFinalizedReceipt(
     options: {
       readonly reuse?: Fixture;
+      readonly fees?: boolean;
       readonly quantity?: number;
       readonly waitTicketId?: string;
       /** A wholesale store, received for by a wholesale-desk account instead of a store account. */
@@ -1862,9 +2095,9 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
       receiptId: declared.value.receiptId,
       expectedVersion: submitted.value.version,
       reviewedByUserId: base.htkdId,
-      freightVnd: 0n,
-      handlingVnd: 0n,
-      vat: { amountVnd: 0n, ratePercent: 8 },
+      freightVnd: options.fees ? 100_000n : 0n,
+      handlingVnd: options.fees ? 30_000n : 0n,
+      vat: { amountVnd: options.fees ? 50_000n : 0n, ratePercent: 8 },
       lines: [
         {
           productId: base.dressId,

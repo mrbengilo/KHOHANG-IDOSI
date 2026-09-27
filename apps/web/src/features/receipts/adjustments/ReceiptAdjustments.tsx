@@ -1006,7 +1006,8 @@ function AccountabilityLine({ adjustment }: { readonly adjustment: ReceiptAdjust
   );
 }
 
-function holdCopy(line: ReceiptAdjustmentLine): string {
+export function holdCopy(line: Pick<ReceiptAdjustmentLine, 'bagStatus' | 'holdState'>): string {
+  if (line.bagStatus === 'RETURNED') return 'Đã xuất trả khỏi cửa hàng';
   switch (line.holdState) {
     case 'HELD':
       return 'Đang tạm giữ, không bán/xuất/chuyển';
@@ -1119,6 +1120,7 @@ function VerifyForm({
       weightChangeNote: line.weightChangeNote ?? '',
       recordedWeightKg: line.recordedWeightKg,
       recordedCostVnd: line.recordedCostVnd,
+      disposition: line.disposition,
       recordedProductId: line.recordedProductId,
     })),
   );
@@ -1185,7 +1187,7 @@ function VerifyForm({
           ? ' Hàng giữ bán được cập nhật và giải phóng phần giữ của hồ sơ.'
           : ''}
         {adjustment.lines.some((line) => line.disposition === 'RETURN')
-          ? ' Hàng trả kho tiếp tục được giữ và có phiếu trả chờ bàn giao; kho chỉ tăng tồn khi xác nhận thực nhận.'
+          ? ' Xác nhận sẽ trừ hàng khỏi cửa hàng, nhập ngay về kho tổng và tạo quyền chờ ưu tiên cho hàng thiếu. Phiếu trả hoàn tất trong cùng lần duyệt.'
           : ''}
       </p>
       {lines.map((line, index) => (
@@ -1500,8 +1502,9 @@ function ReturnsPanel({
         <Truck aria-hidden="true" size={16} /> Trả hàng về kho tổng
       </strong>
       <p className="adjustment-note">
-        Hàng rời tồn cửa hàng khi bàn giao; kho tổng chỉ tăng tồn khi xác nhận thực nhận. Giá trị
-        hàng trả ghi giảm một lần tại thời điểm bàn giao; phí và VAT của phiếu nhận không đổi.
+        Hàng trả trong lần duyệt sai lệch đã được trừ khỏi cửa hàng và nhập ngay về kho tổng. Phiếu
+        trả cũ hoặc trả sau khi đã chọn giữ bán tiếp tục theo bước bàn giao và nhận kho. Giá trị bao
+        trả được loại một lần; phí và VAT không tự thay đổi.
       </p>
       {rows.map(({ line, row }) => {
         const copy = returnStatusCopy[row.status];
@@ -1688,7 +1691,7 @@ function actionNotice(adjustment: ReceiptAdjustment): string {
     case 'PENDING_ADMIN':
       return `Đã xác minh ${adjustment.code}; số sau điều chỉnh là tạm tính cho tới khi HTKD duyệt và áp dụng.`;
     case 'APPLIED':
-      return `Đã xử lý ${adjustment.code}: tiền, phân loại bao và quyền chờ ưu tiên đã có hiệu lực; tiến độ trả/bù theo dõi riêng bên dưới.`;
+      return `Đã xử lý ${adjustment.code}: tiền, phân loại bao và quyền chờ ưu tiên đã có hiệu lực; hàng trả trong lần duyệt đã nhập kho; quyền chờ bù theo dõi bên dưới.`;
     case 'NEEDS_INFO':
       return `Đã yêu cầu cửa hàng bổ sung ${adjustment.code}.`;
     case 'PENDING_HTKD':

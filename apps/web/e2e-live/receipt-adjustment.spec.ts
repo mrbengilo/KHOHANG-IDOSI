@@ -182,60 +182,62 @@ test('store reports a mixed-up bag, HTKD approves once: money, stock and P0B rig
         ),
       );
     await relogin(page, htkdLogin);
-    const htkdApi = tabApi(page);
-    const adjustment = (
-      await (await htkdApi.get(`${api}/receipt-adjustments/${pending!.id}`)).json()
-    ).data;
-    const verified = await htkdApi.post(`${api}/receipt-adjustments/${pending!.id}/actions`, {
-      headers: { 'idempotency-key': randomUUID() },
-      data: {
-        action: 'VERIFY',
-        expectedVersion: 0,
-        cause: 'SOURCE_MISCLASSIFICATION',
-        note: 'Admin xác minh nhánh trả',
-        lines: adjustment.lines.map((line: { receiptBagId: string; recordedWeightKg: string }) => ({
-          receiptBagId: line.receiptBagId,
-          actualProductId: jeans!.id,
-          weightKg: line.recordedWeightKg,
-          pricePerKgVnd: 40_000,
-          weightChangeNote: null,
-        })),
-      },
-    });
-    expect(verified.status()).toBe(200);
-    expect((await verified.json()).data.status).toBe('APPLIED');
+    await page.goto('/receive');
+    await page
+      .locator('.adjustment-queue')
+      .getByRole('button')
+      .filter({ hasText: 'Chờ HTKD xác minh' })
+      .first()
+      .click();
+    await detail.getByLabel('Giá / kg mặt hàng thực tế (VND)').fill('40000');
+    await detail.getByLabel('Nguyên nhân').selectOption('SOURCE_MISCLASSIFICATION');
+    await detail.getByLabel('Ghi chú xác minh').fill('HTKD xác minh trả ngay đúng bao nguồn');
+    await expect(detail).toContainText('nhập ngay về kho tổng');
+    await assertNoOverflow(page, testInfo.outputPath('htkd-return-before'));
+    await detail.getByRole('button', { name: 'Duyệt và áp dụng' }).click();
+    await expect(detail).toContainText('Đã xử lý');
+    await expect(detail.locator('.adjustment-returns')).toContainText('Kho đã nhận');
+    await expect(page.locator('.adjustment-money__effective')).toContainText('1.800.000');
+    await expect(page.getByRole('button', { name: 'Bàn giao trả kho', exact: true })).toHaveCount(
+      0,
+    );
+    await expect(page.getByRole('button', { name: 'Kho nhận đủ', exact: true })).toHaveCount(0);
+    await assertNoOverflow(page, testInfo.outputPath('htkd-return-after'));
+    expect(
+      (
+        await client.db
+          .select()
+          .from(storeReceiptAdjustments)
+          .where(eq(storeReceiptAdjustments.id, pending!.id))
+      )[0]!.status,
+    ).toBe('applied');
     expect(
       await client.db
         .select({ remaining: waitTickets.remainingQuantity })
         .from(waitTickets)
         .where(and(eq(waitTickets.storeId, store.id), eq(waitTickets.status, 'active'))),
     ).toEqual([{ remaining: 2 }]);
-
+    const remaining = await client.db
+      .select({ productId: storeInventoryBags.productId, status: storeInventoryBags.status })
+      .from(storeInventoryBags)
+      .where(eq(storeInventoryBags.storeId, store.id));
+    expect(
+      remaining
+        .filter((bag) => bag.status === 'available')
+        .map((bag) => bag.productId)
+        .sort(),
+    ).toEqual([dress!.id, jeans!.id].sort());
+    expect(remaining.filter((bag) => bag.status === 'returned')).toHaveLength(1);
     await relogin(page, storeLogin);
     await page.goto('/receive');
-    await page
-      .locator('.adjustment-queue')
-      .getByRole('button')
-      .filter({ hasText: 'Chờ bàn giao trả' })
-      .first()
-      .click();
-    const returns = page.locator('.adjustment-returns');
-    await expect(returns).toContainText('Chờ bàn giao trả');
-    await returns.getByRole('button', { name: 'Bàn giao trả kho' }).click();
-    await expect(returns).toContainText('Đang vận chuyển về kho');
-    await assertNoOverflow(page, testInfo.outputPath('store-return-handover'));
-
-    await relogin(page, { username: adminUsername, password: adminPassword });
-    await page.goto('/receive');
-    await page
-      .locator('.adjustment-queue')
-      .getByRole('button')
-      .filter({ hasText: 'Đang vận chuyển về kho' })
-      .filter({ hasText: `Cửa hàng sai lệch ${token}` })
-      .first()
-      .click();
-    await page.locator('.adjustment-returns').getByRole('button', { name: 'Kho nhận đủ' }).click();
-    await expect(page.locator('.adjustment-returns')).toContainText('Kho đã nhận');
+    await page.locator('.receipt-card').first().click();
+    await expect(page.locator('.adjustment-money__effective')).toContainText('1.800.000');
+    await expect(page.getByRole('button', { name: 'Bàn giao trả kho', exact: true })).toHaveCount(
+      0,
+    );
+    await page.reload();
+    await page.locator('.receipt-card').first().click();
+    await expect(page.locator('.adjustment-money__effective')).toContainText('1.800.000');
     const [balance] = await client.db
       .select({ onHand: warehouseBalances.onHandQuantity })
       .from(warehouseBalances)

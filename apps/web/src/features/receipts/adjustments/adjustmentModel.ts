@@ -44,6 +44,7 @@ export const historyEventCopy: Record<ReceiptAdjustmentHistoryEventType, string>
   APPLIED: 'Duyệt và áp dụng',
   RETURN_CREATED: 'Tạo phiếu trả kho',
   RETURN_HANDED_OVER: 'Bàn giao hàng trả',
+  RETURN_AUTO_COMPLETED: 'Trả kho tự động khi duyệt',
   RETURN_RECEIVED: 'Kho tổng nhận hàng trả',
   RETURN_DISPUTED: 'Kho tổng nhận thiếu/sai – đối soát',
   RETURN_RECEIVED_AFTER_RECONCILIATION: 'Đối soát xong – kho đã nhận',
@@ -184,6 +185,7 @@ function parseSigned(value: string): bigint | null {
 }
 
 export interface VerificationDraftLine {
+  readonly disposition?: 'KEEP' | 'RETURN';
   readonly recordedCostVnd: number;
   readonly weightKg: string;
   readonly pricePerKgVnd: string;
@@ -234,7 +236,10 @@ export function previewAdjustment(
     };
   }
   const goods = lineCosts.reduce<bigint>(
-    (total, cost, index) => total + (cost ?? 0n) - BigInt(lines[index]!.recordedCostVnd),
+    (total, cost, index) =>
+      total +
+      (lines[index]!.disposition === 'RETURN' ? 0n : (cost ?? 0n)) -
+      BigInt(lines[index]!.recordedCostVnd),
     0n,
   );
   if (before.vatVnd === null && vat !== 0n) {
