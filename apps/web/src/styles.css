@@ -2116,6 +2116,21 @@ body.dialog-open {
   gap: 8px;
 }
 
+@media (min-width: 769px) {
+  .receipt-list {
+    max-height: 70vh;
+    overflow-y: auto;
+    align-content: start;
+  }
+}
+
+@media (max-width: 768px) {
+  .receipt-workspace--selected .receipt-list,
+  .receipt-workspace:not(.receipt-workspace--selected) .receipt-detail {
+    display: none;
+  }
+}
+
 .receipt-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

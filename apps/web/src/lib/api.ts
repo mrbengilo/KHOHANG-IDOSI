@@ -1,3 +1,5 @@
+import { ListReceiptSummariesResponseSchema } from '@idosi/contracts';
+import { ListSessionDocumentsResponseSchema } from '@idosi/contracts';
 import {
   OrderingContextResponseSchema,
   CreateInboundReceiptRequestSchema,
@@ -388,6 +390,17 @@ export interface AllocationResultFilters {
   readonly storeId?: string;
 }
 
+export async function listSessionDocuments(filters: AllocationResultFilters = {}) {
+  const query = new URLSearchParams({
+    page: String(filters.page ?? 1),
+    pageSize: String(filters.pageSize ?? 20),
+  });
+  if (filters.sessionId) query.set('sessionId', filters.sessionId);
+  if (filters.status) query.set('status', filters.status);
+  if (filters.storeId) query.set('storeId', filters.storeId);
+  return ListSessionDocumentsResponseSchema.parse(await request('/session-documents?' + query));
+}
+
 export async function listAllocationResults(
   filters: AllocationResultFilters = {},
 ): Promise<ListAllocationsResponse> {
@@ -605,6 +618,17 @@ interface ReceiptFilters {
   readonly storeId?: string;
   /** Finalized receipts older than this are left out; open receipts are always listed. */
   readonly openOrCreatedFrom?: string;
+}
+
+/** Fetch exactly one server page; callers retain the server's total count. */
+export async function listStoreReceiptsPage(filters: ReceiptFilters = {}, page = 1, pageSize = 20) {
+  const query = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  if (filters.status) query.set('status', filters.status);
+  if (filters.storeId) query.set('storeId', filters.storeId);
+  if (filters.openOrCreatedFrom) query.set('openOrCreatedFrom', filters.openOrCreatedFrom);
+  return ListReceiptSummariesResponseSchema.parse(
+    await request('/store-receipt-summaries?' + query),
+  );
 }
 
 export async function listStoreReceipts(filters: ReceiptFilters = {}): Promise<Receipt[]> {

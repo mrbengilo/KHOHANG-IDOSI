@@ -6,9 +6,8 @@ import type {
 } from '@idosi/contracts';
 
 /**
- * One row of the "Phiên nhận đơn và phân bổ" table. Each order request is its own row so
- * the reader sees when it was sent and which store sent it; a session nobody ordered in
- * still gets one row, so its status and results stay reachable.
+ * Before allocation, each source request has a row. After allocation, one row per store
+ * navigates to the persisted official documents. Source history remains on RequestsPage.
  */
 export interface SessionRequestRow {
   readonly key: string;
@@ -50,7 +49,23 @@ export function sessionRequestRows(
     if (sessionRequests.length === 0) {
       return [{ key: session.id, session, request: null, firstOfSession: true, store: null }];
     }
-    return sessionRequests.map((request, index) => {
+    // Completed sessions navigate once per store. The official documents themselves
+    // come from /session-documents, never from aggregating this history page.
+    const visibleRequests =
+      session.status === 'ALLOCATED'
+        ? sessionRequests.filter(
+            (request, index, all) =>
+              request.status !== 'CANCELLED' &&
+              all.findIndex(
+                (candidate) =>
+                  candidate.storeId === request.storeId && candidate.status !== 'CANCELLED',
+              ) === index,
+          )
+        : sessionRequests;
+    if (visibleRequests.length === 0) {
+      return [{ key: session.id, session, request: null, firstOfSession: true, store: null }];
+    }
+    return visibleRequests.map((request, index) => {
       const store = storeById.get(request.storeId);
       return {
         key: request.id,
