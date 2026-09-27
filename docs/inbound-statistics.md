@@ -30,6 +30,12 @@ Trigger ban đầu trong migration 0000 vẫn yêu cầu mọi dòng nhận ph�
 
 Rollback ứng dụng có thể giữ migration mở rộng này. Không tự khôi phục trigger cũ vì sẽ tái phát lỗi chốt hàng thừa. Nếu phát hiện lỗi guard, dừng thao tác chốt bị ảnh hưởng và phát hành migration forward-fix; mọi restore dữ liệu phải theo runbook backup/restore hiện hành.
 
+## Index kỳ báo cáo (0033)
+
+Predicate kho lọc `finalized_at`, trong khi index cũ dùng `created_at`. EXPLAIN trên database test nhỏ cho toàn báo cáo khoảng 6 ms, nhưng benchmark riêng đường truy cập với 200.000 header mô phỏng cho thấy quét tuần tự khoảng 21,078 ms so với bitmap/index scan khoảng 0,714 ms sau index. Đây là số đo mô phỏng, không phải số liệu production hay cam kết latency.
+
+Migration 0033 thêm partial index `(finalized_at, store_id) WHERE status='finalized' AND deleted_at IS NULL`. Date đứng trước để phục vụ cả phạm vi toàn hệ thống, không chỉ một cửa hàng. PostgreSQL vẫn có thể chọn sequential scan cho bảng nhỏ. Không sửa dữ liệu; rollback ứng dụng có thể giữ index này.
+
 ## Kiểm thử và đối soát
 
 Fixture tổng chuẩn: A bán lẻ 58 bao/700 kg (kho 50/600, đối tác 8/100), B bán lẻ 17/290 (kho 15/250, đối tác 2/40), C sỉ 30/500. Tổng 105/1490; kho 95/1350; đối tác 10/140. Nam 65/950, Nữ 32/355, Vest 8/185.

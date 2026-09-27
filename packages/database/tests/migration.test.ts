@@ -404,7 +404,7 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(33);
+    expect(journal.entries).toHaveLength(34);
     expect(journal.entries[32]).toMatchObject({
       tag: '0032_receipt_excess_validation',
       breakpoints: true,
