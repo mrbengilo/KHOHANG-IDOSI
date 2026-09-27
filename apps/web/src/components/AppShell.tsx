@@ -95,6 +95,7 @@ const navEntries: NavEntry[] = [
     label: 'Điều chuyển',
     icon: Truck,
   },
+  { to: '/inbound-statistics', label: 'Thống kê nhập hàng', icon: FileClock },
   { to: '/reports', label: 'Báo cáo', icon: FileClock },
   { to: '/stores', label: 'Cửa hàng & nhóm', icon: Building2, group: 'administration' },
   { to: '/users', label: 'Tài khoản', icon: Users, group: 'administration' },

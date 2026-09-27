@@ -1,3 +1,4 @@
+import { InboundStatisticsQuerySchema } from '@idosi/contracts';
 import { ListReceiptSummariesResponseSchema } from '@idosi/contracts';
 import {
   ListSessionDocumentsQuerySchema,
@@ -1785,6 +1786,13 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return reply.send({ data: result.data });
   });
 
+  app.get('/api/v1/reports/inbound-statistics', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const query = InboundStatisticsQuerySchema.parse(request.query);
+    return { data: await repository.getInboundStatistics(session.principal, query) };
+  });
+
   app.get('/api/v1/reports/monthly', async (request) => {
     const session = await authenticate(request, repository);
     const query = MonthlyOperationalReportQuerySchema.parse(request.query);
@@ -2968,6 +2976,21 @@ function openApiDocument(): Record<string, unknown> {
         post: {
           security: cookieSecurity,
           responses: { '200': { description: 'Accepted or declined priority offer' } },
+        },
+      },
+      '/api/v1/reports/inbound-statistics': {
+        get: {
+          security: cookieSecurity,
+          summary:
+            'Admin store inbound statistics: warehouse and partner, gross corrected receipts',
+          responses: {
+            '200': {
+              description: 'Exact quantities and grams with source breakdown and completeness',
+            },
+            '400': { description: 'Invalid period or store scope' },
+            '401': { description: 'Unauthenticated' },
+            '403': { description: 'Admin only' },
+          },
         },
       },
       '/api/v1/reports/monthly': {

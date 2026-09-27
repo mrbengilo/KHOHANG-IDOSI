@@ -5,7 +5,7 @@ import { createDatabase } from '../src/index.js';
 
 const pg = process.env.RUN_POSTGRES_TESTS === '1' ? it : it.skip;
 pg(
-  '0032 preserves manual and NULL historical VAT while expanding constraints and snapshot provenance',
+  '0034 preserves manual and NULL historical VAT while expanding constraints and snapshot provenance',
   async () => {
     const database = createDatabase({ connectionString: process.env.DATABASE_URL });
     const client = await database.pool.connect();
@@ -23,7 +23,7 @@ pg(
       const before = (await client.query('SELECT * FROM store_receipts ORDER BY id')).rows;
       await client.query(
         await readFile(
-          new URL('../migrations/0032_configurable_receipt_vat.sql', import.meta.url),
+          new URL('../migrations/0034_configurable_receipt_vat.sql', import.meta.url),
           'utf8',
         ),
       );

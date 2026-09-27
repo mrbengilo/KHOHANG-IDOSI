@@ -80,9 +80,9 @@ kho tổng, không đưa thuế trở lại luồng này.
 
 ## Migration và rollback
 
-Migration `0032_configurable_receipt_vat` thêm thuế suất cấu hình default 8, version snapshot
+Migration `0034_configurable_receipt_vat` thêm thuế suất cấu hình default 8, version snapshot
 nullable trên phiếu, FK tới phiên bản cấu hình và nới constraint VAT cửa hàng. Seed không
-reset cấu hình Admin. Snapshot Drizzle 0032 bao gồm thay đổi schema 0031. Không sửa migration
+reset cấu hình Admin. Snapshot Drizzle 0034 bao gồm thay đổi schema 0031. Không sửa migration
 đã áp dụng hoặc cập nhật hàng loạt chứng từ.
 
 Schema mới cho phép app cũ chạy trong giai đoạn chuyển phiên bản trước khi ghi dữ liệu mới.
