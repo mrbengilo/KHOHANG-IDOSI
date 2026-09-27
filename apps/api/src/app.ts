@@ -1,3 +1,8 @@
+import { ListReceiptSummariesResponseSchema } from '@idosi/contracts';
+import {
+  ListSessionDocumentsQuerySchema,
+  ListSessionDocumentsResponseSchema,
+} from '@idosi/contracts';
 import { ListStoreBagOpeningsQuerySchema } from '@idosi/contracts';
 import { randomUUID } from 'node:crypto';
 import { isRetryableTransactionError } from '@idosi/database';
@@ -661,6 +666,15 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return { data };
   });
 
+  app.get('/api/v1/session-documents', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    const query = ListSessionDocumentsQuerySchema.parse(request.query);
+    reply.header('cache-control', 'no-store');
+    return ListSessionDocumentsResponseSchema.parse(
+      await repository.listSessionDocuments(session.principal, query),
+    );
+  });
+
   app.get('/api/v1/allocations', async (request, reply) => {
     const session = await authenticate(request, repository);
     const query = ListAllocationsQuerySchema.parse(request.query);
@@ -1082,6 +1096,15 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     );
     reply.header('idempotency-replayed', String(result.replayed));
     return reply.send({ data: result.data });
+  });
+
+  app.get('/api/v1/store-receipt-summaries', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    const query = ListReceiptsQuerySchema.parse(request.query);
+    reply.header('cache-control', 'no-store');
+    return ListReceiptSummariesResponseSchema.parse(
+      await repository.listReceiptSummaries(session.principal, query),
+    );
   });
 
   app.get('/api/v1/store-receipts', async (request) => {
@@ -2508,6 +2531,28 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: { '201': { description: 'Declared store receipt' } },
+        },
+      },
+      '/api/v1/store-receipt-summaries': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': {
+              description:
+                'Scoped receipt headers with server pagination; details fetched separately',
+            },
+          },
+        },
+      },
+      '/api/v1/session-documents': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': {
+              description:
+                'One official store/session document per header, complete sources and separately identified carried allocations',
+            },
+          },
         },
       },
       '/api/v1/store-receipt-sources': {

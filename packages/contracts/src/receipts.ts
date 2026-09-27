@@ -635,3 +635,20 @@ export const ListHeldAllocationsResponseSchema = z
     { path: ['data'], message: 'A store and product may appear only once' },
   );
 export type ListHeldAllocationsResponse = z.infer<typeof ListHeldAllocationsResponseSchema>;
+
+/** List-only receipt header. Full pricing and bag data are fetched by document ID. */
+export const ReceiptSummarySchema = ReceiptSchema.innerType()
+  .pick({
+    id: true,
+    receiptNumber: true,
+    storeId: true,
+    status: true,
+    createdAt: true,
+    updatedAt: true,
+  })
+  .extend({ receivedUnits: z.number().int().nonnegative().safe() })
+  .strict();
+export type ReceiptSummary = z.infer<typeof ReceiptSummarySchema>;
+export const ListReceiptSummariesResponseSchema = z
+  .object({ data: z.array(ReceiptSummarySchema), pagination: PaginationMetaSchema })
+  .strict();

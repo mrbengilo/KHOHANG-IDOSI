@@ -10,6 +10,7 @@ import {
   finalizeStoreReceipt,
   inventorySnapshots,
   listHeldAllocationStock,
+  listSessionDocuments,
   listStoreReceiptSources,
   listWarehouseOutboundRequests,
   mergedOrders,
@@ -314,6 +315,28 @@ describePostgres('priority goods join the next ordinary shipment', () => {
           .from(reservations)
           .where(eq(reservations.outboundRequestLineId, outbound.lines[0]!.id));
         expect(linked.map((row) => row.allocationLineId).sort()).toEqual(sourceIds.sort());
+        const documents = await listSessionDocuments(db, {
+          page: 1,
+          pageSize: 1,
+          sessionId: nextCycle.session.id,
+          storeIds: [store!.id],
+        });
+        expect(documents.pagination.totalItems).toBe(1);
+        expect(documents.data[0]!.sources).toHaveLength(1);
+        expect(documents.data[0]!.sources[0]!.result.allocatedQuantity).toBe(3);
+        expect(
+          documents.data[0]!.carriedAllocations.reduce((sum, line) => sum + line.quantity, 0),
+        ).toBe(3);
+        expect(
+          (
+            await listSessionDocuments(db, {
+              page: 2,
+              pageSize: 1,
+              sessionId: nextCycle.session.id,
+              storeIds: [store!.id],
+            })
+          ).data,
+        ).toEqual([]);
         // The grouped shipment is released by the run itself, once, even under a concurrent retry.
         expect(outbound).toMatchObject({
           status: 'dispatched',

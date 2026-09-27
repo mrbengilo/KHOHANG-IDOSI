@@ -1,3 +1,6 @@
+import type { ReceiptSummary } from '@idosi/contracts';
+import { sessionDocument, type SessionDocument } from '@idosi/contracts';
+import { listSessionDocuments as listDatabaseSessionDocuments } from '@idosi/database';
 import { listStoreBagOpenings } from '@idosi/database';
 import type { ListStoreBagOpeningsQuery, StoreBagOpening } from '@idosi/contracts';
 import {
@@ -1309,6 +1312,58 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     return {
       data: rows.map(orderSessionDto),
       pagination: pagination(query.page, query.pageSize, totalRow?.value ?? 0),
+    };
+  }
+
+  public async listSessionDocuments(
+    actor: AuthenticatedPrincipal,
+    query: ListAllocationsQuery,
+  ): Promise<Page<SessionDocument>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const storeIds =
+      actor.role === 'ADMIN'
+        ? query.storeId === undefined
+          ? undefined
+          : [query.storeId]
+        : actor.role === 'STORE'
+          ? actor.storeId === null
+            ? []
+            : [actor.storeId]
+          : query.storeId === undefined
+            ? actor.assignedStoreIds
+            : [query.storeId];
+
+    const result = await listDatabaseSessionDocuments(db, {
+      page: query.page,
+      pageSize: query.pageSize,
+      ...(storeIds === undefined ? {} : { storeIds }),
+      ...(query.sessionId === undefined ? {} : { sessionId: query.sessionId }),
+      ...(query.status === undefined
+        ? {}
+        : { status: databaseAllocationResultStatus(query.status) }),
+      ...(query.productId === undefined ? {} : { productId: query.productId }),
+      ...(query.priority === undefined ? {} : { priority: query.priority }),
+    });
+    return {
+      pagination: result.pagination,
+      data: result.data.map((header) =>
+        sessionDocument({
+          id: header.sessionId + ':' + header.storeId,
+          orderCode: 'TH-' + header.sessionId + '-' + header.storeId,
+          resultCode: 'KQ-' + header.sessionId + '-' + header.storeId,
+          sessionId: header.sessionId,
+          storeId: header.storeId,
+          allocationRunId: header.allocationRunId,
+          version: header.version,
+          createdAt: header.createdAt.toISOString(),
+          carriedAllocations: header.carriedAllocations,
+          sources: header.sources.map((source) => ({
+            ...source,
+            submittedAt: source.submittedAt?.toISOString() ?? null,
+            result: allocationResultDto(source.result),
+          })),
+        }),
+      ),
     };
   }
 
@@ -2722,6 +2777,76 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     } catch (error: unknown) {
       throwPartnerInboundError(error);
     }
+  }
+
+  public async listReceiptSummaries(
+    actor: AuthenticatedPrincipal,
+    query: ListReceiptsQuery,
+  ): Promise<Page<ReceiptSummary>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    if (actor.role === 'STORE' && actor.storeId === null) {
+      return { data: [], pagination: pagination(query.page, query.pageSize, 0) };
+    }
+    if (
+      (actor.role === 'HTKD' || actor.role === 'WHOLESALE') &&
+      actor.assignedStoreIds.length === 0
+    ) {
+      return { data: [], pagination: pagination(query.page, query.pageSize, 0) };
+    }
+
+    const conditions: SQL[] = [isNull(storeReceipts.deletedAt)];
+    if (query.storeId !== undefined) {
+      conditions.push(eq(storeReceipts.storeId, query.storeId));
+    } else if (actor.role === 'STORE' && actor.storeId !== null) {
+      conditions.push(eq(storeReceipts.storeId, actor.storeId));
+    } else if (actor.role === 'HTKD' || actor.role === 'WHOLESALE') {
+      conditions.push(inArray(storeReceipts.storeId, [...actor.assignedStoreIds]));
+    }
+    if (query.outboundRequestId !== undefined) {
+      conditions.push(eq(storeReceipts.outboundRequestId, query.outboundRequestId));
+    }
+    if (query.status !== undefined) {
+      conditions.push(eq(storeReceipts.status, databaseReceiptStatus(query.status)));
+    }
+    if (query.openOrCreatedFrom !== undefined) {
+      const recent = or(
+        ne(storeReceipts.status, databaseReceiptStatus('FINALIZED')),
+        gte(storeReceipts.createdAt, new Date(query.openOrCreatedFrom)),
+      );
+      if (recent) conditions.push(recent);
+    }
+
+    return db.transaction(
+      async (tx) => {
+        const where = and(...conditions);
+        const [total] = await tx.select({ value: count() }).from(storeReceipts).where(where);
+        const rows = await tx
+          .select({
+            id: storeReceipts.id,
+            receiptNumber: storeReceipts.receiptNumber,
+            storeId: storeReceipts.storeId,
+            status: storeReceipts.status,
+            createdAt: storeReceipts.createdAt,
+            updatedAt: storeReceipts.updatedAt,
+            receivedUnits: sql<number>`(select coalesce(sum(l.received_quantity), 0)::integer from store_receipt_lines l where l.store_receipt_id = ${storeReceipts.id})`,
+          })
+          .from(storeReceipts)
+          .where(where)
+          .orderBy(desc(storeReceipts.createdAt), desc(storeReceipts.id))
+          .limit(query.pageSize)
+          .offset((query.page - 1) * query.pageSize);
+        return {
+          data: rows.map((row) => ({
+            ...row,
+            status: receiptStatus(row.status),
+            createdAt: row.createdAt.toISOString(),
+            updatedAt: row.updatedAt.toISOString(),
+          })),
+          pagination: pagination(query.page, query.pageSize, total?.value ?? 0),
+        };
+      },
+      { isolationLevel: 'repeatable read', accessMode: 'read only' },
+    );
   }
 
   public async listReceipts(
