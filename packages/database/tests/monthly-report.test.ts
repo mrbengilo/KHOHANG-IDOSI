@@ -384,7 +384,7 @@ describe('receipt adjustments in the monthly report', () => {
       appliedCount: 1,
       goodsDeltaVnd: -200_000n,
       totalDeltaVnd: -200_000n,
-      adjustedLandedInboundCostVnd: -200_000n,
+      adjustedLandedInboundCostVnd: -1_000_000n,
       adjustedVatCostVnd: 0n,
       returnsHandedOverCount: 1,
       returnsHandedOverValueVnd: 800_000n,

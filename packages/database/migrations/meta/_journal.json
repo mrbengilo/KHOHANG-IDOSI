@@ -218,6 +218,13 @@
       "when": 1790298000000,
       "tag": "0030_multiline_sale_transfers",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1790460000000,
+      "tag": "0031_receipt_immediate_returns",
+      "breakpoints": true
     }
   ]
 }

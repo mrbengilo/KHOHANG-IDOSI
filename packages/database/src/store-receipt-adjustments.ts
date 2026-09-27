@@ -821,18 +821,29 @@ async function verify(
     handlingVnd: input.handlingDeltaVnd,
     vatVnd: input.vatDeltaVnd,
   };
-  const money = domainOrValidation(() => planReceiptAdjustmentMoney(before, delta));
+  const returnedGoodsVnd = verifiedLines.reduce(
+    (total, line) =>
+      total + (line.disposition === 'return' ? BigInt(line.verifiedCostVnd as string) : 0n),
+    0n,
+  );
+  const money = domainOrValidation(() =>
+    planReceiptAdjustmentMoney(before, {
+      ...delta,
+      goodsVnd: delta.goodsVnd - returnedGoodsVnd,
+    }),
+  );
   const verification: JsonObject = {
     money: {
       before: moneyJson(money.before),
       delta: {
-        goodsVnd: delta.goodsVnd.toString(),
+        goodsVnd: money.delta.goodsVnd.toString(),
         freightVnd: delta.freightVnd.toString(),
         handlingVnd: delta.handlingVnd.toString(),
         vatVnd: delta.vatVnd.toString(),
         costVnd: money.delta.costVnd.toString(),
         totalVnd: money.delta.totalVnd.toString(),
       },
+      returnedGoodsVnd: returnedGoodsVnd.toString(),
       after: moneyJson(money.after),
     },
     baseAppliedCount: appliedCount,
@@ -983,6 +994,31 @@ async function apply(
   await lockAll(0);
   if (Object.keys(blockers).length > 0) throw new ReceiptAdjustmentBlockedError(blockers);
 
+  // Acquire all wait and warehouse locks in deterministic order before processing bag order.
+  // Transaction-level advisory locks remain held after these callbacks return.
+  await withStoreProductWaitLocks(
+    tx,
+    adjustment.storeId,
+    lines.flatMap((line) =>
+      line.shortageQuantity > 0 && line.approvedProductId ? [line.approvedProductId] : [],
+    ),
+    async () => undefined,
+  );
+  const warehouseProducts = [
+    ...new Set(
+      lines.flatMap((line) =>
+        adjustment.cause === 'warehouse_mispick'
+          ? [line.recordedProductId, line.actualProductId]
+          : line.disposition === 'return'
+            ? [line.actualProductId]
+            : [],
+      ),
+    ),
+  ].sort();
+  for (const productId of warehouseProducts) {
+    await withAdvisoryLock(tx, 'warehouse-balance', productId, async () => undefined);
+  }
+
   const entitlements: JsonObject[] = [];
   const returnsCreated: JsonObject[] = [];
   const warehouseMovements: JsonObject[] = [];
@@ -1006,8 +1042,9 @@ async function apply(
         productId: line.actualProductId,
         costVnd: line.verifiedCostVnd,
         initialWeightKg: weightKg,
-        currentWeightKg: weightKg,
-        status: keep ? line.holdPreviousStatus! : 'quarantined',
+        currentWeightKg: keep ? weightKg : '0.000',
+        depletedAt: keep ? null : now,
+        status: keep ? line.holdPreviousStatus! : 'returned',
         version: bag.version + 1,
         updatedAt: now,
       })
@@ -1069,28 +1106,8 @@ async function apply(
     ]);
     await tx
       .update(storeReceiptAdjustmentLines)
-      .set({ holdState: keep ? 'released' : 'returning', updatedAt: now })
+      .set({ holdState: 'released', updatedAt: now })
       .where(eq(storeReceiptAdjustmentLines.id, line.id));
-
-    if (!keep) {
-      const [created] = await tx
-        .insert(storeReceiptReturns)
-        .values({
-          adjustmentLineId: line.id,
-          storeId: bag.storeId,
-          storeInventoryBagId: bag.id,
-          productId: line.actualProductId,
-          weightKg,
-          costVnd: line.verifiedCostVnd,
-          reason: adjustment.reason,
-          createdByUserId: actor.userId,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .returning({ id: storeReceiptReturns.id, code: storeReceiptReturns.code });
-      if (!created) throw new Error('Receipt return insert returned no row.');
-      returnsCreated.push({ returnId: created.id, code: created.code, inventoryBagId: bag.id });
-    }
 
     if (line.shortageQuantity > 0) {
       entitlements.push(
@@ -1115,24 +1132,111 @@ async function apply(
         })),
       );
     }
+    if (!keep) {
+      const [created] = await tx
+        .insert(storeReceiptReturns)
+        .values({
+          adjustmentLineId: line.id,
+          storeId: bag.storeId,
+          storeInventoryBagId: bag.id,
+          productId: line.actualProductId,
+          weightKg,
+          costVnd: line.verifiedCostVnd,
+          status: 'received',
+          autoCompletedAt: now,
+          autoCompletedByUserId: actor.userId,
+          receivedQuantity: 1,
+          receiveNote: 'Trả tự động có hiệu lực bởi lần duyệt sai lệch.',
+          reason: adjustment.reason,
+          createdByUserId: actor.userId,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
+      if (!created) throw new Error('Receipt return insert returned no row.');
+      await tx.insert(storeInventoryLedgerEntries).values({
+        storeInventoryBagId: bag.id,
+        storeId: bag.storeId,
+        productId: line.actualProductId,
+        eventType: 'consume',
+        weightBeforeKg: weightKg,
+        weightAfterKg: '0.000',
+        sourceType: RETURN_SOURCE,
+        sourceId: created.id,
+        eventSequence: RETURN_EVENT.handover,
+        reason: `Trả tự động khi duyệt ${adjustment.code}`,
+        metadata: { adjustmentId: adjustment.id, automatic: true },
+        actorUserId: actor.userId,
+        occurredAt: now,
+      });
+      await bookReturnIntoWarehouse(tx, created, actor.userId, now);
+      await tx.insert(auditLogs).values({
+        requestId: context.input.requestId ?? null,
+        actorUserId: actor.userId,
+        actorRole: actor.databaseRole,
+        actorStoreId: bag.storeId,
+        action: 'STORE_RECEIPT_RETURN_AUTO_COMPLETED',
+        entityType: 'store_receipt_return',
+        entityId: created.id,
+        after: {
+          status: 'received',
+          version: 0,
+          note: created.receiveNote,
+          adjustmentId: adjustment.id,
+          costVnd: created.costVnd.toString(),
+        },
+      });
+      returnsCreated.push({ returnId: created.id, code: created.code, inventoryBagId: bag.id });
+    }
   }
 
+  // Legacy APPLY has no newly generated verification snapshot. Rebuild its retained-value
+  // snapshot too, while keeping the immutable classification delta separate from returns.
+  const returnedGoodsVnd = lines.reduce(
+    (total, line) => total + (line.disposition === 'return' ? line.verifiedCostVnd! : 0n),
+    0n,
+  );
+  const retained = domainOrValidation(() =>
+    planReceiptAdjustmentMoney(before, {
+      goodsVnd: adjustment.goodsDeltaVnd - returnedGoodsVnd,
+      freightVnd: adjustment.freightDeltaVnd,
+      handlingVnd: adjustment.handlingDeltaVnd,
+      vatVnd: adjustment.vatDeltaVnd,
+    }),
+  );
   await updateHeader(context, {
     ...verificationChanges,
+    verification: {
+      ...adjustment.verification,
+      money: {
+        before: moneyJson(retained.before),
+        after: moneyJson(retained.after),
+        returnedGoodsVnd: returnedGoodsVnd.toString(),
+        delta: {
+          goodsVnd: retained.delta.goodsVnd.toString(),
+          freightVnd: adjustment.freightDeltaVnd.toString(),
+          handlingVnd: adjustment.handlingDeltaVnd.toString(),
+          vatVnd: adjustment.vatDeltaVnd.toString(),
+          costVnd: retained.delta.costVnd.toString(),
+          totalVnd: retained.delta.totalVnd.toString(),
+        },
+      },
+    },
     appliedSequence: appliedCount + 1,
     appliedAt: now,
     decidedByUserId: actor.userId,
     decidedAt: now,
     decisionNote: note,
   });
+  const moneyAfter = moneyView(await effectiveMoney(tx, receipt));
   await audit(context, 'RECEIPT_ADJUSTMENT_APPLIED', {
     appliedSequence: appliedCount + 1,
     note,
     money: {
       before: moneyJson(money.before),
-      after: moneyJson(money.after),
+      after: moneyJson(moneyAfter),
       delta: {
-        goodsVnd: adjustment.goodsDeltaVnd.toString(),
+        goodsVnd: (moneyAfter.goodsVnd - money.before.goodsVnd).toString(),
         freightVnd: adjustment.freightDeltaVnd.toString(),
         handlingVnd: adjustment.handlingDeltaVnd.toString(),
         vatVnd: adjustment.vatDeltaVnd.toString(),
@@ -1747,7 +1851,7 @@ export async function transitionReceiptReturn(
   );
 }
 
-/** Warehouse on-hand grows from a return only once, when the warehouse confirms it arrived. */
+/** Book one return, atomically at approval or through the legacy receipt workflow. */
 async function bookReturnIntoWarehouse(
   tx: Transaction,
   row: typeof storeReceiptReturns.$inferSelect,
@@ -1762,8 +1866,16 @@ async function bookReturnIntoWarehouse(
     sourceType: RETURN_SOURCE,
     sourceId: row.id,
     eventSequence: 1,
-    reason: `Kho nhận hàng trả ${row.code}`,
-    metadata: { storeId: row.storeId, adjustmentLineId: row.adjustmentLineId },
+    reason: row.autoCompletedAt
+      ? `Trả tự động khi duyệt: ${row.code}`
+      : `Kho nhận hàng trả ${row.code}`,
+    metadata: {
+      storeId: row.storeId,
+      adjustmentLineId: row.adjustmentLineId,
+      costVnd: row.costVnd.toString(),
+      weightKg: row.weightKg,
+      automatic: row.autoCompletedAt !== null,
+    },
     actorUserId,
     occurredAt: now,
   });
@@ -1877,9 +1989,26 @@ export async function receiptAdjustmentMoneySummary(
     handlingVnd: receipt.handlingVnd,
     vatVnd: receipt.vatAmountVnd,
   };
+  const [returned] = await database
+    .select({ goods: sql<string>`coalesce(sum(${storeReceiptReturns.costVnd}), 0)` })
+    .from(storeReceiptReturns)
+    .innerJoin(
+      storeReceiptAdjustmentLines,
+      eq(storeReceiptAdjustmentLines.id, storeReceiptReturns.adjustmentLineId),
+    )
+    .innerJoin(
+      storeReceiptAdjustments,
+      eq(storeReceiptAdjustments.id, storeReceiptAdjustmentLines.adjustmentId),
+    )
+    .where(
+      and(
+        eq(storeReceiptAdjustments.storeReceiptId, receipt.id),
+        sql`coalesce(${storeReceiptReturns.autoCompletedAt}, ${storeReceiptReturns.handedOverAt}) IS NOT NULL`,
+      ),
+    );
   const effective = applyReceiptMoneyDeltas(original, [
     {
-      goodsVnd: BigInt(totals?.goods ?? 0),
+      goodsVnd: BigInt(totals?.goods ?? 0) - BigInt(returned?.goods ?? 0),
       freightVnd: BigInt(totals?.freight ?? 0),
       handlingVnd: BigInt(totals?.handling ?? 0),
       vatVnd: BigInt(totals?.vat ?? 0),
@@ -2044,7 +2173,7 @@ export async function listReceiptAdjustments(
         cause: adjustment.cause,
         lineCount,
         shortageQuantity,
-        goodsDeltaVnd: adjustment.goodsDeltaVnd,
+        goodsDeltaVnd: adjustment.goodsDeltaVnd - automaticReturnValue(adjustment.verification),
         reportedBy: accountRef(adjustment.reportedByUserId, reporter)!,
         reportedAt: adjustment.reportedAt,
         verifiedBy: accountRef(adjustment.verifiedByUserId, verifier),
@@ -2296,7 +2425,7 @@ export async function getReceiptAdjustment(
     cause: adjustment.cause,
     baseAppliedCount: adjustment.baseAppliedCount,
     appliedSequence: adjustment.appliedSequence,
-    goodsDeltaVnd: adjustment.goodsDeltaVnd,
+    goodsDeltaVnd: adjustment.goodsDeltaVnd - automaticReturnValue(adjustment.verification),
     freightDeltaVnd: adjustment.freightDeltaVnd,
     handlingDeltaVnd: adjustment.handlingDeltaVnd,
     vatDeltaVnd: adjustment.vatDeltaVnd,
@@ -3122,6 +3251,14 @@ type MoneyJson = {
   readonly handlingVnd: string;
   readonly vatVnd: string | null;
 };
+
+/** Only new verification snapshots record automatic returns; legacy snapshots keep their meaning. */
+function automaticReturnValue(verification: JsonObject | null): bigint {
+  const money = verification?.money;
+  if (!money || typeof money !== 'object' || Array.isArray(money)) return 0n;
+  const returned = money.returnedGoodsVnd;
+  return typeof returned === 'string' && /^\d+$/.test(returned) ? BigInt(returned) : 0n;
+}
 
 function moneyView(state: ReceiptMoneyState): ReceiptMoneyView {
   const costVnd = state.goodsVnd + state.freightVnd + state.handlingVnd;

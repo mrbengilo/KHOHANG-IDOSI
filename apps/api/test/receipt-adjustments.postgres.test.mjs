@@ -211,7 +211,7 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
     assert.equal(wait.remainingQuantity, 1);
   });
 
-  test('return flow through the API: handover by store, warehouse receipt by admin only', async () => {
+  test('return flow through the API: approval completes return and rejects stale operational commands', async () => {
     const fx = await finalizedReceipt(repository);
     const contextView = await repository.getReceiptAdjustmentContext(fx.store, fx.receiptId);
     const created = await repository.createReceiptAdjustment(
@@ -260,67 +260,44 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
     );
     const applied = { data: await repository.getReceiptAdjustment(fx.htkd, created.data.id) };
     const pending = applied.data.lines[0].returns[0];
-    assert.equal(pending.status, 'PENDING_HANDOVER');
+    assert.equal(pending.status, 'RECEIVED');
     assert.match(pending.code, /^PTH-\d{6}$/u);
-    await assert.rejects(
-      repository.actOnReceiptReturn(
-        fx.admin,
-        pending.id,
-        { action: 'HANDOVER', expectedVersion: 0 },
-        randomUUID(),
-        'h',
-        context(),
-      ),
-      (error) => error.code === 'FORBIDDEN',
-    );
-    const handed = await repository.actOnReceiptReturn(
-      fx.store,
-      pending.id,
-      { action: 'HANDOVER', expectedVersion: 0 },
-      randomUUID(),
-      'h',
-      context(),
-    );
-    assert.equal(handed.data.status, 'IN_TRANSIT');
-    await assert.rejects(
-      repository.actOnReceiptReturn(
+    for (const [actor, body, code] of [
+      [fx.admin, { action: 'HANDOVER', expectedVersion: 0 }, 'FORBIDDEN'],
+      [fx.store, { action: 'HANDOVER', expectedVersion: 0 }, 'VERSION_CONFLICT'],
+      [
         fx.store,
-        pending.id,
-        { action: 'RECEIVE', expectedVersion: 1, outcome: 'RECEIVED', note: null },
-        randomUUID(),
-        'r',
-        context(),
-      ),
-      (error) => error.code === 'FORBIDDEN',
-    );
-    const received = await repository.actOnReceiptReturn(
-      fx.admin,
-      pending.id,
-      { action: 'RECEIVE', expectedVersion: 1, outcome: 'RECEIVED', note: null },
-      randomUUID(),
-      'r',
-      context(),
-    );
-    assert.equal(received.data.status, 'RECEIVED');
-    // The timeline carries the return's own events, linked by code, after the admin decision.
+        { action: 'RECEIVE', expectedVersion: 0, outcome: 'RECEIVED', note: null },
+        'FORBIDDEN',
+      ],
+      [
+        fx.admin,
+        { action: 'RECEIVE', expectedVersion: 0, outcome: 'RECEIVED', note: null },
+        'VERSION_CONFLICT',
+      ],
+    ]) {
+      await assert.rejects(
+        repository.actOnReceiptReturn(actor, pending.id, body, randomUUID(), 'stale', context()),
+        (error) => error.code === code,
+      );
+    }
     const history = await repository.listReceiptAdjustmentHistory(fx.store, created.data.id, {
       page: 1,
       pageSize: 50,
     });
     assert.deepEqual(
-      history.data.map((event) => event.type),
-      ['REPORTED', 'VERIFIED', 'APPLIED', 'RETURN_HANDED_OVER', 'RETURN_RECEIVED'],
+      history.data.map((event) => event.type).sort(),
+      ['REPORTED', 'VERIFIED', 'APPLIED', 'RETURN_AUTO_COMPLETED'].sort(),
     );
-    assert.equal(history.data[2].changes.returnCount, 1);
+    assert.equal(history.data.find((event) => event.type === 'APPLIED').changes.returnCount, 1);
     const returnEvents = history.data.filter((event) => event.subject === 'RETURN');
     assert.ok(returnEvents.every((event) => event.returnCode === pending.code));
     assert.deepEqual(
       returnEvents.map((event) => [event.statusBefore, event.statusAfter, event.actor.role]),
-      [
-        ['PENDING_HANDOVER', 'IN_TRANSIT', 'STORE'],
-        ['IN_TRANSIT', 'RECEIVED', 'ADMIN'],
-      ],
+      [[null, 'RECEIVED', 'HTKD']],
     );
+    const current = await repository.getReceipt(fx.store, fx.receiptId);
+    assert.equal(current.adjustmentSummary.effective.goodsVnd, 2_000_000);
     const returns = await repository.listReceiptReturns(fx.store, { page: 1, pageSize: 20 });
     assert.equal(returns.data[0].status, 'RECEIVED');
     assert.equal(
@@ -477,11 +454,11 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
     const receipt = await repository.getReceipt(fx.store, fx.receiptId);
     assert.equal(receipt.status, 'FINALIZED');
     assert.equal(receipt.adjustmentSummary.original.goodsVnd, 3_000_000);
-    assert.equal(receipt.adjustmentSummary.effective.goodsVnd, 2_800_000);
+    assert.equal(receipt.adjustmentSummary.effective.goodsVnd, 2_000_000);
     const pending = applied.data.lines[0].returns[0];
-    assert.equal(pending.status, 'PENDING_HANDOVER');
+    assert.equal(pending.status, 'RECEIVED');
     const returns = await repository.listReceiptReturns(fx.store, {
-      status: 'PENDING_HANDOVER',
+      status: 'RECEIVED',
       page: 1,
       pageSize: 100,
     });
@@ -497,21 +474,23 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
       ),
       (error) => error.code === 'FORBIDDEN',
     );
-    const handed = await repository.actOnReceiptReturn(
-      fx.store,
-      pending.id,
-      { action: 'HANDOVER', expectedVersion: 0 },
-      randomUUID(),
-      'h',
-      context(),
+    await assert.rejects(
+      repository.actOnReceiptReturn(
+        fx.store,
+        pending.id,
+        { action: 'HANDOVER', expectedVersion: 0 },
+        randomUUID(),
+        'stale',
+        context(),
+      ),
+      (error) => error.code === 'VERSION_CONFLICT',
     );
-    assert.equal(handed.data.status, 'IN_TRANSIT');
 
     const audits = await db
       .select({ action: auditLogs.action, actorRole: auditLogs.actorRole })
       .from(auditLogs)
       .where(eq(auditLogs.actorUserId, fx.store.accountId));
-    assert.ok(audits.length >= 5);
+    assert.ok(audits.length >= 4);
     assert.ok(
       audits.every((row) => row.actorRole === 'wholesale'),
       JSON.stringify(audits),

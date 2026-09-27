@@ -2,7 +2,17 @@ import type { ReceiptAdjustmentContextBag } from '@idosi/contracts';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { ReportForm } from './ReceiptAdjustments';
+import { holdCopy, ReportForm } from './ReceiptAdjustments';
+
+it('shows returned inventory accurately even when a legacy hold flag remains', () => {
+  expect(holdCopy({ bagStatus: 'RETURNED', holdState: 'RETURNING' })).toBe(
+    'Đã xuất trả khỏi cửa hàng',
+  );
+  expect(holdCopy({ bagStatus: 'RETURNED', holdState: 'RELEASED' })).toBe(
+    'Đã xuất trả khỏi cửa hàng',
+  );
+  expect(holdCopy({ bagStatus: 'QUARANTINED', holdState: 'RETURNING' })).toBe('Giữ chờ trả kho');
+});
 
 describe('discrepancy report selection', () => {
   it('renders an opened bag disabled while an unopened bag remains selectable', () => {
