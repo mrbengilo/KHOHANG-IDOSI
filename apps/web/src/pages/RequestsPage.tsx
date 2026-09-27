@@ -683,7 +683,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
                 {[
                   'Thời gian',
                   'Mã phiếu',
-                  'Cửa hàng',
+                  ...(role === 'STORE' ? [] : ['Cửa hàng']),
                   'Mặt hàng',
                   'Số lượng (bao)',
                   'Trạng thái',
@@ -709,12 +709,14 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
                         <td rowSpan={request.lines.length}>
                           {request.code ?? 'Chưa ghi nhận mã phiếu'}
                         </td>
-                        <td rowSpan={request.lines.length}>
-                          {selectedStore?.code ?? 'Chưa ghi nhận'}
-                        </td>
+                        {role !== 'STORE' ? (
+                          <td rowSpan={request.lines.length}>
+                            {selectedStore?.name ?? 'Chưa ghi nhận'}
+                          </td>
+                        ) : null}
                       </>
                     ) : null}
-                    <td>
+                    <td className="document-product-name">
                       {productNameById.get(line.productId) ?? line.productId}
                       {line.note ? <p>{line.note}</p> : null}
                     </td>

@@ -139,6 +139,19 @@ test('one multi-product Sale document is created, displayed and received against
     await expect(body.locator('tr').first().locator('td').nth(7)).toHaveText('3');
     await expect(body.locator('tr').first().locator('td').nth(8)).toHaveText('130 kg');
     await expect(body.locator('tr').first().locator('td').nth(9)).toHaveText('Actor source');
+    await expect(
+      history.getByRole('columnheader', { name: 'Trạng thái', exact: true }),
+    ).toBeVisible();
+    const firstRow = body.locator('tr').first();
+    await expect(firstRow.locator('td').nth(2)).toHaveText(source!.store.name);
+    await expect(firstRow.locator('td').nth(3)).toHaveText(destination!.store.name);
+    await expect(firstRow.locator('td').last()).toHaveText('Đã điều chuyển');
+    await expect(firstRow.locator('td').last().getByRole('button')).toHaveCount(0);
+    await expect(body.locator('time .document-time-part').first()).toHaveText(/^\d{2}:\d{2}$/);
+    await expect(body.locator('time .document-time-part').nth(1)).toHaveText(
+      /^\d{2}\/\d{2}\/\d{4}$/,
+    );
+    await expect(body.getByText('Tổng: 80 kg', { exact: true })).toBeVisible();
     for (const width of [360, 390, 412, 768, 1366, 1440]) {
       await page.setViewportSize({ width, height: 900 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
@@ -167,10 +180,27 @@ test('one multi-product Sale document is created, displayed and received against
     await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
     await expect(page).not.toHaveURL(/\/login/);
     await page.goto('/transfers');
+    await body.locator('summary').click();
     await body.getByRole('button', { name: 'Xác nhận đã nhận', exact: true }).click();
-    await expect(body.getByText('Đã nhận', { exact: true })).toBeVisible();
+    await expect(body.locator('tr').first().locator('td').last()).toHaveText('Đã điều chuyển');
+    await expect
+      .poll(
+        async () =>
+          (await (await tabApi(page).get(api + '/sorted-sale-transfers')).json()).data.find(
+            (row: { id: string }) => row.id === transfer.id,
+          )?.status,
+      )
+      .toBe('RECEIVED');
     await page.reload();
-    await expect(body.getByText('Đã nhận', { exact: true })).toBeVisible();
+    await expect(body.locator('tr').first().locator('td').last()).toHaveText('Đã điều chuyển');
+    await expect
+      .poll(
+        async () =>
+          (await (await tabApi(page).get(api + '/sorted-sale-transfers')).json()).data.find(
+            (row: { id: string }) => row.id === transfer.id,
+          )?.status,
+      )
+      .toBe('RECEIVED');
     await expect(body).toContainText('Actor source');
     expect(errors).toEqual([]);
   } finally {

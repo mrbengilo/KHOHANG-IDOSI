@@ -73,3 +73,24 @@
   gap: 0.5rem;
   margin-top: 1rem;
 }
+
+.document-history td.document-product-name {
+  font-weight: 400;
+}
+.document-time-part {
+  display: block;
+}
+.sale-transfer-history .document-quantity {
+  min-width: 3.5rem;
+  width: 4.5rem;
+  font-variant-numeric: tabular-nums;
+}
+.transfer-list .sale-transfer-history td:last-child {
+  min-width: 7rem;
+}
+
+.session-document {
+  overflow-wrap: anywhere;
+  min-width: 0;
+  margin-block: 1rem;
+}
