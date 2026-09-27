@@ -22,7 +22,7 @@ const adminPassword =
   process.env.LIVE_E2E_ADMIN_PASSWORD ?? 'ci-bootstrap-password-not-for-production';
 const widths = [360, 390, 412, 768, 1366, 1440];
 
-test('store reports a mixed-up bag, HTKD verifies, admin applies: money, stock and P0B right', async ({
+test('store reports a mixed-up bag, HTKD approves once: money, stock and P0B right', async ({
   page,
 }, testInfo) => {
   test.setTimeout(120_000);
@@ -138,27 +138,12 @@ test('store reports a mixed-up bag, HTKD verifies, admin applies: money, stock a
     await detail.getByLabel('Ghi chú xác minh').fill('Đã xem ảnh, cân lại đúng 20 kg');
     await expect(detail).toContainText('−200.000 ₫');
     await assertNoOverflow(page, testInfo.outputPath('htkd-verify'));
-    await detail.getByRole('button', { name: 'Xác minh, gửi Admin duyệt' }).click();
-    await expect(detail).toContainText('Chờ Admin duyệt');
-    await expect(detail).toContainText('Sau điều chỉnh (tạm tính, chưa hiệu lực)');
-
-    // 3. The admin applies it: money, stock and the dress right take effect together.
-    await relogin(page, { username: adminUsername, password: adminPassword });
-    await page.goto('/receive');
-    await page
-      .locator('.adjustment-queue')
-      .getByRole('button')
-      .filter({ hasText: 'Chờ Admin duyệt' })
-      .filter({ hasText: `Cửa hàng sai lệch ${token}` })
-      .first()
-      .click();
-    const adminDetail = page.locator('.adjustment-detail');
-    await adminDetail.getByRole('button', { name: 'Duyệt và áp dụng' }).click();
-    await expect(adminDetail).toContainText('Đã xử lý');
-    await expect(adminDetail).toContainText('Sau điều chỉnh (đã có hiệu lực)');
-    await expect(adminDetail).toContainText('Chờ cấp (ưu tiên P0B)');
+    await detail.getByRole('button', { name: 'Duyệt và áp dụng' }).click();
+    await expect(detail).toContainText('Đã xử lý');
+    await expect(detail).toContainText('Sau điều chỉnh (đã có hiệu lực)');
+    await expect(detail).toContainText('Chờ cấp (ưu tiên P0B)');
     await expect(page.locator('.adjustment-money__effective')).toContainText('2.800.000');
-    await assertNoOverflow(page, testInfo.outputPath('admin-applied'));
+    await assertNoOverflow(page, testInfo.outputPath('htkd-applied'));
 
     const bags = await client.db
       .select({ productId: storeInventoryBags.productId, status: storeInventoryBags.status })
@@ -194,12 +179,12 @@ test('store reports a mixed-up bag, HTKD verifies, admin applies: money, stock a
           eq(storeReceiptAdjustments.status, 'pending_htkd'),
         ),
       );
-    await relogin(page, { username: adminUsername, password: adminPassword });
-    const adminApi = tabApi(page);
+    await relogin(page, htkdLogin);
+    const htkdApi = tabApi(page);
     const adjustment = (
-      await (await adminApi.get(`${api}/receipt-adjustments/${pending!.id}`)).json()
+      await (await htkdApi.get(`${api}/receipt-adjustments/${pending!.id}`)).json()
     ).data;
-    const verified = await adminApi.post(`${api}/receipt-adjustments/${pending!.id}/actions`, {
+    const verified = await htkdApi.post(`${api}/receipt-adjustments/${pending!.id}/actions`, {
       headers: { 'idempotency-key': randomUUID() },
       data: {
         action: 'VERIFY',
@@ -216,11 +201,7 @@ test('store reports a mixed-up bag, HTKD verifies, admin applies: money, stock a
       },
     });
     expect(verified.status()).toBe(200);
-    const applied = await adminApi.post(`${api}/receipt-adjustments/${pending!.id}/actions`, {
-      headers: { 'idempotency-key': randomUUID() },
-      data: { action: 'APPLY', expectedVersion: 1, note: null },
-    });
-    expect(applied.status()).toBe(200);
+    expect((await verified.json()).data.status).toBe('APPLIED');
     expect(
       await client.db
         .select({ remaining: waitTickets.remainingQuantity })
@@ -369,34 +350,11 @@ test('admin tab lists every store document; applying shows "Đã xử lý" to HT
       ).json()
     ).data as { id: string; code: string };
     await login(htkdPage, htkdLogin);
-    const verified = await tabApi(htkdPage).post(
-      `${api}/receipt-adjustments/${created.id}/actions`,
-      {
-        headers: { 'idempotency-key': randomUUID() },
-        data: {
-          action: 'VERIFY',
-          expectedVersion: 0,
-          cause: 'SOURCE_MISCLASSIFICATION',
-          note: 'HTKD đã đối chiếu ảnh',
-          lines: [
-            {
-              receiptBagId: contextView.bags[0].receiptBagId,
-              actualProductId: jeans!.id,
-              weightKg: '20.000',
-              pricePerKgVnd: 40_000,
-              weightChangeNote: null,
-            },
-          ],
-        },
-      },
-    );
-    expect(verified.status()).toBe(200);
-
     // HTKD and store keep the receipt open; they will not reload.
     for (const page of [storePage, htkdPage]) {
       await page.goto('/receive');
       await expect(page.locator('.adjustment-section')).toContainText(created.code);
-      await expect(page.locator('.adjustment-section')).toContainText('Chờ Admin duyệt');
+      await expect(page.locator('.adjustment-section')).toContainText('Chờ HTKD xác minh');
     }
 
     // Admin: only the open tab loads. The discrepancy tab never downloads warehouse data.
@@ -410,9 +368,9 @@ test('admin tab lists every store document; applying shows "Đã xử lý" to HT
     );
     const list = adminPage.getByRole('region', { name: 'Danh sách phiếu sai lệch' });
     await expect(list).toContainText(created.code);
-    await expect(list).toContainText(`HTKD ${token}`);
-    await expect(list).toContainText('Tạm tính, chưa hiệu lực');
-    await expect(adminPage.getByText(/Đang xem: Chờ Admin duyệt/)).toBeVisible();
+    await expect(list).toContainText('Chờ HTKD xác minh');
+    await expect(list).toContainText('Chờ HTKD xác minh giá');
+    await expect(adminPage.getByText(/Đang xem: Chờ HTKD xác minh/)).toBeVisible();
     expect(requested.filter((path) => path.includes('/warehouse-'))).toEqual([]);
     expect(requested.filter((path) => path.endsWith('/store-inventory-bags'))).toEqual([]);
     expect(
@@ -421,11 +379,10 @@ test('admin tab lists every store document; applying shows "Đã xử lý" to HT
 
     await list.getByRole('button', { name: `Xem chi tiết ${created.code}` }).click();
     const detail = adminPage.getByRole('region', { name: 'Chi tiết hồ sơ sai lệch' });
-    await expect(detail).toContainText('Xác minh, gửi Admin duyệt');
-    await expect(detail.locator('.adjustment-timeline')).toContainText(`HTKD ${token} · HTKD`);
+    await expect(detail).toContainText('Duyệt và áp dụng');
     await assertWorkspaceFits(adminPage, testInfo.outputPath('admin-adjustments-pending'));
     // Changing store also closes the document: guard the draft on this navigation path.
-    const note = detail.getByRole('textbox', { name: 'Ghi chú (bắt buộc khi từ chối/trả lại)' });
+    const note = detail.getByRole('textbox', { name: 'Nội dung/lý do' });
     await note.fill('Đang đối chiếu chứng từ');
     const storeFilter = adminPage.getByRole('combobox', { name: 'Cửa hàng', exact: true });
     const otherStoreId = await storeFilter
@@ -451,16 +408,41 @@ test('admin tab lists every store document; applying shows "Đã xử lý" to HT
     await storeFilter.selectOption(store.id);
     await list.getByRole('button', { name: `Xem chi tiết ${created.code}` }).click();
     await expect(note).toHaveValue('');
-    await detail.getByRole('button', { name: 'Duyệt và áp dụng' }).click();
-    await expect(detail.locator('.adjustment-detail__header')).toContainText('Đã xử lý');
-    await expect(detail.locator('.adjustment-timeline')).toContainText('Admin duyệt và áp dụng');
+    const verified = await tabApi(htkdPage).post(
+      `${api}/receipt-adjustments/${created.id}/actions`,
+      {
+        headers: { 'idempotency-key': randomUUID() },
+        data: {
+          action: 'VERIFY',
+          expectedVersion: 0,
+          cause: 'SOURCE_MISCLASSIFICATION',
+          note: 'HTKD đã đối chiếu ảnh',
+          lines: [
+            {
+              receiptBagId: contextView.bags[0].receiptBagId,
+              actualProductId: jeans!.id,
+              weightKg: '20.000',
+              pricePerKgVnd: 40_000,
+              weightChangeNote: null,
+            },
+          ],
+        },
+      },
+    );
+    expect(verified.status()).toBe(200);
+
+    // Approval happens in another session; the existing sync contract polls every 15 seconds.
+    await expect(detail.locator('.adjustment-detail__header')).toContainText('Đã xử lý', {
+      timeout: 25_000,
+    });
+    await expect(detail.locator('.adjustment-timeline')).toContainText('Duyệt và áp dụng');
 
     // The other two sessions show the same tag by themselves within one poll interval.
     for (const page of [storePage, htkdPage]) {
       await expect(page.locator('.adjustment-section')).toContainText('Đã xử lý', {
         timeout: 25_000,
       });
-      await expect(page.locator('.adjustment-section')).not.toContainText('Chờ Admin duyệt');
+      await expect(page.locator('.adjustment-section')).not.toContainText('Chờ HTKD xác minh');
     }
 
     // The processed document leaves the pending slice but stays in the history.

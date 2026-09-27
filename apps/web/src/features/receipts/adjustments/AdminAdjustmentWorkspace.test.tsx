@@ -175,21 +175,21 @@ function listKey(url: string) {
 
 describe('admin discrepancy workspace', () => {
   it('opens on documents HTKD sent to the admin, with store, people and a draft delta', () => {
-    const url = '/inventory?tab=adjustments';
+    const url = '/inventory?tab=adjustments&psl.status=PENDING_ADMIN';
     const { html } = render(url, (client) =>
       client.setQueryData(listKey(url), {
         data: [listItem('PENDING_ADMIN')],
         pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 },
       }),
     );
-    expect(html).toContain('Đang xem: Chờ Admin duyệt · Mọi cửa hàng · 1 hồ sơ');
+    expect(html).toContain('Đang xem: Chờ HTKD duyệt (hồ sơ cũ) · Mọi cửa hàng · 1 hồ sơ');
     expect(html).toContain('PSL-000001');
     expect(html).toContain('Phiếu nhận PNH-000001');
     expect(html).toContain('Q1 · Cửa hàng Quận 1');
     expect(html).toContain('Cửa hàng Q1');
     expect(html).toContain('HTKD Lan');
     expect(html).toContain('Tạm tính, chưa hiệu lực');
-    expect(html).toContain('Chờ Admin duyệt');
+    expect(html).toContain('Chờ HTKD duyệt (hồ sơ cũ)');
     // The list never asks for each document's detail.
     expect(html).not.toContain('Chi tiết hồ sơ sai lệch');
   });

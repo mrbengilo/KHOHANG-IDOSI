@@ -34,23 +34,23 @@ Vì vậy không có đường nào ghi nhận “đã chốt 3 đầm nhưng th
 tài khoản cửa hàng sỉ `WHOLESALE` (cửa hàng loại sỉ đang hoạt động).
 
 ```text
-                 RESUBMIT (STORE)
-             ┌───────────────────────┐
-             ▼                       │
-STORE báo ─► PENDING_HTKD ──VERIFY (HTKD được giao | ADMIN)──► PENDING_ADMIN ──APPLY (ADMIN)──► APPLIED
-             │   ▲  │                                          │   │
-             │   │  └─REQUEST_INFO (HTKD|ADMIN)─► NEEDS_INFO ◄─┘   │ REQUEST_INFO (ADMIN)
-             │   └──────────── RETURN_TO_VERIFIER (ADMIN) ─────────┘
-             ├─REJECT (HTKD|ADMIN) ─► REJECTED      NEEDS_INFO ─REJECT (ADMIN)─► REJECTED
-             └─CANCEL (STORE) ─────► CANCELLED      NEEDS_INFO ─CANCEL (STORE)─► CANCELLED
+STORE báo → PENDING_HTKD → VERIFY (HTKD phụ trách | ADMIN) → APPLIED
+                ↓ REQUEST_INFO                    ↑ VERIFY (xác minh lại)
+            NEEDS_INFO → RESUBMIT → PENDING_HTKD   PENDING_ADMIN (legacy)
+
+PENDING_HTKD / PENDING_ADMIN → REQUEST_INFO hoặc REJECT (HTKD | ADMIN)
+PENDING_ADMIN → RETURN_TO_VERIFIER (HTKD | ADMIN) → PENDING_HTKD
+PENDING_HTKD / NEEDS_INFO → CANCEL (STORE); NEEDS_INFO → REJECT (ADMIN)
 ```
 
 - Mọi command kiểm tra lại trong transaction: vai trò, tài khoản `active`, `store_id` (cửa hàng
   chỉ của mình), phân công HTKD chưa bị gỡ, `expectedVersion`. Tài khoản bị khóa hoặc gỡ phân
   công bị từ chối dù session cũ còn hạn (session cũng bị thu hồi theo cơ chế hiện có).
 - Nội dung chỉ đổi qua `RESUBMIT` (quay về `PENDING_HTKD`); `REQUEST_INFO`/`RETURN_TO_VERIFIER`
-  xóa kết quả xác minh. Admin chỉ duyệt đúng phiên bản HTKD đã xác minh (`expectedVersion`).
-- `APPLY` còn kiểm tra số điều chỉnh đã áp dụng của phiếu bằng `base_applied_count` lúc xác minh;
+  xóa kết quả xác minh. HTKD duyệt đúng phiên bản đang xem (`expectedVersion`).
+- `VERIFY` tính lại dữ liệu server rồi áp dụng trong cùng transaction; chỉ tăng version một lần.
+  Lỗi bất kỳ bước nào rollback cả xác minh, tồn/ledger, quyền chờ bù, phiếu trả và audit.
+- `APPLY` được giữ cho client Admin cũ, chỉ xử lý legacy và còn kiểm tra số điều chỉnh đã áp dụng của phiếu bằng `base_applied_count` lúc xác minh;
   nếu phiếu có điều chỉnh khác áp dụng sau đó thì phải xác minh lại.
 - Cửa hàng sỉ dùng đúng quy trình này. Tài khoản `WHOLESALE` nhận hàng cho mọi cửa hàng sỉ đang
   hoạt động nên là phía cửa hàng trên chứng từ của các cửa hàng đó: xem ngữ cảnh, báo sai lệch, bổ
@@ -68,16 +68,16 @@ STORE báo ─► PENDING_HTKD ──VERIFY (HTKD được giao | ADMIN)──�
 Mọi màn hình (Admin, HTKD, cửa hàng; danh sách, thẻ, chi tiết, lịch sử) lấy nhãn từ một bảng
 duy nhất `adjustmentStatusCopy` (`apps/web/src/features/receipts/adjustments/adjustmentModel.ts`):
 
-| Trạng thái dữ liệu | Nhãn                 |
-| ------------------ | -------------------- |
-| `PENDING_HTKD`     | Chờ HTKD xác minh    |
-| `PENDING_ADMIN`    | Chờ Admin duyệt      |
-| `NEEDS_INFO`       | Cần cửa hàng bổ sung |
-| `APPLIED`          | Đã xử lý             |
-| `REJECTED`         | Bị từ chối           |
-| `CANCELLED`        | Đã hủy               |
+| Trạng thái dữ liệu | Nhãn                      |
+| ------------------ | ------------------------- |
+| `PENDING_HTKD`     | Chờ HTKD xác minh         |
+| `PENDING_ADMIN`    | Chờ HTKD duyệt (hồ sơ cũ) |
+| `NEEDS_INFO`       | Cần cửa hàng bổ sung      |
+| `APPLIED`          | Đã xử lý                  |
+| `REJECTED`         | Bị từ chối                |
+| `CANCELLED`        | Đã hủy                    |
 
-“Đã xử lý” nghĩa là Admin **đã áp dụng thành công** điều chỉnh (tiền, phân loại bao, quyền chờ
+“Đã xử lý” nghĩa là người duyệt **đã áp dụng thành công** điều chỉnh (tiền, phân loại bao, quyền chờ
 bù có hiệu lực). Không có nghĩa hàng trả đã về kho hay hàng bù đã giao: tiến độ phiếu trả và
 quyền chờ bù hiển thị riêng. Từ chối/hủy là kết quả kết thúc khác, không hiển thị như áp dụng.
 Nhãn đọc từ trạng thái thật trong database, không có cờ riêng cho từng vai trò; hồ sơ `applied`
@@ -95,11 +95,11 @@ cũ tự hiện nhãn mới, không cần backfill.
 - Rời tab hoặc đổi hồ sơ khi biểu mẫu còn nội dung chưa gửi: hỏi “Ở lại / Bỏ nháp và chuyển”,
   kể cả khi đổi bộ lọc cửa hàng làm đóng hồ sơ. Chọn “Ở lại” giữ nguyên bộ lọc và ghi chú;
   tải lại trang thì trình duyệt hỏi xác nhận.
-- Tab **Phiếu sai lệch** mặc định lọc **Chờ Admin duyệt**; lọc thêm cửa hàng, trạng thái (gồm
+- Tab **Phiếu sai lệch** mặc định lọc **Chờ HTKD xác minh**; lọc thêm cửa hàng, trạng thái (gồm
   “Tất cả” và “Đã xử lý (lịch sử)”), mã PSL/mã phiếu nhận, ngày báo hoặc ngày xử lý (ngày Việt Nam,
   khoảng nửa mở `[từ 00:00, đến+1 00:00)`). Phân trang server 20 dòng, sắp `updated_at desc, id
 desc`; đổi bộ lọc về trang 1; trang trống sau khi xử lý tự lùi về trang cuối có dữ liệu.
-- Mỗi dòng: PSL, phiếu nhận gốc, cửa hàng, người báo/thời điểm, người xác minh gửi Admin/thời
+- Mỗi dòng: PSL, phiếu nhận gốc, cửa hàng, người báo/thời điểm, người xác minh/thời
   điểm, lý do, số bao, chênh lệch tiền hàng (tạm tính hay đã hiệu lực), trạng thái, người quyết
   định/thời điểm/ghi chú. Tên lấy bằng join trong cùng truy vấn danh sách, không gọi chi tiết
   từng dòng. Tài khoản/cửa hàng không đọc được hiển thị mã và “Không còn thông tin”.
@@ -109,7 +109,7 @@ desc`; đổi bộ lọc về trang 1; trang trống sau khi xử lý tự lùi 
 
 `GET /api/v1/receipt-adjustments/:adjustmentId/history?page&pageSize` đọc audit bất biến của hồ
 sơ (`entity_type = store_receipt_adjustment`) và của phiếu trả sinh từ hồ sơ
-(`store_receipt_return`), cũ trước mới sau (`created_at, id`), phân trang. Quyền kiểm tra theo cửa
+(`store_receipt_return`), cũ trước mới sau (`created_at`, xác minh trước áp dụng nếu cùng thời điểm, `id`), phân trang. Quyền kiểm tra theo cửa
 hàng của chứng từ trước khi đọc audit (Admin mọi cửa hàng, HTKD cửa hàng được giao, cửa hàng/quầy
 sỉ của mình). DTO chỉ gồm: thời gian, loại sự kiện, tên/mã và **vai trò ghi trên audit lúc thao
 tác**, cửa hàng, trạng thái trước/sau, ghi chú và thay đổi nghiệp vụ audit ghi được (nguyên nhân,
@@ -141,19 +141,18 @@ thao tác). Không đổi schema, không sửa audit cũ.
 
 ## Ma trận sự kiện
 
-| Sự kiện                | Chứng từ                                                               | Hàng/tồn cửa hàng                                                                                                               | Kho tổng                                                                                                        | Tiền                                                   | Chờ ưu tiên                              |
-| ---------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------- |
-| STORE báo              | `PSL` `pending_htkd`, dòng từng bao, snapshot giá trị đang hiệu lực    | Bao `available` chưa từng khui → `quarantined` + ledger `quarantine`; bao khác không đổi                                        | Không đổi                                                                                                       | Không đổi                                              | Chưa tạo                                 |
-| HTKD xác minh          | `pending_admin`, `verification` (trước/sau do server tính), chênh lệch | Vẫn giữ                                                                                                                         | Không đổi                                                                                                       | Tạm tính, chưa hiệu lực                                | Chưa tạo, hiển thị số sẽ phát sinh       |
-| Từ chối/Hủy            | `rejected`/`cancelled` + lý do                                         | Chỉ gỡ giữ bao do chính hồ sơ giữ (ledger `release`)                                                                            | Không đổi                                                                                                       | Không đổi                                              | Không                                    |
-| Admin áp dụng – giữ    | `applied`, `applied_sequence`                                          | Cùng bao vật lý đổi SKU/giá trị/kg: ledger `adjust` ra SKU cũ + `adjust` vào SKU thực tế, rồi `release` về trạng thái trước giữ | Nguyên nhân kho giao nhầm: SKU thực tế −1 on-hand; SKU duyệt +1 on-hand +1 reserved trong phiếu kiểm hàng thiếu | Có hiệu lực ngay                                       | Tạo/bổ sung đúng 1 đơn vị SKU duyệt, P0B |
-| Admin áp dụng – trả    | Như trên + phiếu trả `PTH` `pending_handover`                          | Như trên nhưng bao vẫn `quarantined` (giữ chờ trả)                                                                              | Như trên                                                                                                        | Có hiệu lực ngay (cửa hàng đã nhận jeans)              | Tạo ngay, độc lập tiến độ trả            |
-| Bàn giao trả           | `PTH` `in_transit`                                                     | Bao → `returned`, ledger `consume` hết kg; không còn khả dụng ở cửa hàng                                                        | Không đổi                                                                                                       | Giá trị hàng trả ghi giảm tồn cửa hàng một lần tại đây | Không đổi                                |
-| Kho nhận đủ            | `received`                                                             | —                                                                                                                               | +1 on-hand SKU trả (ledger `return`, đúng một lần)                                                              | —                                                      | Không đổi                                |
-| Kho nhận thiếu/sai     | `disputed` + ghi chú                                                   | —                                                                                                                               | Không tăng                                                                                                      | —                                                      | Không đổi                                |
-| Đối soát xong          | `received` (nhập kho) hoặc `lost`                                      | —                                                                                                                               | +1 chỉ khi tìm thấy                                                                                             | —                                                      | Không đổi                                |
-| Hủy trả (đổi sang giữ) | `PTH` `cancelled`                                                      | Gỡ giữ, bao bán được                                                                                                            | Không đổi                                                                                                       | Không đổi                                              | Không đổi                                |
-| Giữ → trả sau áp dụng  | `PTH` mới liên kết dòng điều chỉnh                                     | Giữ lại bao                                                                                                                     | Không đổi                                                                                                       | Không đổi                                              | Không đổi                                |
+| Sự kiện                | Chứng từ                                                            | Hàng/tồn cửa hàng                                                                                                               | Kho tổng                                                                                                        | Tiền                                                   | Chờ ưu tiên                              |
+| ---------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------- |
+| STORE báo              | `PSL` `pending_htkd`, dòng từng bao, snapshot giá trị đang hiệu lực | Bao `available` chưa từng khui → `quarantined` + ledger `quarantine`; bao khác không đổi                                        | Không đổi                                                                                                       | Không đổi                                              | Chưa tạo                                 |
+| Từ chối/Hủy            | `rejected`/`cancelled` + lý do                                      | Chỉ gỡ giữ bao do chính hồ sơ giữ (ledger `release`)                                                                            | Không đổi                                                                                                       | Không đổi                                              | Không                                    |
+| HTKD duyệt – giữ       | `applied`, `applied_sequence`                                       | Cùng bao vật lý đổi SKU/giá trị/kg: ledger `adjust` ra SKU cũ + `adjust` vào SKU thực tế, rồi `release` về trạng thái trước giữ | Nguyên nhân kho giao nhầm: SKU thực tế −1 on-hand; SKU duyệt +1 on-hand +1 reserved trong phiếu kiểm hàng thiếu | Có hiệu lực ngay                                       | Tạo/bổ sung đúng 1 đơn vị SKU duyệt, P0B |
+| HTKD duyệt – trả       | Như trên + phiếu trả `PTH` `pending_handover`                       | Như trên nhưng bao vẫn `quarantined` (giữ chờ trả)                                                                              | Như trên                                                                                                        | Có hiệu lực ngay (cửa hàng đã nhận jeans)              | Tạo ngay, độc lập tiến độ trả            |
+| Bàn giao trả           | `PTH` `in_transit`                                                  | Bao → `returned`, ledger `consume` hết kg; không còn khả dụng ở cửa hàng                                                        | Không đổi                                                                                                       | Giá trị hàng trả ghi giảm tồn cửa hàng một lần tại đây | Không đổi                                |
+| Kho nhận đủ            | `received`                                                          | —                                                                                                                               | +1 on-hand SKU trả (ledger `return`, đúng một lần)                                                              | —                                                      | Không đổi                                |
+| Kho nhận thiếu/sai     | `disputed` + ghi chú                                                | —                                                                                                                               | Không tăng                                                                                                      | —                                                      | Không đổi                                |
+| Đối soát xong          | `received` (nhập kho) hoặc `lost`                                   | —                                                                                                                               | +1 chỉ khi tìm thấy                                                                                             | —                                                      | Không đổi                                |
+| Hủy trả (đổi sang giữ) | `PTH` `cancelled`                                                   | Gỡ giữ, bao bán được                                                                                                            | Không đổi                                                                                                       | Không đổi                                              | Không đổi                                |
+| Giữ → trả sau áp dụng  | `PTH` mới liên kết dòng điều chỉnh                                  | Giữ lại bao                                                                                                                     | Không đổi                                                                                                       | Không đổi                                              | Không đổi                                |
 
 ## Tiền
 
@@ -247,3 +246,22 @@ kiến). Không xây kho tệp mới trong phạm vi này.
   mất màn hình/endpoint mới, dữ liệu giữ nguyên.
 - Mở quyền cho cửa hàng sỉ không đổi schema hay dữ liệu; rollback bằng image trước chỉ làm quầy sỉ
   mất thao tác phía cửa hàng (API trả 403), hồ sơ đã tạo vẫn do HTKD/Admin xử lý tiếp được.
+
+## Chuyển sang HTKD duyệt một lần và rollback
+
+- Không cần migration/backfill; giữ enum PENDING_ADMIN và dữ liệu lịch sử. Không tự áp dụng
+  hàng loạt, không sửa trạng thái bằng SQL để giả lập nghiệp vụ.
+- Hàng đợi HTKD bao gồm PENDING_HTKD và PENDING_ADMIN. Hồ sơ cũ mở cùng biểu mẫu xác minh,
+  giữ kg/giá/phí đã nhập để HTKD rà soát, rồi gửi VERIFY một lần. Server kiểm tra lại quyền,
+  phân công, phiên bản, trạng thái bao và tính toàn bộ số liệu trên dữ liệu hiệu lực mới nhất.
+  Snapshot tài chính cũ được tính lại; bao không còn hợp lệ bị chặn. Có thể yêu cầu bổ sung,
+  trả lại để xác minh hoặc từ chối theo quyền. Không sửa chứng từ đã APPLIED.
+- Audit mới ghi VERIFIED và APPLIED trong cùng transaction, cùng actor/version cuối. Nhãn sự kiện
+  trung lập, vai trò đọc từ audit; không đổi lịch sử Admin thành HTKD.
+- Giữ bán gỡ phần giữ thuộc hồ sơ; trả kho tạo phiếu chờ bàn giao và tiếp tục giữ hàng.
+  Duyệt không nhập hàng trả vào kho tổng. Bàn giao, nhận thực tế, đối soát và hủy trả không đổi.
+- Triển khai theo watcher sau khi CI merge SHA xanh; kiểm tra backup/migration bằng runbook
+  deployment-khoidosi.io.vn.md. Xác nhận running=merged SHA và state=deployed/up-to-date.
+- Bản cũ đọc được APPLIED do schema không đổi. Rollback image không đảo ledger hoặc audit.
+  Tuy nhiên bản cũ tái lập duyệt hai cấp cho hồ sơ mới; ưu tiên forward-fix để giữ chính sách
+  một lần duyệt. Không restore đè database để che lỗi; đối soát dữ liệu trước quyết định rollback.

@@ -34,7 +34,7 @@ const STORE_BAG_STATUSES = [
 ] as const;
 export type StoreBagStatusFilter = (typeof STORE_BAG_STATUSES)[number];
 
-export const DEFAULT_ADJUSTMENT_STATUS: AdjustmentStatusFilter = 'PENDING_ADMIN';
+export const DEFAULT_ADJUSTMENT_STATUS: AdjustmentStatusFilter = 'PENDING_HTKD';
 export const ADJUSTMENT_PAGE_SIZE = 20;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;

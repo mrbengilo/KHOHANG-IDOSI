@@ -8,9 +8,17 @@ import {
   formatExactVnd,
   formatSignedVnd,
   listMoneyCopy,
+  openForRole,
   previewAdjustment,
   storeLabel,
 } from './adjustmentModel';
+
+it('keeps legacy pending documents actionable by HTKD and terminal documents closed', () => {
+  expect(openForRole({ status: 'PENDING_HTKD' }, 'HTKD')).toBe(true);
+  expect(openForRole({ status: 'PENDING_ADMIN' }, 'HTKD')).toBe(true);
+  expect(openForRole({ status: 'PENDING_ADMIN' }, 'STORE')).toBe(false);
+  expect(openForRole({ status: 'APPLIED' }, 'HTKD')).toBe(false);
+});
 
 const before = {
   goodsVnd: 3_000_000,
@@ -114,7 +122,7 @@ describe('receipt adjustment preview', () => {
       ),
     ).toEqual({
       PENDING_HTKD: 'Chờ HTKD xác minh',
-      PENDING_ADMIN: 'Chờ Admin duyệt',
+      PENDING_ADMIN: 'Chờ HTKD duyệt (hồ sơ cũ)',
       NEEDS_INFO: 'Cần cửa hàng bổ sung',
       APPLIED: 'Đã xử lý',
       REJECTED: 'Bị từ chối',

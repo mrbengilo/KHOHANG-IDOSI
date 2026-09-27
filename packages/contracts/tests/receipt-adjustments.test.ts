@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  ReceiptAdjustmentActionRequestSchema,
   ListReceiptAdjustmentsQuerySchema,
   ReceiptAdjustmentHistoryEventSchema,
   ReceiptAdjustmentHistoryQuerySchema,
@@ -9,6 +10,33 @@ import {
 
 const id = '10000000-0000-4000-8000-000000000001';
 const other = '10000000-0000-4000-8000-000000000002';
+
+describe('single approval command', () => {
+  const input = {
+    action: 'VERIFY',
+    expectedVersion: 0,
+    cause: 'SOURCE_MISCLASSIFICATION',
+    note: 'Đã xác minh',
+    lines: [
+      { receiptBagId: id, actualProductId: other, weightKg: '20.000', pricePerKgVnd: 40_000 },
+    ],
+  };
+  it('requires complete verification and lets the server compute effective amounts', () => {
+    expect(ReceiptAdjustmentActionRequestSchema.parse(input)).toMatchObject({
+      freightDeltaVnd: 0,
+      handlingDeltaVnd: 0,
+      vatDeltaVnd: 0,
+    });
+    for (const invalid of [
+      { ...input, lines: [] },
+      { ...input, expectedVersion: -1 },
+      { ...input, cause: undefined },
+      { ...input, goodsDeltaVnd: 999 },
+      { ...input, lines: [{ ...input.lines[0], pricePerKgVnd: undefined }] },
+    ])
+      expect(ReceiptAdjustmentActionRequestSchema.safeParse(invalid).success).toBe(false);
+  });
+});
 
 describe('receipt adjustment list query', () => {
   it('defaults to the report date and a 20-row server page', () => {

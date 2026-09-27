@@ -488,7 +488,6 @@ test('a wholesale store orders, receives, is finalized and reports a discrepancy
     await section.getByLabel('Lý do').fill('Khui bao 1 thấy mặt hàng khác');
     await section.getByRole('button', { name: 'Gửi HTKD xác minh' }).click();
     await expect(section.locator('.receipt-notice')).toContainText('PSL-');
-    await expect(section.getByRole('button', { name: /Xác minh, gửi Admin duyệt/ })).toHaveCount(0);
     await expect(section.getByRole('button', { name: 'Duyệt và áp dụng' })).toHaveCount(0);
 
     // 6. HTKD asks for more information; the desk answers from its queue.
@@ -525,7 +524,7 @@ test('a wholesale store orders, receives, is finalized and reports a discrepancy
     await deskDetail.getByRole('button', { name: 'Gửi lại HTKD' }).click();
     await expect(deskDetail).toContainText('Chờ HTKD xác minh');
 
-    // 7. HTKD verifies, the admin applies; the desk's store gets its P0B right.
+    // 7. HTKD approves once; the desk's store gets its P0B right.
     await switchAccount(page, htkdLogin);
     await page.goto('/receive');
     await page
@@ -539,21 +538,8 @@ test('a wholesale store orders, receives, is finalized and reports a discrepancy
     await verify.getByLabel('Giá / kg mặt hàng thực tế (VND)').fill('16000');
     await verify.getByLabel('Nguyên nhân').selectOption('SOURCE_MISCLASSIFICATION');
     await verify.getByLabel('Ghi chú xác minh').fill('Đã xem ảnh tem bao');
-    await verify.getByRole('button', { name: 'Xác minh, gửi Admin duyệt' }).click();
-    await expect(verify).toContainText('Chờ Admin duyệt');
-
-    await switchAccount(page, adminLogin);
-    await page.goto('/receive');
-    await page
-      .locator('.adjustment-queue')
-      .getByRole('button')
-      .filter({ hasText: 'Chờ Admin duyệt' })
-      .filter({ hasText: storeA.name })
-      .first()
-      .click();
-    const applied = page.locator('.adjustment-detail');
-    await applied.getByRole('button', { name: 'Duyệt và áp dụng' }).click();
-    await expect(applied).toContainText('Đã xử lý');
+    await verify.getByRole('button', { name: 'Duyệt và áp dụng' }).click();
+    await expect(verify).toContainText('Đã xử lý');
     // 30 kg × 20.000 = 600.000 became 30 kg × 16.000 = 480.000: 1.100.000 → 980.000.
     await expect(page.locator('.adjustment-money__effective')).toContainText('980.000');
 

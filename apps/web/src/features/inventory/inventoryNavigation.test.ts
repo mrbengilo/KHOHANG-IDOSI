@@ -29,7 +29,7 @@ describe('inventory URL navigation', () => {
       bagId: '',
     });
     expect(navigation.adjustments).toEqual({
-      status: 'PENDING_ADMIN',
+      status: 'PENDING_HTKD',
       storeId: '',
       q: '',
       dateField: 'REPORTED',
@@ -60,7 +60,7 @@ describe('inventory URL navigation', () => {
     expect(navigation.warehouse.page).toBe(1);
     expect(navigation.store.storeId).toBe('');
     expect(navigation.store.status).toBe('ALL');
-    expect(navigation.adjustments.status).toBe('PENDING_ADMIN');
+    expect(navigation.adjustments.status).toBe('PENDING_HTKD');
     expect(navigation.adjustments.dateField).toBe('REPORTED');
     expect(navigation.adjustments.from).toBe('');
     expect(navigation.adjustments.page).toBe(1);
@@ -86,7 +86,7 @@ describe('inventory URL navigation', () => {
   it('leaves defaults out of the URL', () => {
     const params = withParams(new URLSearchParams('tab=store'), {
       [KEYS.tab]: 'warehouse',
-      [KEYS.adjustmentStatus]: 'PENDING_ADMIN',
+      [KEYS.adjustmentStatus]: 'PENDING_HTKD',
       [KEYS.adjustmentPage]: 1,
       [KEYS.adjustmentSearch]: '',
     });

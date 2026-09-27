@@ -596,7 +596,7 @@ export async function transitionReceiptAdjustment(
         const next = planTransition(adjustment.status, input.action, actor.role);
         if (['RESUBMIT', 'VERIFY', 'APPLY'].includes(input.action)) {
           const blocked: Record<string, ReceiptAdjustmentBagBlocker[]> = {};
-          for (const line of await loadLines(tx, adjustment.id)) {
+          for (const line of sortLinesByBag(await loadLines(tx, adjustment.id))) {
             await withAdvisoryLock(
               tx,
               'store-inventory-bag',
@@ -620,9 +620,17 @@ export async function transitionReceiptAdjustment(
           case 'RESUBMIT':
             await resubmit(context, input);
             break;
-          case 'VERIFY':
-            await verify(context, input);
+          case 'VERIFY': {
+            const verification = await verify(context, input);
+            // The freshly computed header and line values belong to this transaction. Persist
+            // the header only after applying, with one version increment and no intermediate state.
+            await apply(
+              { ...context, adjustment: { ...adjustment, ...verification } },
+              input.note,
+              verification,
+            );
             break;
+          }
           case 'APPLY':
             await apply(context, input.note);
             break;
@@ -733,7 +741,7 @@ const clearedVerification = {
 async function verify(
   context: TransitionContext,
   input: Extract<ReceiptAdjustmentTransitionInput, { action: 'VERIFY' }>,
-): Promise<void> {
+): Promise<VerificationChanges> {
   const { tx, adjustment, now } = context;
   const note = requiredNote(input.note, 'Ghi chú xác minh', 1_000);
   const lines = await loadLines(tx, adjustment.id);
@@ -832,7 +840,7 @@ async function verify(
     lines: verifiedLines,
     blockers,
   };
-  await updateHeader(context, {
+  const changes = {
     cause: input.cause,
     verification,
     baseAppliedCount: appliedCount,
@@ -844,9 +852,25 @@ async function verify(
     freightDeltaVnd: delta.freightVnd,
     handlingDeltaVnd: delta.handlingVnd,
     vatDeltaVnd: delta.vatVnd,
-  });
+  };
   await audit(context, 'RECEIPT_ADJUSTMENT_VERIFIED', { note, ...verification });
+  return changes;
 }
+
+type VerificationChanges = Pick<
+  typeof storeReceiptAdjustments.$inferSelect,
+  | 'cause'
+  | 'verification'
+  | 'baseAppliedCount'
+  | 'verifiedByUserId'
+  | 'verifiedAt'
+  | 'verificationNote'
+  | 'infoRequestNote'
+  | 'goodsDeltaVnd'
+  | 'freightDeltaVnd'
+  | 'handlingDeltaVnd'
+  | 'vatDeltaVnd'
+>;
 
 async function sendBack(context: TransitionContext, rawNote: string): Promise<void> {
   const note = requiredNote(rawNote, 'Nội dung yêu cầu', 1_000);
@@ -911,7 +935,11 @@ async function close(context: TransitionContext, rawNote: string): Promise<void>
  * approved SKU as a P0B wait, correct the warehouse for a verified mispick, move held bags to
  * a return document or back to sale, and audit. Any failure rolls every part back.
  */
-async function apply(context: TransitionContext, rawNote: string | null): Promise<void> {
+async function apply(
+  context: TransitionContext,
+  rawNote: string | null,
+  verificationChanges?: VerificationChanges,
+): Promise<void> {
   const { tx, adjustment, now, actor } = context;
   const note = optionalNote(rawNote, 'Ghi chú duyệt', 1_000);
   if (!adjustment.cause || !adjustment.verification) {
@@ -1090,6 +1118,7 @@ async function apply(context: TransitionContext, rawNote: string | null): Promis
   }
 
   await updateHeader(context, {
+    ...verificationChanges,
     appliedSequence: appliedCount + 1,
     appliedAt: now,
     decidedByUserId: actor.userId,
@@ -2116,7 +2145,12 @@ export async function listReceiptAdjustmentHistory(
         ),
       )
       .where(where)
-      .orderBy(asc(auditLogs.createdAt), asc(auditLogs.id))
+      .orderBy(
+        asc(auditLogs.createdAt),
+        // PostgreSQL gives all audit events in one transaction the same timestamp.
+        sql`case when ${auditLogs.action} = 'RECEIPT_ADJUSTMENT_VERIFIED' then 0 else 1 end`,
+        asc(auditLogs.id),
+      )
       .limit(input.pageSize)
       .offset((input.page - 1) * input.pageSize),
     database.select({ value: count() }).from(auditLogs).where(where),

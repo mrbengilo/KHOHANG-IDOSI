@@ -364,6 +364,7 @@ export const ReceiptAdjustmentActionRequestSchema = z.discriminatedUnion('action
     .strict(),
   z
     .object({
+      // Final approval: server verifies and applies atomically, including legacy pending_admin.
       action: z.literal('VERIFY'),
       expectedVersion: z.number().int().nonnegative(),
       cause: ReceiptAdjustmentCauseSchema,

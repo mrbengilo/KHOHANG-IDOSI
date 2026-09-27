@@ -39,7 +39,7 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
     await closeDatabase();
   });
 
-  test('store reports, HTKD verifies, admin applies; scope, idempotency and DTOs hold', async () => {
+  test('store reports, HTKD approves once; scope, idempotency and DTOs hold', async () => {
     const fx = await finalizedReceipt(repository);
     const receipt = await repository.getReceipt(fx.store, fx.receiptId);
     assert.equal(receipt.status, 'FINALIZED');
@@ -156,7 +156,8 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
       'v',
       context(),
     );
-    assert.equal(verified.data.status, 'PENDING_ADMIN');
+    assert.equal(verified.data.status, 'APPLIED');
+    assert.equal(verified.data.version, 1);
     assert.equal(verified.data.money.after.goodsVnd, 2_800_000);
     assert.equal(verified.data.delta.goodsVnd, -200_000);
     await assert.rejects(
@@ -181,14 +182,7 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
       ),
       (error) => error.code === 'VERSION_CONFLICT',
     );
-    const applied = await repository.actOnReceiptAdjustment(
-      fx.admin,
-      created.data.id,
-      { action: 'APPLY', expectedVersion: 1, note: 'Đồng ý' },
-      randomUUID(),
-      'a',
-      context(),
-    );
+    const applied = { data: await repository.getReceiptAdjustment(fx.htkd, created.data.id) };
     assert.equal(applied.data.status, 'APPLIED');
     assert.equal(applied.data.lines[0].entitlement.quantity, 1);
     assert.equal(applied.data.lines[0].entitlement.waitMode, 'CREATED');
@@ -240,7 +234,7 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
       context(),
     );
     await repository.actOnReceiptAdjustment(
-      fx.admin,
+      fx.htkd,
       created.data.id,
       {
         action: 'VERIFY',
@@ -264,14 +258,7 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
       'v',
       context(),
     );
-    const applied = await repository.actOnReceiptAdjustment(
-      fx.admin,
-      created.data.id,
-      { action: 'APPLY', expectedVersion: 1, note: null },
-      randomUUID(),
-      'a',
-      context(),
-    );
+    const applied = { data: await repository.getReceiptAdjustment(fx.htkd, created.data.id) };
     const pending = applied.data.lines[0].returns[0];
     assert.equal(pending.status, 'PENDING_HANDOVER');
     assert.match(pending.code, /^PTH-\d{6}$/u);
@@ -485,14 +472,7 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
       'v',
       context(),
     );
-    const applied = await repository.actOnReceiptAdjustment(
-      fx.admin,
-      created.data.id,
-      { action: 'APPLY', expectedVersion: 3, note: null },
-      randomUUID(),
-      'a',
-      context(),
-    );
+    const applied = { data: await repository.getReceiptAdjustment(fx.htkd, created.data.id) };
     assert.equal(applied.data.status, 'APPLIED');
     const receipt = await repository.getReceipt(fx.store, fx.receiptId);
     assert.equal(receipt.status, 'FINALIZED');
@@ -595,41 +575,20 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
       discoveredAt: new Date().toISOString(),
       lines: [bagLine],
     });
-    await act(fx.htkd, verifyInput(2, 'Xác minh lần 1'));
-    await act(fx.admin, {
-      action: 'RETURN_TO_VERIFIER',
-      expectedVersion: 3,
-      note: 'Cân lại bao trước khi duyệt',
-    });
-    await act(fx.htkd, verifyInput(4, 'Xác minh lần 2 sau khi cân'));
-
-    // Pending admin: the queue row already names the store and who verified it.
-    const pending = await repository.listReceiptAdjustments(fx.admin, {
+    const applied = await act(fx.htkd, verifyInput(2, 'Duyệt'));
+    assert.equal(applied.data.status, 'APPLIED');
+    assert.equal(applied.data.version, 3);
+    const pending = await repository.listReceiptAdjustments(fx.htkd, {
       status: 'PENDING_ADMIN',
       storeId: fx.storeId,
       dateField: 'REPORTED',
       page: 1,
       pageSize: 20,
     });
-    assert.deepEqual(
-      pending.data.map((row) => row.id),
-      [created.data.id],
-    );
-    assert.equal(pending.data[0].storeName, 'A');
-    assert.match(pending.data[0].storeCode, /^API-ADJ-A-/u);
-    assert.equal(pending.data[0].reportedBy.accountId, fx.store.accountId);
-    assert.equal(pending.data[0].reportedBy.displayName, fx.store.displayName);
-    assert.equal(pending.data[0].verifiedBy.accountId, fx.htkd.accountId);
-    assert.equal(pending.data[0].decidedBy, null);
-    assert.equal(pending.data[0].cause, 'SOURCE_MISCLASSIFICATION');
-
-    const applied = await act(fx.admin, { action: 'APPLY', expectedVersion: 5, note: 'Duyệt' });
-    assert.equal(applied.data.status, 'APPLIED');
-    // The detail names who reported, verified and decided, for every role in scope.
+    assert.equal(pending.data.length, 0);
     assert.equal(applied.data.reportedBy.displayName, fx.store.displayName);
     assert.equal(applied.data.verifiedBy.accountId, fx.htkd.accountId);
-    assert.equal(applied.data.decidedBy.accountId, fx.admin.accountId);
-    assert.equal(applied.data.decidedBy.displayName, fx.admin.displayName);
+    assert.equal(applied.data.decidedBy.accountId, fx.htkd.accountId);
 
     // Search by PSL code and by receipt number, status and decided-date windows (Vietnam days).
     const listed = (query) =>
@@ -647,7 +606,7 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
     assert.equal(byCode.pagination.totalItems, 1);
     const byReceipt = await listed({ q: applied.data.receiptNumber, status: 'APPLIED' });
     assert.ok(byReceipt.data.some((row) => row.id === created.data.id));
-    assert.equal(byReceipt.data[0].decidedBy.accountId, fx.admin.accountId);
+    assert.equal(byReceipt.data[0].decidedBy.accountId, fx.htkd.accountId);
     assert.equal(byReceipt.data[0].decisionNote, 'Duyệt');
     const today = new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
     const yesterday = new Date(Date.now() + 7 * 3_600_000 - 86_400_000).toISOString().slice(0, 10);
@@ -678,39 +637,22 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
     });
     assert.deepEqual(
       history.data.map((event) => event.type),
-      [
-        'REPORTED',
-        'INFO_REQUESTED',
-        'RESUBMITTED',
-        'VERIFIED',
-        'RETURNED_TO_VERIFIER',
-        'VERIFIED',
-        'APPLIED',
-      ],
+      ['REPORTED', 'INFO_REQUESTED', 'RESUBMITTED', 'VERIFIED', 'APPLIED'],
     );
     assert.deepEqual(
       history.data.map((event) => event.actor.role),
-      ['STORE', 'HTKD', 'STORE', 'HTKD', 'ADMIN', 'HTKD', 'ADMIN'],
+      ['STORE', 'HTKD', 'STORE', 'HTKD', 'HTKD'],
     );
     assert.deepEqual(
       history.data.map((event) => event.statusAfter),
-      [
-        'PENDING_HTKD',
-        'NEEDS_INFO',
-        'PENDING_HTKD',
-        'PENDING_ADMIN',
-        'PENDING_HTKD',
-        'PENDING_ADMIN',
-        'APPLIED',
-      ],
+      ['PENDING_HTKD', 'NEEDS_INFO', 'PENDING_HTKD', 'APPLIED', 'APPLIED'],
     );
     assert.equal(history.data[0].statusBefore, null);
     assert.equal(history.data[1].note, 'Gửi ảnh tem bao');
     assert.equal(history.data[2].changes.evidenceNote, 'Ảnh tem bao trong nhóm');
-    assert.equal(history.data[4].note, 'Cân lại bao trước khi duyệt');
-    assert.equal(history.data[5].note, 'Xác minh lần 2 sau khi cân');
-    const appliedEvent = history.data[6];
-    assert.equal(appliedEvent.actor.accountId, fx.admin.accountId);
+    assert.equal(history.data[3].note, 'Duyệt');
+    const appliedEvent = history.data[4];
+    assert.equal(appliedEvent.actor.accountId, fx.htkd.accountId);
     assert.equal(appliedEvent.store.storeId, fx.storeId);
     assert.equal(appliedEvent.store.name, 'A');
     assert.equal(appliedEvent.changes.goodsDeltaVnd, -200_000);
@@ -731,7 +673,7 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
       page: 2,
       pageSize: 5,
     });
-    assert.equal(secondPage.pagination.totalItems, 7);
+    assert.equal(secondPage.pagination.totalItems, 5);
     assert.deepEqual(
       secondPage.data.map((event) => event.id),
       history.data.slice(5).map((event) => event.id),
@@ -743,7 +685,7 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
         page: 1,
         pageSize: 100,
       });
-      assert.equal(own.pagination.totalItems, 7);
+      assert.equal(own.pagination.totalItems, 5);
       const view = await repository.getReceiptAdjustment(actor, created.data.id);
       assert.equal(view.status, 'APPLIED');
     }
@@ -768,7 +710,7 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
     assert.equal(afterContext.summary.appliedCount, 1);
   });
 
-  test('two admins applying at once take effect once; a lost response replays by key', async () => {
+  test('two HTKD approvals at once take effect once; a lost response replays by key', async () => {
     const fx = await finalizedReceipt(repository);
     const contextView = await repository.getReceiptAdjustmentContext(fx.store, fx.receiptId);
     const bagLine = {
@@ -789,51 +731,28 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
       'concurrent',
       context(),
     );
-    await repository.actOnReceiptAdjustment(
-      fx.htkd,
-      created.data.id,
-      {
-        action: 'VERIFY',
-        expectedVersion: 0,
-        cause: 'SOURCE_MISCLASSIFICATION',
-        note: 'Đã xác minh',
-        lines: [
-          {
-            receiptBagId: bagLine.receiptBagId,
-            actualProductId: fx.jeansId,
-            weightKg: '20.000',
-            pricePerKgVnd: 40_000,
-            weightChangeNote: null,
-          },
-        ],
-        freightDeltaVnd: 0,
-        handlingDeltaVnd: 0,
-        vatDeltaVnd: 0,
-      },
-      randomUUID(),
-      'v',
-      context(),
-    );
-    const [secondAdminRow] = await db
-      .insert(users)
-      .values({
-        email: `api-adj-admin-${randomUUID()}@example.test`,
-        passwordHash: 'integration-test-placeholder-hash',
-        displayName: 'API admin 2',
-        role: 'admin',
-      })
-      .returning();
-    const secondAdmin = {
-      ...fx.admin,
-      accountId: secondAdminRow.id,
-      username: secondAdminRow.email,
-      displayName: secondAdminRow.displayName,
+    const apply = {
+      action: 'VERIFY',
+      expectedVersion: 0,
+      cause: 'SOURCE_MISCLASSIFICATION',
+      note: 'Đã xác minh',
+      lines: [
+        {
+          receiptBagId: bagLine.receiptBagId,
+          actualProductId: fx.jeansId,
+          weightKg: '20.000',
+          pricePerKgVnd: 40_000,
+          weightChangeNote: null,
+        },
+      ],
+      freightDeltaVnd: 0,
+      handlingDeltaVnd: 0,
+      vatDeltaVnd: 0,
     };
-    const apply = { action: 'APPLY', expectedVersion: 1, note: null };
     const firstKey = randomUUID();
     const outcomes = await Promise.allSettled([
       repository.actOnReceiptAdjustment(
-        fx.admin,
+        fx.htkd,
         created.data.id,
         apply,
         firstKey,
@@ -841,7 +760,7 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
         context(),
       ),
       repository.actOnReceiptAdjustment(
-        secondAdmin,
+        fx.htkd,
         created.data.id,
         apply,
         randomUUID(),
@@ -878,7 +797,7 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
     // Retrying the winner's request (lost response) replays; a changed payload is refused.
     if (outcomes[0].status === 'fulfilled') {
       const replay = await repository.actOnReceiptAdjustment(
-        fx.admin,
+        fx.htkd,
         created.data.id,
         apply,
         firstKey,
@@ -889,7 +808,7 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
       assert.equal(replay.data.status, 'APPLIED');
       await assert.rejects(
         repository.actOnReceiptAdjustment(
-          fx.admin,
+          fx.htkd,
           created.data.id,
           { ...apply, note: 'khác' },
           firstKey,
