@@ -15,10 +15,14 @@ import {
   orderRequestItems,
   orderRequests,
   orderSessions,
+  outboundRequests,
+  outboundRequestLines,
   products,
   sessions,
   storeGroups,
   stores,
+  storeReceipts,
+  storeReceiptLines,
   users,
   waitTickets,
 } from '@idosi/database';
@@ -40,6 +44,81 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
     try {
       const fixture = await createFixture();
       app = await createApi({ repository });
+      const [receiptOwner] = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.role, 'admin'))
+        .limit(1);
+      const receiptsByStore = new Map();
+      for (const storeId of Object.values(fixture.storeIds)) {
+        const [outbound] = await db
+          .insert(outboundRequests)
+          .values({
+            requestNumber: '',
+            storeId,
+            requestedByUserId: receiptOwner.id,
+            status: 'dispatched',
+          })
+          .returning();
+        const [receipt] = await db
+          .insert(storeReceipts)
+          .values({
+            receiptNumber: '',
+            storeId,
+            outboundRequestId: outbound.id,
+          })
+          .returning();
+        receiptsByStore.set(storeId, receipt.id);
+        const [outboundLine] = await db
+          .insert(outboundRequestLines)
+          .values({
+            outboundRequestId: outbound.id,
+            productId: fixture.productId,
+            requestedQuantity: 2,
+            approvedQuantity: 2,
+            reservedQuantity: 2,
+            dispatchedQuantity: 2,
+          })
+          .returning();
+        await db.insert(storeReceiptLines).values({
+          storeReceiptId: receipt.id,
+          outboundRequestLineId: outboundLine.id,
+          productId: fixture.productId,
+          approvedQuantity: 2,
+          receivedQuantity: 2,
+        });
+        const adminSummary = await app.inject({
+          method: 'GET',
+          url: '/api/v1/store-receipt-summaries?storeId=' + storeId,
+          headers: { cookie: sessionCookie(fixture.tokens.admin) },
+        });
+        assert.equal(adminSummary.statusCode, 200, adminSummary.body);
+        assert.equal(adminSummary.json().pagination.totalItems, 1);
+        assert.equal(adminSummary.json().data[0].id, receipt.id);
+        assert.equal(adminSummary.json().data[0].receivedUnits, 2);
+        assert.equal(Object.hasOwn(adminSummary.json().data[0], 'lines'), false);
+      }
+      for (const [role, allowed] of [
+        ['htkd', [fixture.storeIds.assignedA, fixture.storeIds.assignedB]],
+        ['store', [fixture.storeIds.assignedA]],
+      ]) {
+        const headers = { cookie: sessionCookie(fixture.tokens[role]) };
+        const summaries = await app.inject({
+          method: 'GET',
+          url: '/api/v1/store-receipt-summaries',
+          headers,
+        });
+        assert.equal(summaries.statusCode, 200, summaries.body);
+        assert.equal(summaries.json().pagination.totalItems, allowed.length);
+        assert.ok(summaries.json().data.every((row) => allowed.includes(row.storeId)));
+        for (const url of [
+          '/api/v1/store-receipt-summaries?storeId=' + fixture.storeIds.unassigned,
+          '/api/v1/store-receipts/' + receiptsByStore.get(fixture.storeIds.unassigned),
+        ]) {
+          const denied = await app.inject({ method: 'GET', url, headers });
+          assert.equal(denied.statusCode, 403, denied.body);
+        }
+      }
       for (const [role, expected] of [
         ['admin', 3],
         ['htkd', 2],

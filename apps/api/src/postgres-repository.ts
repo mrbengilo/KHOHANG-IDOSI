@@ -2828,7 +2828,9 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
             status: storeReceipts.status,
             createdAt: storeReceipts.createdAt,
             updatedAt: storeReceipts.updatedAt,
-            receivedUnits: sql<number>`(select coalesce(sum(l.received_quantity), 0)::integer from store_receipt_lines l where l.store_receipt_id = ${storeReceipts.id})`,
+            // Explicitly qualify the outer ID: single-table select rendering otherwise
+            // removes the qualifier and the subquery resolves it as the line's own ID.
+            receivedUnits: sql<number>`(select coalesce(sum(l.received_quantity), 0)::integer from store_receipt_lines l where l.store_receipt_id = "store_receipts"."id")`,
           })
           .from(storeReceipts)
           .where(where)
