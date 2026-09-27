@@ -89,8 +89,9 @@ const intactBag: ReceiptAdjustmentBagFacts = {
 };
 
 describe('receipt adjustment state machine', () => {
-  it('moves store report → HTKD verification → admin application', () => {
-    expect(planReceiptAdjustmentTransition('PENDING_HTKD', 'VERIFY', 'HTKD')).toBe('PENDING_ADMIN');
+  it('applies a store report on one HTKD approval and retains legacy access', () => {
+    expect(planReceiptAdjustmentTransition('PENDING_HTKD', 'VERIFY', 'HTKD')).toBe('APPLIED');
+    expect(planReceiptAdjustmentTransition('PENDING_ADMIN', 'VERIFY', 'HTKD')).toBe('APPLIED');
     expect(planReceiptAdjustmentTransition('PENDING_ADMIN', 'APPLY', 'ADMIN')).toBe('APPLIED');
     expect(planReceiptAdjustmentTransition('PENDING_ADMIN', 'RETURN_TO_VERIFIER', 'ADMIN')).toBe(
       'PENDING_HTKD',

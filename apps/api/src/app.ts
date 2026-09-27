@@ -2599,7 +2599,7 @@ function openApiDocument(): Record<string, unknown> {
           responses: {
             '200': {
               description:
-                'RESUBMIT/CANCEL (STORE, WHOLESALE), VERIFY/REQUEST_INFO/REJECT (HTKD, ADMIN), RETURN_TO_VERIFIER/APPLY (ADMIN); expectedVersion required',
+                'RESUBMIT/CANCEL (STORE, WHOLESALE), VERIFY atomically verifies and applies (HTKD, ADMIN), REQUEST_INFO/REJECT/RETURN_TO_VERIFIER (HTKD, ADMIN), legacy APPLY (ADMIN); expectedVersion required',
             },
             '409': {
               description: 'Stale version, wrong status or bags blocked by later transactions',

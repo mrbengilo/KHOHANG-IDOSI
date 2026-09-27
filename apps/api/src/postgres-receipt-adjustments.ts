@@ -286,7 +286,7 @@ const ACTION_ROLES: Record<ReceiptAdjustmentActionRequest['action'], readonly Ro
   CANCEL: ['STORE'],
   VERIFY: ['HTKD', 'ADMIN'],
   REQUEST_INFO: ['HTKD', 'ADMIN'],
-  RETURN_TO_VERIFIER: ['ADMIN'],
+  RETURN_TO_VERIFIER: ['HTKD', 'ADMIN'],
   REJECT: ['HTKD', 'ADMIN'],
   APPLY: ['ADMIN'],
 };

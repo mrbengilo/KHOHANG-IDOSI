@@ -46,8 +46,8 @@ interface TransitionRule {
 
 /**
  * Who may do what, in which status. A store reports and corrects its own report; the assigned
- * HTKD verifies goods, kg, price, fees and cause; only an administrator applies. An admin may
- * also verify for a store with no HTKD, but applying always re-checks the verified snapshot.
+ * HTKD verifies and applies goods, kg, price, fees and cause in one command. Admin retains
+ * operational access. PENDING_ADMIN remains readable and can be verified again by HTKD.
  */
 export const RECEIPT_ADJUSTMENT_TRANSITIONS: Readonly<
   Record<ReceiptAdjustmentAction, TransitionRule>
@@ -60,24 +60,30 @@ export const RECEIPT_ADJUSTMENT_TRANSITIONS: Readonly<
       { from: 'NEEDS_INFO', roles: ['STORE'] },
     ],
   },
-  VERIFY: { to: 'PENDING_ADMIN', allowed: [{ from: 'PENDING_HTKD', roles: ['HTKD', 'ADMIN'] }] },
+  VERIFY: {
+    to: 'APPLIED',
+    allowed: [
+      { from: 'PENDING_HTKD', roles: ['HTKD', 'ADMIN'] },
+      { from: 'PENDING_ADMIN', roles: ['HTKD', 'ADMIN'] },
+    ],
+  },
   REQUEST_INFO: {
     to: 'NEEDS_INFO',
     allowed: [
       { from: 'PENDING_HTKD', roles: ['HTKD', 'ADMIN'] },
-      { from: 'PENDING_ADMIN', roles: ['ADMIN'] },
+      { from: 'PENDING_ADMIN', roles: ['HTKD', 'ADMIN'] },
     ],
   },
   RETURN_TO_VERIFIER: {
     to: 'PENDING_HTKD',
-    allowed: [{ from: 'PENDING_ADMIN', roles: ['ADMIN'] }],
+    allowed: [{ from: 'PENDING_ADMIN', roles: ['HTKD', 'ADMIN'] }],
   },
   REJECT: {
     to: 'REJECTED',
     allowed: [
       { from: 'PENDING_HTKD', roles: ['HTKD', 'ADMIN'] },
       { from: 'NEEDS_INFO', roles: ['ADMIN'] },
-      { from: 'PENDING_ADMIN', roles: ['ADMIN'] },
+      { from: 'PENDING_ADMIN', roles: ['HTKD', 'ADMIN'] },
     ],
   },
   APPLY: { to: 'APPLIED', allowed: [{ from: 'PENDING_ADMIN', roles: ['ADMIN'] }] },
