@@ -67,3 +67,5 @@ bàn giao sau khi thực hiện. Không suy ra production từ test local. Chín
 snapshot/legacy và hạn chế rollback nằm trong [tài liệu VAT](../../vat-store-receipt.md).
 
 Migration VAT chuyển từ 0032 sang 0034 khi main phát hành hai migration mới trong #85; chuỗi 0000–0034 đã chạy lặp bằng runner Linux trên database mới. Giữ nguyên trigger nhận thừa và index báo cáo của main, kiểm chứng cả thống kê và VAT trong cùng suite.
+
+CI đã phát hiện Dockerfile.web chưa build @idosi/domain trước frontend. Đã bổ sung đúng thứ tự contracts → domain → web; docker build image web sạch và HTTP smoke của image đều đạt. CI revision sửa sẽ chạy lại toàn pipeline trước merge.
