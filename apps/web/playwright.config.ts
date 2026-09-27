@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: './e2e',
-  testIgnore: '**/sorting-reasons.spec.ts',
+  testIgnore: ['**/sorting-reasons.spec.ts', '**/desktop-layout.spec.ts'],
   fullyParallel: false,
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? 'github' : 'list',

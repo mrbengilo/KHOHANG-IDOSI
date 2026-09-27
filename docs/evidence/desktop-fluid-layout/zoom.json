@@ -1,0 +1,34 @@
+[
+  {
+    "path": "/warehouse-inbound",
+    "zoom": 1.25,
+    "innerWidth": 1536,
+    "devicePixelRatio": 1.25,
+    "scrollWidth": 1536,
+    "mainWidth": 1312
+  },
+  {
+    "path": "/inventory",
+    "zoom": 1.25,
+    "innerWidth": 1536,
+    "devicePixelRatio": 1.25,
+    "scrollWidth": 1536,
+    "mainWidth": 1312
+  },
+  {
+    "path": "/warehouse-inbound",
+    "zoom": 1.5,
+    "innerWidth": 1280,
+    "devicePixelRatio": 1.5,
+    "scrollWidth": 1280,
+    "mainWidth": 1056
+  },
+  {
+    "path": "/inventory",
+    "zoom": 1.5,
+    "innerWidth": 1280,
+    "devicePixelRatio": 1.5,
+    "scrollWidth": 1280,
+    "mainWidth": 1056
+  }
+]

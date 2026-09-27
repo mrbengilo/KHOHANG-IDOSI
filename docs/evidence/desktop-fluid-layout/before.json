@@ -1,0 +1,1130 @@
+[
+  {
+    "role": "ADMIN",
+    "route": "/warehouse-inbound",
+    "width": 1366,
+    "height": 1670,
+    "main": {
+      "x": 224,
+      "y": 0,
+      "width": 1142,
+      "height": 1670.171875
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "width": 224,
+      "height": 768
+    },
+    "gutter": ["87px", "87px"],
+    "header": {
+      "x": 311,
+      "y": 18,
+      "width": 968,
+      "height": 81.890625
+    },
+    "panels": [
+      {
+        "x": 311,
+        "y": 135.890625,
+        "width": 968,
+        "height": 938.921875
+      },
+      {
+        "x": 311,
+        "y": 1092.8125,
+        "width": 968,
+        "height": 559.359375
+      }
+    ],
+    "scrollWidth": 1366,
+    "items": 28,
+    "visibleItems": 16,
+    "primary": {
+      "x": 326,
+      "y": 1021.8125,
+      "width": 166.5625,
+      "height": 38
+    },
+    "heading": "Nhập kho tổng",
+    "viewportHeight": 768
+  },
+  {
+    "role": "ADMIN",
+    "route": "/warehouse-inbound",
+    "width": 1440,
+    "height": 1670,
+    "main": {
+      "x": 224,
+      "y": 0,
+      "width": 1216,
+      "height": 1670.171875
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "width": 224,
+      "height": 900
+    },
+    "gutter": ["124px", "124px"],
+    "header": {
+      "x": 348,
+      "y": 18,
+      "width": 968,
+      "height": 81.890625
+    },
+    "panels": [
+      {
+        "x": 348,
+        "y": 135.890625,
+        "width": 968,
+        "height": 938.921875
+      },
+      {
+        "x": 348,
+        "y": 1092.8125,
+        "width": 968,
+        "height": 559.359375
+      }
+    ],
+    "scrollWidth": 1440,
+    "items": 28,
+    "visibleItems": 20,
+    "primary": {
+      "x": 363,
+      "y": 1021.8125,
+      "width": 166.5625,
+      "height": 38
+    },
+    "heading": "Nhập kho tổng",
+    "viewportHeight": 900
+  },
+  {
+    "role": "ADMIN",
+    "route": "/warehouse-inbound",
+    "width": 1920,
+    "height": 1670,
+    "main": {
+      "x": 224,
+      "y": 0,
+      "width": 1696,
+      "height": 1670.171875
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "width": 224,
+      "height": 1080
+    },
+    "gutter": ["364px", "364px"],
+    "header": {
+      "x": 588,
+      "y": 18,
+      "width": 968,
+      "height": 81.890625
+    },
+    "panels": [
+      {
+        "x": 588,
+        "y": 135.890625,
+        "width": 968,
+        "height": 938.921875
+      },
+      {
+        "x": 588,
+        "y": 1092.8125,
+        "width": 968,
+        "height": 559.359375
+      }
+    ],
+    "scrollWidth": 1920,
+    "items": 28,
+    "visibleItems": 24,
+    "primary": {
+      "x": 603,
+      "y": 1021.8125,
+      "width": 166.5625,
+      "height": 38
+    },
+    "heading": "Nhập kho tổng",
+    "viewportHeight": 1080
+  },
+  {
+    "role": "ADMIN",
+    "route": "/warehouse-inbound",
+    "width": 2560,
+    "height": 1670,
+    "main": {
+      "x": 224,
+      "y": 0,
+      "width": 2336,
+      "height": 1670.171875
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "width": 224,
+      "height": 1440
+    },
+    "gutter": ["684px", "684px"],
+    "header": {
+      "x": 908,
+      "y": 18,
+      "width": 968,
+      "height": 81.890625
+    },
+    "panels": [
+      {
+        "x": 908,
+        "y": 135.890625,
+        "width": 968,
+        "height": 938.921875
+      },
+      {
+        "x": 908,
+        "y": 1092.8125,
+        "width": 968,
+        "height": 559.359375
+      }
+    ],
+    "scrollWidth": 2560,
+    "items": 28,
+    "visibleItems": 26,
+    "primary": {
+      "x": 923,
+      "y": 1021.8125,
+      "width": 166.5625,
+      "height": 38
+    },
+    "heading": "Nhập kho tổng",
+    "viewportHeight": 1440
+  },
+  {
+    "role": "ADMIN",
+    "route": "/warehouse-inbound",
+    "width": 768,
+    "height": 2613,
+    "main": {
+      "x": 0,
+      "y": 0,
+      "width": 768,
+      "height": 2613.296875
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "width": 230,
+      "height": 1024
+    },
+    "gutter": ["18px", "18px"],
+    "header": {
+      "x": 0,
+      "y": 0,
+      "width": 768,
+      "height": 75.296875
+    },
+    "panels": [
+      {
+        "x": 18,
+        "y": 111.296875,
+        "width": 732,
+        "height": 1646.921875
+      },
+      {
+        "x": 18,
+        "y": 1776.21875,
+        "width": 732,
+        "height": 751.078125
+      }
+    ],
+    "scrollWidth": 768,
+    "items": 28,
+    "visibleItems": 13,
+    "primary": {
+      "x": 33,
+      "y": 1699.21875,
+      "width": 166.5625,
+      "height": 44
+    },
+    "heading": "Nhập kho tổng",
+    "viewportHeight": 1024
+  },
+  {
+    "role": "ADMIN",
+    "route": "/warehouse-inbound",
+    "width": 1024,
+    "height": 2521,
+    "main": {
+      "x": 224,
+      "y": 0,
+      "width": 800,
+      "height": 2521.15625
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "width": 224,
+      "height": 768
+    },
+    "gutter": ["18px", "18px"],
+    "header": {
+      "x": 242,
+      "y": 18,
+      "width": 764,
+      "height": 77.296875
+    },
+    "panels": [
+      {
+        "x": 242,
+        "y": 131.296875,
+        "width": 764,
+        "height": 1634.921875
+      },
+      {
+        "x": 242,
+        "y": 1784.21875,
+        "width": 764,
+        "height": 718.9375
+      }
+    ],
+    "scrollWidth": 1024,
+    "items": 28,
+    "visibleItems": 8,
+    "primary": {
+      "x": 257,
+      "y": 1713.21875,
+      "width": 166.5625,
+      "height": 38
+    },
+    "heading": "Nhập kho tổng",
+    "viewportHeight": 768
+  },
+  {
+    "role": "ADMIN",
+    "route": "/warehouse-inbound",
+    "width": 360,
+    "height": 2724,
+    "main": {
+      "x": 0,
+      "y": 0,
+      "width": 360,
+      "height": 2723.765625
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "width": 230,
+      "height": 800
+    },
+    "gutter": ["16px", "16px"],
+    "header": {
+      "x": -2,
+      "y": 0,
+      "width": 364,
+      "height": 87.84375
+    },
+    "panels": [
+      {
+        "x": 16,
+        "y": 119.84375,
+        "width": 328,
+        "height": 1741.34375
+      },
+      {
+        "x": 16,
+        "y": 1875.1875,
+        "width": 328,
+        "height": 762.578125
+      }
+    ],
+    "scrollWidth": 360,
+    "items": 28,
+    "visibleItems": 7,
+    "primary": {
+      "x": 29,
+      "y": 1804.1875,
+      "width": 166.5625,
+      "height": 44
+    },
+    "heading": "Nhập kho tổng",
+    "viewportHeight": 800
+  },
+  {
+    "role": "ADMIN",
+    "route": "/warehouse-inbound",
+    "width": 390,
+    "height": 2724,
+    "main": {
+      "x": 0,
+      "y": 0,
+      "width": 390,
+      "height": 2723.765625
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "width": 230,
+      "height": 844
+    },
+    "gutter": ["16px", "16px"],
+    "header": {
+      "x": -2,
+      "y": 0,
+      "width": 394,
+      "height": 87.84375
+    },
+    "panels": [
+      {
+        "x": 16,
+        "y": 119.84375,
+        "width": 358,
+        "height": 1741.34375
+      },
+      {
+        "x": 16,
+        "y": 1875.1875,
+        "width": 358,
+        "height": 762.578125
+      }
+    ],
+    "scrollWidth": 390,
+    "items": 28,
+    "visibleItems": 8,
+    "primary": {
+      "x": 29,
+      "y": 1804.1875,
+      "width": 166.5625,
+      "height": 44
+    },
+    "heading": "Nhập kho tổng",
+    "viewportHeight": 844
+  },
+  {
+    "role": "ADMIN",
+    "route": "/warehouse-inbound",
+    "width": 412,
+    "height": 2686,
+    "main": {
+      "x": 0,
+      "y": 0,
+      "width": 412,
+      "height": 2685.796875
+    },
+    "sidebar": {
+      "x": -109.85588836669922,
+      "y": 0,
+      "width": 230,
+      "height": 915
+    },
+    "gutter": ["16px", "16px"],
+    "header": {
+      "x": -2,
+      "y": 0,
+      "width": 416,
+      "height": 87.84375
+    },
+    "panels": [
+      {
+        "x": 16,
+        "y": 119.84375,
+        "width": 380,
+        "height": 1721.96875
+      },
+      {
+        "x": 16,
+        "y": 1855.8125,
+        "width": 380,
+        "height": 743.984375
+      }
+    ],
+    "scrollWidth": 412,
+    "items": 28,
+    "visibleItems": 9,
+    "primary": {
+      "x": 29,
+      "y": 1784.8125,
+      "width": 166.5625,
+      "height": 44
+    },
+    "heading": "Nhập kho tổng",
+    "viewportHeight": 915
+  },
+  {
+    "role": "ADMIN",
+    "route": "/warehouse-inbound",
+    "width": 819,
+    "height": 2593,
+    "main": {
+      "x": 0,
+      "y": 0,
+      "width": 819,
+      "height": 2593.15625
+    },
+    "sidebar": {
+      "x": -109.85588836669922,
+      "y": 0,
+      "width": 230,
+      "height": 900
+    },
+    "gutter": ["18px", "18px"],
+    "header": {
+      "x": 0,
+      "y": 0,
+      "width": 819,
+      "height": 75.296875
+    },
+    "panels": [
+      {
+        "x": 18,
+        "y": 111.296875,
+        "width": 783,
+        "height": 1646.921875
+      },
+      {
+        "x": 18,
+        "y": 1776.21875,
+        "width": 783,
+        "height": 730.9375
+      }
+    ],
+    "scrollWidth": 819,
+    "items": 28,
+    "visibleItems": 10,
+    "primary": {
+      "x": 33,
+      "y": 1699.21875,
+      "width": 166.5625,
+      "height": 44
+    },
+    "heading": "Nhập kho tổng",
+    "viewportHeight": 900
+  },
+  {
+    "role": "ADMIN",
+    "route": "/warehouse-inbound",
+    "width": 820,
+    "height": 2593,
+    "main": {
+      "x": 0,
+      "y": 0,
+      "width": 820,
+      "height": 2593.15625
+    },
+    "sidebar": {
+      "x": -109.85588836669922,
+      "y": 0,
+      "width": 230,
+      "height": 900
+    },
+    "gutter": ["18px", "18px"],
+    "header": {
+      "x": 0,
+      "y": 0,
+      "width": 820,
+      "height": 75.296875
+    },
+    "panels": [
+      {
+        "x": 18,
+        "y": 111.296875,
+        "width": 784,
+        "height": 1646.921875
+      },
+      {
+        "x": 18,
+        "y": 1776.21875,
+        "width": 784,
+        "height": 730.9375
+      }
+    ],
+    "scrollWidth": 820,
+    "items": 28,
+    "visibleItems": 10,
+    "primary": {
+      "x": 33,
+      "y": 1699.21875,
+      "width": 166.5625,
+      "height": 44
+    },
+    "heading": "Nhập kho tổng",
+    "viewportHeight": 900
+  },
+  {
+    "role": "ADMIN",
+    "route": "/warehouse-inbound",
+    "width": 821,
+    "height": 2541,
+    "main": {
+      "x": 224,
+      "y": 0,
+      "width": 597,
+      "height": 2541.296875
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "width": 224,
+      "height": 900
+    },
+    "gutter": ["18px", "18px"],
+    "header": {
+      "x": 242,
+      "y": 18,
+      "width": 561,
+      "height": 77.296875
+    },
+    "panels": [
+      {
+        "x": 242,
+        "y": 131.296875,
+        "width": 561,
+        "height": 1634.921875
+      },
+      {
+        "x": 242,
+        "y": 1784.21875,
+        "width": 561,
+        "height": 739.078125
+      }
+    ],
+    "scrollWidth": 821,
+    "items": 28,
+    "visibleItems": 10,
+    "primary": {
+      "x": 257,
+      "y": 1713.21875,
+      "width": 166.5625,
+      "height": 38
+    },
+    "heading": "Nhập kho tổng",
+    "viewportHeight": 900
+  },
+  {
+    "role": "ADMIN",
+    "route": "/inventory",
+    "width": 1366,
+    "height": 2519,
+    "main": {
+      "x": 224,
+      "y": 0,
+      "width": 1142,
+      "height": 2518.59375
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "width": 224,
+      "height": 768
+    },
+    "gutter": ["87px", "87px"],
+    "header": {
+      "x": 311,
+      "y": 18,
+      "width": 968,
+      "height": 81.890625
+    },
+    "panels": [
+      {
+        "x": 311,
+        "y": 259.890625,
+        "width": 968,
+        "height": 2240.703125
+      }
+    ],
+    "scrollWidth": 1366,
+    "items": 24,
+    "visibleItems": 3,
+    "primary": {
+      "x": 1157.109375,
+      "y": 39.9375,
+      "width": 102.890625,
+      "height": 38
+    },
+    "heading": "Tồn kho & lịch sử",
+    "viewportHeight": 768
+  },
+  {
+    "role": "ADMIN",
+    "route": "/inventory",
+    "width": 1440,
+    "height": 2519,
+    "main": {
+      "x": 224,
+      "y": 0,
+      "width": 1216,
+      "height": 2518.59375
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "width": 224,
+      "height": 900
+    },
+    "gutter": ["124px", "124px"],
+    "header": {
+      "x": 348,
+      "y": 18,
+      "width": 968,
+      "height": 81.890625
+    },
+    "panels": [
+      {
+        "x": 348,
+        "y": 259.890625,
+        "width": 968,
+        "height": 2240.703125
+      }
+    ],
+    "scrollWidth": 1440,
+    "items": 24,
+    "visibleItems": 5,
+    "primary": {
+      "x": 1194.109375,
+      "y": 39.9375,
+      "width": 102.890625,
+      "height": 38
+    },
+    "heading": "Tồn kho & lịch sử",
+    "viewportHeight": 900
+  },
+  {
+    "role": "ADMIN",
+    "route": "/inventory",
+    "width": 1920,
+    "height": 2519,
+    "main": {
+      "x": 224,
+      "y": 0,
+      "width": 1696,
+      "height": 2518.59375
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "width": 224,
+      "height": 1080
+    },
+    "gutter": ["364px", "364px"],
+    "header": {
+      "x": 588,
+      "y": 18,
+      "width": 968,
+      "height": 81.890625
+    },
+    "panels": [
+      {
+        "x": 588,
+        "y": 259.890625,
+        "width": 968,
+        "height": 2240.703125
+      }
+    ],
+    "scrollWidth": 1920,
+    "items": 24,
+    "visibleItems": 7,
+    "primary": {
+      "x": 1434.109375,
+      "y": 39.9375,
+      "width": 102.890625,
+      "height": 38
+    },
+    "heading": "Tồn kho & lịch sử",
+    "viewportHeight": 1080
+  },
+  {
+    "role": "ADMIN",
+    "route": "/inventory",
+    "width": 2560,
+    "height": 2519,
+    "main": {
+      "x": 224,
+      "y": 0,
+      "width": 2336,
+      "height": 2518.59375
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "width": 224,
+      "height": 1440
+    },
+    "gutter": ["684px", "684px"],
+    "header": {
+      "x": 908,
+      "y": 18,
+      "width": 968,
+      "height": 81.890625
+    },
+    "panels": [
+      {
+        "x": 908,
+        "y": 259.890625,
+        "width": 968,
+        "height": 2240.703125
+      }
+    ],
+    "scrollWidth": 2560,
+    "items": 24,
+    "visibleItems": 12,
+    "primary": {
+      "x": 1754.109375,
+      "y": 39.9375,
+      "width": 102.890625,
+      "height": 38
+    },
+    "heading": "Tồn kho & lịch sử",
+    "viewportHeight": 1440
+  },
+  {
+    "role": "ADMIN",
+    "route": "/inventory",
+    "width": 768,
+    "height": 2591,
+    "main": {
+      "x": 0,
+      "y": 0,
+      "width": 768,
+      "height": 2591.34375
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "width": 230,
+      "height": 1024
+    },
+    "gutter": ["18px", "18px"],
+    "header": {
+      "x": 0,
+      "y": 0,
+      "width": 768,
+      "height": 75.296875
+    },
+    "panels": [
+      {
+        "x": 18,
+        "y": 235.296875,
+        "width": 732,
+        "height": 2270.046875
+      }
+    ],
+    "scrollWidth": 768,
+    "items": 24,
+    "visibleItems": 7,
+    "primary": {
+      "x": 646.109375,
+      "y": 15.640625,
+      "width": 102.890625,
+      "height": 44
+    },
+    "heading": "Tồn kho & lịch sử",
+    "viewportHeight": 1024
+  },
+  {
+    "role": "ADMIN",
+    "route": "/inventory",
+    "width": 1024,
+    "height": 3035,
+    "main": {
+      "x": 224,
+      "y": 0,
+      "width": 800,
+      "height": 3034.5
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "width": 224,
+      "height": 768
+    },
+    "gutter": ["18px", "18px"],
+    "header": {
+      "x": 242,
+      "y": 18,
+      "width": 764,
+      "height": 77.296875
+    },
+    "panels": [
+      {
+        "x": 242,
+        "y": 255.296875,
+        "width": 764,
+        "height": 2761.203125
+      }
+    ],
+    "scrollWidth": 1024,
+    "items": 24,
+    "visibleItems": 3,
+    "primary": {
+      "x": 884.109375,
+      "y": 37.640625,
+      "width": 102.890625,
+      "height": 38
+    },
+    "heading": "Tồn kho & lịch sử",
+    "viewportHeight": 768
+  },
+  {
+    "role": "ADMIN",
+    "route": "/inventory",
+    "width": 360,
+    "height": 9338,
+    "main": {
+      "x": 0,
+      "y": 0,
+      "width": 360,
+      "height": 9338.140625
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "width": 230,
+      "height": 800
+    },
+    "gutter": ["16px", "16px"],
+    "header": {
+      "x": -2,
+      "y": 0,
+      "width": 364,
+      "height": 143.84375
+    },
+    "panels": [
+      {
+        "x": 16,
+        "y": 303.84375,
+        "width": 328,
+        "height": 8948.296875
+      }
+    ],
+    "scrollWidth": 360,
+    "items": 24,
+    "visibleItems": 0,
+    "primary": {
+      "x": 67,
+      "y": 86.84375,
+      "width": 96.890625,
+      "height": 44
+    },
+    "heading": "Tồn kho & lịch sử",
+    "viewportHeight": 800
+  },
+  {
+    "role": "ADMIN",
+    "route": "/inventory",
+    "width": 390,
+    "height": 9040,
+    "main": {
+      "x": 0,
+      "y": 0,
+      "width": 390,
+      "height": 9040.390625
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "width": 230,
+      "height": 844
+    },
+    "gutter": ["16px", "16px"],
+    "header": {
+      "x": -2,
+      "y": 0,
+      "width": 394,
+      "height": 143.84375
+    },
+    "panels": [
+      {
+        "x": 16,
+        "y": 303.84375,
+        "width": 358,
+        "height": 8650.546875
+      }
+    ],
+    "scrollWidth": 390,
+    "items": 24,
+    "visibleItems": 0,
+    "primary": {
+      "x": 67,
+      "y": 86.84375,
+      "width": 96.890625,
+      "height": 44
+    },
+    "heading": "Tồn kho & lịch sử",
+    "viewportHeight": 844
+  },
+  {
+    "role": "ADMIN",
+    "route": "/inventory",
+    "width": 412,
+    "height": 9040,
+    "main": {
+      "x": 0,
+      "y": 0,
+      "width": 412,
+      "height": 9040.390625
+    },
+    "sidebar": {
+      "x": -224.56568908691406,
+      "y": 0,
+      "width": 230,
+      "height": 915
+    },
+    "gutter": ["16px", "16px"],
+    "header": {
+      "x": -2,
+      "y": 0,
+      "width": 416,
+      "height": 143.84375
+    },
+    "panels": [
+      {
+        "x": 16,
+        "y": 303.84375,
+        "width": 380,
+        "height": 8650.546875
+      }
+    ],
+    "scrollWidth": 412,
+    "items": 24,
+    "visibleItems": 1,
+    "primary": {
+      "x": 67,
+      "y": 86.84375,
+      "width": 102.890625,
+      "height": 44
+    },
+    "heading": "Tồn kho & lịch sử",
+    "viewportHeight": 915
+  },
+  {
+    "role": "ADMIN",
+    "route": "/inventory",
+    "width": 819,
+    "height": 2898,
+    "main": {
+      "x": 0,
+      "y": 0,
+      "width": 819,
+      "height": 2898.0625
+    },
+    "sidebar": {
+      "x": -230.72195434570312,
+      "y": 0,
+      "width": 230,
+      "height": 900
+    },
+    "gutter": ["18px", "18px"],
+    "header": {
+      "x": 0,
+      "y": 0,
+      "width": 819,
+      "height": 75.296875
+    },
+    "panels": [
+      {
+        "x": 18,
+        "y": 235.296875,
+        "width": 783,
+        "height": 2576.765625
+      }
+    ],
+    "scrollWidth": 819,
+    "items": 24,
+    "visibleItems": 5,
+    "primary": {
+      "x": 697.109375,
+      "y": 15.640625,
+      "width": 102.890625,
+      "height": 44
+    },
+    "heading": "Tồn kho & lịch sử",
+    "viewportHeight": 900
+  },
+  {
+    "role": "ADMIN",
+    "route": "/inventory",
+    "width": 820,
+    "height": 2898,
+    "main": {
+      "x": 0,
+      "y": 0,
+      "width": 820,
+      "height": 2898.0625
+    },
+    "sidebar": {
+      "x": -230.72195434570312,
+      "y": 0,
+      "width": 230,
+      "height": 900
+    },
+    "gutter": ["18px", "18px"],
+    "header": {
+      "x": 0,
+      "y": 0,
+      "width": 820,
+      "height": 75.296875
+    },
+    "panels": [
+      {
+        "x": 18,
+        "y": 235.296875,
+        "width": 784,
+        "height": 2576.765625
+      }
+    ],
+    "scrollWidth": 820,
+    "items": 24,
+    "visibleItems": 5,
+    "primary": {
+      "x": 698.109375,
+      "y": 15.640625,
+      "width": 102.890625,
+      "height": 44
+    },
+    "heading": "Tồn kho & lịch sử",
+    "viewportHeight": 900
+  },
+  {
+    "role": "ADMIN",
+    "route": "/inventory",
+    "width": 821,
+    "height": 3417,
+    "main": {
+      "x": 224,
+      "y": 0,
+      "width": 597,
+      "height": 3416.546875
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "width": 224,
+      "height": 900
+    },
+    "gutter": ["18px", "18px"],
+    "header": {
+      "x": 242,
+      "y": 18,
+      "width": 561,
+      "height": 95.296875
+    },
+    "panels": [
+      {
+        "x": 242,
+        "y": 273.296875,
+        "width": 561,
+        "height": 3125.25
+      }
+    ],
+    "scrollWidth": 821,
+    "items": 24,
+    "visibleItems": 3,
+    "primary": {
+      "x": 681.109375,
+      "y": 46.640625,
+      "width": 102.890625,
+      "height": 38
+    },
+    "heading": "Tồn kho & lịch sử",
+    "viewportHeight": 900
+  }
+]
