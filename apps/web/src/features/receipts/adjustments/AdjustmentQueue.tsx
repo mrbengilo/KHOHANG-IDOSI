@@ -12,7 +12,7 @@ type Role = AdjustmentAudience;
 /** What each role has to act on next; the server scopes both lists to the caller. */
 const WAITING_ON: Record<Role, readonly ReceiptAdjustmentStatus[]> = {
   STORE: ['NEEDS_INFO'],
-  HTKD: ['PENDING_HTKD'],
+  HTKD: ['PENDING_HTKD', 'PENDING_ADMIN'],
   ADMIN: ['PENDING_ADMIN', 'PENDING_HTKD'],
 };
 const RETURNS_WAITING_ON: Record<Role, readonly ReceiptReturnStatus[]> = {

@@ -121,7 +121,7 @@ function render(page: { data: ReceiptAdjustmentHistoryEvent[]; totalItems: numbe
 describe('adjustment history timeline', () => {
   it('lists events oldest first with actor, role at the time, store, states and note', () => {
     const html = render({ data: timeline, totalItems: 4 });
-    const order = ['Cửa hàng báo sai lệch', 'Xác minh, gửi Admin duyệt', 'Admin duyệt và áp dụng'];
+    const order = ['Cửa hàng báo sai lệch', 'Xác minh hàng', 'Duyệt và áp dụng'];
     const positions = order.map((label) => html.indexOf(label));
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);

@@ -16,7 +16,7 @@ import type { StatusTone } from '../../../lib/types';
 
 /**
  * The one label set for a document's status on every screen and role. "Đã xử lý" means the
- * admin applied the adjustment successfully; a return still travelling or a make-up unit still
+ * reviewer applied the adjustment successfully; a return still travelling or a make-up unit still
  * owed is shown as its own progress, and rejected/cancelled are other final outcomes.
  */
 export const adjustmentStatusCopy: Record<
@@ -25,7 +25,7 @@ export const adjustmentStatusCopy: Record<
 > = {
   PENDING_HTKD: { label: 'Chờ HTKD xác minh', tone: 'warning' },
   NEEDS_INFO: { label: 'Cần cửa hàng bổ sung', tone: 'info' },
-  PENDING_ADMIN: { label: 'Chờ Admin duyệt', tone: 'priority' },
+  PENDING_ADMIN: { label: 'Chờ HTKD duyệt (hồ sơ cũ)', tone: 'priority' },
   APPLIED: { label: 'Đã xử lý', tone: 'success' },
   REJECTED: { label: 'Bị từ chối', tone: 'danger' },
   CANCELLED: { label: 'Đã hủy', tone: 'neutral' },
@@ -36,12 +36,12 @@ export const ADJUSTMENT_STATUSES = Object.keys(adjustmentStatusCopy) as ReceiptA
 export const historyEventCopy: Record<ReceiptAdjustmentHistoryEventType, string> = {
   REPORTED: 'Cửa hàng báo sai lệch',
   RESUBMITTED: 'Cửa hàng bổ sung và gửi lại',
-  VERIFIED: 'Xác minh, gửi Admin duyệt',
+  VERIFIED: 'Xác minh hàng',
   INFO_REQUESTED: 'Yêu cầu cửa hàng bổ sung',
-  RETURNED_TO_VERIFIER: 'Admin trả HTKD xác minh lại',
+  RETURNED_TO_VERIFIER: 'Trả lại để xác minh',
   REJECTED: 'Từ chối hồ sơ',
   CANCELLED: 'Hủy hồ sơ',
-  APPLIED: 'Admin duyệt và áp dụng',
+  APPLIED: 'Duyệt và áp dụng',
   RETURN_CREATED: 'Tạo phiếu trả kho',
   RETURN_HANDED_OVER: 'Bàn giao hàng trả',
   RETURN_RECEIVED: 'Kho tổng nhận hàng trả',
@@ -93,7 +93,7 @@ export function storeLabel(store: {
 
 /**
  * The goods delta of a list row, labelled by whether it is in force: verified figures are only
- * a draft until the admin applies them, and closed documents never took effect.
+ * a draft until approval applies them, and closed documents never took effect.
  */
 export function listMoneyCopy(item: Pick<ReceiptAdjustmentListItem, 'status' | 'goodsDeltaVnd'>): {
   readonly label: string;
@@ -205,7 +205,7 @@ export interface AdjustmentPreview {
 
 /**
  * Same rounding as the server (each bag half-up to a whole VND). Only a preview for HTKD: the
- * server recomputes on verification and again when the admin applies.
+ * server recomputes on verification and again within the approval transaction.
  */
 export function previewAdjustment(
   before: ReceiptMoney,
@@ -281,7 +281,8 @@ export function formatExactVnd(value: bigint | number | null, missing = 'Chưa g
 
 export function openForRole(adjustment: Pick<ReceiptAdjustment, 'status'>, role: string): boolean {
   if (role === 'STORE') return adjustment.status === 'NEEDS_INFO';
-  if (role === 'HTKD') return adjustment.status === 'PENDING_HTKD';
+  if (role === 'HTKD')
+    return adjustment.status === 'PENDING_HTKD' || adjustment.status === 'PENDING_ADMIN';
   if (role === 'ADMIN')
     return adjustment.status === 'PENDING_ADMIN' || adjustment.status === 'PENDING_HTKD';
   return false;

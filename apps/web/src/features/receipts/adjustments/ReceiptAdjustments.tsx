@@ -181,7 +181,7 @@ export function ReceiptAdjustmentsSection({
       setReporting(false);
       setSelected(adjustment.id);
       setNotice(
-        `Đã gửi hồ sơ ${adjustment.code}. Bao bị ảnh hưởng đang tạm giữ; tiền và quyền chờ bù chỉ có hiệu lực khi Admin duyệt.`,
+        `Đã gửi hồ sơ ${adjustment.code}. Bao bị ảnh hưởng đang tạm giữ; tiền và quyền chờ bù chỉ có hiệu lực khi HTKD duyệt và áp dụng.`,
       );
       await invalidate();
     },
@@ -199,7 +199,7 @@ export function ReceiptAdjustmentsSection({
           </h3>
           <p>
             Phiếu đã chốt không mở lại. Mỗi điều chỉnh là chứng từ riêng, liên kết bao gốc và chỉ có
-            hiệu lực khi Admin áp dụng.
+            hiệu lực khi HTKD duyệt và áp dụng.
           </p>
         </div>
         {shared.role === 'STORE' && context && !reporting ? (
@@ -582,8 +582,8 @@ export function ReportForm({
                   `1 bao ${productNameById.get(bag.approvedProductId ?? '') ?? 'mặt hàng đã duyệt'}`,
               )
               .join(', ')}{' '}
-            được tạo/bổ sung vào phiếu chờ ưu tiên P0B ngay khi Admin áp dụng — cho cả phương án giữ
-            lại hay trả kho. Hàng thực tế không được tính là hàng thay thế.
+            được tạo/bổ sung vào phiếu chờ ưu tiên P0B ngay khi HTKD duyệt và áp dụng — cho cả
+            phương án giữ lại hay trả kho. Hàng thực tế không được tính là hàng thay thế.
           </span>
         </div>
       ) : null}
@@ -985,7 +985,7 @@ function AccountabilityLine({ adjustment }: { readonly adjustment: ReceiptAdjust
         </dd>
       </div>
       <div>
-        <dt>Xác minh, gửi Admin</dt>
+        <dt>Xác minh hàng</dt>
         <dd>
           {adjustment.verifiedBy && adjustment.verifiedAt
             ? `${accountLabel(adjustment.verifiedBy)} · ${formatDateTime(adjustment.verifiedAt)}`
@@ -1054,7 +1054,7 @@ function EntitlementList({
             .map((line) => (
               <p key={line.id}>
                 {adjustment.status === 'PENDING_ADMIN'
-                  ? `Sẽ phát sinh ${line.shortageQuantity} bao ${name(line.approvedProductId)} chờ ưu tiên P0B khi Admin áp dụng.`
+                  ? `Sẽ phát sinh ${line.shortageQuantity} bao ${name(line.approvedProductId)} chờ ưu tiên P0B khi HTKD duyệt và áp dụng.`
                   : `Nếu được duyệt: phát sinh quyền chờ bù bao ${name(line.approvedProductId)} (ưu tiên P0B), dù giữ hay trả hàng thực tế.`}
               </p>
             ))
@@ -1123,20 +1123,15 @@ function VerifyForm({
     })),
   );
   const [cause, setCause] = useState<ReceiptAdjustmentCause | ''>(adjustment.cause ?? '');
-  const [freight, setFreight] = useState('0');
-  const [handling, setHandling] = useState('0');
-  const [vat, setVat] = useState('0');
-  const [note, setNote] = useState('');
+  const [freight, setFreight] = useState(String(adjustment.delta.freightVnd));
+  const [handling, setHandling] = useState(String(adjustment.delta.handlingVnd));
+  const [vat, setVat] = useState(String(adjustment.delta.vatVnd));
+  const [note, setNote] = useState(adjustment.verificationNote ?? '');
   const [formError, setFormError] = useState('');
-  const [initialLines] = useState(() => JSON.stringify(lines));
-  useDraftGuard(
-    note.trim() !== '' ||
-      freight !== '0' ||
-      handling !== '0' ||
-      vat !== '0' ||
-      cause !== (adjustment.cause ?? '') ||
-      JSON.stringify(lines) !== initialLines,
+  const [initialDraft] = useState(() =>
+    JSON.stringify({ lines, cause, freight, handling, vat, note }),
   );
+  useDraftGuard(JSON.stringify({ lines, cause, freight, handling, vat, note }) !== initialDraft);
   const preview = previewAdjustment(adjustment.money.before, lines, { freight, handling, vat });
 
   const submit = async () => {
@@ -1184,6 +1179,15 @@ function VerifyForm({
   return (
     <div className="adjustment-form" role="group" aria-label="Xác minh của HTKD">
       <h4>Xác minh hàng, kg, giá và chi phí</h4>
+      <p className="adjustment-note">
+        Duyệt sẽ áp dụng ngay tiền hàng, chi phí và quyền chờ bù đủ điều kiện.
+        {adjustment.lines.some((line) => line.disposition === 'KEEP')
+          ? ' Hàng giữ bán được cập nhật và giải phóng phần giữ của hồ sơ.'
+          : ''}
+        {adjustment.lines.some((line) => line.disposition === 'RETURN')
+          ? ' Hàng trả kho tiếp tục được giữ và có phiếu trả chờ bàn giao; kho chỉ tăng tồn khi xác nhận thực nhận.'
+          : ''}
+      </p>
       {lines.map((line, index) => (
         <div className="adjustment-verify-line" key={line.receiptBagId}>
           <strong>
@@ -1338,8 +1342,13 @@ function VerifyForm({
         </div>
       ) : null}
       <div className="adjustment-actions">
-        <Button busy={busy} onClick={() => void submit()} tone="success">
-          <ShieldCheck aria-hidden="true" size={16} /> Xác minh, gửi Admin duyệt
+        <Button
+          busy={busy}
+          disabled={adjustment.lines.some((line) => line.blockers.length > 0)}
+          onClick={() => void submit()}
+          tone="success"
+        >
+          <ShieldCheck aria-hidden="true" size={16} /> Duyệt và áp dụng
         </Button>
       </div>
     </div>
@@ -1363,7 +1372,7 @@ function DecisionBar({
   const noteActions = (['REQUEST_INFO', 'RETURN_TO_VERIFIER', 'REJECT', 'CANCEL'] as const).filter(
     (action) => allowed.has(action),
   );
-  if (noteActions.length === 0 && !allowed.has('APPLY')) return null;
+  if (noteActions.length === 0 && !(allowed.has('APPLY') && !allowed.has('VERIFY'))) return null;
   const blocked = adjustment.lines.some((line) => line.blockers.length > 0);
   const withNote = async (action: 'REQUEST_INFO' | 'RETURN_TO_VERIFIER' | 'REJECT' | 'CANCEL') => {
     if (note.trim().length < 3) {
@@ -1383,7 +1392,9 @@ function DecisionBar({
     <div className="adjustment-decision">
       <label>
         <span className="field-label">
-          {allowed.has('APPLY') ? 'Ghi chú (bắt buộc khi từ chối/trả lại)' : 'Nội dung/lý do'}
+          {allowed.has('APPLY') && !allowed.has('VERIFY')
+            ? 'Ghi chú (bắt buộc khi từ chối/trả lại)'
+            : 'Nội dung/lý do'}
         </span>
         <textarea
           disabled={busy}
@@ -1413,7 +1424,7 @@ function DecisionBar({
             {labels[action]}
           </Button>
         ))}
-        {allowed.has('APPLY') ? (
+        {allowed.has('APPLY') && !allowed.has('VERIFY') ? (
           <Button
             busy={busy}
             disabled={blocked}
@@ -1431,7 +1442,7 @@ function DecisionBar({
           </Button>
         ) : null}
       </div>
-      {allowed.has('APPLY') ? (
+      {allowed.has('APPLY') && !allowed.has('VERIFY') ? (
         <small className="adjustment-note">
           Áp dụng trong một giao dịch: đổi phân loại bao, ghi chênh lệch tiền, tạo/bổ sung chờ ưu
           tiên, chuyển hàng sang bán hoặc phiếu trả. Lỗi bất kỳ bước nào thì không thay đổi gì.
@@ -1675,7 +1686,7 @@ function ReturnsPanel({
 function actionNotice(adjustment: ReceiptAdjustment): string {
   switch (adjustment.status) {
     case 'PENDING_ADMIN':
-      return `Đã xác minh ${adjustment.code}; số sau điều chỉnh là tạm tính cho tới khi Admin duyệt.`;
+      return `Đã xác minh ${adjustment.code}; số sau điều chỉnh là tạm tính cho tới khi HTKD duyệt và áp dụng.`;
     case 'APPLIED':
       return `Đã xử lý ${adjustment.code}: tiền, phân loại bao và quyền chờ ưu tiên đã có hiệu lực; tiến độ trả/bù theo dõi riêng bên dưới.`;
     case 'NEEDS_INFO':

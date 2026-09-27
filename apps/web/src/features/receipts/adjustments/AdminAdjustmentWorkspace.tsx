@@ -306,7 +306,7 @@ export function AdminAdjustmentWorkspace() {
                 setFormError('');
                 update(
                   withAdjustmentFilters(params, {
-                    status: 'PENDING_ADMIN',
+                    status: 'PENDING_HTKD',
                     storeId: '',
                     q: '',
                     dateField: 'REPORTED',
@@ -360,7 +360,7 @@ export function AdminAdjustmentWorkspace() {
               <EmptyState
                 detail={
                   filters.status === 'PENDING_ADMIN'
-                    ? 'Không có hồ sơ nào HTKD đã xác minh đang chờ Admin duyệt trong phạm vi lọc.'
+                    ? 'Không có hồ sơ cũ nào đang chờ HTKD duyệt trong phạm vi lọc.'
                     : 'Không có hồ sơ phù hợp với bộ lọc hiện tại.'
                 }
                 title="Không có phiếu sai lệch"
@@ -373,7 +373,7 @@ export function AdminAdjustmentWorkspace() {
                       <th>Hồ sơ</th>
                       <th>Cửa hàng</th>
                       <th>Cửa hàng báo</th>
-                      <th>Xác minh, gửi Admin</th>
+                      <th>Xác minh hàng</th>
                       <th>Nội dung</th>
                       <th>Tiền hàng</th>
                       <th>Trạng thái / xử lý</th>
@@ -406,7 +406,7 @@ export function AdminAdjustmentWorkspace() {
                               <small>{when(item.reportedAt)}</small>
                             </span>
                           </td>
-                          <td data-label="Xác minh, gửi Admin">
+                          <td data-label="Xác minh hàng">
                             {item.verifiedBy ? (
                               <span className="adjustment-cell">
                                 {accountLabel(item.verifiedBy)}
