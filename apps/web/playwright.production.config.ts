@@ -7,7 +7,7 @@ const webOrigin = 'http://127.0.0.1:4175';
 export default defineConfig({
   ...smokeConfig,
   testIgnore: [],
-  testMatch: '**/sorting-reasons.spec.ts',
+  testMatch: ['**/sorting-reasons.spec.ts', '**/desktop-layout.spec.ts'],
   use: { ...smokeConfig.use, baseURL: webOrigin },
   webServer: {
     command: 'npm run build && npm run preview -- --host 127.0.0.1 --port 4175',

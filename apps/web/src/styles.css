@@ -4,9 +4,9 @@
   font-family: 'Times New Roman', Times, 'Liberation Serif', 'Nimbus Roman', serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  /* Khung nội dung theo Figma V1.4: AD-01 / Content = 1192 × 960, padding 32, gap 24. */
-  --content-max: 1192px;
-  --content-pad: 32px;
+  /* Main fills the space beside the sidebar; gutters stay small on wide screens. */
+  --sidebar-width: 224px;
+  --content-pad: 18px;
   --content-gap: 24px;
   --brand: #4f46e5;
   --brand-dark: #4338ca;
@@ -156,7 +156,7 @@ p {
   bottom: 0;
   left: 0;
   display: flex;
-  width: 224px;
+  width: var(--sidebar-width);
   flex-direction: column;
   border-right: 1px solid var(--border);
   background: var(--surface);
@@ -340,16 +340,13 @@ p {
   opacity: 0.65;
 }
 
-/*
- * Figma V1.4: nội dung nằm trong khung 1192px, không kéo hết bề ngang màn hình.
- * Căn bằng padding thay vì margin trên từng con, vì nhiều box tự khai báo
- * `margin` rút gọn và sẽ ghi đè mất margin-inline khiến các box lệch nhau.
- */
+/* Keep child margins contained without clipping focus rings or hiding overflow. */
 .app-main {
+  display: flow-root;
+  min-width: 0;
   min-height: 100vh;
-  margin-left: 224px;
-  overflow: hidden;
-  padding: 18px max(18px, calc((100% - var(--content-max)) / 2));
+  margin-left: var(--sidebar-width);
+  padding: 18px var(--content-pad);
 }
 
 .mobile-menu-trigger,
@@ -3064,6 +3061,10 @@ label:has(:required) > .field-label::after {
 }
 
 @media (max-width: 1100px) {
+  /* The 260px + 360px report columns do not fit beside the desktop sidebar. */
+  .report-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .stats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -3176,7 +3177,7 @@ label:has(:required) > .field-label::after {
     box-shadow: var(--shadow);
   }
   .page-header {
-    margin: -68px -18px 18px;
+    margin: -68px calc(-1 * var(--content-pad)) 18px;
     padding: 13px 18px 13px 68px;
   }
   .page-header__actions {
@@ -3303,9 +3304,12 @@ label:has(:required) > .field-label::after {
 }
 
 @media (max-width: 620px) {
+  :root {
+    --content-pad: 16px;
+  }
   .app-main {
-    padding-right: 16px;
-    padding-left: 16px;
+    padding-right: var(--content-pad);
+    padding-left: var(--content-pad);
   }
   /* Header là một box có viền như mọi box khác, không tràn ra mép màn hình. */
   .page-header {
