@@ -12,6 +12,7 @@ const current: OperationalSettingsVersion = {
   maxRequestsPerStore: 2,
   policyVersion: 'ALLOC-v1.2',
   idosiSyncIntervalMinutes: 15,
+  vatRatePercent: 8,
   createdByAccountId: null,
   requestId: 'settings-request-4',
   createdAt: '2026-09-17T00:00:00.000Z',
@@ -26,6 +27,7 @@ describe('admin operational settings UI helpers', () => {
       maxRequestsPerStore: '2',
       policyVersion: 'ALLOC-v1.2',
       idosiSyncIntervalMinutes: 15,
+      vatRatePercent: '8',
     });
   });
 
@@ -36,6 +38,7 @@ describe('admin operational settings UI helpers', () => {
         maxRequestsPerStore: '3',
         policyVersion: '  ALLOC-v1.3  ',
         idosiSyncIntervalMinutes: 30,
+        vatRatePercent: '8',
       },
       current.version,
     );
@@ -48,6 +51,7 @@ describe('admin operational settings UI helpers', () => {
       maxRequestsPerStore: 3,
       policyVersion: 'ALLOC-v1.3',
       idosiSyncIntervalMinutes: 30,
+      vatRatePercent: 8,
     });
     expect(result.input).not.toHaveProperty('integrationSecret');
   });

@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import {
+  operationalSettingsVersions,
   allocationLines,
   allocationRuns,
   applyWarehouseMovement,
@@ -289,7 +290,9 @@ describePostgres('stranded allocation outbound backfill', () => {
       reviewedByUserId: admin.id,
       freightVnd: 20n,
       handlingVnd: 5n,
-      vat: { amountVnd: 7n, ratePercent: 8 },
+      expectedVatSettingsVersion: Math.max(
+        ...(await db.select().from(operationalSettingsVersions)).map((row) => row.version),
+      ),
       lines: [
         {
           productId: fixture.productId,
@@ -314,7 +317,7 @@ describePostgres('stranded allocation outbound backfill', () => {
           .from(storeReceipts)
           .where(eq(storeReceipts.id, receiptId))
       )[0],
-    ).toEqual({ goodsCostVnd: 40n, totalCostVnd: 65n, vatAmountVnd: 7n, vatRatePercent: 8 });
+    ).toEqual({ goodsCostVnd: 40n, totalCostVnd: 65n, vatAmountVnd: 5n, vatRatePercent: 8 });
     const [finalizeAudit] = await db
       .select({ after: auditLogs.after })
       .from(auditLogs)
@@ -323,9 +326,9 @@ describePostgres('stranded allocation outbound backfill', () => {
       );
     expect(finalizeAudit?.after).toMatchObject({
       totalCostVnd: '65',
-      vatAmountVnd: '7',
+      vatAmountVnd: '5',
       vatRatePercent: 8,
-      totalAmountVnd: '72',
+      totalAmountVnd: '70',
     });
     const now = new Date();
     const monthParts = new Intl.DateTimeFormat('en-GB', {
@@ -339,7 +342,7 @@ describePostgres('stranded allocation outbound backfill', () => {
       scope: { kind: 'STORE', id: fixture.storeId },
     });
     expect(report.totals.vatCostVnd).toEqual({
-      value: 7n,
+      value: 5n,
       unavailableReason: null,
       source: 'STORE_RECEIPTS',
     });
@@ -442,7 +445,9 @@ describePostgres('stranded allocation outbound backfill', () => {
       reviewedByUserId: admin.id,
       freightVnd: 0n,
       handlingVnd: 0n,
-      vat: { amountVnd: 0n, ratePercent: 8 },
+      expectedVatSettingsVersion: Math.max(
+        ...(await db.select().from(operationalSettingsVersions)).map((row) => row.version),
+      ),
       lines: [{ productId: fixture.productId, pricePerKgVnd: 10n, bagWeightsKg: ['1.000'] }],
       idempotencyKey: `legacy-finalize-${token}`,
       requestHash: `legacy-finalize-${token}`,

@@ -13,15 +13,29 @@ const validUpdate = {
   maxRequestsPerStore: 2,
   policyVersion: 'ALLOC-v1.2',
   idosiSyncIntervalMinutes: 15,
+  vatRatePercent: 8,
 } as const;
 
 describe('operational settings contracts', () => {
+  it('accepts integer VAT 0 through 100 and rejects fractions and non-finite values', () => {
+    for (const vatRatePercent of [0, 8, 10, 100])
+      expect(
+        UpdateOperationalSettingsRequestSchema.safeParse({ ...validUpdate, vatRatePercent })
+          .success,
+      ).toBe(true);
+    for (const vatRatePercent of [-1, 101, 8.5, NaN, Infinity, undefined])
+      expect(
+        UpdateOperationalSettingsRequestSchema.safeParse({ ...validUpdate, vatRatePercent })
+          .success,
+      ).toBe(false);
+  });
   it('accepts the supported operational schedule and sync intervals', () => {
     expect(UpdateOperationalSettingsRequestSchema.safeParse(validUpdate).success).toBe(true);
     expect(
       UpdateOperationalSettingsRequestSchema.safeParse({
         ...validUpdate,
         idosiSyncIntervalMinutes: 30,
+        vatRatePercent: 8,
       }).success,
     ).toBe(true);
   });
@@ -64,6 +78,7 @@ describe('operational settings contracts', () => {
       maxRequestsPerStore: 2,
       policyVersion: 'ALLOC-v1.2',
       idosiSyncIntervalMinutes: 15,
+      vatRatePercent: 8,
       createdByAccountId: null,
       requestId: 'migration:0003',
       createdAt: '2026-09-17T00:00:00.000Z',

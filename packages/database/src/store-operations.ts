@@ -1,8 +1,10 @@
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { calculateReceiptVat, DomainError } from '@idosi/domain';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
 import {
+  operationalSettingsVersions,
   allocationLines,
   auditLogs,
   dailyPriorityOffers,
@@ -48,8 +50,8 @@ export interface FinalizeStoreReceiptInput {
   readonly reviewedByUserId: string;
   readonly freightVnd: bigint;
   readonly handlingVnd: bigint;
-  /** Entered from the delivery note; kept out of totalCostVnd as deductible input VAT. */
-  readonly vat: { readonly amountVnd: bigint; readonly ratePercent: 8 };
+  /** Version of VAT settings confirmed by the reviewer; stale previews are rejected. */
+  readonly expectedVatSettingsVersion: number;
   readonly lines: readonly FinalizeStoreReceiptLineInput[];
   readonly unexpectedItems?: readonly FinalizeStoreReceiptUnexpectedItemInput[];
   readonly reviewNote?: string | null;
@@ -267,6 +269,20 @@ export async function finalizeStoreReceiptInTransaction(
     }
 
     await assertReviewerMayAccessStore(tx, input.reviewedByUserId, receipt.storeId);
+    // Serialize with settings writes so the confirmed preview remains authoritative.
+    const settings = await withAdvisoryLock(tx, 'operational-settings', 'current', async () => {
+      const [row] = await tx
+        .select()
+        .from(operationalSettingsVersions)
+        .orderBy(desc(operationalSettingsVersions.version))
+        .limit(1);
+      if (!row || row.version !== input.expectedVatSettingsVersion) {
+        throw new StoreOperationConflictError(
+          'Thuế suất VAT đã thay đổi. Tải lại thuế suất và kiểm tra tổng tiền trước khi chốt.',
+        );
+      }
+      return row;
+    });
 
     const persistedLines = await tx
       .select({
@@ -522,7 +538,14 @@ export async function finalizeStoreReceiptInTransaction(
       const totalCostVnd = goodsCostVnd + input.freightVnd + input.handlingVnd;
       assertVnd(totalCostVnd, 'receipt total cost');
       // VAT stays out of the landed cost but is part of what the receipt totals to.
-      const totalAmountVnd = totalCostVnd + input.vat.amountVnd;
+      let vatAmountVnd: bigint;
+      try {
+        vatAmountVnd = calculateReceiptVat(totalCostVnd, settings.vatRatePercent);
+      } catch (error) {
+        if (error instanceof DomainError) throw new StoreOperationValidationError(error.message);
+        throw error;
+      }
+      const totalAmountVnd = totalCostVnd + vatAmountVnd;
       if (totalAmountVnd > BigInt(Number.MAX_SAFE_INTEGER)) {
         throw new StoreOperationValidationError('Receipt total including VAT is too large.');
       }
@@ -535,8 +558,9 @@ export async function finalizeStoreReceiptInTransaction(
           freightVnd: input.freightVnd,
           handlingVnd: input.handlingVnd,
           totalCostVnd,
-          vatAmountVnd: input.vat.amountVnd,
-          vatRatePercent: input.vat.ratePercent,
+          vatAmountVnd,
+          vatRatePercent: settings.vatRatePercent,
+          vatSettingsVersion: settings.version,
           reviewedByUserId: input.reviewedByUserId,
           reviewNote: input.reviewNote ?? null,
           finalizedAt: now,
@@ -587,8 +611,9 @@ export async function finalizeStoreReceiptInTransaction(
           freightVnd: input.freightVnd.toString(),
           handlingVnd: input.handlingVnd.toString(),
           totalCostVnd: totalCostVnd.toString(),
-          vatAmountVnd: input.vat.amountVnd.toString(),
-          vatRatePercent: input.vat.ratePercent,
+          vatAmountVnd: vatAmountVnd.toString(),
+          vatRatePercent: settings.vatRatePercent,
+          vatSettingsVersion: settings.version,
           totalAmountVnd: totalAmountVnd.toString(),
           inventoryBagIds,
         },
@@ -1376,11 +1401,10 @@ function validateFinalizationInput(
   assertVnd(input.freightVnd, 'freightVnd');
   assertVnd(input.handlingVnd, 'handlingVnd');
   if (
-    input.vat.amountVnd < 0n ||
-    input.vat.amountVnd > BigInt(Number.MAX_SAFE_INTEGER) ||
-    input.vat.ratePercent !== 8
+    !Number.isSafeInteger(input.expectedVatSettingsVersion) ||
+    input.expectedVatSettingsVersion < 1
   ) {
-    throw new StoreOperationValidationError('VAT must be a safe VND amount at the 8% rate.');
+    throw new StoreOperationValidationError('Cần phiên bản cấu hình VAT đang xác nhận.');
   }
   if (input.lines.length === 0) {
     throw new StoreOperationValidationError('A receipt must contain at least one line.');

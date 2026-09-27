@@ -1,3 +1,4 @@
+import { calculateReceiptVat, DomainError } from '@idosi/domain';
 import type { ReceiptSummary } from '@idosi/contracts';
 import type { SessionDocument } from '@idosi/contracts';
 import type { ListStoreBagOpeningsQuery, StoreBagOpening } from '@idosi/contracts';
@@ -952,6 +953,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       maxRequestsPerStore: input.maxRequestsPerStore,
       policyVersion: input.policyVersion,
       idosiSyncIntervalMinutes: input.idosiSyncIntervalMinutes,
+      vatRatePercent: input.vatRatePercent,
       createdByAccountId: actor.accountId,
       requestId: context.requestId,
       createdAt: this.now().toISOString(),
@@ -2978,6 +2980,12 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     throw receiptAdjustmentsUnavailable();
   }
 
+  public async getReceiptVatConfiguration(actor: AuthenticatedPrincipal, receiptId: string) {
+    await this.getReceipt(actor, receiptId);
+    const settings = this.operationalSettings.toSorted((a, b) => b.version - a.version)[0]!;
+    return { ratePercent: settings.vatRatePercent, version: settings.version };
+  }
+
   public async finalizeStoreReceipt(
     actor: AuthenticatedPrincipal,
     receiptId: string,
@@ -3006,7 +3014,17 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       0n,
     );
     const totalCostVnd = goodsCostVnd + BigInt(input.freightVnd) + BigInt(input.handlingVnd);
-    const totalAmountVnd = totalCostVnd + BigInt(input.vat.amountVnd);
+    const settings = this.operationalSettings.toSorted((a, b) => b.version - a.version)[0]!;
+    if (settings.version !== input.expectedVatSettingsVersion)
+      throw operationalSettingsVersionConflict();
+    let vatAmountVnd: bigint;
+    try {
+      vatAmountVnd = calculateReceiptVat(totalCostVnd, settings.vatRatePercent);
+    } catch (error) {
+      if (error instanceof DomainError) throw new ApiError('VALIDATION_ERROR', error.message, 400);
+      throw error;
+    }
+    const totalAmountVnd = totalCostVnd + vatAmountVnd;
     if (totalAmountVnd > BigInt(Number.MAX_SAFE_INTEGER)) {
       throw new ApiError('VALIDATION_ERROR', 'Tổng giá vốn vượt giới hạn an toàn', 400);
     }
@@ -3014,7 +3032,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       ...current,
       freightVnd: input.freightVnd,
       handlingVnd: input.handlingVnd,
-      vat: input.vat,
+      vat: { amountVnd: Number(vatAmountVnd), ratePercent: settings.vatRatePercent },
+      vatSettingsVersion: settings.version,
       lines: input.lines,
       unexpectedItems: (current.unexpectedItems ?? []).map((item) => {
         const booked = (input.unexpectedItems ?? []).find(
@@ -5549,6 +5568,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         maxRequestsPerStore: 2,
         policyVersion: 'ALLOC-v1.2',
         idosiSyncIntervalMinutes: 15,
+        vatRatePercent: 8,
         createdByAccountId: null,
         requestId: 'memory-seed',
         createdAt: now,

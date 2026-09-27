@@ -1,3 +1,4 @@
+import { VatRatePercentSchema } from './operational-settings.js';
 import { z } from 'zod';
 
 import {
@@ -47,7 +48,7 @@ export type ReceiptProductCost = z.infer<typeof ReceiptProductCostSchema>;
 export const InboundVatSchema = z
   .object({
     amountVnd: MoneyVndSchema,
-    ratePercent: z.literal(8),
+    ratePercent: VatRatePercentSchema,
   })
   .strict();
 
@@ -56,7 +57,7 @@ export const ReceiptCostConfirmationSchema = z
     productCosts: z.array(ReceiptProductCostSchema),
     transportationFeeVnd: MoneyVndSchema,
     handlingFeeVnd: MoneyVndSchema,
-    /** Legacy only: VAT is no longer entered on warehouse receipts, only on store receipts. */
+    /** Legacy only: VAT is no longer entered on warehouse receipts; new store receipts calculate it. */
     vatAmountVnd: MoneyVndSchema.nullish(),
     goodsCostVnd: MoneyVndSchema,
     /** Nullable only for responses of older API versions that waited for warehouse VAT. */
@@ -344,11 +345,12 @@ export const ReceiptSchema = z
     status: ReceiptStatusSchema,
     freightVnd: MoneyVndSchema,
     handlingVnd: MoneyVndSchema,
-    /** VAT from the actual delivery note, entered by HTKD; null until finalized or legacy. */
+    /** Immutable VAT captured at finalization; historical manually entered amounts remain unchanged. */
     vat: InboundVatSchema.nullable().optional(),
+    vatSettingsVersion: z.number().int().positive().nullable().optional(),
     /** Landed cost: goods + freight + handling. Deductible VAT is tracked separately. */
     totalCostVnd: MoneyVndSchema.nullable(),
-    /** Receipt total payable: landed cost + entered VAT; null until both are known. */
+    /** Receipt total payable: landed cost + VAT; null until both are known. */
     totalAmountVnd: MoneyVndSchema.nullable().optional(),
     reviewedByAccountId: EntityIdSchema.nullable(),
     reviewNote: z.string().trim().min(3).max(500).nullable(),
@@ -508,8 +510,8 @@ export const FinalizeReceiptRequestSchema = z
       .optional(),
     freightVnd: MoneyVndSchema,
     handlingVnd: MoneyVndSchema,
-    /** Entered amount from the delivery note; 0 when the note carries no VAT. */
-    vat: InboundVatSchema,
+    /** Settings version displayed in the confirmed VAT preview. */
+    expectedVatSettingsVersion: z.number().int().positive(),
     expectedVersion: z.number().int().nonnegative(),
   })
   .strict()
@@ -651,4 +653,14 @@ export const ReceiptSummarySchema = ReceiptSchema.innerType()
 export type ReceiptSummary = z.infer<typeof ReceiptSummarySchema>;
 export const ListReceiptSummariesResponseSchema = z
   .object({ data: z.array(ReceiptSummarySchema), pagination: PaginationMetaSchema })
+  .strict();
+
+export const ReceiptVatConfigurationSchema = z
+  .object({
+    ratePercent: VatRatePercentSchema,
+    version: z.number().int().positive(),
+  })
+  .strict();
+export const ReceiptVatConfigurationResponseSchema = z
+  .object({ data: ReceiptVatConfigurationSchema })
   .strict();

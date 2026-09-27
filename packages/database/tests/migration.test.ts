@@ -404,7 +404,11 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(32);
+    expect(journal.entries).toHaveLength(33);
+    expect(journal.entries[32]).toMatchObject({
+      tag: '0032_configurable_receipt_vat',
+      breakpoints: true,
+    });
     expect(journal.entries[31]).toMatchObject({
       tag: '0031_receipt_immediate_returns',
       breakpoints: true,

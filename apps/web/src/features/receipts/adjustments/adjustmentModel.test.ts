@@ -34,24 +34,29 @@ describe('receipt adjustment preview', () => {
     const preview = previewAdjustment(
       before,
       [{ recordedCostVnd: 1_000_000, weightKg: '20.000', pricePerKgVnd: '40000' }],
-      { freight: '0', handling: '0', vat: '0' },
+      { freight: '0', handling: '0' },
+      8,
     );
     expect(preview.problem).toBeNull();
     expect(preview.lineCosts).toEqual([800_000n]);
     expect(preview.delta?.goods).toBe(-200_000n);
     expect(preview.after?.goods).toBe(2_800_000n);
-    expect(preview.after?.total).toBe(2_800_000n);
+    expect(preview.after?.total).toBe(3_024_000n);
     // 1.001 kg × 500 đ = 500,5 đ rounds half up like finalization.
     expect(
-      previewAdjustment(before, [{ recordedCostVnd: 0, weightKg: '1.001', pricePerKgVnd: '500' }], {
-        freight: '0',
-        handling: '0',
-        vat: '0',
-      }).lineCosts,
+      previewAdjustment(
+        before,
+        [{ recordedCostVnd: 0, weightKg: '1.001', pricePerKgVnd: '500' }],
+        {
+          freight: '0',
+          handling: '0',
+        },
+        8,
+      ).lineCosts,
     ).toEqual([501n]);
   });
 
-  it('previews immediate return without removing unchanged fees or VAT', () => {
+  it('previews immediate return with server value and recalculated VAT', () => {
     const preview = previewAdjustment(
       { ...before, freightVnd: 100_000, handlingVnd: 30_000, vatVnd: 50_000 },
       [
@@ -62,15 +67,16 @@ describe('receipt adjustment preview', () => {
           pricePerKgVnd: '40000',
         },
       ],
-      { freight: '0', handling: '0', vat: '0' },
+      { freight: '0', handling: '0' },
+      8,
     );
-    expect(preview.lineCosts).toEqual([800_000n]);
+    expect(preview.lineCosts).toEqual([1_000_000n]);
     expect(preview.after).toMatchObject({
       goods: 2_000_000n,
       freight: 100_000n,
       handling: 30_000n,
-      vat: 50_000n,
-      total: 2_180_000n,
+      vat: 170_400n,
+      total: 2_300_400n,
     });
   });
 
@@ -79,30 +85,43 @@ describe('receipt adjustment preview', () => {
     const kept = previewAdjustment(
       legacy,
       [{ recordedCostVnd: 1_000_000, weightKg: '20', pricePerKgVnd: '40000' }],
-      { freight: '0', handling: '0', vat: '0' },
+      { freight: '0', handling: '0' },
+      8,
     );
     expect(kept.after?.vat).toBeNull();
     expect(kept.after?.total).toBeNull();
     expect(
-      previewAdjustment(legacy, [{ recordedCostVnd: 0, weightKg: '1', pricePerKgVnd: '1' }], {
-        freight: '0',
-        handling: '0',
-        vat: '5',
-      }).problem,
-    ).toContain('chưa ghi nhận VAT');
+      previewAdjustment(
+        legacy,
+        [{ recordedCostVnd: 0, weightKg: '1', pricePerKgVnd: '1' }],
+        {
+          freight: '0',
+          handling: '0',
+        },
+        null,
+      ).after?.vat,
+    ).toBeNull();
     expect(
-      previewAdjustment(before, [{ recordedCostVnd: 0, weightKg: '1', pricePerKgVnd: '1' }], {
-        freight: '-1',
-        handling: '0',
-        vat: '0',
-      }).problem,
+      previewAdjustment(
+        before,
+        [{ recordedCostVnd: 0, weightKg: '1', pricePerKgVnd: '1' }],
+        {
+          freight: '-1',
+          handling: '0',
+        },
+        8,
+      ).problem,
     ).toContain('không được âm');
     expect(
-      previewAdjustment(before, [{ recordedCostVnd: 0, weightKg: '0', pricePerKgVnd: '1' }], {
-        freight: '0',
-        handling: '0',
-        vat: '0',
-      }).delta,
+      previewAdjustment(
+        before,
+        [{ recordedCostVnd: 0, weightKg: '0', pricePerKgVnd: '1' }],
+        {
+          freight: '0',
+          handling: '0',
+        },
+        8,
+      ).delta,
     ).toBeNull();
   });
 

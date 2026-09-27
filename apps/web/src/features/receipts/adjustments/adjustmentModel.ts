@@ -1,3 +1,4 @@
+import { calculateReceiptVat } from '@idosi/domain';
 import type {
   AdjustmentAccount,
   AuditActorRole,
@@ -212,22 +213,19 @@ export interface AdjustmentPreview {
 export function previewAdjustment(
   before: ReceiptMoney,
   lines: readonly VerificationDraftLine[],
-  fees: { readonly freight: string; readonly handling: string; readonly vat: string },
+  fees: { readonly freight: string; readonly handling: string },
+  vatRatePercent: number | null,
 ): AdjustmentPreview {
   const lineCosts = lines.map((line) => {
+    if (line.disposition === 'RETURN') return BigInt(line.recordedCostVnd);
     const grams = parseGrams(line.weightKg);
     const price = /^\d{1,15}$/.test(line.pricePerKgVnd) ? BigInt(line.pricePerKgVnd) : null;
     return grams === null || price === null ? null : (grams * price + 500n) / 1_000n;
   });
   const freight = parseSigned(fees.freight || '0');
   const handling = parseSigned(fees.handling || '0');
-  const vat = parseSigned(fees.vat || '0');
-  if (
-    lineCosts.some((cost) => cost === null) ||
-    freight === null ||
-    handling === null ||
-    vat === null
-  ) {
+  let vat = 0n;
+  if (lineCosts.some((cost) => cost === null) || freight === null || handling === null) {
     return {
       lineCosts,
       delta: null,
@@ -259,6 +257,19 @@ export function previewAdjustment(
     total: null as bigint | null,
   };
   after.cost = after.goods + after.freight + after.handling;
+  if (before.vatVnd !== null && vatRatePercent !== null) {
+    try {
+      after.vat = calculateReceiptVat(after.cost, vatRatePercent);
+      vat = after.vat - BigInt(before.vatVnd);
+    } catch {
+      return {
+        lineCosts,
+        delta: null,
+        after: null,
+        problem: 'Cơ sở VAT hoặc tổng tiền vượt giới hạn hợp lệ.',
+      };
+    }
+  }
   after.total = after.vat === null ? null : after.cost + after.vat;
   const negative = [after.goods, after.freight, after.handling, after.vat ?? 0n].some(
     (value) => value < 0n,

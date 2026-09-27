@@ -5,6 +5,7 @@ import {
   boolean,
   check,
   date,
+  foreignKey,
   index,
   inet,
   integer,
@@ -1455,11 +1456,12 @@ export const storeReceipts = pgTable(
       .notNull()
       .default(sql`0`),
     /**
-     * VAT entered by HTKD from the actual delivery note. It is deductible input VAT, so it is
-     * kept out of total_cost_vnd. NULL means not captured (not yet finalized, or legacy rows).
+     * Immutable VAT calculated at finalization; historical manually entered VAT is preserved.
+     * Kept out of total_cost_vnd. NULL means not captured (pending or legacy rows).
      */
     vatAmountVnd: bigint('vat_amount_vnd', { mode: 'bigint' }),
     vatRatePercent: integer('vat_rate_percent'),
+    vatSettingsVersion: integer('vat_settings_version'),
     version: integer('version').notNull().default(0),
     declaredByUserId: uuid('declared_by_user_id').references(() => users.id, {
       onDelete: 'set null',
@@ -1495,8 +1497,13 @@ export const storeReceipts = pgTable(
     ),
     check(
       'store_receipts_vat_valid',
-      sql`(${table.vatAmountVnd} IS NULL AND ${table.vatRatePercent} IS NULL) OR (${table.vatAmountVnd} IS NOT NULL AND ${table.vatRatePercent} IS NOT NULL AND ${table.vatAmountVnd} BETWEEN 0 AND 9007199254740991 AND ${table.vatRatePercent} = 8)`,
+      sql`(${table.vatAmountVnd} IS NULL AND ${table.vatRatePercent} IS NULL) OR (${table.vatAmountVnd} IS NOT NULL AND ${table.vatRatePercent} IS NOT NULL AND ${table.vatAmountVnd} BETWEEN 0 AND 9007199254740991 AND ${table.vatRatePercent} BETWEEN 0 AND 100)`,
     ),
+    foreignKey({
+      name: 'store_receipts_vat_settings_version_fkey',
+      columns: [table.vatSettingsVersion],
+      foreignColumns: [operationalSettingsVersions.version],
+    }),
     check('store_receipts_version_nonnegative', sql`${table.version} >= 0`),
     check(
       'store_receipts_submission_state',
@@ -2708,6 +2715,7 @@ export const operationalSettingsVersions = pgTable(
     maxRequestsPerStore: integer('max_requests_per_store').notNull(),
     policyVersion: text('policy_version').notNull(),
     idosiSyncIntervalMinutes: integer('idosi_sync_interval_minutes').notNull(),
+    vatRatePercent: integer('vat_rate_percent').notNull().default(8),
     createdByUserId: uuid('created_by_user_id').references(() => users.id, {
       onDelete: 'restrict',
     }),
@@ -2715,6 +2723,7 @@ export const operationalSettingsVersions = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    check('operational_settings_vat_rate_valid', sql`${table.vatRatePercent} BETWEEN 0 AND 100`),
     uniqueIndex('operational_settings_versions_version_uidx').on(table.version),
     index('operational_settings_versions_created_idx').on(table.createdAt),
     check('operational_settings_versions_version_positive', sql`${table.version} > 0`),

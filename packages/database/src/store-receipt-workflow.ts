@@ -554,6 +554,7 @@ export async function submitStoreReceiptInTransaction(
             totalCostVnd: 0n,
             vatAmountVnd: null,
             vatRatePercent: null,
+            vatSettingsVersion: null,
             version: receipt.version + 1,
             updatedAt: now,
           })

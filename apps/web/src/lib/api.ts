@@ -1,3 +1,4 @@
+import { ReceiptVatConfigurationResponseSchema } from '@idosi/contracts';
 import { ListReceiptSummariesResponseSchema } from '@idosi/contracts';
 import { ListSessionDocumentsResponseSchema } from '@idosi/contracts';
 import {
@@ -728,4 +729,10 @@ export function finalizeStoreReceipt(
     input,
     idempotencyKey,
   );
+}
+
+export async function getReceiptVatConfiguration(receiptId: string) {
+  return ReceiptVatConfigurationResponseSchema.parse(
+    await request('/store-receipts/' + encodeURIComponent(receiptId) + '/vat-configuration'),
+  ).data;
 }

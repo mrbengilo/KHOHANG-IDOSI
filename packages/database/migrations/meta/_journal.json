@@ -225,6 +225,13 @@
       "when": 1790460000000,
       "tag": "0031_receipt_immediate_returns",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1790510000000,
+      "tag": "0032_configurable_receipt_vat",
+      "breakpoints": true
     }
   ]
 }

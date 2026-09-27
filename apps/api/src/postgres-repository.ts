@@ -1161,6 +1161,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
             maxRequestsPerStore: input.maxRequestsPerStore,
             policyVersion: input.policyVersion,
             idosiSyncIntervalMinutes: input.idosiSyncIntervalMinutes,
+            vatRatePercent: input.vatRatePercent,
             createdByUserId: actor.accountId,
             requestId: context.requestId,
           })
@@ -3070,6 +3071,17 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     }
   }
 
+  public async getReceiptVatConfiguration(actor: AuthenticatedPrincipal, receiptId: string) {
+    await this.getReceipt(actor, receiptId);
+    const [settings] = await db
+      .select()
+      .from(operationalSettingsVersions)
+      .orderBy(desc(operationalSettingsVersions.version))
+      .limit(1);
+    if (!settings) throw new Error('Operational settings have not been initialized');
+    return { ratePercent: settings.vatRatePercent, version: settings.version };
+  }
+
   public async finalizeStoreReceipt(
     actor: AuthenticatedPrincipal,
     receiptId: string,
@@ -3088,7 +3100,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         reviewedByUserId: actor.accountId,
         freightVnd: BigInt(input.freightVnd),
         handlingVnd: BigInt(input.handlingVnd),
-        vat: { amountVnd: BigInt(input.vat.amountVnd), ratePercent: input.vat.ratePercent },
+        expectedVatSettingsVersion: input.expectedVatSettingsVersion,
         lines: input.lines.map((line) => ({
           productId: line.productId,
           pricePerKgVnd: line.pricePerKgVnd === null ? null : BigInt(line.pricePerKgVnd),
@@ -4298,7 +4310,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         vat:
           receipt.vatAmountVnd === null
             ? null
-            : { amountVnd: safeVnd(receipt.vatAmountVnd), ratePercent: 8 },
+            : { amountVnd: safeVnd(receipt.vatAmountVnd), ratePercent: receipt.vatRatePercent! },
         status: inboundReceiptStatus(receipt.status),
         bags,
         totalWeightKg: bags.some((bag) => bag.weightKg === null)
@@ -4396,13 +4408,14 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
           ? { ...item, bagWeightsKg: booked.weights, pricePerKgVnd: booked.price }
           : { ...item };
       }),
+      vatSettingsVersion: receipt.vatSettingsVersion,
       status: receiptStatus(receipt.status),
       freightVnd: safeVnd(receipt.freightVnd),
       handlingVnd: safeVnd(receipt.handlingVnd),
       vat:
         receipt.vatAmountVnd === null
           ? null
-          : { amountVnd: safeVnd(receipt.vatAmountVnd), ratePercent: 8 },
+          : { amountVnd: safeVnd(receipt.vatAmountVnd), ratePercent: receipt.vatRatePercent! },
       totalCostVnd: receipt.status === 'finalized' ? safeVnd(receipt.totalCostVnd) : null,
       totalAmountVnd:
         receipt.status === 'finalized' && receipt.vatAmountVnd !== null
@@ -5083,6 +5096,7 @@ function operationalSettingsDto(
     cutoffTime: row.cutoffTime.slice(0, 5),
     maxRequestsPerStore: row.maxRequestsPerStore,
     policyVersion: row.policyVersion,
+    vatRatePercent: row.vatRatePercent,
     idosiSyncIntervalMinutes:
       row.idosiSyncIntervalMinutes as OperationalSettingsVersion['idosiSyncIntervalMinutes'],
     createdByAccountId: row.createdByUserId,
@@ -5868,6 +5882,7 @@ function operationalSettingsJson(settings: OperationalSettingsVersion): JsonObje
     maxRequestsPerStore: settings.maxRequestsPerStore,
     policyVersion: settings.policyVersion,
     idosiSyncIntervalMinutes: settings.idosiSyncIntervalMinutes,
+    vatRatePercent: settings.vatRatePercent,
     createdByAccountId: settings.createdByAccountId,
     requestId: settings.requestId,
     createdAt: settings.createdAt,

@@ -395,7 +395,9 @@ export function summarizeMonthlyReport(
   }
   const adjustmentRows = rows.receiptAdjustments ?? [];
   const adjustmentDelta = {
-    goodsDeltaVnd: sum(adjustmentRows, (row) => row.goodsDeltaVnd),
+    goodsDeltaVnd:
+      sum(adjustmentRows, (row) => row.goodsDeltaVnd) -
+      sum(rows.receiptReturns ?? [], (row) => row.costVnd),
     freightDeltaVnd: sum(adjustmentRows, (row) => row.freightDeltaVnd),
     handlingDeltaVnd: sum(adjustmentRows, (row) => row.handlingDeltaVnd),
     vatDeltaVnd: sum(adjustmentRows, (row) => row.vatDeltaVnd),
@@ -459,11 +461,7 @@ export function summarizeMonthlyReport(
       costDeltaVnd,
       totalDeltaVnd: costDeltaVnd + adjustmentDelta.vatDeltaVnd,
       adjustedLandedInboundCostVnd:
-        rows.inboundSource === 'STORE_RECEIPTS'
-          ? landedInboundCostVnd +
-            costDeltaVnd -
-            sum(rows.receiptReturns ?? [], (row) => row.costVnd)
-          : null,
+        rows.inboundSource === 'STORE_RECEIPTS' ? landedInboundCostVnd + costDeltaVnd : null,
       adjustedVatCostVnd: adjustmentVatComplete ? vatCostVnd + adjustmentDelta.vatDeltaVnd : null,
       returnsHandedOverCount: uniqueCount((rows.receiptReturns ?? []).map((row) => row.returnId)),
       returnsHandedOverValueVnd: sum(rows.receiptReturns ?? [], (row) => row.costVnd),

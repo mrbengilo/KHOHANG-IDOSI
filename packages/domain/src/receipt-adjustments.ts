@@ -250,7 +250,14 @@ export function planReceiptAdjustmentMoney(
     ['freightVnd', after.freightVnd],
     ['handlingVnd', after.handlingVnd],
     ['vatVnd', after.vatVnd ?? 0n],
+    ['costVnd', after.costVnd],
+    ['totalVnd', after.totalVnd ?? 0n],
   ] as const) {
+    invariant(
+      value <= BigInt(Number.MAX_SAFE_INTEGER),
+      'INVALID_ARGUMENT',
+      'Money exceeds API safe range',
+    );
     invariant(value >= 0n, 'INVALID_ARGUMENT', `Adjusted ${field} cannot be negative`, {
       field,
       value: value.toString(),

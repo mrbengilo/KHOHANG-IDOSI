@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { seedReferenceData } from '../src/reference-seed.js';
 
 import {
+  operationalSettingsVersions,
   allocationLines,
   allocationRuns,
   applyWarehouseMovement,
@@ -615,7 +617,7 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
     expect(row).toMatchObject({
       status: 'received',
       productId: fx.jeansId,
-      costVnd: 800_000n,
+      costVnd: 1_000_000n,
       autoCompletedByUserId: fx.htkdId,
       autoCompletedAt: expect.any(Date),
       receivedQuantity: 1,
@@ -989,7 +991,9 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
       expect(record?.money.after?.goodsVnd).toBe(
         disposition === 'return' ? 2_000_000n : 2_900_000n,
       );
-      expect((await bagRow(fx.bags[0]!.inventoryBagId)).costVnd).toBe(900_000n);
+      expect((await bagRow(fx.bags[0]!.inventoryBagId)).costVnd).toBe(
+        disposition === 'return' ? 1_000_000n : 900_000n,
+      );
       const events = await db.select().from(auditLogs).where(eq(auditLogs.entityId, id));
       expect(events.filter((event) => event.action === 'RECEIPT_ADJUSTMENT_APPLIED')).toEqual([
         expect.objectContaining({
@@ -1015,7 +1019,7 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
   });
 
   it.each(['keep', 'return'] as const)(
-    '%s preserves unrelated freight, handling and captured VAT',
+    '%s preserves fees and original VAT while recalculating effective VAT',
     async (disposition) => {
       const fx = await createFinalizedReceipt({ fees: true });
       const id = await report(fx, [fx.bags[0]!], disposition);
@@ -1025,14 +1029,14 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
         goodsVnd: 3_000_000n,
         freightVnd: 100_000n,
         handlingVnd: 30_000n,
-        vatVnd: 50_000n,
+        vatVnd: 250_400n,
       });
       expect(money.effective).toMatchObject({
         goodsVnd: disposition === 'return' ? 2_000_000n : 2_800_000n,
         freightVnd: 100_000n,
         handlingVnd: 30_000n,
-        vatVnd: 50_000n,
-        totalVnd: disposition === 'return' ? 2_180_000n : 2_980_000n,
+        vatVnd: disposition === 'return' ? 170_400n : 234_400n,
+        totalVnd: disposition === 'return' ? 2_300_400n : 3_164_400n,
       });
     },
   );
@@ -1415,9 +1419,6 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
     await expect(report(fx, [fx.bags[0]!], 'keep')).rejects.toBeInstanceOf(
       ReceiptAdjustmentBlockedError,
     );
-    await expect(
-      verify(fx, created, 0, { pricePerKgVnd: 40_000n, vatDeltaVnd: 100n }),
-    ).rejects.toThrow(/chưa ghi nhận VAT/);
     await verify(fx, created, 0, { pricePerKgVnd: 40_000n });
     const record = await getReceiptAdjustment(db, created);
     expect(record?.money.after).toMatchObject({ vatVnd: null, totalVnd: null });
@@ -1585,21 +1586,187 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
       expect(monthly.totals.inboundGoodsCostVnd.value).toBe(3_000_000n);
       expect(monthly.adjustments).toMatchObject({
         appliedCount: 1,
-        goodsDeltaVnd: -200_000n,
-        totalDeltaVnd: -200_000n,
+        goodsDeltaVnd: disposition === 'return' ? -1_000_000n : -200_000n,
+        totalDeltaVnd: disposition === 'return' ? -1_080_000n : -216_000n,
       });
       expect(monthly.adjustments.adjustedLandedInboundCostVnd).toBe(
         disposition === 'return' ? 2_000_000n : 2_800_000n,
       );
       expect(monthly.adjustments.returnsHandedOverValueVnd).toBe(
-        disposition === 'return' ? 800_000n : 0n,
+        disposition === 'return' ? 1_000_000n : 0n,
       );
       expect(monthly.products.find((row) => row.productId === fx.jeansId)).toMatchObject({
         adjustmentWeightDeltaGrams: 20_000n,
-        adjustmentGoodsDeltaVnd: 800_000n,
+        adjustmentGoodsDeltaVnd: disposition === 'return' ? 1_000_000n : 800_000n,
       });
     },
   );
+
+  it('snapshots settings, rejects stale previews atomically, and never retaxes history on settings edits', async () => {
+    const initial = (await db.select().from(operationalSettingsVersions)).sort(
+      (a, b) => b.version - a.version,
+    )[0]!;
+    const setRate = async (rate: number) => {
+      const current = (await db.select().from(operationalSettingsVersions)).sort(
+        (a, b) => b.version - a.version,
+      )[0]!;
+      await db.insert(operationalSettingsVersions).values({
+        ...current,
+        id: randomUUID(),
+        version: current.version + 1,
+        vatRatePercent: rate,
+        requestId: randomUUID(),
+        createdAt: new Date(),
+      });
+    };
+    try {
+      await setRate(8);
+      const fx = await createFinalizedReceipt({ fees: true });
+      const [original] = await db
+        .select()
+        .from(storeReceipts)
+        .where(eq(storeReceipts.id, fx.receiptId));
+      expect(original).toMatchObject({ vatAmountVnd: 250_400n, vatRatePercent: 8 });
+      expect(original!.vatSettingsVersion).toBeGreaterThan(initial.version);
+      await setRate(10);
+      await seedReferenceData(db);
+      await seedReferenceData(db);
+      expect(
+        (await db.select().from(operationalSettingsVersions)).sort(
+          (a, b) => b.version - a.version,
+        )[0]!.vatRatePercent,
+      ).toBe(10);
+      const id = await report(fx, [fx.bags[0]!], 'keep');
+      await verify(fx, id, 0, { pricePerKgVnd: 40_000n });
+      expect((await summary(fx)).effective.vatVnd).toBe(234_400n);
+      expect(
+        (await db.select().from(storeReceipts).where(eq(storeReceipts.id, fx.receiptId)))[0],
+      ).toEqual(original);
+      const newer = await createFinalizedReceipt();
+      expect((await summary(newer)).original.vatVnd).toBe(300_000n);
+      let staleReceiptId = '';
+      await expect(
+        createFinalizedReceipt({
+          beforeFinalize: async (id) => {
+            staleReceiptId = id;
+            await setRate(0);
+          },
+        }),
+      ).rejects.toThrow(/VAT đã thay đổi/);
+      const [stale] = await db
+        .select()
+        .from(storeReceipts)
+        .where(eq(storeReceipts.id, staleReceiptId));
+      expect(stale).toMatchObject({
+        status: 'pending_htkd',
+        vatAmountVnd: null,
+        vatSettingsVersion: null,
+      });
+      const zero = await createFinalizedReceipt();
+      expect((await summary(zero)).original.vatVnd).toBe(0n);
+    } finally {
+      await setRate(initial.vatRatePercent);
+    }
+  });
+
+  it('serializes different approvals on one receipt without losing VAT or effective goods', async () => {
+    const fx = await createFinalizedReceipt();
+    const a = await report(fx, [fx.bags[0]!], 'keep');
+    const b = await report(fx, [fx.bags[1]!], 'return');
+    await Promise.all([
+      verify(fx, a, 0, { pricePerKgVnd: 40_000n }),
+      verify(fx, b, 0, { pricePerKgVnd: 999_999n }),
+    ]);
+    expect((await summary(fx)).effective).toMatchObject({
+      goodsVnd: 1_800_000n,
+      vatVnd: 144_000n,
+      totalVnd: 1_944_000n,
+    });
+    const adjustments = await db
+      .select()
+      .from(storeReceiptAdjustments)
+      .where(eq(storeReceiptAdjustments.storeReceiptId, fx.receiptId));
+    expect(adjustments.reduce((sum, row) => sum + row.vatDeltaVnd, 0n)).toBe(-96_000n);
+    await expectLedgerMatchesBags(fx);
+  });
+
+  it('rejects a forged RETURN disposition on a stored KEEP line', async () => {
+    const fx = await createFinalizedReceipt();
+    const id = await report(fx, [fx.bags[0]!], 'keep');
+    await expect(
+      transition({
+        adjustmentId: id,
+        expectedVersion: 0,
+        actorUserId: fx.htkdId,
+        action: 'VERIFY',
+        cause: 'source_misclassification',
+        note: 'Không được giả phương án',
+        freightDeltaVnd: 0n,
+        handlingDeltaVnd: 0n,
+        lines: [
+          {
+            receiptBagId: fx.bags[0]!.receiptBagId,
+            actualProductId: fx.jeansId,
+            disposition: 'return',
+            weightKg: '20',
+            weightChangeNote: null,
+          },
+        ],
+      }),
+    ).rejects.toThrow(/không khớp/);
+    expect((await getReceiptAdjustment(db, id))!.status).toBe('pending_htkd');
+  });
+
+  it('returns a previously repriced bag without client price and preserves its server cost', async () => {
+    const fx = await createFinalizedReceipt();
+    const first = await report(fx, [fx.bags[0]!], 'keep');
+    await verify(fx, first, 0, { pricePerKgVnd: 40_000n });
+    const next = await report(fx, [fx.bags[0]!], 'return', fx.coatId);
+    const record = (await getReceiptAdjustment(db, next))!;
+    const command = {
+      adjustmentId: next,
+      expectedVersion: 0,
+      actorUserId: fx.htkdId,
+      action: 'VERIFY' as const,
+      cause: 'source_misclassification' as const,
+      note: 'Trả theo giá hiệu lực',
+      freightDeltaVnd: 0n,
+      handlingDeltaVnd: 0n,
+      lines: record.lines.map((line) => ({
+        receiptBagId: line.receiptBagId,
+        actualProductId: fx.coatId,
+        disposition: 'return' as const,
+        weightKg: line.recordedWeightKg,
+        weightChangeNote: null,
+      })),
+    };
+    await transition(command);
+    expect((await summary(fx)).effective).toMatchObject({
+      goodsVnd: 2_000_000n,
+      vatVnd: 160_000n,
+      totalVnd: 2_160_000n,
+    });
+    const [returned] = await db
+      .select()
+      .from(storeReceiptReturns)
+      .where(eq(storeReceiptReturns.storeInventoryBagId, fx.bags[0]!.inventoryBagId));
+    expect(returned).toMatchObject({ costVnd: 800_000n, productId: fx.coatId, status: 'received' });
+    await expectLedgerMatchesBags(fx);
+  });
+
+  it('preserves manually entered original VAT and records the new full-base VAT delta', async () => {
+    const fx = await createFinalizedReceipt({ fees: true });
+    await db
+      .update(storeReceipts)
+      .set({ vatAmountVnd: 50_000n, vatSettingsVersion: null })
+      .where(eq(storeReceipts.id, fx.receiptId));
+    const id = await report(fx, [fx.bags[0]!], 'keep');
+    await verify(fx, id, 0, { pricePerKgVnd: 40_000n });
+    const summaryValue = await summary(fx);
+    expect(summaryValue.original.vatVnd).toBe(50_000n);
+    expect(summaryValue.effective.vatVnd).toBe(234_400n);
+    expect((await getReceiptAdjustment(db, id))!.vatDeltaVnd).toBe(184_400n);
+  });
 
   // ---------------------------------------------------------------------------------------------
 
@@ -1635,7 +1802,6 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
     options: {
       readonly pricePerKgVnd: bigint;
       readonly actualProductId?: string;
-      readonly vatDeltaVnd?: bigint;
       readonly cause?: 'source_misclassification' | 'warehouse_mispick';
     },
     key?: string,
@@ -1658,7 +1824,6 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
         })),
         freightDeltaVnd: 0n,
         handlingDeltaVnd: 0n,
-        vatDeltaVnd: options.vatDeltaVnd ?? 0n,
       },
       key,
     );
@@ -1824,6 +1989,7 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
     options: {
       readonly reuse?: Fixture;
       readonly fees?: boolean;
+      readonly beforeFinalize?: (receiptId: string) => Promise<void>;
       readonly quantity?: number;
       readonly waitTicketId?: string;
       /** A wholesale store, received for by a wholesale-desk account instead of a store account. */
@@ -2091,13 +2257,17 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
       requestHash: `submit-${token}`,
     });
     if (submitted.replayed) throw new Error('unexpected replay');
+    const vatVersion = Math.max(
+      ...(await db.select().from(operationalSettingsVersions)).map((row) => row.version),
+    );
+    await options.beforeFinalize?.(declared.value.receiptId);
     await finalizeStoreReceipt(db, {
       receiptId: declared.value.receiptId,
       expectedVersion: submitted.value.version,
       reviewedByUserId: base.htkdId,
       freightVnd: options.fees ? 100_000n : 0n,
       handlingVnd: options.fees ? 30_000n : 0n,
-      vat: { amountVnd: options.fees ? 50_000n : 0n, ratePercent: 8 },
+      expectedVatSettingsVersion: vatVersion,
       lines: [
         {
           productId: base.dressId,

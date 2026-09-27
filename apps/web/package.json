@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@idosi/contracts": "0.1.0",
+    "@idosi/domain": "^0.1.0",
     "@tanstack/react-query": "5.102.0",
     "clsx": "2.1.1",
     "lucide-react": "1.46.0",

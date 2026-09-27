@@ -259,6 +259,7 @@ describe('admin API client', () => {
       maxRequestsPerStore: 2,
       policyVersion: 'ALLOC-v1.2',
       idosiSyncIntervalMinutes: 15,
+      vatRatePercent: 8,
       createdByAccountId: null,
       requestId: 'migration:0003',
       createdAt: '2026-09-17T00:00:00.000Z',
@@ -305,6 +306,7 @@ describe('admin API client', () => {
       maxRequestsPerStore: 2,
       policyVersion: 'ALLOC-v1.3',
       idosiSyncIntervalMinutes: 30,
+      vatRatePercent: 8,
     });
 
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
@@ -320,6 +322,7 @@ describe('admin API client', () => {
       maxRequestsPerStore: 2,
       policyVersion: 'ALLOC-v1.3',
       idosiSyncIntervalMinutes: 30,
+      vatRatePercent: 8,
     });
     expect(String(updateInit.body)).not.toContain('secret');
   });
