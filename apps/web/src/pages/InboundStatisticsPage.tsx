@@ -7,7 +7,7 @@ import {
   type InboundStatistics,
   type InboundStatisticsQuery,
 } from '@idosi/contracts';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { PageHeader } from '../components/PageHeader';
 import { getInboundStatistics } from '../lib/api';
@@ -209,16 +209,19 @@ export function InboundStatisticsPage() {
   const valid = InboundStatisticsQuerySchema.safeParse(query);
   const report = useQuery({
     queryKey: inboundStatisticsKey(query),
-    queryFn: () => getInboundStatistics(query),
+    queryFn: async () => ({ result: await getInboundStatistics(query), scope: query }),
+    placeholderData: keepPreviousData,
     enabled: valid.success,
   });
   const update = (patch: Partial<InboundStatisticsQuery>) =>
     setQuery((current) => ({ ...current, storePage: 1, productPage: 1, ...patch }));
   const [storeOptions, setStoreOptions] = useState<InboundStatistics['storeOptions']>([]);
   useEffect(() => {
-    if (report.data) setStoreOptions(report.data.storeOptions);
+    if (report.data) setStoreOptions(report.data.result.storeOptions);
   }, [report.data]);
-  const data = valid.success ? report.data : undefined;
+  const data = valid.success ? report.data?.result : undefined;
+  const displayScope = report.data?.scope ?? query;
+  const refreshing = report.isPlaceholderData;
   return (
     <div className="inbound-statistics">
       <PageHeader
@@ -365,8 +368,18 @@ export function InboundStatisticsPage() {
           <button onClick={() => void report.refetch()}>Thử lại</button>
         </div>
       )}
+      {data && !report.isError && refreshing && (
+        <p role="status" className="inbound-warning">
+          Đang tải phạm vi mới. Bên dưới vẫn là báo cáo trước: {data.period.label} ·{' '}
+          {kinds[displayScope.storeKind ?? 'ALL']} ·{' '}
+          {displayScope.storeId
+            ? data.storeOptions.find((s) => s.id === displayScope.storeId)?.name
+            : 'Tất cả cửa hàng'}{' '}
+          · Chi tiết theo nguồn: {sources[data.selectedSource]}. Chưa phải kết quả của bộ lọc mới.
+        </p>
+      )}
       {data && !report.isError && (
-        <>
+        <div className="inbound-results" aria-busy={report.isFetching} inert={refreshing}>
           <div className="inbound-heading">
             <h2>Tổng quan mọi nguồn</h2>
             <span>{data.period.label} · Asia/Ho_Chi_Minh</span>
@@ -410,7 +423,7 @@ export function InboundStatisticsPage() {
           </div>
           <section className="inbound-panel">
             <h2>Tổng hợp theo loại cửa hàng</h2>
-            <p>Trong kỳ và phạm vi đang chọn; phân loại theo loại cửa hàng hiện tại.</p>
+            <p>Trong kỳ và phạm vi báo cáo đang hiển thị; phân loại theo loại cửa hàng hiện tại.</p>
             <div className="inbound-table-scroll" tabIndex={0} aria-label="Bảng loại cửa hàng">
               <table>
                 <thead>
@@ -432,19 +445,19 @@ export function InboundStatisticsPage() {
           </section>
 
           <section className="inbound-panel">
-            <h2>Mặt hàng · {sources[query.source]}</h2>
+            <h2>Mặt hàng · {sources[data.selectedSource]}</h2>
             <Ranking value={data.ranking} />
           </section>
           <div className="inbound-charts">
-            <Chart rows={data.charts.bags} source={query.source} />
-            <Chart rows={data.charts.weight} source={query.source} weight />
+            <Chart rows={data.charts.bags} source={data.selectedSource} />
+            <Chart rows={data.charts.weight} source={data.selectedSource} weight />
           </div>
           <section className="inbound-panel">
             <h2>Theo cửa hàng</h2>
 
             <p>
               Tìm kiếm chỉ thu hẹp bảng. Tổng và xếp hạng giữ nguyên phạm vi; xếp hạng theo nguồn{' '}
-              {sources[query.source]}.
+              {sources[data.selectedSource]}.
             </p>
             <div className="inbound-table-scroll" tabIndex={0} aria-label="Bảng cửa hàng">
               <table>
@@ -514,7 +527,7 @@ export function InboundStatisticsPage() {
             />
           </section>
           <section className="inbound-panel">
-            <h2>Theo mặt hàng · {sources[query.source]}</h2>
+            <h2>Theo mặt hàng · {sources[data.selectedSource]}</h2>
 
             <p>Tìm kiếm chỉ thu hẹp bảng; tỷ trọng, biểu đồ và dòng tổng tính trên toàn phạm vi.</p>
             <div className="inbound-table-scroll" tabIndex={0} aria-label="Bảng mặt hàng">
@@ -522,12 +535,12 @@ export function InboundStatisticsPage() {
                 <thead>
                   <tr>
                     <th>Mã / tên mặt hàng</th>
-                    {query.source === 'ALL' ? (
+                    {data.selectedSource === 'ALL' ? (
                       <BreakdownHeaders />
                     ) : (
                       <>
-                        <th>{sources[query.source]} · bao</th>
-                        <th>{sources[query.source]} · kg</th>
+                        <th>{sources[data.selectedSource]} · bao</th>
+                        <th>{sources[data.selectedSource]} · kg</th>
                       </>
                     )}
                     <th>Tỷ trọng bao</th>
@@ -541,7 +554,7 @@ export function InboundStatisticsPage() {
                         {row.sku}
                         <small>{row.productName}</small>
                       </th>
-                      {query.source === 'ALL' ? (
+                      {data.selectedSource === 'ALL' ? (
                         <BreakdownCells value={row.amounts} />
                       ) : (
                         <MetricCells value={row.selected} />
@@ -562,7 +575,7 @@ export function InboundStatisticsPage() {
                 <tfoot>
                   <tr>
                     <th>Tổng toàn phạm vi</th>
-                    {query.source === 'ALL' ? (
+                    {data.selectedSource === 'ALL' ? (
                       <BreakdownCells value={data.overviewAllSources} />
                     ) : (
                       <MetricCells value={data.selectedTotal} />
@@ -597,7 +610,7 @@ export function InboundStatisticsPage() {
             hiện tại và không trừ hàng trả sau nhận. Hiệu chỉnh muộn có thể thay đổi kỳ cũ. Cập
             nhật: {new Date(data.generatedAt).toLocaleString('vi-VN', { timeZone: data.timezone })}.
           </p>
-        </>
+        </div>
       )}
     </div>
   );

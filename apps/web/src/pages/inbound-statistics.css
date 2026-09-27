@@ -253,3 +253,12 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.inbound-results {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+.inbound-results[inert] {
+  opacity: 0.65;
+}

@@ -138,7 +138,11 @@ test('Admin filters, source breakdown, charts, retry and responsive tables', asy
       .toBe(true);
     await expect(page.getByLabel('Bảng mặt hàng')).toBeVisible();
     if (width === 390 || width === 1440)
-      await page.screenshot({ path: testInfo.outputPath(`inbound-${width}.png`), fullPage: true });
+      await page.screenshot({
+        path: testInfo.outputPath(`inbound-${width}.png`),
+        fullPage: true,
+        animations: 'disabled',
+      });
   }
   missing = true;
   await page.getByRole('button', { name: 'Làm mới', exact: true }).click();
@@ -154,7 +158,10 @@ test('Admin filters, source breakdown, charts, retry and responsive tables', asy
   await expect(page.locator('.inbound-overview')).toContainText('36 bao · 545 kg');
   await page.getByLabel('Tháng', { exact: true }).fill('2000-02');
   await slowRequest;
-  await expect(page.locator('.inbound-overview')).toHaveCount(0);
+  await expect(page.locator('.inbound-overview')).toContainText('36 bao · 545 kg');
+  await expect(page.getByRole('status')).toContainText('Bên dưới vẫn là báo cáo trước:');
+  await expect(page.getByRole('status')).toContainText('Chưa phải kết quả của bộ lọc mới.');
+  await expect(page.locator('.inbound-results')).toHaveAttribute('inert', '');
   await page.getByLabel('Tháng', { exact: true }).fill('2000-01');
   await expect(page.locator('.inbound-overview')).toContainText('0 bao · 0 kg');
   releaseSlow?.();

@@ -50,6 +50,7 @@ test('Admin browser to API to PostgreSQL reconciles original warehouse and partn
       await page.screenshot({
         path: testInfo.outputPath(`inbound-live-${width}.png`),
         fullPage: true,
+        animations: 'disabled',
       });
     }
     await page
