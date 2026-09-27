@@ -99,6 +99,7 @@ test('production opening locks a stale discrepancy form and retains opening hist
 
     await login(page, storeLogin);
     await page.goto('/receive');
+    await page.locator('.receipt-card').first().click();
     const section = page.locator('.adjustment-section');
     await section.getByRole('button', { name: 'Báo sai lệch sau khui bao' }).click();
     await section.getByRole('checkbox', { name: /Bao 1/ }).check();

@@ -462,6 +462,7 @@ test('a wholesale store orders, receives, is finalized and reports a discrepancy
     await page.goto('/receive');
     await page.locator('.receipt-scope select').selectOption({ label: labelA });
     const review = page.locator('.receipt-detail');
+    await page.locator('.receipt-card').filter({ hasText: receipt!.receiptNumber }).click();
     await review.getByLabel('Giá nhập / kg (VND)').fill('20000');
     await review.getByLabel('Khối lượng bao 1 (kg)').fill('30');
     await review.getByLabel('Khối lượng bao 2 (kg)').fill('25');
@@ -481,6 +482,7 @@ test('a wholesale store orders, receives, is finalized and reports a discrepancy
     await switchAccount(page, deskLogin);
     await page.goto('/receive');
     await page.locator('.receipt-scope select').selectOption({ label: labelA });
+    await page.locator('.receipt-card').filter({ hasText: receipt!.receiptNumber }).click();
     const section = page.locator('.adjustment-section');
     await section.getByRole('button', { name: 'Báo sai lệch sau khui bao' }).click();
     await section.getByRole('checkbox', { name: /Bao 1/ }).check();
