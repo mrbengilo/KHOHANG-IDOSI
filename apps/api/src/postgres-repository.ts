@@ -1,3 +1,5 @@
+import type { InboundStatistics, InboundStatisticsQuery } from '@idosi/contracts';
+import { loadInboundStatistics, InboundScopeError } from '@idosi/database';
 import type { ReceiptSummary } from '@idosi/contracts';
 import { sessionDocument, type SessionDocument } from '@idosi/contracts';
 import { listSessionDocuments as listDatabaseSessionDocuments } from '@idosi/database';
@@ -3998,6 +4000,20 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         replayed: result.replayed,
       };
     });
+  }
+
+  public async getInboundStatistics(
+    actor: AuthenticatedPrincipal,
+    query: InboundStatisticsQuery,
+  ): Promise<InboundStatistics> {
+    if (actor.role !== 'ADMIN') throw forbidden();
+    try {
+      return await loadInboundStatistics(db, query);
+    } catch (error) {
+      if (error instanceof InboundScopeError)
+        throw new ApiError('VALIDATION_ERROR', error.message, 400);
+      throw error;
+    }
   }
 
   public async getMonthlyOperationalReport(

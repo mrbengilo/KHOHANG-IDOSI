@@ -1,6 +1,8 @@
+import { InboundStatisticsQuerySchema } from '@idosi/contracts';
+import { loadInboundStatistics } from '../src/inbound-statistics.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, sql } from 'drizzle-orm';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
   allocationLines,
@@ -1564,6 +1566,139 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
     });
   });
 
+  it('late successive corrections replace the original SKU/kg while resupply belongs to its new month', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2090-09-15T05:00:00Z'));
+      const fx = await createFinalizedReceipt();
+      const september = InboundStatisticsQuerySchema.parse({
+        month: '2090-09',
+        storeId: fx.storeId,
+      });
+      vi.setSystemTime(new Date('2090-10-15T05:00:00Z'));
+      const first = await report(fx, [fx.bags[0]!], 'keep');
+      await verify(fx, first, 0, { pricePerKgVnd: 40_000n, weightKg: '21.125' });
+      const second = await report(fx, [fx.bags[0]!], 'keep', fx.coatId);
+      await verify(fx, second, 0, {
+        pricePerKgVnd: 40_000n,
+        weightKg: '22.125',
+        actualProductId: fx.coatId,
+      });
+      const historical = await loadInboundStatistics(db, september);
+      expect(historical.overviewAllSources.total).toMatchObject({
+        bagQuantity: '3',
+        weightGrams: '62125',
+      });
+      expect(historical.productRows.some((p) => p.productId === fx.jeansId)).toBe(false);
+      expect(historical.productRows.find((p) => p.productId === fx.coatId)?.selected).toMatchObject(
+        { bagQuantity: '1', weightGrams: '22125' },
+      );
+      const october = InboundStatisticsQuerySchema.parse({ month: '2090-10', storeId: fx.storeId });
+      expect((await loadInboundStatistics(db, october)).selectedTotal.bagQuantity).toBe('0');
+      const [wait] = await activeWaits(fx);
+      await createFinalizedReceipt({ reuse: fx, quantity: 1, waitTicketId: wait!.id });
+      expect((await loadInboundStatistics(db, october)).selectedTotal.bagQuantity).toBe('1');
+      expect((await loadInboundStatistics(db, september)).selectedTotal.bagQuantity).toBe('3');
+      const adjustment = (await getReceiptAdjustment(db, second))!;
+      const returned = await createReceiptReturn(db, {
+        adjustmentId: second,
+        adjustmentLineId: adjustment.lines[0]!.id,
+        actorUserId: fx.storeUserId,
+        reason: 'Trả sau khi giữ bán',
+        idempotencyKey: randomUUID(),
+        requestHash: randomUUID(),
+      });
+      if (returned.replayed) throw new Error('Unexpected replay');
+      await returnAction(fx.storeUserId, returned.value.returnId, 0, { action: 'HANDOVER' });
+      await returnAction(adminId, returned.value.returnId, 1, {
+        action: 'RECEIVE',
+        outcome: 'RECEIVED',
+        note: null,
+      });
+      expect((await loadInboundStatistics(db, september)).overviewAllSources).toEqual(
+        historical.overviewAllSources,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('finalization books declared excess and unexpected products with conserved ledger and gross statistics', async () => {
+    const fx = await createFinalizedReceipt({ excess: true });
+    const month = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      year: 'numeric',
+      month: '2-digit',
+    }).format(new Date());
+    const result = await loadInboundStatistics(
+      db,
+      InboundStatisticsQuerySchema.parse({ month, storeId: fx.storeId }),
+    );
+    expect(result.overviewAllSources.warehouse).toMatchObject({
+      bagQuantity: '6',
+      weightGrams: '82000',
+      bagsComplete: true,
+      weightComplete: true,
+    });
+    expect(result.productRows.find((p) => p.productId === fx.dressId)?.selected.bagQuantity).toBe(
+      '4',
+    );
+    expect(result.productRows.find((p) => p.productId === fx.jeansId)?.selected.bagQuantity).toBe(
+      '2',
+    );
+    expect((await balance(fx.dressId)).onHand).toBe(0);
+    expect((await balance(fx.jeansId)).onHand).toBe(3);
+    expect((await summary(fx)).effective.goodsVnd).toBe(4_200_000n);
+    await expect(
+      db.update(storeReceipts).set({ goodsCostVnd: 0n }).where(eq(storeReceipts.id, fx.receiptId)),
+    ).rejects.toThrow();
+  });
+
+  it.each(['keep', 'return'] as const)(
+    'inbound statistics uses effective SKU once and preserves gross receipts after %s',
+    async (disposition) => {
+      const fx = await createFinalizedReceipt();
+      const month = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        year: 'numeric',
+        month: '2-digit',
+      }).format(new Date());
+      const query = InboundStatisticsQuerySchema.parse({ month, storeId: fx.storeId });
+      const initial = await loadInboundStatistics(db, query);
+      const created = await report(fx, [fx.bags[0]!], disposition);
+      expect((await loadInboundStatistics(db, query)).overviewAllSources).toEqual(
+        initial.overviewAllSources,
+      );
+      const key = randomUUID();
+      await verify(fx, created, 0, { pricePerKgVnd: 40_000n }, key);
+      await verify(fx, created, 0, { pricePerKgVnd: 40_000n }, key);
+      const updated = await loadInboundStatistics(db, query);
+      expect(updated.overviewAllSources.total).toMatchObject({
+        bagQuantity: '3',
+        weightGrams: '60000',
+      });
+      expect(
+        updated.productRows.find((p) => p.productId === fx.jeansId)?.selected.bagQuantity,
+      ).toBe('1');
+      expect(
+        updated.productRows.find((p) => p.productId === fx.dressId)?.selected.bagQuantity,
+      ).toBe('2');
+      if (disposition === 'return')
+        expect((await bagRow(fx.bags[0]!.inventoryBagId)).currentWeightKg).toBe('0.000');
+      const pending = await report(fx, [fx.bags[1]!], 'keep');
+      await transition({
+        adjustmentId: pending,
+        expectedVersion: 0,
+        actorUserId: adminId,
+        action: 'REJECT',
+        note: 'Không có sai lệch',
+      });
+      expect((await loadInboundStatistics(db, query)).overviewAllSources).toEqual(
+        updated.overviewAllSources,
+      );
+    },
+  );
+
   it.each(['keep', 'return'] as const)(
     'monthly report keeps original documents and accounts for %s on its effective date',
     async (disposition) => {
@@ -1637,6 +1772,7 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
       readonly actualProductId?: string;
       readonly vatDeltaVnd?: bigint;
       readonly cause?: 'source_misclassification' | 'warehouse_mispick';
+      readonly weightKg?: string;
     },
     key?: string,
   ) {
@@ -1652,9 +1788,9 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
         lines: record!.lines.map((line) => ({
           receiptBagId: line.receiptBagId,
           actualProductId: options.actualProductId ?? line.actualProductId,
-          weightKg: line.recordedWeightKg,
+          weightKg: options.weightKg ?? line.recordedWeightKg,
           pricePerKgVnd: options.pricePerKgVnd,
-          weightChangeNote: null,
+          weightChangeNote: options.weightKg ? 'Cân thực tế theo bằng chứng mới' : null,
         })),
         freightDeltaVnd: 0n,
         handlingDeltaVnd: 0n,
@@ -1828,6 +1964,7 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
       readonly waitTicketId?: string;
       /** A wholesale store, received for by a wholesale-desk account instead of a store account. */
       readonly wholesale?: boolean;
+      readonly excess?: boolean;
     } = {},
   ): Promise<Fixture> {
     const quantity = options.quantity ?? 3;
@@ -2073,11 +2210,30 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
     const lines = [
       { productId: base.dressId, approvedQuantity: quantity, receivedQuantity: quantity },
     ];
+    const unexpectedItems = options.excess
+      ? [
+          { productId: base.dressId, quantity: 1 },
+          { productId: base.jeansId, quantity: 2 },
+        ]
+      : [];
+    if (options.excess)
+      await db.transaction((tx) =>
+        applyWarehouseMovement(tx, {
+          productId: base.dressId,
+          eventType: 'receipt',
+          onHandDelta: 1,
+          reservedDelta: 0,
+          sourceType: 'statistics-excess-fixture',
+          sourceId: randomUUID(),
+        }),
+      );
     const declared = await declareStoreReceipt(db, {
       outboundRequestId: outbound!.id,
       storeId: base.storeId,
       declaredByUserId: base.storeUserId,
       lines,
+      unexpectedItems,
+      discrepancyNote: options.excess ? 'Đã nhận hàng thừa và hàng ngoài phiếu' : null,
       idempotencyKey: `declare-${token}`,
       requestHash: `declare-${token}`,
     });
@@ -2087,6 +2243,8 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
       expectedVersion: declared.value.version,
       submittedByUserId: base.storeUserId,
       lines,
+      unexpectedItems,
+      discrepancyNote: options.excess ? 'Đã nhận hàng thừa và hàng ngoài phiếu' : null,
       idempotencyKey: `submit-${token}`,
       requestHash: `submit-${token}`,
     });
@@ -2095,6 +2253,12 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
       receiptId: declared.value.receiptId,
       expectedVersion: submitted.value.version,
       reviewedByUserId: base.htkdId,
+      unexpectedItems: options.excess
+        ? [
+            { productId: base.dressId, bagWeightsKg: ['10.000'], pricePerKgVnd: 60_000n },
+            { productId: base.jeansId, bagWeightsKg: ['5.125', '6.875'], pricePerKgVnd: 50_000n },
+          ]
+        : [],
       freightVnd: options.fees ? 100_000n : 0n,
       handlingVnd: options.fees ? 30_000n : 0n,
       vat: { amountVnd: options.fees ? 50_000n : 0n, ratePercent: 8 },

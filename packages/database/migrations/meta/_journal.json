@@ -225,6 +225,20 @@
       "when": 1790460000000,
       "tag": "0031_receipt_immediate_returns",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1790517600000,
+      "tag": "0032_receipt_excess_validation",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1790517660000,
+      "tag": "0033_inbound_reporting_period_index",
+      "breakpoints": true
     }
   ]
 }
