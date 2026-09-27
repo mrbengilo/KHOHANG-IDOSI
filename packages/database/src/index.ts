@@ -452,3 +452,5 @@ export type {
 } from './store-receipt-adjustments.js';
 
 export * from './store-bag-openings.js';
+
+export * from './session-documents.js';

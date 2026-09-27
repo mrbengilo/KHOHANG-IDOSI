@@ -1,3 +1,4 @@
+import '../styles/document-history.css';
 import {
   CreateOrderSessionRequestSchema,
   DEFAULT_ALLOCATION_POLICY_VERSION,
@@ -45,7 +46,7 @@ import {
   createOrderSession,
   daysAgo,
   listAccessibleOrderRequests,
-  listAllocationResults,
+  listSessionDocuments,
   listAccessibleStores,
   listCatalog,
   listOrderSessions,
@@ -564,8 +565,8 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
     () => overdueAllocationSessions(sessionsQuery.data ?? [], Date.now()),
     [sessionsQuery.data],
   );
-  // Each request becomes a row of the session table, so the reader sees when it was sent
-  // and which store sent it. The server limits the list to the account's store scope.
+  // Open sessions show submissions; allocated sessions navigate once per store.
+  // The server limits source history and official documents to the account's scope.
   const orderRequestsQuery = useQuery({
     queryFn: () => listAccessibleOrderRequests(daysAgo(SESSION_TABLE_DAYS)),
     queryKey: ['order-requests', 'accessible', SESSION_TABLE_DAYS],
@@ -603,7 +604,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
   });
   const allocationQuery = useQuery({
     queryFn: () =>
-      listAllocationResults({
+      listSessionDocuments({
         page: allocationPage,
         pageSize: allocationResultPageSize,
         ...(allocationSessionId ? { sessionId: allocationSessionId } : {}),
@@ -1284,78 +1285,139 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                 Đang cập nhật kết quả…
               </p>
             ) : null}
-            <div className="responsive-table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Phiên</th>
-                    <th>Cửa hàng</th>
-                    <th>Mặt hàng</th>
-                    <th>Yêu cầu</th>
-                    <th>Đã cấp</th>
-                    <th>Chờ</th>
-                    <th>Ưu tiên / vòng</th>
-                    <th>Kết quả / lý do</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {allocationQuery.data.data.map((result) => (
-                    <tr key={result.id}>
-                      <td data-label="Phiên">
-                        <strong>{sessionDateById.get(result.sessionId) ?? 'Không rõ ngày'}</strong>
-                        <small title={result.sessionId}>{result.sessionId.slice(0, 8)}</small>
-                      </td>
-                      <td data-label="Cửa hàng">
-                        <strong>{storeNameById.get(result.storeId) ?? result.storeId}</strong>
-                      </td>
-                      <td data-label="Mặt hàng">
-                        <strong>{productNameById.get(result.productId) ?? result.productId}</strong>
-                      </td>
-                      <td data-label="Yêu cầu">{result.requestedQuantity}</td>
-                      <td data-label="Đã cấp">
-                        <strong className="text-success">{result.allocatedQuantity}</strong>
-                      </td>
-                      <td data-label="Chờ">
-                        <strong
-                          className={result.waitlistedQuantity > 0 ? 'text-danger' : undefined}
-                        >
-                          {result.waitlistedQuantity}
-                        </strong>
-                      </td>
-                      <td data-label="Ưu tiên / vòng">
-                        <Badge tone={result.priority.startsWith('P0') ? 'priority' : 'info'}>
-                          Nguồn: {result.priority}
-                        </Badge>
-                        <small>
-                          {result.appliedPriority
-                            ? `Áp dụng: ${result.appliedPriority}`
-                            : 'Chưa có dữ liệu ưu tiên áp dụng'}
-                        </small>
-                        <small>{allocationRoundText(result)}</small>
-                      </td>
-                      <td className="allocation-result-decision" data-label="Kết quả / lý do">
-                        <Badge tone={allocationResultStatusTone[result.status]}>
-                          {allocationResultStatusCopy[result.status]}
-                        </Badge>
-                        {allocationReasonText(result.reasonCode) ? (
-                          <small title={result.reasonCode}>
-                            {allocationReasonText(result.reasonCode)}
-                          </small>
-                        ) : null}
-                        <small>
-                          {allocationTimestampFormatter.format(new Date(result.createdAt))}
-                        </small>
-                      </td>
-                    </tr>
+            {allocationQuery.data.data.map((document) => (
+              <article
+                className="panel session-document"
+                key={document.id}
+                aria-label={'Chứng từ ' + document.id}
+              >
+                <h3>
+                  {storeNameById.get(document.storeId) ?? 'Chưa xác định cửa hàng'} · Phiên{' '}
+                  {sessionDateById.get(document.sessionId) ?? document.sessionId}
+                </h3>
+                <p>
+                  Phiên bản chính thức {document.version} · Đã phân bổ ·{' '}
+                  {allocationTimestampFormatter.format(new Date(document.createdAt))}
+                </p>
+                {document.hasPrioritySource ? (
+                  <Badge tone="priority">Có gộp phiếu ưu tiên</Badge>
+                ) : null}
+                <details>
+                  <summary>Phiếu đặt hàng tổng hợp · {document.orderCode}</summary>
+                  <div className="document-history">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Mặt hàng</th>
+                          <th>Nhu cầu (bao)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {document.lines.map((line) => (
+                          <tr key={line.productId}>
+                            <td>{productNameById.get(line.productId) ?? line.productId}</td>
+                            <td>{line.requestedQuantity}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr>
+                          <th>Tổng</th>
+                          <td>
+                            {document.lines.reduce((sum, line) => sum + line.requestedQuantity, 0)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </details>
+                <h4>Phiếu kết quả phân bổ · {document.resultCode}</h4>
+                <div className="document-history">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Mặt hàng</th>
+                        <th>Nhu cầu (bao)</th>
+                        <th>Cấp mới trong phiên</th>
+                        <th>Còn chờ</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {document.lines.map((line) => (
+                        <tr key={line.productId}>
+                          <td>{productNameById.get(line.productId) ?? line.productId}</td>
+                          <td>{line.requestedQuantity}</td>
+                          <td>{line.allocatedQuantity}</td>
+                          <td>{line.waitlistedQuantity}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <th>Tổng</th>
+                        <td>
+                          {document.lines.reduce((sum, line) => sum + line.requestedQuantity, 0)}
+                        </td>
+                        <td>
+                          {document.lines.reduce((sum, line) => sum + line.allocatedQuantity, 0)}
+                        </td>
+                        <td>
+                          {document.lines.reduce((sum, line) => sum + line.waitlistedQuantity, 0)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+                {document.carriedAllocations.length ? (
+                  <details>
+                    <summary>
+                      Hàng đã cấp ở phiên trước, giao chung ·{' '}
+                      {document.carriedAllocations.reduce((sum, line) => sum + line.quantity, 0)}{' '}
+                      bao
+                    </summary>
+                    <p>Không cộng vào nhu cầu hoặc lượng cấp mới của phiên này.</p>
+                    {document.carriedAllocations.map((line) => (
+                      <p key={line.allocationLineId}>
+                        {productNameById.get(line.productId) ?? line.productId}: {line.quantity} bao
+                        · Nguồn phân bổ {line.allocationRunId}
+                      </p>
+                    ))}
+                  </details>
+                ) : null}
+                <details>
+                  <summary>Phiếu nguồn và các vòng phân bổ</summary>
+                  {document.sources.map((source) => (
+                    <div key={source.result.id}>
+                      <p>
+                        {source.orderRequestCode ?? source.waitTicketId} ·{' '}
+                        {source.submittedAt
+                          ? allocationTimestampFormatter.format(new Date(source.submittedAt))
+                          : 'Nguồn phiếu chờ'}{' '}
+                        · {productNameById.get(source.result.productId) ?? source.result.productId}
+                      </p>
+                      <p>
+                        Nhu cầu {source.result.requestedQuantity} · Cấp{' '}
+                        {source.result.allocatedQuantity} · Chờ {source.result.waitlistedQuantity} ·
+                        Nguồn {source.result.priority} · Áp dụng{' '}
+                        {source.result.appliedPriority ?? 'Chưa ghi nhận'}
+                      </p>
+                      <Badge tone={allocationResultStatusTone[source.result.status]}>
+                        {allocationResultStatusCopy[source.result.status]}
+                      </Badge>
+                      <p>
+                        {allocationRoundText(source.result)} ·{' '}
+                        {allocationReasonText(source.result.reasonCode)}
+                      </p>
+                    </div>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </details>
+              </article>
+            ))}
             <div className="allocation-result-pagination">
               <span>
                 Trang {allocationQuery.data.pagination.page} /{' '}
                 {Math.max(1, allocationQuery.data.pagination.totalPages)} ·{' '}
-                {allocationQuery.data.pagination.totalItems} kết quả
+                {allocationQuery.data.pagination.totalItems} phiếu kết quả
               </span>
               <div>
                 <Button

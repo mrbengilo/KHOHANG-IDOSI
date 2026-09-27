@@ -106,6 +106,7 @@ test('store reports a mixed-up bag, HTKD approves once: money, stock and P0B rig
     // 1. The store reports bag 1 as jeans and keeps it.
     await login(page, storeLogin);
     await page.goto('/receive');
+    await page.locator('.receipt-card').first().click();
     const section = page.locator('.adjustment-section');
     await expect(section.getByRole('heading', { name: /Sai lệch sau khui bao/ })).toBeVisible();
     await section.getByRole('button', { name: 'Báo sai lệch sau khui bao' }).click();
@@ -163,6 +164,7 @@ test('store reports a mixed-up bag, HTKD approves once: money, stock and P0B rig
     // 4. Return branch: bag 2 is jeans too and goes back to the warehouse.
     await relogin(page, storeLogin);
     await page.goto('/receive');
+    await page.locator('.receipt-card').first().click();
     await section.getByRole('button', { name: 'Báo sai lệch sau khui bao' }).click();
     await section.getByRole('checkbox', { name: /Bao 2/ }).check();
     await section.getByLabel('Mặt hàng thực tế').selectOption({ label: jeansName });
@@ -319,7 +321,7 @@ test('admin tab lists every store document; applying shows "Đã xử lý" to HT
       productId: dress!.id,
     });
     const [receipt] = await client.db
-      .select({ id: storeReceipts.id })
+      .select({ id: storeReceipts.id, receiptNumber: storeReceipts.receiptNumber })
       .from(storeReceipts)
       .where(eq(storeReceipts.storeId, store.id));
 
@@ -353,6 +355,7 @@ test('admin tab lists every store document; applying shows "Đã xử lý" to HT
     // HTKD and store keep the receipt open; they will not reload.
     for (const page of [storePage, htkdPage]) {
       await page.goto('/receive');
+      await page.locator('.receipt-card').filter({ hasText: receipt!.receiptNumber }).click();
       await expect(page.locator('.adjustment-section')).toContainText(created.code);
       await expect(page.locator('.adjustment-section')).toContainText('Chờ HTKD xác minh');
     }

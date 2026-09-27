@@ -297,11 +297,13 @@ test('sorting credits Sale kilograms and transfers weighed bags per product', as
 
   activeStoreId = destinationStoreId;
   await page.reload();
+  await page.locator('.document-history summary').filter({ hasText: 'PDC-00001' }).click();
   await page.getByRole('button', { name: 'Xác nhận đã nhận' }).click();
   await expect(page.locator('.transfer-card').getByText('Đồ nam · 0,625 kg').first()).toBeVisible();
   await expect(
-    page.locator('.document-history').getByText('Đã nhận', { exact: true }),
+    page.locator('.document-history').getByText('Đã điều chuyển', { exact: true }),
   ).toBeVisible();
+  expect(transfer?.status).toBe('RECEIVED');
 });
 
 test('charity goes back to Sale by kg or is exported bag by bag per product', async ({ page }) => {

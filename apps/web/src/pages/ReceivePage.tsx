@@ -46,7 +46,7 @@ import {
   getStoreReceipt,
   listAccessibleStores,
   listCatalog,
-  listStoreReceipts,
+  listStoreReceiptsPage,
   mockModeEnabled,
   returnStoreReceiptForCorrection,
   submitStoreReceipt,
@@ -145,7 +145,17 @@ function ProductionReceivePage({ role }: AppOutletContext) {
   const queryClient = useQueryClient();
   const sessionQuery = useSession();
   const [statusFilter, setStatusFilter] = useState<ReceiptStatus | 'ALL'>('ALL');
-  const [storeFilter, setStoreFilter] = useState('');
+  const [storeFilter, setStoreFilter] = useState(() => {
+    if (role !== 'ADMIN') return '';
+    try {
+      return sessionStorage.getItem('receipt-store-scope') ?? '';
+    } catch {
+      return '';
+    }
+  });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [storeSearch, setStoreSearch] = useState('');
   const [selectedReceiptId, setSelectedReceiptId] = useState('');
   const pendingReceiptFocus = useRef<string | null>(null);
   const receiptPanel = useRef<HTMLElement>(null);
@@ -173,6 +183,11 @@ function ProductionReceivePage({ role }: AppOutletContext) {
   // One selector scopes the whole page: the declaration, its pending count and the receipts.
   const scopeStores = role === 'WHOLESALE' ? wholesaleStores : stores;
   const selectedScopeStoreId = role === 'WHOLESALE' ? receivingStoreId : storeFilter;
+  const scopeReady =
+    role === 'ADMIN'
+      ? selectedScopeStoreId === 'ALL' ||
+        scopeStores.some((store) => store.id === selectedScopeStoreId)
+      : role !== 'WHOLESALE' || Boolean(receivingStoreId);
   const catalogQuery = useQuery({ queryFn: listCatalog, queryKey: ['catalog'], retry: false });
   const receiptSourcesQuery = useQuery({
     enabled: isStoreReceiver && Boolean(receivingStoreId),
@@ -181,27 +196,31 @@ function ProductionReceivePage({ role }: AppOutletContext) {
     retry: false,
   });
   const receiptsQuery = useQuery({
-    enabled: role !== 'WHOLESALE' || Boolean(receivingStoreId),
+    enabled: scopeReady,
     queryFn: () =>
-      listStoreReceipts({
-        // Receipts in progress are always listed; finalized ones only for a recent window.
-        openOrCreatedFrom: daysAgo(RECEIPT_HISTORY_DAYS),
-        ...(statusFilter === 'ALL' ? {} : { status: statusFilter }),
-        ...(role === 'WHOLESALE' && receivingStoreId ? { storeId: receivingStoreId } : {}),
-        ...(role === 'HTKD' || role === 'ADMIN'
-          ? storeFilter
-            ? { storeId: storeFilter }
-            : {}
-          : {}),
-      }),
-    queryKey: ['store-receipts', role, receivingStoreId, storeFilter, statusFilter],
+      listStoreReceiptsPage(
+        {
+          // Receipts in progress are always listed; finalized ones only for a recent window.
+          openOrCreatedFrom: daysAgo(RECEIPT_HISTORY_DAYS),
+          ...(statusFilter === 'ALL' ? {} : { status: statusFilter }),
+          ...(role === 'WHOLESALE' && receivingStoreId ? { storeId: receivingStoreId } : {}),
+          ...(role === 'HTKD' || role === 'ADMIN'
+            ? storeFilter && storeFilter !== 'ALL'
+              ? { storeId: storeFilter }
+              : {}
+            : {}),
+        },
+        page,
+        pageSize,
+      ),
+    queryKey: ['store-receipts', role, receivingStoreId, storeFilter, statusFilter, page, pageSize],
     retry: false,
   });
 
-  const receipts = receiptsQuery.data ?? [];
+  const receipts = receiptsQuery.data?.data ?? [];
   // A receipt opened from the discrepancy queue may be older than the list window; it stays
   // selected rather than falling back to another receipt.
-  const effectiveReceiptId = selectedReceiptId || receipts[0]?.id || '';
+  const effectiveReceiptId = scopeReady ? selectedReceiptId : '';
   const detailQuery = useQuery({
     enabled: Boolean(effectiveReceiptId),
     queryFn: () => getStoreReceipt(effectiveReceiptId),
@@ -313,6 +332,15 @@ function ProductionReceivePage({ role }: AppOutletContext) {
     if (mutation.isPending || operationInFlight.current) return false;
     if (declarationDirty && !window.confirm(DISCARD_DECLARATION_PROMPT)) return false;
     setStoreFilter(nextStoreId);
+    setPage(1);
+    pendingReceiptFocus.current = null;
+    if (role === 'ADMIN') {
+      try {
+        sessionStorage.setItem('receipt-store-scope', nextStoreId);
+      } catch {
+        /* Storage is optional. */
+      }
+    }
     setSelectedReceiptId('');
     setFocusAdjustmentId(null);
     setDeclarationDirty(false);
@@ -326,11 +354,7 @@ function ProductionReceivePage({ role }: AppOutletContext) {
       draft: receipts.filter((receipt) => ['DRAFT', 'RETURNED'].includes(receipt.status)).length,
       finalized: receipts.filter((receipt) => receipt.status === 'FINALIZED').length,
       pending: receipts.filter((receipt) => receipt.status === 'PENDING_HTKD').length,
-      receivedUnits: receipts.reduce(
-        (total, receipt) =>
-          total + receipt.lines.reduce((lineTotal, line) => lineTotal + line.receivedUnits, 0),
-        0,
-      ),
+      receivedUnits: receipts.reduce((total, receipt) => total + receipt.receivedUnits, 0),
     }),
     [receipts],
   );
@@ -353,34 +377,17 @@ function ProductionReceivePage({ role }: AppOutletContext) {
         title={isStoreReceiver ? 'Xác nhận nhận hàng' : 'Duyệt phiếu nhận hàng'}
       />
 
-      <div className="stats-grid stats-grid--small">
-        <StatCard
-          detail="Nháp hoặc cần sửa"
-          label="Cửa hàng xử lý"
-          value={String(receiptCounts.draft)}
-        />
-        <StatCard
-          detail="Không tự cộng tồn"
-          label="Chờ HTKD"
-          tone="warning"
-          value={String(receiptCounts.pending)}
-        />
-        <StatCard
-          detail="Đã có giá và Mã bao"
-          label="Đã nhập kho"
-          tone="success"
-          value={String(receiptCounts.finalized)}
-        />
-        <StatCard
-          detail="Trong danh sách đang lọc"
-          label="Tổng thực nhận"
-          tone="info"
-          value={`${receiptCounts.receivedUnits} bao`}
-        />
-      </div>
-
       {role !== 'STORE' ? (
         <section className="filter-card receipt-scope" aria-label="Phạm vi cửa hàng">
+          <label>
+            Tìm cửa hàng
+            <input
+              type="search"
+              value={storeSearch}
+              onChange={(event) => setStoreSearch(event.target.value)}
+              placeholder="Nhập tên hoặc mã cửa hàng"
+            />
+          </label>
           <label>
             Cửa hàng
             <select
@@ -388,7 +395,14 @@ function ProductionReceivePage({ role }: AppOutletContext) {
               onChange={(event) => selectStore(event.target.value)}
               value={selectedScopeStoreId}
             >
-              {role !== 'WHOLESALE' ? <option value="">Tất cả phạm vi được giao</option> : null}
+              {role === 'ADMIN' ? (
+                <>
+                  <option value="">Chọn cửa hàng</option>
+                  <option value="ALL">Tất cả cửa hàng</option>
+                </>
+              ) : role !== 'WHOLESALE' ? (
+                <option value="">Tất cả phạm vi được giao</option>
+              ) : null}
               {role === 'WHOLESALE' && scopeStores.length === 0 ? (
                 <option value="">
                   {storesQuery.isPending
@@ -396,11 +410,19 @@ function ProductionReceivePage({ role }: AppOutletContext) {
                     : 'Chưa có cửa hàng sỉ đang hoạt động'}
                 </option>
               ) : null}
-              {scopeStores.map((store) => (
-                <option key={store.id} value={store.id}>
-                  {store.code} · {store.name}
-                </option>
-              ))}
+              {scopeStores
+                .filter(
+                  (store) =>
+                    store.id === selectedScopeStoreId ||
+                    (store.name + ' ' + store.code)
+                      .toLocaleLowerCase('vi')
+                      .includes(storeSearch.toLocaleLowerCase('vi')),
+                )
+                .map((store) => (
+                  <option key={store.id} value={store.id}>
+                    {store.code} · {store.name}
+                  </option>
+                ))}
             </select>
           </label>
           <p className="receipt-scope__hint">
@@ -410,6 +432,32 @@ function ProductionReceivePage({ role }: AppOutletContext) {
           </p>
         </section>
       ) : null}
+
+      <div className="stats-grid stats-grid--small">
+        <StatCard
+          detail="Nháp hoặc cần sửa trên trang này"
+          label="Cửa hàng xử lý"
+          value={String(receiptCounts.draft)}
+        />
+        <StatCard
+          detail="Trên trang này; không tự cộng tồn"
+          label="Chờ HTKD"
+          tone="warning"
+          value={String(receiptCounts.pending)}
+        />
+        <StatCard
+          detail="Trên trang này; đã có giá và Mã bao"
+          label="Đã nhập kho"
+          tone="success"
+          value={String(receiptCounts.finalized)}
+        />
+        <StatCard
+          detail="Trong trang đang xem"
+          label="Tổng thực nhận"
+          tone="info"
+          value={`${receiptCounts.receivedUnits} bao`}
+        />
+      </div>
 
       {isStoreReceiver && receivingStoreId ? (
         <CreateReceiptForm
@@ -458,7 +506,12 @@ function ProductionReceivePage({ role }: AppOutletContext) {
           Trạng thái
           <select
             disabled={mutation.isPending}
-            onChange={(event) => setStatusFilter(event.target.value as ReceiptStatus | 'ALL')}
+            onChange={(event) => {
+              setStatusFilter(event.target.value as ReceiptStatus | 'ALL');
+              setPage(1);
+              setSelectedReceiptId('');
+              setFocusAdjustmentId(null);
+            }}
             value={statusFilter}
           >
             <option value="ALL">Tất cả trạng thái</option>
@@ -470,8 +523,12 @@ function ProductionReceivePage({ role }: AppOutletContext) {
           </select>
         </label>
         <div className="filter-card__summary">
-          <strong>{receipts.length}</strong>
-          <span>phiếu trong phạm vi (đã chốt: {RECEIPT_HISTORY_DAYS} ngày gần nhất)</span>
+          <strong>
+            {receipts.length} / {receiptsQuery.data?.pagination.totalItems ?? 0}
+          </strong>
+          <span>
+            phiếu trên trang / tổng số trong phạm vi (đã chốt: {RECEIPT_HISTORY_DAYS} ngày gần nhất)
+          </span>
         </div>
       </section>
 
@@ -489,15 +546,19 @@ function ProductionReceivePage({ role }: AppOutletContext) {
             void sessionQuery.refetch();
             void storesQuery.refetch();
             void catalogQuery.refetch();
-            void receiptsQuery.refetch();
+            if (scopeReady) void receiptsQuery.refetch();
             if (effectiveReceiptId) void detailQuery.refetch();
           }}
         />
       ) : null}
 
-      {receiptsQuery.isPending ? (
+      {!scopeReady ? (
+        <section className="panel">
+          <p>Chọn cửa hàng để xem phiếu nhập và giá vốn</p>
+        </section>
+      ) : receiptsQuery.isPending ? (
         <DashboardSkeleton />
-      ) : receipts.length === 0 ? (
+      ) : receipts.length === 0 && !effectiveReceiptId ? (
         <section className="panel">
           <EmptyState
             detail={
@@ -509,8 +570,18 @@ function ProductionReceivePage({ role }: AppOutletContext) {
           />
         </section>
       ) : (
-        <div className="receipt-workspace">
-          <section className="panel receipt-list" aria-label="Danh sách phiếu nhận hàng">
+        <div
+          className={
+            effectiveReceiptId
+              ? 'receipt-workspace receipt-workspace--selected'
+              : 'receipt-workspace'
+          }
+        >
+          <section
+            className="panel receipt-list"
+            tabIndex={-1}
+            aria-label="Danh sách phiếu nhận hàng"
+          >
             <div className="section-heading section-heading--compact">
               <div>
                 <h2>Phiếu nhận</h2>
@@ -519,7 +590,7 @@ function ProductionReceivePage({ role }: AppOutletContext) {
             </div>
             {receipts.map((receipt) => {
               const copy = receiptStatusCopy[receipt.status];
-              const total = receipt.lines.reduce((sum, line) => sum + line.receivedUnits, 0);
+              const total = receipt.receivedUnits;
               return (
                 <button
                   aria-pressed={receipt.id === effectiveReceiptId}
@@ -541,7 +612,11 @@ function ProductionReceivePage({ role }: AppOutletContext) {
                 >
                   <span className="receipt-card__identity">
                     <strong>{receipt.receiptNumber}</strong>
-                    <small>{storeNameById.get(receipt.storeId) ?? receipt.storeId}</small>
+                    {!selectedScopeStoreId || selectedScopeStoreId === 'ALL' ? (
+                      <small>
+                        {storeNameById.get(receipt.storeId) ?? 'Chưa xác định cửa hàng'}
+                      </small>
+                    ) : null}
                     <small>Cập nhật {formatDateTime(receipt.updatedAt)}</small>
                   </span>
                   <Badge tone={copy.tone}>{copy.label}</Badge>
@@ -558,7 +633,28 @@ function ProductionReceivePage({ role }: AppOutletContext) {
             style={{ scrollMarginTop: '6rem' }}
             className="panel receipt-detail"
           >
-            {detailQuery.isError ? (
+            {effectiveReceiptId ? (
+              <Button
+                tone="secondary"
+                disabled={mutation.isPending}
+                onClick={() => {
+                  setSelectedReceiptId('');
+                  window.requestAnimationFrame(() => {
+                    const list = document.querySelector<HTMLElement>('.receipt-list');
+                    list?.scrollIntoView({ block: 'start' });
+                    list?.focus({ preventScroll: true });
+                  });
+                }}
+              >
+                Trở lại danh sách
+              </Button>
+            ) : null}
+            {!effectiveReceiptId ? (
+              <EmptyState
+                title="Chọn phiếu nhận"
+                detail="Chọn một phiếu trong danh sách để xem chi tiết."
+              />
+            ) : detailQuery.isError ? (
               <EmptyState
                 detail="Dữ liệu danh sách không được dùng thay cho bản chi tiết khi máy chủ chưa xác minh."
                 title="Chưa tải được chi tiết phiếu"
@@ -593,6 +689,52 @@ function ProductionReceivePage({ role }: AppOutletContext) {
           </section>
         </div>
       )}
+      {scopeReady ? (
+        <nav className="button-row" aria-label="Phân trang phiếu nhận">
+          <Button
+            tone="secondary"
+            disabled={page <= 1 || receiptsQuery.isFetching || mutation.isPending}
+            onClick={() => {
+              setPage(page - 1);
+              setSelectedReceiptId('');
+            }}
+          >
+            Trang trước
+          </Button>
+          <span>
+            Trang {page} / {Math.max(1, receiptsQuery.data?.pagination.totalPages ?? 0)}
+          </span>
+          <Button
+            tone="secondary"
+            disabled={
+              page >= (receiptsQuery.data?.pagination.totalPages ?? 0) ||
+              receiptsQuery.isFetching ||
+              mutation.isPending
+            }
+            onClick={() => {
+              setPage(page + 1);
+              setSelectedReceiptId('');
+            }}
+          >
+            Trang sau
+          </Button>
+          <label>
+            Số phiếu mỗi trang
+            <select
+              value={pageSize}
+              disabled={mutation.isPending}
+              onChange={(event) => {
+                setPageSize(Number(event.target.value));
+                setPage(1);
+                setSelectedReceiptId('');
+              }}
+            >
+              <option value={20}>20</option>
+              <option value={50}>50</option>
+            </select>
+          </label>
+        </nav>
+      ) : null}
     </>
   );
 }

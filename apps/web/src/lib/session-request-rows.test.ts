@@ -16,6 +16,17 @@ const stores = [
 ];
 
 describe('session request rows', () => {
+  it('navigates once per store after allocation without merging different sessions or stores', () => {
+    const done = { ...session('s1'), status: 'ALLOCATED' as const };
+    const sources = [
+      request('r1', 's1', 'vl', '2026-09-23T01:00:00Z'),
+      request('r2', 's1', 'vl', '2026-09-23T02:00:00Z'),
+      request('r3', 's1', 'ct', '2026-09-23T03:00:00Z'),
+    ];
+    const rows = sessionRequestRows([done], sources, stores);
+    expect(rows.map((row) => row.request?.storeId)).toEqual(['ct', 'vl']);
+    expect(sources).toHaveLength(3);
+  });
   it('gives every request its own row, newest first, inside the session order', () => {
     const rows = sessionRequestRows(
       [session('s2'), session('s1')],

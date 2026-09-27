@@ -5,6 +5,7 @@ import { describe, test } from 'node:test';
 import {
   allocationLines,
   allocationRuns,
+  dailyPriorityOffers,
   db,
   htkdAssignments,
   inventorySnapshots,
@@ -14,11 +15,16 @@ import {
   orderRequestItems,
   orderRequests,
   orderSessions,
+  outboundRequests,
+  outboundRequestLines,
   products,
   sessions,
   storeGroups,
   stores,
+  storeReceipts,
+  storeReceiptLines,
   users,
+  waitTickets,
 } from '@idosi/database';
 import { and, eq, isNull } from 'drizzle-orm';
 
@@ -38,6 +44,102 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
     try {
       const fixture = await createFixture();
       app = await createApi({ repository });
+      const [receiptOwner] = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.role, 'admin'))
+        .limit(1);
+      const receiptsByStore = new Map();
+      for (const storeId of Object.values(fixture.storeIds)) {
+        const [outbound] = await db
+          .insert(outboundRequests)
+          .values({
+            requestNumber: '',
+            storeId,
+            requestedByUserId: receiptOwner.id,
+            status: 'dispatched',
+          })
+          .returning();
+        const [receipt] = await db
+          .insert(storeReceipts)
+          .values({
+            receiptNumber: '',
+            storeId,
+            outboundRequestId: outbound.id,
+          })
+          .returning();
+        receiptsByStore.set(storeId, receipt.id);
+        const [outboundLine] = await db
+          .insert(outboundRequestLines)
+          .values({
+            outboundRequestId: outbound.id,
+            productId: fixture.productId,
+            requestedQuantity: 2,
+            approvedQuantity: 2,
+            reservedQuantity: 2,
+            dispatchedQuantity: 2,
+          })
+          .returning();
+        await db.insert(storeReceiptLines).values({
+          storeReceiptId: receipt.id,
+          outboundRequestLineId: outboundLine.id,
+          productId: fixture.productId,
+          approvedQuantity: 2,
+          receivedQuantity: 2,
+        });
+        const adminSummary = await app.inject({
+          method: 'GET',
+          url: '/api/v1/store-receipt-summaries?storeId=' + storeId,
+          headers: { cookie: sessionCookie(fixture.tokens.admin) },
+        });
+        assert.equal(adminSummary.statusCode, 200, adminSummary.body);
+        assert.equal(adminSummary.json().pagination.totalItems, 1);
+        assert.equal(adminSummary.json().data[0].id, receipt.id);
+        assert.equal(adminSummary.json().data[0].receivedUnits, 2);
+        assert.equal(Object.hasOwn(adminSummary.json().data[0], 'lines'), false);
+      }
+      for (const [role, allowed] of [
+        ['htkd', [fixture.storeIds.assignedA, fixture.storeIds.assignedB]],
+        ['store', [fixture.storeIds.assignedA]],
+      ]) {
+        const headers = { cookie: sessionCookie(fixture.tokens[role]) };
+        const summaries = await app.inject({
+          method: 'GET',
+          url: '/api/v1/store-receipt-summaries',
+          headers,
+        });
+        assert.equal(summaries.statusCode, 200, summaries.body);
+        assert.equal(summaries.json().pagination.totalItems, allowed.length);
+        assert.ok(summaries.json().data.every((row) => allowed.includes(row.storeId)));
+        for (const url of [
+          '/api/v1/store-receipt-summaries?storeId=' + fixture.storeIds.unassigned,
+          '/api/v1/store-receipts/' + receiptsByStore.get(fixture.storeIds.unassigned),
+        ]) {
+          const denied = await app.inject({ method: 'GET', url, headers });
+          assert.equal(denied.statusCode, 403, denied.body);
+        }
+      }
+      for (const [role, expected] of [
+        ['admin', 3],
+        ['htkd', 2],
+        ['store', 1],
+      ]) {
+        const docs = await app.inject({
+          method: 'GET',
+          url: '/api/v1/session-documents?sessionId=' + fixture.sessionId + '&pageSize=1',
+          headers: { cookie: sessionCookie(fixture.tokens[role]) },
+        });
+        assert.equal(docs.statusCode, 200, docs.body);
+        assert.equal(docs.json().pagination.totalItems, expected);
+        assert.equal(docs.json().data.length, 1);
+        assert.ok(docs.json().data[0].sources.length > 0);
+      }
+      const forbiddenDocs = await app.inject({
+        method: 'GET',
+        url: '/api/v1/session-documents?storeId=' + fixture.storeIds.unassigned,
+        headers: { cookie: sessionCookie(fixture.tokens.store) },
+      });
+      assert.equal(forbiddenDocs.statusCode, 403);
       const baseUrl = `/api/v1/allocations?sessionId=${fixture.sessionId}`;
 
       const adminPage = await app.inject({
@@ -168,6 +270,15 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
       assert.equal(bounded.json().data[0].roundsOmitted, true);
       assert.deepEqual(bounded.json().data[0].rounds, []);
       assert.ok(Buffer.byteLength(bounded.body) < 2000);
+      const boundedDocument = await app.inject({
+        method: 'GET',
+        url: `/api/v1/session-documents?sessionId=${largeFixture.sessionId}`,
+        headers: { cookie: sessionCookie(largeFixture.tokens.store) },
+      });
+      assert.equal(boundedDocument.statusCode, 200, boundedDocument.body);
+      assert.equal(boundedDocument.json().data[0].sources[0].result.roundsOmitted, true);
+      assert.deepEqual(boundedDocument.json().data[0].sources[0].result.rounds, []);
+      assert.ok(Buffer.byteLength(boundedDocument.body) < 5000);
       const [stored] = await db
         .select({ metadata: allocationLines.decisionMetadata })
         .from(allocationLines)
@@ -206,6 +317,237 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
         assert.deepEqual(invalid.json().data[0].rounds, [], audit.label);
         assert.ok(Buffer.byteLength(invalid.body) < 2000, audit.label);
       }
+      const expanded = await createFixture({
+        quantity: 2,
+        policyRounds: [1, 2],
+        documentExample: true,
+      });
+      const original = (
+        await db
+          .select()
+          .from(allocationLines)
+          .where(
+            and(
+              eq(allocationLines.storeId, expanded.storeIds.assignedA),
+              eq(allocationLines.productId, expanded.productId),
+            ),
+          )
+      )[0];
+      const sourceItem = (
+        await db
+          .select()
+          .from(orderRequestItems)
+          .where(eq(orderRequestItems.id, original.orderRequestItemId))
+      )[0];
+      const sourceOrder = (
+        await db.select().from(orderRequests).where(eq(orderRequests.id, sourceItem.orderRequestId))
+      )[0];
+      const productIds = [expanded.productId];
+      await db.transaction(async (tx) => {
+        const [second] = await tx
+          .insert(orderRequests)
+          .values({ ...sourceOrder, id: randomUUID(), code: '', requestNumber: 2 })
+          .returning();
+        const [item] = await tx
+          .insert(orderRequestItems)
+          .values({
+            orderRequestId: second.id,
+            productId: expanded.productId,
+            requestedQuantity: 3,
+            allocatedQuantity: 2,
+            waitlistedQuantity: 1,
+          })
+          .returning();
+        const [mergedItem] = await tx
+          .select()
+          .from(mergedOrderItems)
+          .where(eq(mergedOrderItems.mergedOrderId, original.mergedOrderId));
+        await tx.insert(mergedOrderSources).values({
+          mergedOrderItemId: mergedItem.id,
+          orderRequestItemId: item.id,
+          requestedQuantity: 3,
+        });
+        await tx.insert(allocationLines).values({
+          ...original,
+          id: randomUUID(),
+          orderRequestItemId: item.id,
+          requestedQuantity: 3,
+          allocatedQuantity: 2,
+          waitlistedQuantity: 1,
+          status: 'partial',
+        });
+        const [ticket] = await tx
+          .insert(waitTickets)
+          .values({
+            storeId: expanded.storeIds.assignedA,
+            productId: expanded.productId,
+            sourceOrderRequestItemId: sourceItem.id,
+            originalQuantity: 1,
+            remainingQuantity: 1,
+            fulfilledQuantity: 0,
+            status: 'active',
+          })
+          .returning();
+        const [offer] = await tx
+          .insert(dailyPriorityOffers)
+          .values({
+            businessDate: '2000-01-01',
+            storeId: expanded.storeIds.assignedA,
+            productId: expanded.productId,
+            waitTicketId: ticket.id,
+            priorityLevel: 'P0A',
+            offeredQuantity: 1,
+            acceptedQuantity: 1,
+            roundNumber: 1,
+            status: 'accepted',
+            responseDeadlineAt: original.createdAt,
+            respondedAt: original.createdAt,
+          })
+          .returning();
+        await tx.insert(allocationLines).values({
+          ...original,
+          id: randomUUID(),
+          mergedOrderId: null,
+          priorityOfferId: offer.id,
+          orderRequestItemId: null,
+          waitTicketId: ticket.id,
+          priorityLevel: 'P0A',
+          requestedQuantity: 1,
+          allocatedQuantity: 0,
+          waitlistedQuantity: 1,
+          status: 'waitlisted',
+          decisionMetadata: {},
+        });
+        for (const [quantity, allocated] of [
+          [1, 1],
+          [2, 0],
+        ]) {
+          const unique = randomUUID();
+          const [product] = await tx
+            .insert(products)
+            .values({ sku: unique, slug: unique, name: 'Document product ' + unique })
+            .returning();
+          productIds.push(product.id);
+          const [lineItem] = await tx
+            .insert(orderRequestItems)
+            .values({
+              orderRequestId: second.id,
+              productId: product.id,
+              requestedQuantity: quantity,
+              allocatedQuantity: allocated,
+              waitlistedQuantity: quantity - allocated,
+            })
+            .returning();
+          const [merged] = await tx
+            .insert(mergedOrderItems)
+            .values({
+              mergedOrderId: original.mergedOrderId,
+              productId: product.id,
+              requestedQuantity: quantity,
+              allocatedQuantity: allocated,
+              waitlistedQuantity: quantity - allocated,
+              priorityLevel: 'P1',
+            })
+            .returning();
+          await tx.insert(mergedOrderSources).values({
+            mergedOrderItemId: merged.id,
+            orderRequestItemId: lineItem.id,
+            requestedQuantity: quantity,
+          });
+          await tx.insert(allocationLines).values({
+            ...original,
+            id: randomUUID(),
+            productId: product.id,
+            orderRequestItemId: lineItem.id,
+            requestedQuantity: quantity,
+            allocatedQuantity: allocated,
+            waitlistedQuantity: quantity - allocated,
+            status: allocated ? 'allocated' : 'waitlisted',
+            decisionMetadata: {},
+          });
+        }
+      });
+      const documentUrl =
+        '/api/v1/session-documents?sessionId=' +
+        expanded.sessionId +
+        '&storeId=' +
+        expanded.storeIds.assignedA +
+        '&pageSize=1';
+      const readDocument = () =>
+        app.inject({
+          method: 'GET',
+          url: documentUrl,
+          headers: { cookie: sessionCookie(expanded.tokens.admin) },
+        });
+      const documentResponse = await readDocument();
+      assert.equal(documentResponse.statusCode, 200, documentResponse.body);
+      const document = documentResponse.json().data[0];
+      assert.equal(documentResponse.json().pagination.totalItems, 1);
+      assert.equal(document.hasPrioritySource, true);
+      assert.equal(document.sources.length, 5);
+      assert.equal(
+        new Set(document.sources.map((source) => source.orderRequestId).filter(Boolean)).size,
+        2,
+      );
+      assert.deepEqual(
+        productIds.map((productId) => {
+          const line = document.lines.find((row) => row.productId === productId);
+          return [line.requestedQuantity, line.allocatedQuantity, line.waitlistedQuantity];
+        }),
+        [
+          [6, 4, 2],
+          [1, 1, 0],
+          [2, 0, 2],
+        ],
+      );
+      assert.deepEqual((await readDocument()).json(), documentResponse.json());
+      const filteredDocument = await app.inject({
+        method: 'GET',
+        url: documentUrl + '&status=ALLOCATED',
+        headers: { cookie: sessionCookie(expanded.tokens.admin) },
+      });
+      assert.equal(filteredDocument.json().data[0].lines.length, 3);
+      // A later completed version changes the official pointer, not historical rows.
+      const [previousRun] = await db
+        .select()
+        .from(allocationRuns)
+        .where(eq(allocationRuns.id, original.allocationRunId));
+      const previousSources = await db
+        .select()
+        .from(allocationLines)
+        .where(
+          and(
+            eq(allocationLines.allocationRunId, original.allocationRunId),
+            eq(allocationLines.storeId, expanded.storeIds.assignedA),
+          ),
+        );
+      await db.transaction(async (tx) => {
+        const [newRun] = await tx
+          .insert(allocationRuns)
+          .values({ ...previousRun, id: randomUUID(), runNumber: 2, idempotencyKey: randomUUID() })
+          .returning();
+        // Ordinary rows suffice to check version selection; priority offers are one-shot.
+        await tx
+          .insert(allocationLines)
+          .values(
+            previousSources
+              .filter((source) => source.waitTicketId === null)
+              .map((source) => ({ ...source, id: randomUUID(), allocationRunId: newRun.id })),
+          );
+      });
+      const latest = (await readDocument()).json();
+      assert.equal(latest.pagination.totalItems, 1);
+      assert.equal(latest.data[0].version, 2);
+      assert.equal(latest.data[0].id, document.id);
+      assert.equal(
+        (
+          await db
+            .select()
+            .from(allocationLines)
+            .where(eq(allocationLines.allocationRunId, original.allocationRunId))
+        ).length,
+        7,
+      );
     } finally {
       if (app) await app.close();
       else await repository.close();
@@ -217,6 +559,7 @@ async function createFixture({
   quantity = 5,
   policyRounds = [1, 2, 3, 4, 5],
   policyRoundsVersion,
+  documentExample = false,
 } = {}) {
   const suffix = randomUUID();
   const [administrator] = await db
@@ -399,7 +742,7 @@ async function createFixture({
           orderSessionId: session.id,
           storeId: input.storeId,
           status: 'allocated',
-          requestCount: 1,
+          requestCount: documentExample && index === 0 ? 2 : 1,
           generatedByUserId: administrator.id,
         })
         .returning({ id: mergedOrders.id });
@@ -409,10 +752,10 @@ async function createFixture({
         .values({
           mergedOrderId: mergedOrder.id,
           productId: product.id,
-          requestedQuantity: input.requested,
+          requestedQuantity: documentExample && index === 0 ? 5 : input.requested,
           priorityLevel: 'P1',
-          allocatedQuantity: input.allocated,
-          waitlistedQuantity: input.waitlisted,
+          allocatedQuantity: documentExample && index === 0 ? 4 : input.allocated,
+          waitlistedQuantity: documentExample && index === 0 ? 1 : input.waitlisted,
         })
         .returning({ id: mergedOrderItems.id });
       if (!mergedItem) throw new Error('Merged allocation item was not created.');

@@ -8,6 +8,7 @@ import { EmptyState } from '../../components/EmptyState';
 import { ApiClientError } from '../../lib/api';
 import { checkBagWeights } from '../../lib/bag-weights';
 import { formatKgExact } from '../../lib/format';
+import { formatRequestSubmittedAt } from '../../lib/session-request-rows';
 import { formatDocumentTime } from '../../lib/business-time';
 import '../../styles/document-history.css';
 import type { Role } from '../../lib/types';
@@ -410,7 +411,7 @@ export function SortedSaleTransferWorkspace({
           />
         ) : (
           <div
-            className="document-history"
+            className="document-history sale-transfer-history"
             role="region"
             aria-label="Lịch sử điều chuyển Sale"
             tabIndex={0}
@@ -429,9 +430,13 @@ export function SortedSaleTransferWorkspace({
                     'Tổng số lượng (bao)',
                     'Tổng khối lượng (kg)',
                     'Người thực hiện',
-                    'Trạng thái / Thao tác',
+                    'Trạng thái',
                   ].map((label) => (
-                    <th scope="col" key={label}>
+                    <th
+                      scope="col"
+                      key={label}
+                      className={label.includes('ố lượng') ? 'document-quantity' : undefined}
+                    >
                       {label}
                     </th>
                   ))}
@@ -453,7 +458,12 @@ export function SortedSaleTransferWorkspace({
                           <>
                             <td rowSpan={lines.length}>
                               <time dateTime={transfer.createdAt}>
-                                {formatDocumentTime(transfer.createdAt)}
+                                <span className="document-time-part">
+                                  {formatRequestSubmittedAt(transfer.createdAt).time}
+                                </span>
+                                <span className="document-time-part">
+                                  {formatRequestSubmittedAt(transfer.createdAt).date}
+                                </span>
                               </time>
                             </td>
                             <td rowSpan={lines.length}>
@@ -461,14 +471,77 @@ export function SortedSaleTransferWorkspace({
                                 <summary>{transfer.transferNumber}</summary>
                                 <p>{transfer.note}</p>
                                 <p>Nhận: {formatDocumentTime(transfer.receivedAt)}</p>
+                                {role === 'STORE' &&
+                                transfer.destinationStoreId === principalStoreId &&
+                                transfer.status === 'IN_TRANSIT' ? (
+                                  <Button
+                                    busy={
+                                      receiveMutation.isPending &&
+                                      receiveMutation.variables?.id === transfer.id
+                                    }
+                                    disabled={receiveMutation.isPending}
+                                    onClick={() =>
+                                      receiveMutation.mutate({
+                                        id: transfer.id,
+                                        version: transfer.version,
+                                      })
+                                    }
+                                  >
+                                    Xác nhận đã nhận
+                                  </Button>
+                                ) : null}
+                                {transfer.status === 'CANCELLED' && transfer.cancellationReason ? (
+                                  <small>Lý do hủy: {transfer.cancellationReason}</small>
+                                ) : null}
+                                {role === 'STORE' &&
+                                transfer.sourceStoreId === principalStoreId &&
+                                transfer.status === 'IN_TRANSIT' ? (
+                                  <div className="transfer-card__cancel">
+                                    <input
+                                      aria-label={`Lý do hủy phiếu ${transfer.transferNumber}`}
+                                      maxLength={500}
+                                      placeholder="Lý do hủy, ví dụ: chọn nhầm cửa hàng"
+                                      value={cancelReasons[transfer.id] ?? ''}
+                                      disabled={cancelMutation.isPending}
+                                      onChange={(event) =>
+                                        setCancelReasons((current) => ({
+                                          ...current,
+                                          [transfer.id]: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                    <Button
+                                      tone="danger"
+                                      busy={
+                                        cancelMutation.isPending &&
+                                        cancelMutation.variables?.id === transfer.id
+                                      }
+                                      disabled={cancelMutation.isPending}
+                                      onClick={() =>
+                                        cancelMutation.mutate({
+                                          id: transfer.id,
+                                          version: transfer.version,
+                                        })
+                                      }
+                                    >
+                                      Hủy phiếu, trả Sale về cửa hàng
+                                    </Button>
+                                  </div>
+                                ) : null}
                               </details>
                             </td>
-                            <td rowSpan={lines.length}>{storeName(transfer.sourceStoreId)}</td>
-                            <td rowSpan={lines.length}>{storeName(transfer.destinationStoreId)}</td>
+                            <td rowSpan={lines.length}>
+                              {stores.find((store) => store.id === transfer.sourceStoreId)?.name ||
+                                'Chưa xác định cửa hàng'}
+                            </td>
+                            <td rowSpan={lines.length}>
+                              {stores.find((store) => store.id === transfer.destinationStoreId)
+                                ?.name || 'Chưa xác định cửa hàng'}
+                            </td>
                           </>
                         ) : null}
                         <td>{productName(line.productId)}</td>
-                        <td>{line.bagQuantity}</td>
+                        <td className="document-quantity">{line.bagQuantity}</td>
                         <td>
                           {line.bagWeightsKg.length ? (
                             line.bagWeightsKg.map((weight, i) => (
@@ -479,80 +552,21 @@ export function SortedSaleTransferWorkspace({
                           ) : (
                             <p>Chưa ghi nhận kg từng bao</p>
                           )}
-                          <strong>Cộng: {formatKgExact(line.weightKg)}</strong>
+                          <strong>Tổng: {formatKgExact(line.weightKg)}</strong>
                         </td>
                         {index === 0 ? (
                           <>
-                            <td rowSpan={lines.length}>{totalBags}</td>
+                            <td className="document-quantity" rowSpan={lines.length}>
+                              {totalBags}
+                            </td>
                             <td rowSpan={lines.length}>{formatKgExact(totalWeight)}</td>
                             <td rowSpan={lines.length}>
                               {transfer.createdByDisplayName ?? 'Chưa ghi nhận'}
                             </td>
                             <td rowSpan={lines.length}>
                               <p>
-                                {transfer.status === 'RECEIVED'
-                                  ? 'Đã nhận'
-                                  : transfer.status === 'CANCELLED'
-                                    ? 'Đã hủy'
-                                    : 'Đang vận chuyển'}
+                                {transfer.status === 'CANCELLED' ? 'Đã hủy' : 'Đã điều chuyển'}
                               </p>{' '}
-                              {role === 'STORE' &&
-                              transfer.destinationStoreId === principalStoreId &&
-                              transfer.status === 'IN_TRANSIT' ? (
-                                <Button
-                                  busy={
-                                    receiveMutation.isPending &&
-                                    receiveMutation.variables?.id === transfer.id
-                                  }
-                                  disabled={receiveMutation.isPending}
-                                  onClick={() =>
-                                    receiveMutation.mutate({
-                                      id: transfer.id,
-                                      version: transfer.version,
-                                    })
-                                  }
-                                >
-                                  Xác nhận đã nhận
-                                </Button>
-                              ) : null}
-                              {transfer.status === 'CANCELLED' && transfer.cancellationReason ? (
-                                <small>Lý do hủy: {transfer.cancellationReason}</small>
-                              ) : null}
-                              {role === 'STORE' &&
-                              transfer.sourceStoreId === principalStoreId &&
-                              transfer.status === 'IN_TRANSIT' ? (
-                                <div className="transfer-card__cancel">
-                                  <input
-                                    aria-label={`Lý do hủy phiếu ${transfer.transferNumber}`}
-                                    maxLength={500}
-                                    placeholder="Lý do hủy, ví dụ: chọn nhầm cửa hàng"
-                                    value={cancelReasons[transfer.id] ?? ''}
-                                    disabled={cancelMutation.isPending}
-                                    onChange={(event) =>
-                                      setCancelReasons((current) => ({
-                                        ...current,
-                                        [transfer.id]: event.target.value,
-                                      }))
-                                    }
-                                  />
-                                  <Button
-                                    tone="danger"
-                                    busy={
-                                      cancelMutation.isPending &&
-                                      cancelMutation.variables?.id === transfer.id
-                                    }
-                                    disabled={cancelMutation.isPending}
-                                    onClick={() =>
-                                      cancelMutation.mutate({
-                                        id: transfer.id,
-                                        version: transfer.version,
-                                      })
-                                    }
-                                  >
-                                    Hủy phiếu, trả Sale về cửa hàng
-                                  </Button>
-                                </div>
-                              ) : null}
                             </td>
                           </>
                         ) : null}

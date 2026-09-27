@@ -46,7 +46,20 @@ test('HTKD sees assigned stores, selects bags inline and persists two ordinary r
     },
   );
   expect(assigned.status()).toBe(200);
-  await page.request.post(`${api}/auth/logout`);
+  const storeLogin = { username: 'store.history.' + token, password };
+  expect(
+    (
+      await page.request.post(api + '/admin/accounts', {
+        data: {
+          ...storeLogin,
+          displayName: 'Store history',
+          role: 'STORE',
+          storeId: stores[1]!.id,
+        },
+      })
+    ).status(),
+  ).toBe(201);
+  await page.request.post(api + '/auth/logout');
   await page.goto('/login');
   await page.getByLabel('Tên đăng nhập').fill(username);
   await page.getByLabel('Mật khẩu', { exact: true }).fill(password);
@@ -78,6 +91,7 @@ test('HTKD sees assigned stores, selects bags inline and persists two ordinary r
     fullPage: true,
   });
   await page.getByRole('checkbox').nth(1).check();
+  await page.getByRole('checkbox').nth(2).check();
   const send = page.getByRole('button', { name: 'Gửi yêu cầu đặt hàng' });
   const responsePromise = page.waitForResponse(
     (response) =>
@@ -89,16 +103,16 @@ test('HTKD sees assigned stores, selects bags inline and persists two ordinary r
   expect(response.status()).toBe(201);
   const order = (await response.json()).data;
   expect(order.storeId).toBe(stores[1]!.id);
-  expect(order.lines).toHaveLength(2);
+  expect(order.lines).toHaveLength(3);
   const history = page.getByRole('region', { name: 'Lịch sử đặt hàng', exact: true });
   const document = history.locator('tbody').filter({ hasText: order.code });
   await expect(history.locator('thead th')).toHaveCount(7);
-  await expect(document.locator('tr')).toHaveCount(2);
-  await expect(document.locator('[rowspan="2"]')).toHaveCount(5);
+  await expect(document.locator('tr')).toHaveCount(3);
+  await expect(document.locator('[rowspan="3"]')).toHaveCount(5);
   await expect(document.getByRole('button', { name: 'Hủy yêu cầu', exact: true })).toHaveCount(1);
   expect(
     order.lines.map((line: { requested: { quantity: number } }) => line.requested.quantity).sort(),
-  ).toEqual([1, 2]);
+  ).toEqual([1, 1, 2]);
   await expect(page.getByText('1 / 2 phiếu', { exact: true })).toBeVisible();
   await first.check();
   await send.click();
@@ -112,7 +126,7 @@ test('HTKD sees assigned stores, selects bags inline and persists two ordinary r
   await document.getByLabel('Lý do hủy').fill('Hủy toàn bộ phiếu nhiều mặt hàng');
   await document.getByRole('button', { name: 'Xác nhận hủy', exact: true }).click();
   await expect(document.getByText('Đã hủy', { exact: true })).toBeVisible();
-  await expect(document.locator('tr')).toHaveCount(2);
+  await expect(document.locator('tr')).toHaveCount(3);
   await expect(page.getByText('1 / 2 phiếu', { exact: true })).toBeVisible();
   await selector.selectOption(stores[0]!.id);
   await expect(page.getByText('0 / 2 phiếu', { exact: true })).toBeVisible();
@@ -124,4 +138,26 @@ test('HTKD sees assigned stores, selects bags inline and persists two ordinary r
     animations: 'disabled',
     fullPage: true,
   });
+  await page.context().clearCookies();
+  await page.goto('/login');
+  await page.getByLabel('Tên đăng nhập').fill(storeLogin.username);
+  await page.getByLabel('Mật khẩu', { exact: true }).fill(storeLogin.password);
+  await page.getByRole('button', { name: 'Đăng nhập' }).click();
+  await expect(page).not.toHaveURL(/\/login/);
+  await page.goto('/requests');
+  await expect(history.getByRole('columnheader', { name: 'Cửa hàng', exact: true })).toHaveCount(0);
+  await expect(document.locator('.document-product-name')).toHaveCount(3);
+  for (const cell of await document.locator('.document-product-name').all())
+    await expect(cell).toHaveCSS('font-weight', '400');
+  for (const width of [360, 390, 412, 768, 1366, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    if ([390, 1440].includes(width))
+      await page.screenshot({
+        path: testInfo.outputPath('store-history-' + width + '.png'),
+        fullPage: true,
+      });
+  }
 });

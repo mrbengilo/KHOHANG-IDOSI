@@ -1,3 +1,5 @@
+import type { ReceiptSummary } from '@idosi/contracts';
+import type { SessionDocument } from '@idosi/contracts';
 import type { ListStoreBagOpeningsQuery, StoreBagOpening } from '@idosi/contracts';
 import { randomUUID } from 'node:crypto';
 import { nextOrderingWindow, type OrderingContext } from '@idosi/contracts';
@@ -1207,6 +1209,15 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       data: slicePage(values, query.page, query.pageSize),
       pagination: pagination(query.page, query.pageSize, values.length),
     };
+  }
+
+  public async listSessionDocuments(
+    actor: AuthenticatedPrincipal,
+    query: ListAllocationsQuery,
+  ): Promise<Page<SessionDocument>> {
+    // Official documents require the persisted worker snapshot; memory mode has none.
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    return { data: [], pagination: pagination(query.page, query.pageSize, 0) };
   }
 
   public async listAllocations(
@@ -2706,6 +2717,25 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       slip,
     );
     return { data: structuredClone(slip), replayed: false };
+  }
+
+  public async listReceiptSummaries(
+    actor: AuthenticatedPrincipal,
+    query: ListReceiptsQuery,
+  ): Promise<Page<ReceiptSummary>> {
+    const page = await this.listReceipts(actor, query);
+    return {
+      ...page,
+      data: page.data.map((receipt) => ({
+        id: receipt.id,
+        receiptNumber: receipt.receiptNumber,
+        storeId: receipt.storeId,
+        status: receipt.status,
+        createdAt: receipt.createdAt,
+        updatedAt: receipt.updatedAt,
+        receivedUnits: receipt.lines.reduce((sum, line) => sum + line.receivedUnits, 0),
+      })),
+    };
   }
 
   public async listReceipts(

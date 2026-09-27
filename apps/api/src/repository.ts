@@ -1,3 +1,5 @@
+import type { ReceiptSummary } from '@idosi/contracts';
+import type { SessionDocument } from '@idosi/contracts';
 import type { ListStoreBagOpeningsQuery, StoreBagOpening } from '@idosi/contracts';
 import type {
   CreateReceiptAdjustmentRequest,
@@ -380,6 +382,10 @@ export interface WarehouseRepository {
     storeId: string,
     context: RequestContext,
   ): Promise<OrderingContext>;
+  listSessionDocuments(
+    actor: AuthenticatedPrincipal,
+    query: ListAllocationsQuery,
+  ): Promise<Page<SessionDocument>>;
   listAllocations(
     actor: AuthenticatedPrincipal,
     query: ListAllocationsQuery,
@@ -570,6 +576,10 @@ export interface WarehouseRepository {
     context: RequestContext,
   ): Promise<IdempotentResource<StorePartnerInbound>>;
 
+  listReceiptSummaries(
+    actor: AuthenticatedPrincipal,
+    query: ListReceiptsQuery,
+  ): Promise<Page<ReceiptSummary>>;
   listReceipts(actor: AuthenticatedPrincipal, query: ListReceiptsQuery): Promise<Page<Receipt>>;
   listStoreReceiptSources(
     actor: AuthenticatedPrincipal,

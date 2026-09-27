@@ -15,6 +15,7 @@ import {
   listOrderSessions,
   listPriorityOffers,
   listStoreReceipts,
+  listStoreReceiptsPage,
   listWaitTickets,
   mapWithConcurrency,
   respondPriorityOffer,
@@ -27,6 +28,26 @@ import {
 const pagination = { page: 1, pageSize: 100, totalItems: 1, totalPages: 1 };
 
 describe('API projections', () => {
+  it('fetches only the requested receipt page even when more pages exist', async () => {
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [],
+          pagination: { page: 2, pageSize: 20, totalItems: 61, totalPages: 4 },
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal('fetch', fetch);
+    const result = await listStoreReceiptsPage(
+      { storeId: '20000000-0000-4000-8000-000000000001', status: 'DRAFT' },
+      2,
+      20,
+    );
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(String(fetch.mock.calls[0]?.[0])).toContain('page=2&pageSize=20&status=DRAFT&storeId=');
+    expect(result.pagination.totalItems).toBe(61);
+  });
   afterEach(() => vi.unstubAllGlobals());
 
   it('keeps a missing conversion explicit instead of inventing a one-to-one ratio', async () => {
