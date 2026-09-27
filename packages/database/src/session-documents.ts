@@ -1,4 +1,17 @@
-import { and, asc, count, desc, eq, inArray, isNull, ne, or, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  getTableColumns,
+  eq,
+  inArray,
+  isNull,
+  ne,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 import type { Database } from './client.js';
 import {
   allocationLines,
@@ -12,6 +25,7 @@ import {
 import { withTransaction } from './transaction.js';
 import {
   allocationRoundsFromMetadata,
+  allocationResultMetadata,
   type ListAllocationResultsInput,
 } from './allocation-results.js';
 
@@ -78,7 +92,7 @@ export async function listSessionDocuments(database: Database, input: ListAlloca
         };
       const sources = await tx
         .select({
-          line: allocationLines,
+          line: { ...getTableColumns(allocationLines), decisionMetadata: allocationResultMetadata },
           orderRequestId: orderRequests.id,
           orderRequestCode: orderRequests.code,
           submittedAt: orderRequests.submittedAt,
@@ -161,11 +175,7 @@ export async function listSessionDocuments(database: Database, input: ListAlloca
                   ? (line.decisionMetadata.appliedPriority as 'P0A' | 'P0B' | 'P1' | 'P2' | 'P3')
                   : null,
                 rounds: allocationRoundsFromMetadata(line.decisionMetadata, line.allocatedQuantity),
-                roundsOmitted:
-                  line.decisionMetadata.policyRoundsVersion === 1 &&
-                  Array.isArray(line.decisionMetadata.policyRounds) &&
-                  line.decisionMetadata.policyRounds.length > 100 &&
-                  line.decisionMetadata.policyRounds.length === line.allocatedQuantity,
+                roundsOmitted: line.decisionMetadata.roundsOmitted === true,
               },
             })),
         })),

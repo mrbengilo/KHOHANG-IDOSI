@@ -191,6 +191,15 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
       assert.equal(bounded.json().data[0].roundsOmitted, true);
       assert.deepEqual(bounded.json().data[0].rounds, []);
       assert.ok(Buffer.byteLength(bounded.body) < 2000);
+      const boundedDocument = await app.inject({
+        method: 'GET',
+        url: `/api/v1/session-documents?sessionId=${largeFixture.sessionId}`,
+        headers: { cookie: sessionCookie(largeFixture.tokens.store) },
+      });
+      assert.equal(boundedDocument.statusCode, 200, boundedDocument.body);
+      assert.equal(boundedDocument.json().data[0].sources[0].result.roundsOmitted, true);
+      assert.deepEqual(boundedDocument.json().data[0].sources[0].result.rounds, []);
+      assert.ok(Buffer.byteLength(boundedDocument.body) < 5000);
       const [stored] = await db
         .select({ metadata: allocationLines.decisionMetadata })
         .from(allocationLines)

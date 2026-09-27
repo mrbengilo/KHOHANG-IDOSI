@@ -4,6 +4,20 @@ import type { Database } from './client.js';
 import { allocationLines, allocationRuns, type JsonObject } from './schema.js';
 import { withTransaction } from './transaction.js';
 
+/** Bound audit arrays in SQL before transferring them to the API process. */
+export const allocationResultMetadata = sql<JsonObject>`case
+            when jsonb_typeof(${allocationLines.decisionMetadata}->'policyRounds') = 'array' then
+              case when jsonb_array_length(${allocationLines.decisionMetadata}->'policyRounds') > 100
+                then jsonb_build_object(
+                  'roundsOmitted', coalesce(
+                    ${allocationLines.decisionMetadata}->'policyRoundsVersion' = '1'::jsonb
+                    and jsonb_array_length(${allocationLines.decisionMetadata}->'policyRounds') = ${allocationLines.allocatedQuantity},
+                    false),
+                  'appliedPriority', ${allocationLines.decisionMetadata}->'appliedPriority'
+                )
+                else ${allocationLines.decisionMetadata} end
+            else ${allocationLines.decisionMetadata} end`;
+
 export type AllocationResultDatabaseStatus = 'allocated' | 'partial' | 'waitlisted' | 'skipped';
 
 export type AllocationResultPriority = 'P0A' | 'P0B' | 'P1' | 'P2' | 'P3';
@@ -106,18 +120,7 @@ export async function listAllocationResults(
           reasonCode: allocationLines.reasonCode,
           // Keep large historical audit arrays in PostgreSQL, not in paginated
           // list responses. The immutable source metadata remains unchanged.
-          decisionMetadata: sql<JsonObject>`case
-            when jsonb_typeof(${allocationLines.decisionMetadata}->'policyRounds') = 'array' then
-              case when jsonb_array_length(${allocationLines.decisionMetadata}->'policyRounds') > 100
-                then jsonb_build_object(
-                  'roundsOmitted', coalesce(
-                    ${allocationLines.decisionMetadata}->'policyRoundsVersion' = '1'::jsonb
-                    and jsonb_array_length(${allocationLines.decisionMetadata}->'policyRounds') = ${allocationLines.allocatedQuantity},
-                    false),
-                  'appliedPriority', ${allocationLines.decisionMetadata}->'appliedPriority'
-                )
-                else ${allocationLines.decisionMetadata} end
-            else ${allocationLines.decisionMetadata} end`,
+          decisionMetadata: allocationResultMetadata,
           createdAt: allocationLines.createdAt,
         })
         .from(allocationLines)
