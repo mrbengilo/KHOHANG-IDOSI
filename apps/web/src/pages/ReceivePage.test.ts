@@ -13,22 +13,23 @@ import {
   receiptWeightTotal,
 } from './ReceivePage';
 
-describe('receipt totals with manually entered VAT', () => {
+describe('receipt totals with server-calculated VAT', () => {
   it('keeps VAT out of the landed cost but adds it to the receipt total', () => {
     expect(
       receiptTotalsPreview({
         priced: [{ weightsKg: ['100', '150'], pricePerKgVnd: '20000' }],
         freightVnd: '200000',
         handlingVnd: '100000',
-        vatVnd: '500000',
+        vatRatePercent: 8,
       }),
     ).toEqual({
       goodsVnd: 5_000_000n,
       freightVnd: 200_000n,
       handlingVnd: 100_000n,
       costVnd: 5_300_000n,
-      vatVnd: 500_000n,
-      totalVnd: 5_800_000n,
+      vatRatePercent: 8,
+      vatVnd: 424_000n,
+      totalVnd: 5_724_000n,
     });
   });
 
@@ -40,7 +41,7 @@ describe('receipt totals with manually entered VAT', () => {
       ],
       freightVnd: '0',
       handlingVnd: '0',
-      vatVnd: '',
+      vatRatePercent: null,
     });
     // 2.333 kg × 1,001 = 2,335.333 → 2,335; 0.5 kg × 3 = 1.5 → 2 (half up).
     expect(preview.goodsVnd).toBe(2_337n);
@@ -52,9 +53,9 @@ describe('receipt totals with manually entered VAT', () => {
         priced: [{ weightsKg: ['30', ''], pricePerKgVnd: '1000' }],
         freightVnd: '0',
         handlingVnd: '0',
-        vatVnd: '0',
+        vatRatePercent: 0,
       }),
-    ).toMatchObject({ goodsVnd: null, costVnd: null, totalVnd: null, vatVnd: 0n });
+    ).toMatchObject({ goodsVnd: null, costVnd: null, totalVnd: null, vatVnd: null });
   });
 });
 

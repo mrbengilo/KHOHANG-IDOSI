@@ -321,18 +321,23 @@ export function ReceiptAdjustmentsSection({
 function MoneySummary({ context }: { readonly context: ReceiptAdjustmentContext }) {
   const { original, effective } = context.summary;
   const changed = context.summary.appliedCount > 0;
+  const knownVat = original.totalVnd !== null && effective.totalVnd !== null;
+  const appliedDelta = knownVat
+    ? BigInt(effective.totalVnd!) - BigInt(original.totalVnd!)
+    : BigInt(effective.costVnd) - BigInt(original.costVnd);
   return (
     <div className="adjustment-money" aria-label="Giá trị phiếu nhận">
       <div>
         <span>Giá trị chốt gốc (gồm VAT)</span>
         <strong>{formatExactVnd(original.totalVnd)}</strong>
         <small>Giá vốn {formatExactVnd(original.costVnd)}</small>
+        <small>VAT {formatExactVnd(original.vatVnd)}</small>
       </div>
       <div>
-        <span>Chênh lệch đã áp dụng</span>
-        <strong>
-          {changed ? formatSignedVnd(BigInt(effective.costVnd) - BigInt(original.costVnd)) : '0 ₫'}
-        </strong>
+        <span>
+          {knownVat ? 'Chênh lệch đã áp dụng (gồm VAT)' : 'Chênh lệch giá vốn (VAT chưa ghi nhận)'}
+        </span>
+        <strong>{changed ? formatSignedVnd(appliedDelta) : '0 ₫'}</strong>
         <small>
           {context.summary.appliedCount} điều chỉnh đã xử lý · {context.summary.openCount} đang chờ
           xử lý
@@ -342,6 +347,7 @@ function MoneySummary({ context }: { readonly context: ReceiptAdjustmentContext 
         <span>Giá trị sau điều chỉnh (có hiệu lực)</span>
         <strong>{formatExactVnd(effective.totalVnd)}</strong>
         <small>Giá vốn {formatExactVnd(effective.costVnd)}</small>
+        <small>VAT {formatExactVnd(effective.vatVnd)}</small>
       </div>
     </div>
   );
@@ -868,6 +874,11 @@ function AdjustmentDetail({
 
       <EntitlementList adjustment={adjustment} name={name} />
 
+      <p>
+        Thuế suất đã chốt trên phiếu:{' '}
+        {adjustment.vatRatePercent == null ? 'Chưa ghi nhận' : `${adjustment.vatRatePercent}%`}.
+      </p>
+
       <div className="adjustment-compare" aria-label="So sánh trước và sau">
         <CompareColumn label="Trước điều chỉnh (đang hiệu lực)" money={adjustment.money.before} />
         <div className="adjustment-compare__delta">
@@ -1127,14 +1138,16 @@ function VerifyForm({
   const [cause, setCause] = useState<ReceiptAdjustmentCause | ''>(adjustment.cause ?? '');
   const [freight, setFreight] = useState(String(adjustment.delta.freightVnd));
   const [handling, setHandling] = useState(String(adjustment.delta.handlingVnd));
-  const [vat, setVat] = useState(String(adjustment.delta.vatVnd));
   const [note, setNote] = useState(adjustment.verificationNote ?? '');
   const [formError, setFormError] = useState('');
-  const [initialDraft] = useState(() =>
-    JSON.stringify({ lines, cause, freight, handling, vat, note }),
+  const [initialDraft] = useState(() => JSON.stringify({ lines, cause, freight, handling, note }));
+  useDraftGuard(JSON.stringify({ lines, cause, freight, handling, note }) !== initialDraft);
+  const preview = previewAdjustment(
+    adjustment.money.before,
+    lines,
+    { freight, handling },
+    adjustment.vatRatePercent ?? null,
   );
-  useDraftGuard(JSON.stringify({ lines, cause, freight, handling, vat, note }) !== initialDraft);
-  const preview = previewAdjustment(adjustment.money.before, lines, { freight, handling, vat });
 
   const submit = async () => {
     if (!cause) {
@@ -1168,13 +1181,13 @@ function VerifyForm({
         receiptBagId: line.receiptBagId,
         actualProductId: line.actualProductId,
         weightKg: line.weightKg,
-        pricePerKgVnd: Number(line.pricePerKgVnd),
+        disposition: line.disposition,
+        ...(line.disposition === 'RETURN' ? {} : { pricePerKgVnd: Number(line.pricePerKgVnd) }),
         weightChangeNote:
           line.weightKg === line.recordedWeightKg ? null : line.weightChangeNote.trim(),
       })),
       freightDeltaVnd: Number(freight || '0'),
       handlingDeltaVnd: Number(handling || '0'),
-      vatDeltaVnd: Number(vat || '0'),
     });
   };
 
@@ -1236,21 +1249,25 @@ function VerifyForm({
                 value={line.weightKg}
               />
             </label>
-            <label>
-              <span className="field-label">Giá / kg mặt hàng thực tế (VND)</span>
-              <MoneyInput
-                disabled={busy}
-                onValueChange={(digits) =>
-                  setLines((current) =>
-                    current.map((item, i) =>
-                      i === index ? { ...item, pricePerKgVnd: digits } : item,
-                    ),
-                  )
-                }
-                placeholder="0"
-                value={line.pricePerKgVnd}
-              />
-            </label>
+            {line.disposition === 'KEEP' ? (
+              <label>
+                <span className="field-label">Giá / kg mặt hàng thực tế (VND)</span>
+                <MoneyInput
+                  disabled={busy}
+                  onValueChange={(digits) =>
+                    setLines((current) =>
+                      current.map((item, i) =>
+                        i === index ? { ...item, pricePerKgVnd: digits } : item,
+                      ),
+                    )
+                  }
+                  placeholder="0"
+                  value={line.pricePerKgVnd}
+                />
+              </label>
+            ) : (
+              <p>Giá trị giảm trừ theo dữ liệu máy chủ: {formatExactVnd(line.recordedCostVnd)}</p>
+            )}
             {line.weightKg !== line.recordedWeightKg ? (
               <label>
                 <span className="field-label">Căn cứ cân lại</span>
@@ -1296,21 +1313,12 @@ function VerifyForm({
           [
             ['Chênh lệch vận chuyển (VND, có thể âm)', freight, setFreight],
             ['Chênh lệch bốc xếp (VND, có thể âm)', handling, setHandling],
-            [
-              adjustment.money.before.vatVnd === null
-                ? 'VAT (phiếu gốc chưa ghi nhận – giữ 0)'
-                : 'Chênh lệch VAT (VND, có thể âm)',
-              vat,
-              setVat,
-            ],
           ] as const
         ).map(([label, value, setter]) => (
           <label key={label}>
             <span className="field-label">{label}</span>
             <input
-              disabled={
-                busy || (label.startsWith('VAT (') && adjustment.money.before.vatVnd === null)
-              }
+              disabled={busy}
               inputMode="numeric"
               onChange={(event) => setter(event.target.value.replace(/[^\d-]/g, ''))}
               value={value}
@@ -1330,7 +1338,10 @@ function VerifyForm({
       </label>
       {preview.after && !preview.problem ? (
         <p className="adjustment-note" aria-live="polite">
-          Tạm tính sau điều chỉnh: tiền hàng {formatExactVnd(preview.after.goods)} · tổng{' '}
+          VAT{' '}
+          {adjustment.vatRatePercent == null ? 'chưa ghi nhận' : adjustment.vatRatePercent + '%'}:{' '}
+          {formatExactVnd(preview.after.vat)} · Tạm tính sau điều chỉnh: tiền hàng{' '}
+          {formatExactVnd(preview.after.goods)} · tổng{' '}
           {formatExactVnd(
             preview.after.total,
             `${formatExactVnd(preview.after.cost)} + VAT chưa ghi nhận`,

@@ -239,6 +239,13 @@
       "when": 1790517660000,
       "tag": "0033_inbound_reporting_period_index",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1790517720000,
+      "tag": "0034_configurable_receipt_vat",
+      "breakpoints": true
     }
   ]
 }

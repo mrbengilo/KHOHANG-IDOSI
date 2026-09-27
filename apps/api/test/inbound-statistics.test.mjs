@@ -112,7 +112,9 @@ describe('Admin inbound statistics API', () => {
         })),
         freightVnd: 0,
         handlingVnd: 0,
-        vat: { amountVnd: 0, ratePercent: 8 },
+        expectedVatSettingsVersion: (
+          await repository.getReceiptVatConfiguration(htkd.principal, receipt.id)
+        ).version,
       },
       randomUUID(),
       randomUUID(),

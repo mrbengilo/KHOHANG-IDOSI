@@ -382,8 +382,8 @@ describe('receipt adjustments in the monthly report', () => {
     expect(report.totals.inboundGoodsCostVnd.value).toBe(0n);
     expect(report.adjustments).toMatchObject({
       appliedCount: 1,
-      goodsDeltaVnd: -200_000n,
-      totalDeltaVnd: -200_000n,
+      goodsDeltaVnd: -1_000_000n,
+      totalDeltaVnd: -1_000_000n,
       adjustedLandedInboundCostVnd: -1_000_000n,
       adjustedVatCostVnd: 0n,
       returnsHandedOverCount: 1,

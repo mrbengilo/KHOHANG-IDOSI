@@ -1,3 +1,4 @@
+import { VatRatePercentSchema } from './operational-settings.js';
 import { z } from 'zod';
 
 import {
@@ -202,6 +203,7 @@ export const ReceiptAdjustmentSchema = z
     receiptId: EntityIdSchema,
     receiptNumber: z.string().min(1).max(100),
     receiptFinalizedAt: IsoDateTimeSchema.nullable(),
+    vatRatePercent: VatRatePercentSchema.nullable().optional(),
     storeId: EntityIdSchema,
     status: ReceiptAdjustmentStatusSchema,
     version: z.number().int().nonnegative(),
@@ -376,16 +378,20 @@ export const ReceiptAdjustmentActionRequestSchema = z.discriminatedUnion('action
               receiptBagId: EntityIdSchema,
               actualProductId: EntityIdSchema,
               weightKg: PositiveKilogramsDecimalSchema,
-              pricePerKgVnd: MoneyVndSchema,
+              disposition: ReceiptAdjustmentDispositionSchema.optional(),
+              pricePerKgVnd: MoneyVndSchema.optional(),
               weightChangeNote: z.string().trim().max(500).nullable().default(null),
             })
-            .strict(),
+            .strict()
+            .refine((line) => line.disposition === 'RETURN' || line.pricePerKgVnd !== undefined, {
+              path: ['pricePerKgVnd'],
+              message: 'Bao giữ bán cần giá/kg',
+            }),
         )
         .min(1)
         .max(50),
       freightDeltaVnd: SignedMoneyVndSchema.default(0),
       handlingDeltaVnd: SignedMoneyVndSchema.default(0),
-      vatDeltaVnd: SignedMoneyVndSchema.default(0),
     })
     .strict(),
   z

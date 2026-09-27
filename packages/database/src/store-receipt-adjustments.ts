@@ -1,3 +1,4 @@
+import { calculateReceiptVat } from '@idosi/domain';
 export { allowedReceiptAdjustmentActions } from '@idosi/domain';
 import {
   applyReceiptMoneyDeltas,
@@ -149,7 +150,8 @@ export interface VerifiedAdjustmentLineInput {
   readonly receiptBagId: string;
   readonly actualProductId: string;
   readonly weightKg: string;
-  readonly pricePerKgVnd: bigint;
+  readonly disposition?: 'keep' | 'return';
+  readonly pricePerKgVnd?: bigint;
   readonly weightChangeNote: string | null;
 }
 
@@ -175,7 +177,6 @@ export type ReceiptAdjustmentTransitionInput = {
       readonly lines: readonly VerifiedAdjustmentLineInput[];
       readonly freightDeltaVnd: bigint;
       readonly handlingDeltaVnd: bigint;
-      readonly vatDeltaVnd: bigint;
     }
   | {
       readonly action: 'CANCEL' | 'REQUEST_INFO' | 'RETURN_TO_VERIFIER' | 'REJECT';
@@ -269,6 +270,7 @@ export interface ReceiptAdjustmentLineRecord {
 }
 
 export interface ReceiptAdjustmentRecord {
+  readonly vatRatePercent: number | null;
   readonly id: string;
   readonly code: string;
   readonly receiptId: string;
@@ -631,9 +633,46 @@ export async function transitionReceiptAdjustment(
             );
             break;
           }
-          case 'APPLY':
-            await apply(context, input.note);
+          case 'APPLY': {
+            if (
+              !adjustment.cause ||
+              adjustment.baseAppliedCount !== (await countApplied(tx, located.receiptId))
+            ) {
+              throw new StoreOperationConflictError(
+                'Phiếu nhận đã thay đổi; cần HTKD xác minh lại.',
+              );
+            }
+            const legacyLines = await loadLines(tx, adjustment.id);
+            if (
+              legacyLines.some(
+                (line) => line.verifiedWeightKg === null || line.verifiedPricePerKgVnd === null,
+              )
+            ) {
+              throw new StoreOperationConflictError('Hồ sơ chưa có đủ dữ liệu xác minh.');
+            }
+            const verification = await verify(context, {
+              ...input,
+              action: 'VERIFY',
+              cause: adjustment.cause,
+              note: input.note ?? adjustment.verificationNote ?? 'Duyệt hồ sơ đã xác minh',
+              freightDeltaVnd: adjustment.freightDeltaVnd,
+              handlingDeltaVnd: adjustment.handlingDeltaVnd,
+              lines: legacyLines.map((line) => ({
+                receiptBagId: line.storeReceiptBagId,
+                actualProductId: line.actualProductId,
+                disposition: line.disposition,
+                weightKg: line.verifiedWeightKg!,
+                pricePerKgVnd: line.verifiedPricePerKgVnd!,
+                weightChangeNote: line.weightChangeNote,
+              })),
+            });
+            await apply(
+              { ...context, adjustment: { ...adjustment, ...verification } },
+              input.note,
+              verification,
+            );
             break;
+          }
           case 'CANCEL':
           case 'REJECT':
             await close(context, input.note);
@@ -765,6 +804,15 @@ async function verify(
   const blockers: Record<string, ReceiptAdjustmentBagBlocker[]> = {};
   for (const line of lines) {
     const verified = supplied.get(line.storeReceiptBagId)!;
+    if (verified.disposition !== undefined && verified.disposition !== line.disposition) {
+      throw new StoreOperationValidationError('Phương án không khớp hồ sơ đã lưu.');
+    }
+    if (line.disposition === 'keep' && verified.pricePerKgVnd === undefined) {
+      throw new StoreOperationValidationError('Bao giữ bán cần giá/kg.');
+    }
+    // RETURN carries the persisted effective cost, independent of any client price.
+    const pricePerKgVnd =
+      line.disposition === 'return' ? line.recordedPricePerKgVnd : verified.pricePerKgVnd!;
     const recordedGrams = kilogramsToGramsExact(line.recordedWeightKg);
     const verifiedGrams = kilogramsToGramsExact(verified.weightKg);
     const weightChangeNote = optionalNote(verified.weightChangeNote, 'Căn cứ cân lại', 500);
@@ -773,23 +821,29 @@ async function verify(
         'Chỉ đổi kg khi có căn cứ cân lại; hãy ghi căn cứ cho bao có kg thay đổi.',
       );
     }
-    const plan = planLineOrThrow({
-      approvedProductId: line.approvedProductId,
-      recordedProductId: line.recordedProductId,
-      actualProductId: verified.actualProductId,
-      recordedWeightKg: line.recordedWeightKg,
-      recordedCostVnd: line.recordedCostVnd,
-      verifiedWeightKg: verified.weightKg,
-      verifiedPricePerKgVnd: verified.pricePerKgVnd,
-      shortageAlreadyGranted: granted.has(line.storeReceiptBagId),
-    });
+    const plan = {
+      ...planLineOrThrow({
+        approvedProductId: line.approvedProductId,
+        recordedProductId: line.recordedProductId,
+        actualProductId: verified.actualProductId,
+        recordedWeightKg: line.recordedWeightKg,
+        recordedCostVnd: line.recordedCostVnd,
+        verifiedWeightKg: verified.weightKg,
+        verifiedPricePerKgVnd: pricePerKgVnd,
+        shortageAlreadyGranted: granted.has(line.storeReceiptBagId),
+      }),
+    };
+    if (line.disposition === 'return') {
+      plan.verifiedCostVnd = line.recordedCostVnd;
+      plan.goodsDeltaVnd = 0n;
+    }
     goodsDeltaVnd += plan.goodsDeltaVnd;
     await tx
       .update(storeReceiptAdjustmentLines)
       .set({
         actualProductId: verified.actualProductId,
         verifiedWeightKg: gramsToKilogramsExact(verifiedGrams),
-        verifiedPricePerKgVnd: verified.pricePerKgVnd,
+        verifiedPricePerKgVnd: pricePerKgVnd,
         verifiedCostVnd: plan.verifiedCostVnd,
         weightChangeNote: verifiedGrams === recordedGrams ? null : weightChangeNote,
         shortageQuantity: plan.shortageQuantity,
@@ -819,27 +873,48 @@ async function verify(
     goodsVnd: goodsDeltaVnd,
     freightVnd: input.freightDeltaVnd,
     handlingVnd: input.handlingDeltaVnd,
-    vatVnd: input.vatDeltaVnd,
+    vatVnd: 0n,
   };
   const returnedGoodsVnd = verifiedLines.reduce(
     (total, line) =>
       total + (line.disposition === 'return' ? BigInt(line.verifiedCostVnd as string) : 0n),
     0n,
   );
+  const vatDelta =
+    before.vatVnd === null || receipt.vatRatePercent === null
+      ? 0n
+      : domainOrValidation(
+          () =>
+            calculateReceiptVat(
+              before.goodsVnd +
+                goodsDeltaVnd -
+                returnedGoodsVnd +
+                before.freightVnd +
+                input.freightDeltaVnd +
+                before.handlingVnd +
+                input.handlingDeltaVnd,
+              receipt.vatRatePercent!,
+            ) - before.vatVnd!,
+        );
+  const computedDelta = { ...delta, vatVnd: vatDelta };
   const money = domainOrValidation(() =>
     planReceiptAdjustmentMoney(before, {
-      ...delta,
+      ...computedDelta,
       goodsVnd: delta.goodsVnd - returnedGoodsVnd,
     }),
   );
   const verification: JsonObject = {
+    vatRatePercent: receipt.vatRatePercent,
+    vatSettingsVersion: receipt.vatSettingsVersion,
+    vatStatus:
+      before.vatVnd === null || receipt.vatRatePercent === null ? 'NOT_CAPTURED' : 'CAPTURED',
     money: {
       before: moneyJson(money.before),
       delta: {
         goodsVnd: money.delta.goodsVnd.toString(),
         freightVnd: delta.freightVnd.toString(),
         handlingVnd: delta.handlingVnd.toString(),
-        vatVnd: delta.vatVnd.toString(),
+        vatVnd: computedDelta.vatVnd.toString(),
         costVnd: money.delta.costVnd.toString(),
         totalVnd: money.delta.totalVnd.toString(),
       },
@@ -862,7 +937,7 @@ async function verify(
     goodsDeltaVnd: delta.goodsVnd,
     freightDeltaVnd: delta.freightVnd,
     handlingDeltaVnd: delta.handlingVnd,
-    vatDeltaVnd: delta.vatVnd,
+    vatDeltaVnd: computedDelta.vatVnd,
   };
   await audit(context, 'RECEIPT_ADJUSTMENT_VERIFIED', { note, ...verification });
   return changes;
@@ -2416,6 +2491,7 @@ export async function getReceiptAdjustment(
     receiptId: receipt.id,
     receiptNumber: receipt.receiptNumber,
     receiptFinalizedAt: receipt.finalizedAt,
+    vatRatePercent: receipt.vatRatePercent,
     storeId: adjustment.storeId,
     status: adjustment.status,
     version: adjustment.version,
@@ -3224,7 +3300,7 @@ function validateTransitionInput(input: ReceiptAdjustmentTransitionInput): void 
     if (input.lines.length === 0 || input.lines.length > MAX_LINES) {
       throw new StoreOperationValidationError('Cần xác minh đủ từng bao trong hồ sơ.');
     }
-    for (const value of [input.freightDeltaVnd, input.handlingDeltaVnd, input.vatDeltaVnd]) {
+    for (const value of [input.freightDeltaVnd, input.handlingDeltaVnd]) {
       if (value > 9_007_199_254_740_991n || value < -9_007_199_254_740_991n) {
         throw new StoreOperationValidationError('Chênh lệch tiền vượt giới hạn.');
       }

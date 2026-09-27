@@ -324,3 +324,14 @@ Rollback bằng image cũ vẫn đọc được schema; phiếu tự hoàn tất
 Tuy nhiên code cũ sẽ hiển thị giá trị hiệu lực chưa trừ hàng trả và tạo phiếu mới theo luật cũ:
 ưu tiên forward-fix, không đảo ledger/restore dữ liệu để che lỗi. Watcher triển khai sau CI merge
 SHA xanh; xác minh running SHA, health/readiness, log và đối soát chỉ đọc.
+
+## VAT tự tính và giá trị hàng trả
+
+Từ migration 0032, áp dụng chính sách trong [VAT phiếu nhận](vat-store-receipt.md):
+Admin cấu hình số nguyên 0–100%, phiếu mới lưu snapshot; VERIFY tính lại VAT trên toàn bộ
+hàng/phí còn lại bằng snapshot. Không nhận VAT delta từ client. KEEP cần giá/kg; RETURN
+không cần giá và dùng giá trị hiệu lực đang lưu để giảm tiền, bảo toàn giá vốn hàng hoàn.
+Phiếu VAT thủ công cũ giữ số gốc và ghi chênh lệch mới; NULL legacy giữ “Chưa ghi nhận”.
+Báo cáo dùng chênh lệch tiền hàng thuần sau hàng trả; số hàng trả riêng chỉ để đối soát.
+Cơ chế tự hoàn tất tại VERIFY, sửa phân loại/giao nhầm, hold kiểm kê, quyền nhận bù và
+trả legacy tiếp tục như mô tả trên. Không cộng/trừ tồn thêm lần nữa vì thay đổi VAT.

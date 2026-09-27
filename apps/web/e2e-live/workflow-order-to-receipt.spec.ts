@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 
 import { expect, test, type Page } from '@playwright/test';
 import {
+  operationalSettingsVersions,
   applyWarehouseMovement,
   auditLogs,
   createDatabase,
@@ -34,6 +35,21 @@ test('an order approved by the 09:00 allocation reaches the store and can be rec
   const databaseUrl = process.env.DATABASE_URL;
   test.skip(!databaseUrl, 'Requires the live PostgreSQL database.');
   const client = createDatabase({ connectionString: databaseUrl, max: 2 });
+  let restoreVatRate: number | null = null;
+  const changeVat = async (rate: number) => {
+    const current = (await client.db.select().from(operationalSettingsVersions)).sort(
+      (a, b) => b.version - a.version,
+    )[0]!;
+    await client.db.insert(operationalSettingsVersions).values({
+      ...current,
+      id: randomUUID(),
+      version: current.version + 1,
+      vatRatePercent: rate,
+      requestId: randomUUID(),
+      createdAt: new Date(),
+    });
+    return current.vatRatePercent;
+  };
   try {
     const token = randomUUID().slice(0, 8);
     const productName = `Hàng giao nhận ${token}`;
@@ -199,17 +215,19 @@ test('an order approved by the 09:00 allocation reaches the store and can be rec
     await review.getByLabel('Khối lượng bao 2 (kg)').fill('25,5');
     await review.getByLabel('Phí vận chuyển (VND)').fill('10000');
     await review.getByLabel('Phí bốc xếp (VND)').fill('5000');
-    const vat = review.getByLabel('VAT 8% theo phiếu (VND)');
-    await expect(vat).toHaveValue('');
-    await expect(vat).toHaveAttribute('required', '');
-    await review.getByRole('button', { name: /Chốt giá & nhập kho/ }).click();
-    await expect(review.getByRole('alert')).toContainText('Nhập VAT theo phiếu nhận hàng thực tế');
-    await vat.fill('44000');
-    await expect(vat).toHaveValue('44,000');
+    let vat = review.getByText('Thuế suất VAT: 8%', { exact: true });
+    await expect(vat).toBeVisible();
+    await expect(review.getByLabel('VAT 8% theo phiếu (VND)')).toHaveCount(0);
     // Preview: landed cost excludes VAT, the receipt total adds it.
     const preview = review.locator('.receipt-totals');
-    await expect(preview).toContainText(/Giá vốn \(không gồm VAT\)\s*1\.125\.000/);
-    await expect(preview).toContainText(/Tổng tiền phiếu \(gồm VAT\)\s*1\.169\.000/);
+    await expect(preview).toContainText(/Cơ sở tính VAT \/ giá vốn\s*1\.125\.000/);
+    await expect(preview).toContainText(/Tổng tiền phiếu \(gồm VAT\)\s*1\.215\.000/);
+    restoreVatRate = await changeVat(10);
+    await review.getByRole('button', { name: /Chốt giá & nhập kho/ }).click();
+    await expect(review.getByRole('alert')).toContainText('Cấu hình VAT đã đổi');
+    vat = review.getByText('Thuế suất VAT: 10%', { exact: true });
+    await expect(vat).toBeVisible();
+    await expect(preview).toContainText(/Tổng tiền phiếu \(gồm VAT\)\s*1\.237\.500/);
     for (const width of [360, 390, 412, 768, 1366, 1440]) {
       await page.setViewportSize({ width, height: 900 });
       await expect(vat).toBeVisible();
@@ -241,21 +259,23 @@ test('an order approved by the 09:00 allocation reaches the store and can be rec
     expect(finalized.request().postDataJSON()).toMatchObject({
       freightVnd: 10000,
       handlingVnd: 5000,
-      vat: { amountVnd: 44000, ratePercent: 8 },
+      expectedVatSettingsVersion: expect.any(Number),
     });
+    expect(finalized.request().postDataJSON()).not.toHaveProperty('vat');
     // 55.5 kg × 20,000 + freight + handling; VAT is recorded beside the landed cost.
     expect((await finalized.json()).data).toMatchObject({
       status: 'FINALIZED',
       totalCostVnd: 1_125_000,
-      totalAmountVnd: 1_169_000,
-      vat: { amountVnd: 44000, ratePercent: 8 },
+      totalAmountVnd: 1_237_500,
+      vat: { amountVnd: 112500, ratePercent: 10 },
     });
     const summary = review.locator('.receipt-finalized-summary');
-    await expect(summary).toContainText('VAT 8%');
-    await expect(summary).toContainText(/44\.000/);
-    await expect(summary).toContainText(/Giá vốn \(không gồm VAT\)\s*1\.125\.000/);
-    await expect(summary).toContainText(/Tổng tiền phiếu \(gồm VAT\)\s*1\.169\.000/);
+    await expect(summary).toContainText('VAT 10%');
+    await expect(summary).toContainText(/112\.500/);
+    await expect(summary).toContainText(/Cơ sở tính VAT \/ giá vốn\s*1\.125\.000/);
+    await expect(summary).toContainText(/Tổng tiền phiếu \(gồm VAT\)\s*1\.237\.500/);
   } finally {
+    if (restoreVatRate !== null) await changeVat(restoreVatRate);
     await client.close();
   }
 });
@@ -468,7 +488,7 @@ test('a wholesale store orders, receives, is finalized and reports a discrepancy
     await review.getByLabel('Khối lượng bao 2 (kg)').fill('25');
     await review.getByLabel('Phí vận chuyển (VND)').fill('0');
     await review.getByLabel('Phí bốc xếp (VND)').fill('0');
-    await review.getByLabel('VAT 8% theo phiếu (VND)').fill('0');
+    await expect(review.getByText('Thuế suất VAT: 8%', { exact: true })).toBeVisible();
     await review.getByRole('button', { name: /Chốt giá & nhập kho/ }).click();
     await expect(review).toContainText('Đã nhập kho');
     expect(

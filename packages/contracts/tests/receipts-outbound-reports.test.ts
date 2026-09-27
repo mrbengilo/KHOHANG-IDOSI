@@ -306,7 +306,7 @@ describe('receipt, outbound and report contracts', () => {
       lines: [line],
       freightVnd: 10_000,
       handlingVnd: 5_000,
-      vat: { amountVnd: 4_400, ratePercent: 8 },
+      expectedVatSettingsVersion: 1,
       expectedVersion: 3,
     };
     expect(FinalizeReceiptRequestSchema.safeParse(finalize).success).toBe(true);
@@ -317,12 +317,12 @@ describe('receipt, outbound and report contracts', () => {
       }).success,
     ).toBe(false);
     // HTKD must enter the delivery-note VAT (0 when none) before stock is booked.
-    const { vat: _omitted, ...withoutVat } = finalize;
+    const { expectedVatSettingsVersion: _omitted, ...withoutVat } = finalize;
     expect(FinalizeReceiptRequestSchema.safeParse(withoutVat).success).toBe(false);
     expect(
       FinalizeReceiptRequestSchema.safeParse({ ...finalize, vat: { amountVnd: 0, ratePercent: 8 } })
         .success,
-    ).toBe(true);
+    ).toBe(false);
     for (const vat of [
       { amountVnd: -1, ratePercent: 8 },
       { amountVnd: 0.5, ratePercent: 8 },

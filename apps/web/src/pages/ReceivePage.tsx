@@ -1,3 +1,4 @@
+import { calculateReceiptVat } from '@idosi/domain';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   DeclareStoreReceiptRequest,
@@ -44,6 +45,7 @@ import {
   declareStoreReceipt,
   finalizeStoreReceipt,
   getStoreReceipt,
+  getReceiptVatConfiguration,
   listAccessibleStores,
   listCatalog,
   listStoreReceiptsPage,
@@ -1583,8 +1585,16 @@ function ReviewerReceiptForm({
   );
   const [freight, setFreight] = useState(receipt.freightVnd.toString());
   const [handling, setHandling] = useState(receipt.handlingVnd.toString());
-  // Không điền sẵn 0: HTKD phải nhập VAT theo phiếu thực tế, kể cả khi phiếu không có VAT.
-  const [vat, setVat] = useState(receipt.vat?.amountVnd.toString() ?? '');
+  const vatQueryClient = useQueryClient();
+  const vatQueryKey = ['receipt-vat-configuration', receipt.id];
+  const vatQuery = useQuery({
+    queryKey: vatQueryKey,
+    queryFn: () => getReceiptVatConfiguration(receipt.id),
+    enabled: receipt.status === 'PENDING_HTKD',
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
   const [returnReason, setReturnReason] = useState('');
   const [formError, setFormError] = useState('');
   const reviewable = receipt.status === 'PENDING_HTKD';
@@ -1616,8 +1626,19 @@ function ReviewerReceiptForm({
       setFormError('Giá và chi phí phải là số nguyên VND không âm.');
       return;
     }
-    if (!isMoney(vat)) {
-      setFormError('Nhập VAT theo phiếu nhận hàng thực tế (VND, nhập 0 nếu phiếu không có VAT).');
+    if (!vatQuery.data) {
+      setFormError('Chưa tải được thuế suất VAT.');
+      return;
+    }
+    try {
+      const latest = await getReceiptVatConfiguration(receipt.id);
+      if (latest.version !== vatQuery.data.version) {
+        vatQueryClient.setQueryData(vatQueryKey, latest);
+        setFormError('Cấu hình VAT đã đổi. Kiểm tra thuế suất và tổng tiền mới, rồi chốt lại.');
+        return;
+      }
+    } catch {
+      setFormError('Không kiểm tra được cấu hình VAT. Hãy thử lại.');
       return;
     }
     setFormError('');
@@ -1625,7 +1646,7 @@ function ReviewerReceiptForm({
       expectedVersion: receipt.version,
       freightVnd: Number(freight),
       handlingVnd: Number(handling),
-      vat: { amountVnd: Number(vat), ratePercent: 8 },
+      expectedVatSettingsVersion: vatQuery.data.version,
       lines: receipt.lines.map((line) => ({
         approvedUnits: line.approvedUnits,
         bagWeightsKg: weights[line.productId] ?? [],
@@ -1797,21 +1818,17 @@ function ReviewerReceiptForm({
             value={handling}
           />
         </label>
-        <label>
-          <span className="field-label">VAT 8% theo phiếu (VND)</span>
-          <MoneyInput
-            required
-            aria-describedby={`receipt-vat-hint-${receipt.id}`}
-            disabled={mutationPending}
-            onValueChange={setVat}
-            placeholder="Nhập 0 nếu không có VAT"
-            value={vat}
-          />
-          <small id={`receipt-vat-hint-${receipt.id}`}>
-            Số tiền thuế trên phiếu nhận hàng thực tế; không cộng vào giá vốn, cộng vào tổng tiền
-            phiếu.
-          </small>
-        </label>
+        <div role="status">
+          <strong>
+            Thuế suất VAT: {vatQuery.data ? vatQuery.data.ratePercent + '%' : 'Đang tải'}
+          </strong>
+          <p>Tự tính trên tiền hàng + vận chuyển + bốc xếp; làm tròn một lần tới VND.</p>
+          {vatQuery.isError ? (
+            <Button onClick={() => void vatQuery.refetch()} tone="secondary">
+              Tải lại thuế suất
+            </Button>
+          ) : null}
+        </div>
       </div>
       <ReceiptTotalsSummary
         caption="Tạm tính theo số đã nhập"
@@ -1830,7 +1847,7 @@ function ReviewerReceiptForm({
           ],
           freightVnd: freight,
           handlingVnd: handling,
-          vatVnd: vat,
+          vatRatePercent: vatQuery.data?.ratePercent ?? null,
         })}
       />
       <label>
@@ -1934,6 +1951,7 @@ function FinalizedSummary({ receipt }: { readonly receipt: Receipt }) {
         freightVnd: BigInt(receipt.freightVnd),
         handlingVnd: BigInt(receipt.handlingVnd),
         costVnd,
+        vatRatePercent: receipt.vat?.ratePercent ?? null,
         vatVnd,
         totalVnd:
           receipt.totalAmountVnd != null
@@ -1947,6 +1965,7 @@ function FinalizedSummary({ receipt }: { readonly receipt: Receipt }) {
 }
 
 export interface ReceiptTotals {
+  readonly vatRatePercent?: number | null;
   readonly goodsVnd: bigint | null;
   readonly freightVnd: bigint | null;
   readonly handlingVnd: bigint | null;
@@ -1978,7 +1997,7 @@ export function receiptTotalsPreview(input: {
   }[];
   readonly freightVnd: string;
   readonly handlingVnd: string;
-  readonly vatVnd: string;
+  readonly vatRatePercent: number | null;
 }): ReceiptTotals {
   let goodsVnd: bigint | null = 0n;
   for (const line of input.priced) {
@@ -1994,12 +2013,20 @@ export function receiptTotalsPreview(input: {
   }
   const freightVnd = parseVnd(input.freightVnd);
   const handlingVnd = parseVnd(input.handlingVnd);
-  const vatVnd = parseVnd(input.vatVnd);
   const costVnd =
     goodsVnd === null || freightVnd === null || handlingVnd === null
       ? null
       : goodsVnd + freightVnd + handlingVnd;
+  let vatVnd: bigint | null = null;
+  if (costVnd !== null && input.vatRatePercent !== null) {
+    try {
+      vatVnd = calculateReceiptVat(costVnd, input.vatRatePercent);
+    } catch {
+      /* Invalid preview cannot be finalized by server. */
+    }
+  }
   return {
+    vatRatePercent: input.vatRatePercent,
     goodsVnd,
     freightVnd,
     handlingVnd,
@@ -2035,9 +2062,9 @@ function ReceiptTotalsSummary({
       <strong>{formatVndExact(totals.freightVnd, 'Chưa nhập')}</strong>
       <span>Phí bốc xếp</span>
       <strong>{formatVndExact(totals.handlingVnd, 'Chưa nhập')}</strong>
-      <span>Giá vốn (không gồm VAT)</span>
+      <span>Cơ sở tính VAT / giá vốn</span>
       <strong>{formatVndExact(totals.costVnd, 'Chưa đủ dữ liệu')}</strong>
-      <span>VAT 8%</span>
+      <span>VAT{totals.vatRatePercent == null ? '' : ` ${totals.vatRatePercent}%`}</span>
       <strong>{formatVndExact(totals.vatVnd, 'Chưa ghi nhận')}</strong>
       <span className="receipt-totals__grand">Tổng tiền phiếu (gồm VAT)</span>
       <strong className="receipt-totals__grand">

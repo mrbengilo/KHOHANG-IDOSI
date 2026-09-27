@@ -39,6 +39,52 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
     await closeDatabase();
   });
 
+  test('VAT settings writes are Admin-only and versioned; receipt DTO keeps its own snapshot', async () => {
+    const fx = await finalizedReceipt(repository);
+    const initial = (await repository.getOperationalSettings(fx.admin, 10)).current;
+    const inputFor = (current, rate) => ({
+      expectedVersion: current.version,
+      timezone: current.timezone,
+      snapshotTime: current.snapshotTime,
+      cutoffTime: current.cutoffTime,
+      maxRequestsPerStore: current.maxRequestsPerStore,
+      policyVersion: current.policyVersion,
+      idosiSyncIntervalMinutes: current.idosiSyncIntervalMinutes,
+      vatRatePercent: rate,
+    });
+    try {
+      for (const actor of [fx.htkd, fx.store])
+        await assert.rejects(
+          repository.updateOperationalSettings(actor, inputFor(initial, 10), context()),
+          (error) => error.code === 'FORBIDDEN',
+        );
+      const results = await Promise.allSettled([
+        repository.updateOperationalSettings(fx.admin, inputFor(initial, 10), context()),
+        repository.updateOperationalSettings(fx.admin, inputFor(initial, 12), context()),
+      ]);
+      assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
+      const current = (await repository.getOperationalSettings(fx.admin, 10)).current;
+      assert.equal(current.version, initial.version + 1);
+      const oldReceipt = await repository.getReceipt(fx.htkd, fx.receiptId);
+      assert.equal(oldReceipt.vat.ratePercent, initial.vatRatePercent);
+      assert.equal(oldReceipt.vatSettingsVersion, initial.version);
+      const newer = await finalizedReceipt(repository);
+      const newReceipt = await repository.getReceipt(newer.htkd, newer.receiptId);
+      assert.equal(newReceipt.vat.ratePercent, current.vatRatePercent);
+      assert.equal(newReceipt.vatSettingsVersion, current.version);
+      assert.equal(newReceipt.vat.amountVnd, (3_000_000 * current.vatRatePercent) / 100);
+      const history = await repository.getOperationalSettings(fx.admin, 10);
+      assert.equal(history.history[1].vatRatePercent, initial.vatRatePercent);
+    } finally {
+      const current = (await repository.getOperationalSettings(fx.admin, 10)).current;
+      await repository.updateOperationalSettings(
+        fx.admin,
+        inputFor(current, initial.vatRatePercent),
+        context(),
+      );
+    }
+  });
+
   test('store reports, HTKD approves once; scope, idempotency and DTOs hold', async () => {
     const fx = await finalizedReceipt(repository);
     const receipt = await repository.getReceipt(fx.store, fx.receiptId);
@@ -124,7 +170,6 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
       ],
       freightDeltaVnd: 0,
       handlingDeltaVnd: 0,
-      vatDeltaVnd: 0,
     };
     await assert.rejects(
       repository.actOnReceiptAdjustment(
@@ -246,13 +291,12 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
             receiptBagId: contextView.bags[1].receiptBagId,
             actualProductId: fx.jeansId,
             weightKg: '20.000',
-            pricePerKgVnd: 40_000,
+            disposition: 'RETURN',
             weightChangeNote: null,
           },
         ],
         freightDeltaVnd: 0,
         handlingDeltaVnd: 0,
-        vatDeltaVnd: 0,
       },
       randomUUID(),
       'v',
@@ -372,7 +416,6 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
         ],
         freightDeltaVnd: 0,
         handlingDeltaVnd: 0,
-        vatDeltaVnd: 0,
       },
       { action: 'REQUEST_INFO', expectedVersion: 0, note: 'Tự yêu cầu' },
       { action: 'APPLY', expectedVersion: 0, note: null },
@@ -443,7 +486,6 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
         ],
         freightDeltaVnd: 0,
         handlingDeltaVnd: 0,
-        vatDeltaVnd: 0,
       },
       randomUUID(),
       'v',
@@ -521,7 +563,6 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
       ],
       freightDeltaVnd: 0,
       handlingDeltaVnd: 0,
-      vatDeltaVnd: 0,
     });
     const act = (actor, input) =>
       repository.actOnReceiptAdjustment(
@@ -726,7 +767,6 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
       ],
       freightDeltaVnd: 0,
       handlingDeltaVnd: 0,
-      vatDeltaVnd: 0,
     };
     const firstKey = randomUUID();
     const outcomes = await Promise.allSettled([
@@ -1297,7 +1337,9 @@ async function finalizedReceipt(repository, { wholesale: wholesaleStore = false 
         ],
         freightVnd: 0,
         handlingVnd: 0,
-        vat: { amountVnd: 0, ratePercent: 8 },
+        expectedVatSettingsVersion: (
+          await repository.getReceiptVatConfiguration(htkdActor, declared.data.id)
+        ).version,
       },
       randomUUID(),
       randomUUID(),

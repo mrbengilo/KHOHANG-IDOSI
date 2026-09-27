@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 import { EntityIdSchema, IsoDateTimeSchema } from './common.js';
 
+export const VatRatePercentSchema = z.number().int().min(0).max(100);
+
 const BUSINESS_TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/u;
 
 export const BusinessTimeSchema = z
@@ -25,6 +27,7 @@ export const OperationalSettingsVersionSchema = z
     maxRequestsPerStore: z.number().int().min(1).max(10),
     policyVersion: z.string().trim().min(3).max(64),
     idosiSyncIntervalMinutes: IdosiSyncIntervalMinutesSchema,
+    vatRatePercent: VatRatePercentSchema,
     createdByAccountId: EntityIdSchema.nullable(),
     requestId: z.string().trim().min(1).max(128),
     createdAt: IsoDateTimeSchema,
@@ -65,6 +68,7 @@ export const UpdateOperationalSettingsRequestSchema = z
     maxRequestsPerStore: z.number().int().min(1).max(10),
     policyVersion: z.string().trim().min(3).max(64),
     idosiSyncIntervalMinutes: IdosiSyncIntervalMinutesSchema,
+    vatRatePercent: VatRatePercentSchema,
   })
   .strict()
   .refine((settings) => settings.cutoffTime > settings.snapshotTime, {

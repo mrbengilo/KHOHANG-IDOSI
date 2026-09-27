@@ -247,6 +247,7 @@ describe('KHOHANG-IDOSI API', () => {
         maxRequestsPerStore: 2,
         policyVersion: 'ALLOC-v1.3',
         idosiSyncIntervalMinutes: 15,
+        vatRatePercent: 8,
       },
     });
     assert.equal(invalidSchedule.statusCode, 400);
@@ -264,6 +265,7 @@ describe('KHOHANG-IDOSI API', () => {
         maxRequestsPerStore: 2,
         policyVersion: 'ALLOC-v1.3',
         idosiSyncIntervalMinutes: 15,
+        vatRatePercent: 8,
         integrationSecret: 'must-not-be-accepted',
       },
     });
@@ -281,10 +283,13 @@ describe('KHOHANG-IDOSI API', () => {
         maxRequestsPerStore: 3,
         policyVersion: 'ALLOC-v1.3',
         idosiSyncIntervalMinutes: 30,
+        vatRatePercent: 10,
       },
     });
     assert.equal(updated.statusCode, 200);
     assert.equal(updated.json().data.current.version, 2);
+    assert.equal(updated.json().data.current.vatRatePercent, 10);
+    assert.equal(updated.json().data.history[1].vatRatePercent, 8);
     assert.equal(updated.json().data.current.createdByAccountId, MEMORY_SEED_IDS.adminAccount);
     assert.equal(updated.json().data.current.requestId, 'settings-update-request');
     assert.deepEqual(
@@ -304,6 +309,7 @@ describe('KHOHANG-IDOSI API', () => {
         maxRequestsPerStore: 2,
         policyVersion: 'ALLOC-v1.4',
         idosiSyncIntervalMinutes: 15,
+        vatRatePercent: 8,
       },
     });
     assert.equal(stale.statusCode, 409);
@@ -1983,10 +1989,16 @@ describe('KHOHANG-IDOSI API', () => {
       ],
       freightVnd: 10_000,
       handlingVnd: 5_000,
-      vat: { amountVnd: 9_208, ratePercent: 8 },
+      expectedVatSettingsVersion: (
+        await app.inject({
+          method: 'GET',
+          url: '/api/v1/store-receipts/' + receiptId + '/vat-configuration',
+          headers: { cookie: htkdCookie },
+        })
+      ).json().data.version,
       expectedVersion: 1,
     };
-    const { vat: _vat, ...withoutVat } = finalization;
+    const { expectedVatSettingsVersion: _vat, ...withoutVat } = finalization;
     const missingVat = await mutateReceipt(
       htkdCookie,
       'POST',
@@ -2052,7 +2064,7 @@ describe('KHOHANG-IDOSI API', () => {
     // 1.255 kg × 20,001 + 7.5 kg of excess × 10,000 + freight 10,000 + handling 5,000;
     // the delivery-note VAT is kept beside the landed cost, not added to it.
     assert.equal(finalized.json().data.totalCostVnd, 115_101);
-    assert.deepEqual(finalized.json().data.vat, finalization.vat);
+    assert.deepEqual(finalized.json().data.vat, { amountVnd: 9208, ratePercent: 8 });
     // The receipt total adds the entered VAT on top of the landed cost.
     assert.equal(finalized.json().data.totalAmountVnd, 115_101 + 9_208);
 

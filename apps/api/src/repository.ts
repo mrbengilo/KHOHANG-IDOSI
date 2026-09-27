@@ -615,6 +615,10 @@ export interface WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<Receipt>>;
+  getReceiptVatConfiguration(
+    actor: AuthenticatedPrincipal,
+    receiptId: string,
+  ): Promise<{ ratePercent: number; version: number }>;
   finalizeStoreReceipt(
     actor: AuthenticatedPrincipal,
     receiptId: string,

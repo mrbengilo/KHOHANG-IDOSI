@@ -27,6 +27,7 @@ const settingsQueryKey = ['admin', 'operational-settings'] as const;
 const historyLimit = 10;
 
 export interface OperationalSettingsDraft {
+  readonly vatRatePercent: string;
   readonly timezone: 'Asia/Ho_Chi_Minh';
   readonly snapshotTime: string;
   readonly cutoffTime: string;
@@ -39,6 +40,7 @@ export function settingsDraftFromVersion(
   settings: OperationalSettingsVersion,
 ): OperationalSettingsDraft {
   return {
+    vatRatePercent: String(settings.vatRatePercent),
     timezone: settings.timezone,
     snapshotTime: settings.snapshotTime,
     cutoffTime: settings.cutoffTime,
@@ -65,6 +67,9 @@ export function settingsUpdateFromDraft(
 
   const parsed = UpdateOperationalSettingsRequestSchema.safeParse({
     expectedVersion,
+    vatRatePercent: /^\d{1,3}$/.test(draft.vatRatePercent.trim())
+      ? Number(draft.vatRatePercent)
+      : NaN,
     timezone: draft.timezone,
     snapshotTime: draft.snapshotTime,
     cutoffTime: draft.cutoffTime,
@@ -267,6 +272,24 @@ function SettingsEditor({
           </div>
         </section>
 
+        <section className="settings-panel" aria-labelledby="settings-vat-heading">
+          <h2 id="settings-vat-heading">Thuế suất VAT</h2>
+          <p>Áp dụng khi chốt phiếu mới. Phiếu đã chốt giữ thuế suất riêng.</p>
+          <label className="settings-field">
+            <span>Thuế suất (%)</span>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              step="1"
+              required
+              disabled={saving}
+              value={draft.vatRatePercent}
+              onChange={(event) => update('vatRatePercent', event.target.value)}
+            />
+            <small>Số nguyên từ 0 đến 100%. Hiện tại: {overview.current.vatRatePercent}%.</small>
+          </label>
+        </section>
         <section className="settings-panel" aria-labelledby="settings-integration-heading">
           <div className="settings-section-heading">
             <span className="settings-section-icon settings-section-icon--integration">
@@ -374,7 +397,10 @@ function SettingsHistory({ history }: { readonly history: readonly OperationalSe
               </span>
             </div>
             <small>
-              {formatSettingsTimestamp(settings.createdAt)} · {settings.policyVersion}
+              {formatSettingsTimestamp(settings.createdAt)} · {settings.policyVersion} · VAT{' '}
+              {history[index + 1] ? history[index + 1]!.vatRatePercent + '% → ' : ''}
+              {settings.vatRatePercent}% · Người sửa:{' '}
+              {settings.createdByAccountId ?? 'Khởi tạo hệ thống'}
             </small>
           </li>
         ))}
@@ -412,6 +438,7 @@ function SettingsLoadError({
 
 function sameDraft(left: OperationalSettingsDraft, right: OperationalSettingsDraft): boolean {
   return (
+    left.vatRatePercent === right.vatRatePercent &&
     left.timezone === right.timezone &&
     left.snapshotTime === right.snapshotTime &&
     left.cutoffTime === right.cutoffTime &&

@@ -25,7 +25,6 @@ describe('single approval command', () => {
     expect(ReceiptAdjustmentActionRequestSchema.parse(input)).toMatchObject({
       freightDeltaVnd: 0,
       handlingDeltaVnd: 0,
-      vatDeltaVnd: 0,
     });
     for (const invalid of [
       { ...input, lines: [] },
@@ -35,6 +34,28 @@ describe('single approval command', () => {
       { ...input, lines: [{ ...input.lines[0], pricePerKgVnd: undefined }] },
     ])
       expect(ReceiptAdjustmentActionRequestSchema.safeParse(invalid).success).toBe(false);
+  });
+  it('accepts RETURN without price and rejects client-owned VAT or reduction amounts', () => {
+    const returned = {
+      ...input,
+      lines: [{ receiptBagId: id, actualProductId: other, weightKg: '20', disposition: 'RETURN' }],
+    };
+    expect(ReceiptAdjustmentActionRequestSchema.safeParse(returned).success).toBe(true);
+    for (const extra of [
+      { vatDeltaVnd: 0 },
+      { vatRatePercent: 8 },
+      { goodsDeltaVnd: -1_000_000 },
+    ]) {
+      expect(
+        ReceiptAdjustmentActionRequestSchema.safeParse({ ...returned, ...extra }).success,
+      ).toBe(false);
+    }
+    expect(
+      ReceiptAdjustmentActionRequestSchema.safeParse({
+        ...returned,
+        lines: [{ ...returned.lines[0], disposition: 'KEEP' }],
+      }).success,
+    ).toBe(false);
   });
 });
 

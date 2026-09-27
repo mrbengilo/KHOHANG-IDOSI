@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  operationalSettingsVersions,
   allocationLines,
   allocationRuns,
   applyWarehouseMovement,
@@ -193,7 +194,9 @@ export async function finalizedReceipt(
     reviewedByUserId: input.htkdId,
     freightVnd: 0n,
     handlingVnd: 0n,
-    vat: { amountVnd: 0n, ratePercent: 8 },
+    expectedVatSettingsVersion: Math.max(
+      ...(await db.select().from(operationalSettingsVersions)).map((row) => row.version),
+    ),
     lines: [
       {
         productId: input.productId,

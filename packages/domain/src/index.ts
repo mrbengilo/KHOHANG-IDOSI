@@ -6,6 +6,7 @@ export * from './policy.js';
 export * from './priority-offers.js';
 export * from './receipt-adjustments.js';
 export * from './receipts.js';
+export * from './receipt-vat.js';
 export * from './validation.js';
 export * from './value-objects.js';
 export * from './wait-tickets.js';

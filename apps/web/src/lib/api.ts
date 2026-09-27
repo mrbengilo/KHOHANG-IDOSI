@@ -1,3 +1,4 @@
+import { ReceiptVatConfigurationResponseSchema } from '@idosi/contracts';
 import { InboundStatisticsResponseSchema, type InboundStatisticsQuery } from '@idosi/contracts';
 import { ListReceiptSummariesResponseSchema } from '@idosi/contracts';
 import { ListSessionDocumentsResponseSchema } from '@idosi/contracts';
@@ -729,6 +730,12 @@ export function finalizeStoreReceipt(
     input,
     idempotencyKey,
   );
+}
+
+export async function getReceiptVatConfiguration(receiptId: string) {
+  return ReceiptVatConfigurationResponseSchema.parse(
+    await request('/store-receipts/' + encodeURIComponent(receiptId) + '/vat-configuration'),
+  ).data;
 }
 
 export async function getInboundStatistics(input: InboundStatisticsQuery) {

@@ -339,12 +339,19 @@ export async function actOnAdjustment(
           receiptBagId: line.receiptBagId,
           actualProductId: line.actualProductId,
           weightKg: line.weightKg,
-          pricePerKgVnd: BigInt(line.pricePerKgVnd),
+          ...(line.pricePerKgVnd === undefined
+            ? {}
+            : { pricePerKgVnd: BigInt(line.pricePerKgVnd) }),
+          ...(line.disposition === undefined
+            ? {}
+            : {
+                disposition:
+                  line.disposition === 'RETURN' ? ('return' as const) : ('keep' as const),
+              }),
           weightChangeNote: line.weightChangeNote,
         })),
         freightDeltaVnd: BigInt(input.freightDeltaVnd),
         handlingDeltaVnd: BigInt(input.handlingDeltaVnd),
-        vatDeltaVnd: BigInt(input.vatDeltaVnd),
       };
       break;
     case 'APPLY':
@@ -749,6 +756,7 @@ function adjustmentDto(record: ReceiptAdjustmentRecord, role: Role): ReceiptAdju
     receiptId: record.receiptId,
     receiptNumber: record.receiptNumber,
     receiptFinalizedAt: record.receiptFinalizedAt?.toISOString() ?? null,
+    vatRatePercent: record.vatRatePercent,
     storeId: record.storeId,
     status,
     version: record.version,

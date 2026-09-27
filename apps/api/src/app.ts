@@ -1204,6 +1204,13 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return reply.send({ data: result.data });
   });
 
+  app.get('/api/v1/store-receipts/:receiptId/vat-configuration', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    const { receiptId } = ReceiptParamsSchema.parse(request.params);
+    reply.header('cache-control', 'no-store');
+    return { data: await repository.getReceiptVatConfiguration(session.principal, receiptId) };
+  });
+
   app.post('/api/v1/store-receipts/:receiptId/finalize', async (request, reply) => {
     const session = await authenticate(request, repository);
     requireRole(session.principal, ['ADMIN', 'HTKD']);
@@ -2589,10 +2596,27 @@ function openApiDocument(): Record<string, unknown> {
           responses: { '200': { description: 'Returned for store correction' } },
         },
       },
+      '/api/v1/store-receipts/{receiptId}/vat-configuration': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': {
+              description:
+                'Current VAT rate (integer 0..100) and settings version, scoped by receipt read permission',
+            },
+            '403': { description: 'Receipt outside account scope' },
+          },
+        },
+      },
       '/api/v1/store-receipts/{receiptId}/finalize': {
         post: {
           security: cookieSecurity,
-          responses: { '200': { description: 'Finalized receipt and inventory' } },
+          responses: {
+            '200': {
+              description:
+                'Finalized receipt and inventory; server-calculated VAT using expectedVatSettingsVersion. Stale settings return 409; legacy manual vat payload returns 400.',
+            },
+          },
         },
       },
       '/api/v1/store-receipts/{receiptId}/adjustment-context': {

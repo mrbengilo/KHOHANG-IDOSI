@@ -144,6 +144,9 @@ test('store reports a mixed-up bag, HTKD approves once: money, stock and P0B rig
     await expect(detail).toContainText('Sau điều chỉnh (đã có hiệu lực)');
     await expect(detail).toContainText('Chờ cấp (ưu tiên P0B)');
     await expect(page.locator('.adjustment-money__effective')).toContainText('2.800.000');
+    await expect(page.locator('.adjustment-money__effective')).toContainText('224.000');
+    await expect(page.locator('.adjustment-money__effective')).toContainText('3.024.000');
+    await expect(page.locator('.adjustment-money')).toContainText('−216.000');
     await assertNoOverflow(page, testInfo.outputPath('htkd-applied'));
 
     const bags = await client.db
@@ -189,7 +192,7 @@ test('store reports a mixed-up bag, HTKD approves once: money, stock and P0B rig
       .filter({ hasText: 'Chờ HTKD xác minh' })
       .first()
       .click();
-    await detail.getByLabel('Giá / kg mặt hàng thực tế (VND)').fill('40000');
+    await expect(detail.getByLabel('Giá / kg mặt hàng thực tế (VND)')).toHaveCount(0);
     await detail.getByLabel('Nguyên nhân').selectOption('SOURCE_MISCLASSIFICATION');
     await detail.getByLabel('Ghi chú xác minh').fill('HTKD xác minh trả ngay đúng bao nguồn');
     await expect(detail).toContainText('nhập ngay về kho tổng');
@@ -198,6 +201,9 @@ test('store reports a mixed-up bag, HTKD approves once: money, stock and P0B rig
     await expect(detail).toContainText('Đã xử lý');
     await expect(detail.locator('.adjustment-returns')).toContainText('Kho đã nhận');
     await expect(page.locator('.adjustment-money__effective')).toContainText('1.800.000');
+    await expect(page.locator('.adjustment-money__effective')).toContainText('144.000');
+    await expect(page.locator('.adjustment-money__effective')).toContainText('1.944.000');
+    await expect(page.locator('.adjustment-money')).toContainText('−1.296.000');
     await expect(page.getByRole('button', { name: 'Bàn giao trả kho', exact: true })).toHaveCount(
       0,
     );
