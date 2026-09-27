@@ -23,6 +23,7 @@ pg(
         id integer PRIMARY KEY, status text, quantity integer DEFAULT 1,
         handed_over_by_user_id uuid, handed_over_at timestamptz,
         received_by_user_id uuid, received_at timestamptz, received_quantity integer,
+        store_id uuid,
         CONSTRAINT store_receipt_returns_handover_state CHECK (
           status IN ('pending_handover', 'cancelled') OR (handed_over_by_user_id IS NOT NULL AND handed_over_at IS NOT NULL)),
         CONSTRAINT store_receipt_returns_receive_state CHECK (
@@ -38,6 +39,22 @@ pg(
         'utf8',
       );
       await client.query(migration);
+      const index = await client.query(
+        "SELECT indexdef FROM pg_indexes WHERE schemaname=$1 AND indexname='store_receipt_returns_effective_store_idx'",
+        [schema],
+      );
+      expect(index.rows[0]?.indexdef).toContain(
+        'COALESCE(auto_completed_at, handed_over_at), store_id',
+      );
+      // A tiny fixture normally favors a sequential scan; force alternatives only to prove
+      // this exact report predicate can use the expression index, not to claim a benchmark.
+      await client.query('SET LOCAL enable_seqscan=off');
+      const plan = await client.query(`EXPLAIN SELECT * FROM store_receipt_returns
+      WHERE coalesce(auto_completed_at, handed_over_at) >= now() - interval '1 day'
+      AND coalesce(auto_completed_at, handed_over_at) < now() + interval '1 day'`);
+      expect(plan.rows.map((row) => row['QUERY PLAN']).join('\n')).toContain(
+        'store_receipt_returns_effective_store_idx',
+      );
       const after = (await client.query('SELECT * FROM store_receipt_returns ORDER BY id')).rows;
       expect(after).toEqual(
         before.map((row) => ({ ...row, auto_completed_at: null, auto_completed_by_user_id: null })),

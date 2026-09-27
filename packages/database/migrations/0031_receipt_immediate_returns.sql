@@ -24,3 +24,7 @@ ALTER TABLE store_receipt_returns ADD CONSTRAINT store_receipt_returns_auto_comp
    AND received_quantity IS NOT NULL AND received_quantity = quantity AND handed_over_at IS NULL AND handed_over_by_user_id IS NULL
    AND received_at IS NULL AND received_by_user_id IS NULL)
 );
+--> statement-breakpoint
+CREATE INDEX store_receipt_returns_effective_store_idx
+  ON store_receipt_returns (coalesce(auto_completed_at, handed_over_at), store_id)
+  WHERE coalesce(auto_completed_at, handed_over_at) IS NOT NULL;

@@ -2044,6 +2044,9 @@ export const storeReceiptReturns = pgTable(
     ),
     index('store_receipt_returns_status_idx').on(table.status, table.createdAt),
     index('store_receipt_returns_handed_over_idx').on(table.handedOverAt),
+    index('store_receipt_returns_effective_store_idx')
+      .on(sql`coalesce(${table.autoCompletedAt}, ${table.handedOverAt})`, table.storeId)
+      .where(sql`coalesce(${table.autoCompletedAt}, ${table.handedOverAt}) IS NOT NULL`),
     check('store_receipt_returns_code_format', sql`${table.code} ~ '^PTH-[0-9]{6}$'`),
     check('store_receipt_returns_quantity', sql`${table.quantity} = 1`),
     check(
