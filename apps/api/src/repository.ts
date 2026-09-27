@@ -1,3 +1,4 @@
+import type { InboundStatistics, InboundStatisticsQuery } from '@idosi/contracts';
 import type { ReceiptSummary } from '@idosi/contracts';
 import type { SessionDocument } from '@idosi/contracts';
 import type { ListStoreBagOpeningsQuery, StoreBagOpening } from '@idosi/contracts';
@@ -868,6 +869,11 @@ export interface WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<PriorityOffer>>;
+
+  getInboundStatistics(
+    actor: AuthenticatedPrincipal,
+    query: InboundStatisticsQuery,
+  ): Promise<InboundStatistics>;
 
   getMonthlyOperationalReport(
     actor: AuthenticatedPrincipal,

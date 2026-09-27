@@ -48,6 +48,7 @@ export const routeAccessPolicies = {
   },
   '/catalog': { roles: ['ADMIN', 'HTKD'] },
   '/costs': { roles: ['ADMIN', 'HTKD'] },
+  '/inbound-statistics': { roles: ['ADMIN'] },
   '/reports': { roles: ['ADMIN', 'HTKD'] },
   '/stores': { roles: ['ADMIN'] },
   '/users': { roles: ['ADMIN'] },

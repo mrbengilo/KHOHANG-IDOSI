@@ -1,3 +1,10 @@
+import type { InboundStatistics, InboundStatisticsQuery } from '@idosi/contracts';
+import {
+  inboundPeriod,
+  summarizeInboundStatistics,
+  InboundScopeError,
+  type InboundAggregate,
+} from '@idosi/database';
 import type { ReceiptSummary } from '@idosi/contracts';
 import type { SessionDocument } from '@idosi/contracts';
 import type { ListStoreBagOpeningsQuery, StoreBagOpening } from '@idosi/contracts';
@@ -355,6 +362,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly productConversions = new Map<string, ProductConversion>();
   private readonly orderRequests = new Map<string, StoreOrderRequest>();
   private readonly inboundReceipts = new Map<string, InboundReceipt>();
+  private readonly receiptFinalizedAt = new Map<string, string>();
   private readonly receipts = new Map<string, Receipt>();
   private readonly shortageChecks = new Map<string, WarehouseShortageCheck>();
   private readonly shortageCheckMutations = new Map<string, { hash: string; checkId: string }>();
@@ -3031,6 +3039,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       updatedAt: this.now().toISOString(),
       version: current.version + 1,
     };
+    this.receiptFinalizedAt.set(receiptId, this.now().toISOString());
     this.receipts.set(receiptId, updated);
     this.rememberReceipt(scopedKey, requestHash, updated);
     for (const line of input.lines) {
@@ -4790,6 +4799,67 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       updated,
     );
     return { data: structuredClone(updated), replayed: false };
+  }
+
+  public async getInboundStatistics(
+    actor: AuthenticatedPrincipal,
+    query: InboundStatisticsQuery,
+  ): Promise<InboundStatistics> {
+    if (actor.role !== 'ADMIN') throw forbidden();
+    const period = inboundPeriod(query);
+    const inPeriod = (time: string | undefined) =>
+      time !== undefined && time >= period.start && time < period.endExclusive;
+    const rows: InboundAggregate[] = [];
+    const push = (
+      source: 'WAREHOUSE' | 'PARTNER',
+      storeId: string,
+      productId: string,
+      quantity: number,
+      weights: readonly string[],
+    ) => {
+      const product = this.products.get(productId);
+      rows.push({
+        source,
+        storeId,
+        productId,
+        sku: product?.sku ?? productId,
+        productName: product?.name ?? productId,
+        bagQuantity: String(quantity),
+        weightGrams: String(weights.reduce((sum, kg) => sum + kilogramsToGramsExact(kg), 0n)),
+        bagsComplete: weights.length <= quantity,
+        weightComplete: weights.length === quantity,
+      });
+    };
+    for (const receipt of this.receipts.values()) {
+      if (receipt.status !== 'FINALIZED' || !inPeriod(this.receiptFinalizedAt.get(receipt.id)))
+        continue;
+      for (const line of receipt.lines)
+        push('WAREHOUSE', receipt.storeId, line.productId, line.receivedUnits, line.bagWeightsKg);
+      for (const line of receipt.unexpectedItems ?? [])
+        push('WAREHOUSE', receipt.storeId, line.productId, line.quantity, line.bagWeightsKg ?? []);
+    }
+    for (const receipt of this.partnerInbounds.values()) {
+      if (!inPeriod(receipt.receivedAt)) continue;
+      for (const line of receipt.lines)
+        push('PARTNER', receipt.storeId, line.productId, line.quantity, line.bagWeightsKg);
+    }
+    try {
+      return summarizeInboundStatistics(
+        query,
+        rows,
+        [...this.stores.values()].map((s) => ({
+          id: s.id,
+          code: s.code,
+          name: s.name,
+          kind: s.kind,
+        })),
+        this.now(),
+      );
+    } catch (error) {
+      if (error instanceof InboundScopeError)
+        throw new ApiError('VALIDATION_ERROR', error.message, 400);
+      throw error;
+    }
   }
 
   public async getMonthlyOperationalReport(

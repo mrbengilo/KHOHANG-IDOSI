@@ -3,6 +3,12 @@ import { createBrowserRouter } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
 import { DashboardSkeleton } from './components/Skeleton';
 
+const InboundStatisticsPage = lazy(() =>
+  import('./pages/InboundStatisticsPage').then((module) => ({
+    default: module.InboundStatisticsPage,
+  })),
+);
+
 const DashboardPage = lazy(() =>
   import('./pages/DashboardPage').then((module) => ({ default: module.DashboardPage })),
 );
@@ -94,6 +100,7 @@ export const router = createBrowserRouter([
       { path: 'transfers', element: suspense(<TransfersPage />) },
       { path: 'catalog', element: suspense(<CatalogPage />) },
       { path: 'costs', element: suspense(<ReceivePage />) },
+      { path: 'inbound-statistics', element: suspense(<InboundStatisticsPage />) },
       { path: 'reports', element: suspense(<ReportsPage />) },
       { path: 'stores', element: suspense(<StoresPage />) },
       { path: 'users', element: suspense(<UsersPage />) },
