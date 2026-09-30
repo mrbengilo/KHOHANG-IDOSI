@@ -9,11 +9,22 @@ interface StatCardProps {
   detail: string;
   tone?: StatusTone;
   badge?: ReactNode;
+  /** Số liệu quan trọng (đỏ) độc lập với tone trạng thái nghiệp vụ. */
+  emphasis?: 'important' | undefined;
 }
 
-export function StatCard({ badge, detail, label, tone = 'neutral', value }: StatCardProps) {
+export function StatCard({
+  badge,
+  detail,
+  emphasis,
+  label,
+  tone = 'neutral',
+  value,
+}: StatCardProps) {
   return (
-    <article className={clsx('stat-card', `stat-card--${tone}`)}>
+    <article
+      className={clsx('stat-card', `stat-card--${tone}`, emphasis && `stat-card--${emphasis}`)}
+    >
       <div className="stat-card__topline">
         <span>{label}</span>
         {badge ? <Badge tone={tone}>{badge}</Badge> : null}

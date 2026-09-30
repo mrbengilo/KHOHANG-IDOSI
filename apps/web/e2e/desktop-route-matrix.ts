@@ -1,0 +1,52 @@
+// Route × role manifest mirrors apps/web/src/lib/access.ts; denied routes are tested separately.
+export const desktopViewports = [
+  [1366, 768],
+  [1440, 900],
+  [1920, 1080],
+  [2560, 1440],
+] as const;
+
+export const routesByRole: Record<string, readonly string[]> = {
+  ADMIN: [
+    '/',
+    '/warehouse-inbound',
+    '/allocations',
+    '/costs',
+    '/inventory',
+    '/sales',
+    '/sorting',
+    '/transfers',
+    '/inbound-statistics',
+    '/reports',
+    '/stores',
+    '/users',
+    '/catalog',
+    '/settings',
+    '/audit',
+  ],
+  HTKD: [
+    '/',
+    '/warehouse-inbound',
+    '/allocations',
+    '/requests',
+    '/receive',
+    '/costs',
+    '/partner-inbound',
+    '/inventory',
+    '/transfers',
+    '/reports',
+    '/catalog',
+  ],
+  STORE_RETAIL: [
+    '/',
+    '/allocations',
+    '/requests',
+    '/receive',
+    '/inventory',
+    '/open-bag',
+    '/sales',
+    '/sorting',
+    '/transfers',
+  ],
+  STORE_WHOLESALE: ['/', '/allocations', '/requests'],
+};

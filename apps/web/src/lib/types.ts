@@ -2,7 +2,8 @@ export type Role = 'ADMIN' | 'HTKD' | 'STORE' | 'WHOLESALE';
 export type StoreKind = 'RETAIL' | 'WHOLESALE';
 export type DemoMode = 'ADMIN' | 'HTKD' | 'STORE_RETAIL' | 'STORE_WHOLESALE';
 
-export type StatusTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'priority';
+export type StatusTone =
+  'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'priority' | 'accent';
 
 export interface ProductConversion {
   id: string;

@@ -403,6 +403,7 @@
 }
 
 .adjustment-compare__delta strong {
+  color: var(--danger);
   font-size: 16px;
 }
 
