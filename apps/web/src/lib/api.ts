@@ -1,3 +1,4 @@
+import { requestJson } from './http-request';
 import { ReceiptVatConfigurationResponseSchema } from '@idosi/contracts';
 import { InboundStatisticsResponseSchema, type InboundStatisticsQuery } from '@idosi/contracts';
 import { ListReceiptSummariesResponseSchema } from '@idosi/contracts';
@@ -10,7 +11,6 @@ import {
   InboundReceiptResponseSchema,
   ListInboundReceiptsResponseSchema,
   type CreateInboundReceiptRequest,
-  ErrorEnvelopeSchema,
   CancelWaitTicketRequestSchema,
   CancelStoreOrderRequestSchema,
   CreateOrderSessionRequestSchema,
@@ -75,12 +75,7 @@ import {
 } from '@idosi/contracts';
 import { businessDate } from './business-time';
 import { shouldEnableMockMode } from './runtime-mode';
-import { reportUnauthorizedResponse } from './session-expiry';
-import { addTabSessionHeader } from './tab-session';
 import type { ProductConversion as CatalogProduct } from './types';
-
-const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
-const apiBaseUrl = (configuredBaseUrl || '/api/v1').replace(/\/$/, '');
 
 export const mockModeEnabled = shouldEnableMockMode(
   import.meta.env.DEV,
@@ -104,43 +99,7 @@ export class ApiClientError extends Error {
 
 /** JSON request with the session cookie, tab header and structured API errors. */
 export async function request(path: string, init?: RequestInit): Promise<unknown> {
-  const headers = new Headers(init?.headers);
-  if (!headers.has('Accept')) headers.set('Accept', 'application/json');
-  if (init?.body !== undefined && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
-  }
-  addTabSessionHeader(headers);
-
-  let response: Response;
-  try {
-    response = await fetch(`${apiBaseUrl}${path}`, {
-      ...init,
-      credentials: 'include',
-      headers,
-    });
-  } catch {
-    throw new ApiClientError(
-      'Không thể kết nối máy chủ. Vui lòng kiểm tra mạng và thử lại.',
-      0,
-      'NETWORK_ERROR',
-    );
-  }
-
-  reportUnauthorizedResponse(response.status, path);
-  const payload: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const parsed = ErrorEnvelopeSchema.safeParse(payload);
-    if (parsed.success) {
-      throw new ApiClientError(
-        parsed.data.error.message,
-        response.status,
-        parsed.data.error.code,
-        parsed.data.error.requestId,
-      );
-    }
-    throw new ApiClientError(`Yêu cầu thất bại (${response.status}).`, response.status);
-  }
-  return payload;
+  return requestJson(path, init, ApiClientError);
 }
 
 export interface ParsedPage<T> {
@@ -200,9 +159,9 @@ export function daysAgo(days: number, now = new Date()): string {
   return new Date(now.getTime() - days * 24 * 60 * 60 * 1_000).toISOString();
 }
 
-export async function getSession(): Promise<Session | null> {
+export async function getSession(context?: { signal?: AbortSignal }): Promise<Session | null> {
   try {
-    const payload = await request('/auth/session');
+    const payload = await request('/auth/session', { signal: context?.signal ?? null });
     return GetSessionResponseSchema.parse(payload).data;
   } catch (error) {
     if (error instanceof ApiClientError && error.status === 401) return null;

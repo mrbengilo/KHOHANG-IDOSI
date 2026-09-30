@@ -82,12 +82,12 @@ export function HeldAllocationsPanel({
         <Badge tone="warning">{totalUnits} bao đang giữ</Badge>
       </div>
       <div className="responsive-table">
-        <table>
+        <table className="table-density">
           <thead>
             <tr>
               {audience === 'OPERATIONS' ? <th>Cửa hàng</th> : null}
               <th>Mặt hàng</th>
-              <th>Số bao đang giữ</th>
+              <th className="table-number">Số bao đang giữ</th>
               <th>Giữ từ</th>
             </tr>
           </thead>
@@ -96,7 +96,9 @@ export function HeldAllocationsPanel({
               <tr key={row.key}>
                 {audience === 'OPERATIONS' ? <td data-label="Cửa hàng">{row.storeName}</td> : null}
                 <td data-label="Mặt hàng">{row.productName}</td>
-                <td data-label="Số bao đang giữ">{row.heldUnits} bao</td>
+                <td className="table-number" data-label="Số bao đang giữ">
+                  {row.heldUnits} bao
+                </td>
                 <td data-label="Giữ từ">
                   {new Date(row.heldSince).toLocaleString('vi-VN', {
                     timeZone: 'Asia/Ho_Chi_Minh',

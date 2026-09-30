@@ -225,4 +225,5 @@ jobs:
           retention-days: 14
           path: |
             apps/web/test-results/**/*.png
-            apps/web/test-results/**/receipt-load-measurement.json
+            apps/web/test-results/**/*.json
+            apps/web/test-results/**/*.zip

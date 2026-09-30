@@ -1005,7 +1005,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
         ) : null}
         {sessionsQuery.data && sessionsQuery.data.length > 0 ? (
           <div className="responsive-table">
-            <table>
+            <table className="table-density">
               <thead>
                 <tr>
                   <th>Thời gian</th>
@@ -1305,7 +1305,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                 <details>
                   <summary>Phiếu đặt hàng tổng hợp · {document.orderCode}</summary>
                   <div className="document-history">
-                    <table>
+                    <table className="table-density table-density--metrics">
                       <thead>
                         <tr>
                           <th>Mặt hàng</th>
@@ -1333,7 +1333,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                 </details>
                 <h4>Phiếu kết quả phân bổ · {document.resultCode}</h4>
                 <div className="document-history">
-                  <table>
+                  <table className="table-density table-density--metrics">
                     <thead>
                       <tr>
                         <th>Mặt hàng</th>

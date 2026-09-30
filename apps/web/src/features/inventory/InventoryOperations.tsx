@@ -647,14 +647,14 @@ function StoreInventoryPage({
                 />
               ) : (
                 <div className="responsive-table">
-                  <table>
+                  <table className="table-density">
                     <thead>
                       <tr>
                         <th>Mã bao</th>
                         <th>Mặt hàng</th>
                         <th>Cửa hàng</th>
                         <th>Trạng thái</th>
-                        <th>Còn lại</th>
+                        <th className="table-number">Còn lại</th>
                         <th>Thao tác</th>
                       </tr>
                     </thead>
@@ -674,7 +674,9 @@ function StoreInventoryPage({
                               {statusCopy[bag.status].label}
                             </Badge>
                           </td>
-                          <td data-label="Còn lại">{formatKg(bag.remainingWeightKg)}</td>
+                          <td className="table-number" data-label="Còn lại">
+                            {formatKg(bag.remainingWeightKg)}
+                          </td>
                           <td data-label="Thao tác">
                             <button
                               aria-label={`Xem sổ phát sinh ${bag.bagCode}`}
@@ -1946,12 +1948,12 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
               />
             ) : (
               <div className="responsive-table">
-                <table>
+                <table className="table-density">
                   <thead>
                     <tr>
                       <th>Cửa hàng</th>
                       <th>Mặt hàng</th>
-                      <th>Sale còn</th>
+                      <th className="table-number">Sale còn</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1961,7 +1963,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
                         <td data-label="Mặt hàng">
                           {productNames.get(item.productId) ?? item.productId}
                         </td>
-                        <td data-label="Sale còn">
+                        <td className="table-number" data-label="Sale còn">
                           <strong>{formatKgExact(gramsToKilograms(item.saleGrams))}</strong>
                         </td>
                       </tr>
@@ -2163,7 +2165,7 @@ function SortingHistoryPanel({
       ) : (
         <>
           <div className="responsive-table" aria-busy={historyQuery.isFetching}>
-            <table>
+            <table className="table-density">
               <thead>
                 <tr>
                   <th>Thời gian</th>
@@ -2171,7 +2173,7 @@ function SortingHistoryPanel({
                   <th>Mã bao</th>
                   <th>Mặt hàng</th>
                   <th>Xử lý</th>
-                  <th>Khối lượng</th>
+                  <th className="table-number">Khối lượng</th>
                   <th>Người thực hiện</th>
                 </tr>
               </thead>
@@ -2193,7 +2195,7 @@ function SortingHistoryPanel({
                         {sortingHistoryCopy[row.action].label}
                       </Badge>
                     </td>
-                    <td data-label="Khối lượng">
+                    <td className="table-number" data-label="Khối lượng">
                       <strong>{formatKgExact(row.weightKg)}</strong>
                     </td>
                     <td data-label="Người thực hiện">{row.actorDisplayName ?? '—'}</td>

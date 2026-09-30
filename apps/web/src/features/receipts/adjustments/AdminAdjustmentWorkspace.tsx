@@ -367,7 +367,7 @@ export function AdminAdjustmentWorkspace() {
               />
             ) : (
               <div className="responsive-table adjustment-workspace__table">
-                <table>
+                <table className="table-density">
                   <thead>
                     <tr>
                       <th>Hồ sơ</th>
@@ -375,7 +375,7 @@ export function AdminAdjustmentWorkspace() {
                       <th>Cửa hàng báo</th>
                       <th>Xác minh hàng</th>
                       <th>Nội dung</th>
-                      <th>Tiền hàng</th>
+                      <th className="table-number">Tiền hàng</th>
                       <th>Trạng thái / xử lý</th>
                       <th>
                         <span className="sr-only">Thao tác</span>
@@ -427,7 +427,7 @@ export function AdminAdjustmentWorkspace() {
                               </small>
                             </span>
                           </td>
-                          <td data-label="Tiền hàng">
+                          <td className="table-number" data-label="Tiền hàng">
                             <span className="adjustment-cell">
                               {money.value ?? '—'}
                               <small>{money.label}</small>

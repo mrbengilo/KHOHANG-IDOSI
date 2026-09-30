@@ -44,6 +44,31 @@
 .document-history td::before {
   display: none;
 }
+/* Opt in per measured document: merged cells keep their real column semantics. */
+.document-history--compact table {
+  width: auto;
+  min-width: 0;
+}
+.document-history--compact th,
+.document-history--compact td {
+  padding: 8px 10px;
+  min-width: 0;
+  max-width: 20rem;
+}
+.document-history--compact .document-number {
+  width: 6rem;
+  min-width: 4rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.document-history--compact td.document-number {
+  white-space: nowrap;
+}
+@media (min-width: 1366px) {
+  .document-history--compact td:not(.document-number) {
+    max-width: 32rem;
+  }
+}
 .document-history tbody + tbody {
   border-top: 2px solid var(--text-secondary);
 }

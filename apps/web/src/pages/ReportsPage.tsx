@@ -623,7 +623,7 @@ function ReportContent({ report }: { readonly report: MonthlyOperationalReport }
           </div>
         ) : (
           <div className="responsive-table">
-            <table>
+            <table className="table-density table-density--metrics">
               <thead>
                 <tr>
                   <th>Mặt hàng</th>

@@ -1,5 +1,6 @@
+import { requestJson } from '../../lib/http-request';
+import { mapWithConcurrency, PAGE_FETCH_CONCURRENCY } from '../../lib/api';
 import {
-  ErrorEnvelopeSchema,
   GetSessionResponseSchema,
   ListOrderSessionsResponseSchema,
   ListPriorityOffersResponseSchema,
@@ -17,11 +18,6 @@ import {
   type StoreOrderRequest,
   type WaitTicket,
 } from '@idosi/contracts';
-import { reportUnauthorizedResponse } from '../../lib/session-expiry';
-import { addTabSessionHeader } from '../../lib/tab-session';
-
-const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
-const apiBaseUrl = (configuredBaseUrl || '/api/v1').replace(/\/$/, '');
 
 export class DashboardApiError extends Error {
   readonly code: string;
@@ -37,42 +33,8 @@ export class DashboardApiError extends Error {
   }
 }
 
-async function request(path: string): Promise<unknown> {
-  const headers = new Headers({ Accept: 'application/json' });
-  addTabSessionHeader(headers);
-  let response: Response;
-  try {
-    response = await fetch(`${apiBaseUrl}${path}`, {
-      cache: 'no-store',
-      credentials: 'include',
-      headers,
-    });
-  } catch {
-    throw new DashboardApiError(
-      'Không thể kết nối máy chủ. Dashboard không hiển thị số liệu dự phòng.',
-      0,
-      'NETWORK_ERROR',
-    );
-  }
-
-  reportUnauthorizedResponse(response.status, path);
-  const payload: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const parsed = ErrorEnvelopeSchema.safeParse(payload);
-    if (parsed.success) {
-      throw new DashboardApiError(
-        parsed.data.error.message,
-        response.status,
-        parsed.data.error.code,
-        parsed.data.error.requestId,
-      );
-    }
-    throw new DashboardApiError(
-      `Yêu cầu dashboard thất bại (${response.status}).`,
-      response.status,
-    );
-  }
-  return payload;
+async function request(path: string, init?: RequestInit): Promise<unknown> {
+  return requestJson(path, { cache: 'no-store', ...init }, DashboardApiError);
 }
 
 export interface DashboardBootstrap {
@@ -117,10 +79,10 @@ async function loadAllPages<T>(
 ): Promise<T[]> {
   const first = parse(await request(`${path}?${paginatedQuery(scope, 1)}`));
   if (first.pagination.totalPages <= 1) return first.data;
-  const remaining = await Promise.all(
-    Array.from({ length: first.pagination.totalPages - 1 }, async (_, index) =>
-      parse(await request(`${path}?${paginatedQuery(scope, index + 2)}`)),
-    ),
+  const remaining = await mapWithConcurrency(
+    first.pagination.totalPages - 1,
+    PAGE_FETCH_CONCURRENCY,
+    async (index) => parse(await request(`${path}?${paginatedQuery(scope, index + 2)}`)),
   );
   return [first, ...remaining].flatMap((page) => page.data);
 }

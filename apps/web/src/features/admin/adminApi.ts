@@ -1,8 +1,9 @@
+import { requestJson } from '../../lib/http-request';
+import { mapWithConcurrency, PAGE_FETCH_CONCURRENCY } from '../../lib/api';
 import {
   CreateAccountResponseSchema,
   CreateStoreGroupRequestSchema,
   CreateStoreRequestSchema,
-  ErrorEnvelopeSchema,
   GetSessionResponseSchema,
   HtkdAssignmentsResponseSchema,
   IdosiProductLinkResponseSchema,
@@ -51,11 +52,6 @@ import {
   type UpdateStoreRequest,
   type WorkerStatus,
 } from '@idosi/contracts';
-import { reportUnauthorizedResponse } from '../../lib/session-expiry';
-import { addTabSessionHeader } from '../../lib/tab-session';
-
-const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
-const adminApiBaseUrl = (configuredBaseUrl || '/api/v1').replace(/\/$/u, '');
 
 export class AdminApiError extends Error {
   public readonly status: number;
@@ -77,44 +73,7 @@ export interface AdminPage<T> {
 }
 
 async function requestAdminApi(path: string, init?: RequestInit): Promise<unknown> {
-  const headers = new Headers(init?.headers);
-  headers.set('Accept', 'application/json');
-  if (init?.body !== undefined && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
-  }
-  addTabSessionHeader(headers);
-
-  let response: Response;
-  try {
-    response = await fetch(`${adminApiBaseUrl}${path}`, {
-      ...init,
-      cache: 'no-store',
-      credentials: 'include',
-      headers,
-    });
-  } catch {
-    throw new AdminApiError(
-      'Không thể kết nối máy chủ. Vui lòng kiểm tra mạng và thử lại.',
-      0,
-      'NETWORK_ERROR',
-    );
-  }
-
-  reportUnauthorizedResponse(response.status, path);
-  const payload: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const parsed = ErrorEnvelopeSchema.safeParse(payload);
-    if (parsed.success) {
-      throw new AdminApiError(
-        parsed.data.error.message,
-        response.status,
-        parsed.data.error.code,
-        parsed.data.error.requestId,
-      );
-    }
-    throw new AdminApiError(`Yêu cầu thất bại (${response.status}).`, response.status);
-  }
-  return payload;
+  return requestJson(path, { cache: 'no-store', ...init }, AdminApiError);
 }
 
 function queryString(values: Readonly<Record<string, string | number | undefined>>): string {
@@ -254,10 +213,11 @@ export async function updateAdminOperationalSettings(
 export async function listActiveStoresForAccounts(): Promise<readonly Store[]> {
   const query = { pageSize: 100, kind: 'RETAIL' as const, status: 'ACTIVE' as const };
   const firstPage = await listAdminStores({ ...query, page: 1 });
-  const remainingPages = await Promise.all(
-    Array.from({ length: firstPage.pagination.totalPages - 1 }, (_, index) =>
-      listAdminStores({ ...query, page: index + 2 }),
-    ),
+  if (firstPage.pagination.totalPages <= 1) return firstPage.data;
+  const remainingPages = await mapWithConcurrency(
+    firstPage.pagination.totalPages - 1,
+    PAGE_FETCH_CONCURRENCY,
+    (index) => listAdminStores({ ...query, page: index + 2 }),
   );
   return [firstPage, ...remainingPages].flatMap((page) => page.data);
 }
@@ -278,10 +238,10 @@ export async function listAdminStoreGroupDirectory(): Promise<readonly StoreGrou
   const firstPage = await listAdminStoreGroups({ page: 1, pageSize: 100 });
   if (firstPage.pagination.totalPages <= 1) return firstPage.data;
 
-  const remainingPages = await Promise.all(
-    Array.from({ length: firstPage.pagination.totalPages - 1 }, (_, index) =>
-      listAdminStoreGroups({ page: index + 2, pageSize: 100 }),
-    ),
+  const remainingPages = await mapWithConcurrency(
+    firstPage.pagination.totalPages - 1,
+    PAGE_FETCH_CONCURRENCY,
+    (index) => listAdminStoreGroups({ page: index + 2, pageSize: 100 }),
   );
   return [firstPage, ...remainingPages].flatMap((page) => page.data);
 }

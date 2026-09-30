@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { RouterProvider } from 'react-router-dom';
 import { router } from './router';
 import './styles.css';
+import './styles/table-density.css';
 
 const queryClient = new QueryClient({
   defaultOptions: {

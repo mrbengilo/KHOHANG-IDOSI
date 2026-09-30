@@ -3,7 +3,7 @@ import { formatDocumentTime } from '../../lib/business-time';
 import { formatKg, formatKgExact } from '../../lib/format';
 import type { Store, StoreTransfer, StoreTransferStatus } from '@idosi/contracts';
 import { ArrowRight, CheckCircle2, CircleCheck, RefreshCw, Truck, XCircle } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 
 import type { AppOutletContext } from '../../components/AppShell';
 import { Badge } from '../../components/Badge';
@@ -252,6 +252,7 @@ export function ProductionTransfersPage({ role }: AppOutletContext) {
   });
   const [cancelReasons, setCancelReasons] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<Notice | null>(null);
+  const operationKeys = useRef(new Map<string, string>());
 
   const destinations = destinationsQuery.data ?? [];
   const allVisibleStores = useMemo(() => {
@@ -283,18 +284,25 @@ export function ProductionTransfersPage({ role }: AppOutletContext) {
 
   const actionMutation = useMutation({
     mutationFn: async ({ action, reason, transfer }: ActionInput) => {
+      const signature = JSON.stringify([transfer.id, transfer.version, action, reason ?? '']);
+      const key = operationKeys.current.get(signature) ?? crypto.randomUUID();
+      operationKeys.current.set(signature, key);
       if (action === 'RECEIVE') {
-        return receiveStoreTransfer(
+        const result = await receiveStoreTransfer(
           transfer.id,
           { expectedVersion: transfer.version },
-          crypto.randomUUID(),
+          key,
         );
+        operationKeys.current.delete(signature);
+        return result;
       }
-      return cancelStoreTransfer(
+      const result = await cancelStoreTransfer(
         transfer.id,
         { expectedVersion: transfer.version, reason: reason ?? '' },
-        crypto.randomUUID(),
+        key,
       );
+      operationKeys.current.delete(signature);
+      return result;
     },
     onError: (error) => setNotice({ tone: 'error', text: errorMessage(error) }),
     onSuccess: async (transfer) => {

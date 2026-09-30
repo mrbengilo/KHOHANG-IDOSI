@@ -1,0 +1,29 @@
+/* Opt-in desktop tables measured in the route audit. Mobile card layouts stay intact. */
+@media (min-width: 821px) {
+  /* Keep the opt-in stronger than feature CSS loaded after the app stylesheet. */
+  .app-main table.table-density {
+    width: auto;
+    min-width: 0;
+    max-width: 100%;
+    table-layout: auto;
+  }
+
+  table.table-density th,
+  table.table-density td {
+    max-width: 32rem;
+    overflow-wrap: anywhere;
+  }
+
+  table.table-density .table-number,
+  table.table-density--metrics tr > :not(:first-child):not([colspan]) {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    max-width: 16rem;
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+
+  .bag-opening-history table.table-density th {
+    width: auto;
+  }
+}

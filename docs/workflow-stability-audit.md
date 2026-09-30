@@ -1,0 +1,41 @@
+# Kiểm tra ổn định luồng kho hàng — 2026-09-29
+
+Baseline: 1991069f4f0542edec45ec3fd3fb79f46941db17. Tất cả dữ liệu tạo trong đợt kiểm thử nằm trên PostgreSQL 17.6 riêng; không sửa dữ liệu nghiệp vụ production.
+
+| ID         | Mức         | Bằng chứng / nguyên nhân                                                                                                           | Thay đổi                                                                                                                    | Kiểm thử                                                                                                          |
+| ---------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| HTTP-01    | P1          | Fetch và đọc JSON không có deadline; request không kết thúc giữ form ở trạng thái chờ. Bài kiểm tra treo/abort thất bại trước sửa. | requestJson dùng AbortController với 60s đọc, 120s ghi; IDOSI giữ ngân sách 180s. Deadline bao cả body, dọn timer/listener. | request-recovery.test.ts; API wrapper tests                                                                       |
+| HTTP-02    | P2          | Abort từ caller trước đây bị báo thành lỗi mạng.                                                                                   | Bảo toàn cancellation reason; chuyển signal của query tồn kho/lịch sử và session xuống fetch.                               | request-recovery.test.ts                                                                                          |
+| RETRY-01   | P1          | Receive/cancel điều chuyển cũ tạo key mới ở mỗi lần gửi, nên mất response sau commit không replay được lệnh cũ.                    | Lưu key theo transfer/version/action/reason trong vòng đời component; chỉ xóa sau thành công. Payload đổi nhận key khác.    | transfer-recovery.spec.ts mô phỏng commit rồi mất response; PostgreSQL điều chuyển và version/idempotency hiện có |
+| LOAD-01    | P2          | Nguồn nhận, danh sách điều chuyển và các danh sách dashboard và hai danh bạ quản trị dùng Promise.all cho toàn bộ trang còn lại.   | Tái sử dụng bộ tải tối đa ba trang đồng thời, vẫn ghép toàn bộ trang.                                                       | receiptSourceApi.test.ts: năm loader, tám trang, đủ trang, tối đa ba request trên mỗi danh sách                   |
+| UI-01      | P2          | Các bảng được đo giãn cột để lấp toàn bộ chiều ngang; số liệu nhỏ cách xa tên/số đối chiếu.                                        | Class desktop theo nội dung cho các bảng đã đo; cột số đánh dấu riêng, giữ font và nội dung.                                | desktop-table-density; route audit; real browser zoom                                                             |
+| UI-02      | P2          | /users ở 821px: nhãn ẩn position:absolute không có containing block trong vùng cuộn, làm trang rộng 891px.                         | position:relative trên .admin-table-wrap để vùng cuộn quản lý nhãn.                                                         | admin-contracts.spec.ts và route audit                                                                            |
+| FIXTURE-01 | P2 kiểm thử | Bốn đơn trong test quota thiếu dòng hàng, làm response danh sách không hợp schema.                                                 | Fixture quota tạo dòng hợp lệ. Không nới validation.                                                                        | continuous-ordering.integration và admin-contracts                                                                |
+| FIXTURE-02 | P2 kiểm thử | Fixture offer hết hạn trước thời điểm tạo mặc định, khiến dashboard từ chối response.                                              | Ghi createdAt trước deadline trong hai suite. Mã worker thật đã ghi createdAt từ offer.                                     | postgres-allocation; combined-shipment; admin-contracts                                                           |
+
+## Invariant và giới hạn
+
+Không thay đổi schema DB, migration hoặc thuật toán phân bổ. Contract đọc lịch sử xuất cho phép allocationLineId=null; timestamp thiếu chỉ được chấp nhận khi cả phiên, run và toàn bộ nguồn dòng đều chưa ghi nhận. Invariant số lượng và kiểm tra dispatch vẫn giữ nguyên. RETURN mới tiếp tục tự hoàn tất trong transaction VERIFY; không thêm lại bước bàn giao/nhập trả cho luồng mới. Bộ test hiện có kiểm tra hai HTKD xác nhận đồng thời, replay sau mất response, legacy, tồn/kg/tiền/VAT/audit và phân quyền.
+
+Bài transaction-recovery mới dùng hai khóa hàng đối nghịch cùng barrier để tạo deadlock thật. Kết quả phải tăng mỗi hàng đúng hai lần sau retry. Hai bài khác làm đầy pool có deadline và tạo lock timeout rồi xác minh rollback/phục hồi. Timeout 150ms trong hai bài là cấu hình test riêng, không phải tuyên bố production đã có lock timeout.
+
+Không tự retry mutation trong HTTP helper. Timeout hoặc mất response của lệnh ghi được báo là chưa xác định, yêu cầu kiểm tra trạng thái trước khi gửi lại. Hủy fetch không chứng minh server rollback. HTTP status/code/requestId và loại lỗi theo feature được giữ nguyên.
+
+Các giới hạn cần theo dõi riêng: key điều chuyển giữ trong component, không tồn tại qua reload; signal chưa được truyền từ mọi query của mọi feature; chưa đặt timeout cho mọi SQL trên server; các nguồn IDOSI thật cần cấu hình/credential riêng và không được đánh giá từ mock. Không coi các bài fake-timer hoặc pool test là bằng chứng cho restart cả VPS hay lỗi nguồn ngoài.
+
+## Lịch sử xuất thiếu nguồn phân bổ
+
+Bài warehouse-history.postgres.test.mjs tái hiện HTTP 500 trước sửa khi một dòng có allocationLineId=null. DB vốn cho phép giá trị này, nhưng assembleRecords ném lỗi trong lúc đọc. Bản sửa giữ nguyên null, không tạo nguồn/timestamp giả; UI ghi rõ chưa ghi nhận nguồn hoặc giờ xuất. Lệnh dispatch cùng dữ liệu vẫn trả 409 INVALID_STATE_TRANSITION và không thay đổi phiếu/audit. admin-contracts đọc toàn bộ trang lịch sử để phát hiện lỗi schema. Kiểm tra production bằng câu SELECT chỉ đọc trước release cho thấy 0 dòng thiếu nguồn phân bổ; đây không phải khẳng định đã có sự cố này trên production.
+
+## Mẫu latency local 30/09
+
+Node24.19/PostgreSQL17.6 trên máy Windows, log API mức info, warm-up trước32 request/cấu hình; 240 sản phẩm,132 đơn tại thời điểm đo; dữ liệu tổng ở JSON. Đây là phép đo đọc nhỏ sau sửa, không phải benchmark tăng trưởng hoặc kết luận nhanh hơn baseline. Không so trực tiếp hai lượt khi dataset khác nhau.
+
+| Endpoint                    | Đồng thời | p50 (ms) | p95 (ms) | p99 (ms) | Response bytes tối đa |
+| --------------------------- | --------- | -------- | -------- | -------- | --------------------- |
+| /warehouse-inventory        | 1         | 5.20     | 6.61     | 6.63     | 3821                  |
+| /warehouse-inventory        | 4         | 7.92     | 12.72    | 13.36    | 3821                  |
+| /order-requests?pageSize=50 | 1         | 18.43    | 26.21    | 29.12    | 23918                 |
+| /order-requests?pageSize=50 | 4         | 57.87    | 69.32    | 76.15    | 23918                 |
+| /store-receipts?pageSize=50 | 1         | 47.20    | 57.69    | 76.13    | 57059                 |
+| /store-receipts?pageSize=50 | 4         | 155.03   | 171.08   | 174.80   | 57059                 |

@@ -1,7 +1,7 @@
+import { requestJson } from '../../lib/http-request';
 import {
   CancelSortedSaleTransferRequestSchema,
   CreateSortedSaleTransferRequestSchema,
-  ErrorEnvelopeSchema,
   ReceiveSortedSaleTransferRequestSchema,
   SortedSaleTransferResponseSchema,
   SortedSaleTransfersResponseSchema,
@@ -10,36 +10,9 @@ import {
   type ReceiveSortedSaleTransferRequest,
 } from '@idosi/contracts';
 import { ApiClientError } from '../../lib/api';
-import { reportUnauthorizedResponse } from '../../lib/session-expiry';
-import { addTabSessionHeader } from '../../lib/tab-session';
-
-const baseUrl = (import.meta.env.VITE_API_BASE_URL?.trim() || '/api/v1').replace(/\/$/, '');
 
 async function request(path: string, init?: RequestInit): Promise<unknown> {
-  const headers = new Headers(init?.headers);
-  headers.set('Accept', 'application/json');
-  if (init?.body !== undefined) headers.set('Content-Type', 'application/json');
-  addTabSessionHeader(headers);
-  let response: Response;
-  try {
-    response = await fetch(`${baseUrl}${path}`, { ...init, credentials: 'include', headers });
-  } catch {
-    throw new ApiClientError('Không thể kết nối máy chủ. Vui lòng thử lại.', 0, 'NETWORK_ERROR');
-  }
-  reportUnauthorizedResponse(response.status, path);
-  const payload: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const parsed = ErrorEnvelopeSchema.safeParse(payload);
-    if (parsed.success)
-      throw new ApiClientError(
-        parsed.data.error.message,
-        response.status,
-        parsed.data.error.code,
-        parsed.data.error.requestId,
-      );
-    throw new ApiClientError(`Yêu cầu thất bại (${response.status}).`, response.status);
-  }
-  return payload;
+  return requestJson(path, init, ApiClientError);
 }
 
 function post(path: string, body: unknown, key: string): Promise<unknown> {

@@ -1,3 +1,4 @@
+import { requestJson } from '../../lib/http-request';
 import {
   ListStoreBagOpeningsResponseSchema,
   type ListStoreBagOpeningsQuery,
@@ -6,7 +7,6 @@ import {
   WarehouseInventoryResponseSchema,
   ListWarehouseOutboundRequestsResponseSchema,
   CreateStoreOutboundRequestSchema,
-  ErrorEnvelopeSchema,
   ListStoreInventoryBagLedgerResponseSchema,
   ListStoreInventoryBagsResponseSchema,
   ListStoreOutboundsResponseSchema,
@@ -48,26 +48,23 @@ import {
   type CharityExport,
   type ListStoreSortingHistoryResponse,
 } from '@idosi/contracts';
-import { reportUnauthorizedResponse } from '../../lib/session-expiry';
-import { addTabSessionHeader } from '../../lib/tab-session';
 
 import { ApiClientError, mapWithConcurrency, PAGE_FETCH_CONCURRENCY } from '../../lib/api';
 
-const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
-const apiBaseUrl = (configuredBaseUrl || '/api/v1').replace(/\/$/, '');
-
-export async function loadWarehouseInventory(page: number, search: string) {
+export async function loadWarehouseInventory(page: number, search: string, signal?: AbortSignal) {
   return WarehouseInventoryResponseSchema.parse(
     await request(
       `/warehouse-inventory?${new URLSearchParams({ page: String(page), pageSize: '20', search })}`,
+      { signal: signal ?? null },
     ),
   );
 }
 
-export async function loadWarehouseOutboundHistory(page: number) {
+export async function loadWarehouseOutboundHistory(page: number, signal?: AbortSignal) {
   return ListWarehouseOutboundRequestsResponseSchema.parse(
     await request(
       `/outbound-requests?${new URLSearchParams({ page: String(page), pageSize: '20' })}`,
+      { signal: signal ?? null },
     ),
   );
 }
@@ -110,41 +107,7 @@ interface OutboundFilters {
 }
 
 async function request(path: string, init?: RequestInit): Promise<unknown> {
-  const headers = new Headers(init?.headers);
-  headers.set('Accept', 'application/json');
-  if (init?.body !== undefined) headers.set('Content-Type', 'application/json');
-  addTabSessionHeader(headers);
-
-  let response: Response;
-  try {
-    response = await fetch(`${apiBaseUrl}${path}`, {
-      ...init,
-      credentials: 'include',
-      headers,
-    });
-  } catch {
-    throw new ApiClientError(
-      'Không thể kết nối máy chủ. Vui lòng kiểm tra mạng và thử lại.',
-      0,
-      'NETWORK_ERROR',
-    );
-  }
-
-  reportUnauthorizedResponse(response.status, path);
-  const payload: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const parsed = ErrorEnvelopeSchema.safeParse(payload);
-    if (parsed.success) {
-      throw new ApiClientError(
-        parsed.data.error.message,
-        response.status,
-        parsed.data.error.code,
-        parsed.data.error.requestId,
-      );
-    }
-    throw new ApiClientError(`Yêu cầu thất bại (${response.status}).`, response.status);
-  }
-  return payload;
+  return requestJson(path, init, ApiClientError);
 }
 
 function pageQuery(filters: Record<string, string | undefined>, page: number): string {

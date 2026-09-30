@@ -677,7 +677,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
           <p>Chưa có yêu cầu đã gửi.</p>
         ) : null}
         <div className="document-history" role="region" aria-label="Lịch sử đặt hàng" tabIndex={0}>
-          <table>
+          <table className="table-density">
             <thead>
               <tr>
                 {[
@@ -689,7 +689,11 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
                   'Trạng thái',
                   'Thao tác',
                 ].map((label) => (
-                  <th scope="col" key={label}>
+                  <th
+                    scope="col"
+                    key={label}
+                    className={label === 'Số lượng (bao)' ? 'table-number' : undefined}
+                  >
                     {label}
                   </th>
                 ))}
@@ -720,7 +724,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
                       {productNameById.get(line.productId) ?? line.productId}
                       {line.note ? <p>{line.note}</p> : null}
                     </td>
-                    <td>
+                    <td className="table-number">
                       {line.requested.kind === 'UNIT' ? (
                         line.requested.quantity
                       ) : (

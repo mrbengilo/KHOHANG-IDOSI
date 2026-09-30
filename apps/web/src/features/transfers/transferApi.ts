@@ -1,8 +1,8 @@
+import { requestJson } from '../../lib/http-request';
 import {
   CancelStoreTransferRequestSchema,
   CreateStoreTransferRequestSchema,
   DispatchStoreTransferRequestSchema,
-  ErrorEnvelopeSchema,
   ListStoreTransferDestinationsResponseSchema,
   ListStoreTransfersResponseSchema,
   ReceiveStoreTransferRequestSchema,
@@ -15,13 +15,8 @@ import {
   type StoreTransfer,
   type StoreTransferStatus,
 } from '@idosi/contracts';
-import { reportUnauthorizedResponse } from '../../lib/session-expiry';
-import { addTabSessionHeader } from '../../lib/tab-session';
 
-import { ApiClientError } from '../../lib/api';
-
-const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
-const apiBaseUrl = (configuredBaseUrl || '/api/v1').replace(/\/$/, '');
+import { ApiClientError, mapWithConcurrency, PAGE_FETCH_CONCURRENCY } from '../../lib/api';
 
 interface TransferFilters {
   readonly storeId?: string;
@@ -32,41 +27,7 @@ interface TransferFilters {
 }
 
 async function request(path: string, init?: RequestInit): Promise<unknown> {
-  const headers = new Headers(init?.headers);
-  headers.set('Accept', 'application/json');
-  if (init?.body !== undefined) headers.set('Content-Type', 'application/json');
-  addTabSessionHeader(headers);
-
-  let response: Response;
-  try {
-    response = await fetch(`${apiBaseUrl}${path}`, {
-      ...init,
-      credentials: 'include',
-      headers,
-    });
-  } catch {
-    throw new ApiClientError(
-      'Không thể kết nối máy chủ. Vui lòng kiểm tra mạng và thử lại.',
-      0,
-      'NETWORK_ERROR',
-    );
-  }
-
-  reportUnauthorizedResponse(response.status, path);
-  const payload: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const parsed = ErrorEnvelopeSchema.safeParse(payload);
-    if (parsed.success) {
-      throw new ApiClientError(
-        parsed.data.error.message,
-        response.status,
-        parsed.data.error.code,
-        parsed.data.error.requestId,
-      );
-    }
-    throw new ApiClientError(`Yêu cầu thất bại (${response.status}).`, response.status);
-  }
-  return payload;
+  return requestJson(path, init, ApiClientError);
 }
 
 function pageQuery(filters: TransferFilters, page: number): string {
@@ -83,12 +44,13 @@ export async function listStoreTransfers(filters: TransferFilters = {}): Promise
   );
   if (first.pagination.totalPages <= 1) return first.data;
 
-  const remaining = await Promise.all(
-    Array.from({ length: first.pagination.totalPages - 1 }, async (_, index) =>
+  const remaining = await mapWithConcurrency(
+    first.pagination.totalPages - 1,
+    PAGE_FETCH_CONCURRENCY,
+    async (index) =>
       ListStoreTransfersResponseSchema.parse(
         await request(`/store-transfers?${pageQuery(filters, index + 2)}`),
       ),
-    ),
   );
   return [first, ...remaining].flatMap((page) => page.data);
 }

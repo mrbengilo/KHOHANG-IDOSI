@@ -23,9 +23,22 @@
   align-items: end;
   margin-block: 12px;
 }
-@media (min-width: 769px) {
-  .warehouse-stock-panel th:first-child {
-    width: 28%;
+@media (min-width: 821px) {
+  .warehouse-stock-table {
+    width: auto;
+    max-width: 100%;
+  }
+  .warehouse-stock-table th:first-child,
+  .warehouse-stock-table td:first-child {
+    width: 32rem;
+    min-width: 18rem;
+    max-width: 32rem;
+    overflow-wrap: anywhere;
+  }
+  .warehouse-stock-table th:not(:first-child),
+  .warehouse-stock-table td:not(:first-child) {
+    text-align: right;
+    white-space: nowrap;
   }
 }
 .shortage-check-actions {

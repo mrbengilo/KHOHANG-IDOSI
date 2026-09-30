@@ -2,10 +2,19 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: './e2e',
-  testIgnore: ['**/sorting-reasons.spec.ts', '**/desktop-layout.spec.ts'],
+  outputDir: './test-results/smoke',
+  testIgnore: [
+    '**/sorting-reasons.spec.ts',
+    '**/desktop-layout.spec.ts',
+    '**/desktop-table-density.spec.ts',
+    '**/transfer-recovery.spec.ts',
+    '**/desktop-zoom.spec.ts',
+  ],
   fullyParallel: false,
   retries: process.env.CI ? 2 : 0,
-  reporter: process.env.CI ? 'github' : 'list',
+  reporter: process.env.CI
+    ? [['github'], ['json', { outputFile: 'test-results/smoke-results.json' }]]
+    : 'list',
   use: {
     baseURL: 'http://127.0.0.1:4173',
     trace: 'retain-on-failure',

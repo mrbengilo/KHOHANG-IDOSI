@@ -155,6 +155,7 @@ describePostgres('priority goods join the next ordinary shipment', () => {
               roundNumber: index + 1,
               acceptedQuantity: quantity,
               status: 'accepted',
+              createdAt: new Date(now.getTime() - 60_000),
               responseDeadlineAt: now,
               respondedAt: now,
             })

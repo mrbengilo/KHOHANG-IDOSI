@@ -305,6 +305,8 @@
 }
 
 .admin-table-wrap {
+  /* Keep absolutely positioned accessible labels inside this scroll container. */
+  position: relative;
   overflow-x: auto;
   margin-top: 18px;
   border: 1px solid var(--border);
