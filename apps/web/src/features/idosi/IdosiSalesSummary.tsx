@@ -196,13 +196,13 @@ export function IdosiSalesSummary({
               label="Sale theo cái"
               value={hasData ? money(summary.salePieceRevenueVnd) : 'Chưa có dữ liệu'}
               detail="Tiền sale theo số cái"
-              tone="info"
+              tone="accent"
             />
             <StatCard
               label="Sale theo ký"
               value={hasData ? money(summary.saleKgRevenueVnd) : 'Chưa có dữ liệu'}
               detail="Tiền sale theo kg thực bán"
-              tone="info"
+              tone="accent"
             />
             <StatCard
               label="Chưa phân loại"
@@ -212,6 +212,7 @@ export function IdosiSalesSummary({
                   ? `${formatInteger(summary.revenueUnclassifiedOrders)} đơn cần đối soát`
                   : 'Không có đơn thiếu dấu phân loại'
               }
+              emphasis={summary.revenueUnclassifiedOrders ? 'important' : undefined}
               tone={summary.revenueUnclassifiedOrders ? 'warning' : 'success'}
             />
           </div>

@@ -1414,7 +1414,7 @@ function StoreReceiptForm({
                   )}
                 </td>
                 <td data-label="Chênh lệch">
-                  <Badge tone={line.receivedUnits === line.approvedUnits ? 'success' : 'warning'}>
+                  <Badge tone={line.receivedUnits === line.approvedUnits ? 'success' : 'danger'}>
                     {line.receivedUnits === line.approvedUnits
                       ? 'Nhận đủ'
                       : `Thiếu ${line.approvedUnits - line.receivedUnits}`}
