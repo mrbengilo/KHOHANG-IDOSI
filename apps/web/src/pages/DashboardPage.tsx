@@ -814,15 +814,15 @@ function DashboardContent({
           </div>
         ) : (
           <div className="responsive-table">
-            <table>
+            <table className="table-density">
               <thead>
                 <tr>
                   <th>Cửa hàng</th>
                   <th>Loại</th>
-                  <th>Phiếu nhận chờ</th>
-                  <th>Phiếu chờ</th>
-                  <th>Offer chờ</th>
-                  <th>Đơn đang theo dõi</th>
+                  <th className="table-number">Phiếu nhận chờ</th>
+                  <th className="table-number">Phiếu chờ</th>
+                  <th className="table-number">Offer chờ</th>
+                  <th className="table-number">Đơn đang theo dõi</th>
                   <th>Sức khỏe</th>
                 </tr>
               </thead>
@@ -838,12 +838,18 @@ function DashboardContent({
                         {row.store.kind === 'RETAIL' ? 'Bán lẻ' : 'Khách sỉ'}
                       </Badge>
                     </td>
-                    <td data-label="Phiếu nhận chờ">
+                    <td className="table-number" data-label="Phiếu nhận chờ">
                       {row.store.kind === 'WHOLESALE' ? 'Không áp dụng' : row.pendingReceipts}
                     </td>
-                    <td data-label="Phiếu chờ">{row.activeWaitTickets}</td>
-                    <td data-label="Offer chờ">{row.activeOffers}</td>
-                    <td data-label="Đơn đang theo dõi">{row.activeOrders}</td>
+                    <td className="table-number" data-label="Phiếu chờ">
+                      {row.activeWaitTickets}
+                    </td>
+                    <td className="table-number" data-label="Offer chờ">
+                      {row.activeOffers}
+                    </td>
+                    <td className="table-number" data-label="Đơn đang theo dõi">
+                      {row.activeOrders}
+                    </td>
                     <td data-label="Sức khỏe">
                       <Badge
                         tone={

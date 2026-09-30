@@ -85,7 +85,7 @@ function WarehouseStock({ page, search }: { readonly page: number; readonly sear
     setParams((current) => withParams(current, { [KEYS.warehousePage]: next }));
   const inventory = useQuery({
     queryKey: ['warehouse-inventory', page, search],
-    queryFn: () => loadWarehouseInventory(page, search),
+    queryFn: ({ signal }) => loadWarehouseInventory(page, search, signal),
     retry: false,
   });
   return (
@@ -127,7 +127,7 @@ function WarehouseStock({ page, search }: { readonly page: number; readonly sear
       ) : (
         <>
           <div className="responsive-table">
-            <table>
+            <table className="warehouse-stock-table">
               <thead>
                 <tr>
                   <th>Mặt hàng</th>
@@ -181,7 +181,7 @@ function WarehouseHistory({ page: historyPage }: { readonly page: number }) {
     setParams((current) => withParams(current, { [KEYS.warehouseHistoryPage]: next }));
   const history = useQuery({
     queryKey: ['warehouse-outbound-history', historyPage],
-    queryFn: () => loadWarehouseOutboundHistory(historyPage),
+    queryFn: ({ signal }) => loadWarehouseOutboundHistory(historyPage, signal),
     retry: false,
   });
   const { catalog, stores, productNames, storeNames } = useNames();
@@ -198,13 +198,13 @@ function WarehouseHistory({ page: historyPage }: { readonly page: number }) {
       ) : (
         <>
           <div className="responsive-table">
-            <table>
+            <table className="table-density">
               <thead>
                 <tr>
                   <th>Phiếu / cửa hàng</th>
                   <th>Mặt hàng</th>
-                  <th>Chờ xuất</th>
-                  <th>Đã xuất</th>
+                  <th className="table-number">Chờ xuất</th>
+                  <th className="table-number">Đã xuất</th>
                   <th>Thời gian xuất</th>
                 </tr>
               </thead>
@@ -215,12 +215,15 @@ function WarehouseHistory({ page: historyPage }: { readonly page: number }) {
                       <td data-label="Phiếu / cửa hàng">
                         <strong>{outbound.requestNumber}</strong>
                         <small>{storeNames.get(outbound.storeId) ?? outbound.storeId}</small>
+                        {line.allocationLineId === null ? (
+                          <small>Chưa ghi nhận nguồn phân bổ</small>
+                        ) : null}
                         {outbound.status === 'CANCELLED' ? <small>Đã hủy</small> : null}
                       </td>
                       <td data-label="Mặt hàng">
                         {productNames.get(line.productId) ?? line.productId}
                       </td>
-                      <td data-label="Chờ xuất">
+                      <td className="table-number" data-label="Chờ xuất">
                         {formatInteger(
                           outbound.status === 'RESERVED'
                             ? line.reservedUnits - line.dispatchedUnits
@@ -228,13 +231,17 @@ function WarehouseHistory({ page: historyPage }: { readonly page: number }) {
                         )}{' '}
                         bao
                       </td>
-                      <td data-label="Đã xuất">{formatInteger(line.dispatchedUnits)} bao</td>
+                      <td className="table-number" data-label="Đã xuất">
+                        {formatInteger(line.dispatchedUnits)} bao
+                      </td>
                       <td data-label="Thời gian xuất">
                         {outbound.dispatchedAt
                           ? new Date(outbound.dispatchedAt).toLocaleString('vi-VN', {
                               timeZone: 'Asia/Ho_Chi_Minh',
                             })
-                          : 'Chưa xuất'}
+                          : outbound.status === 'RESERVED' || outbound.status === 'CANCELLED'
+                            ? 'Chưa xuất'
+                            : 'Chưa ghi nhận giờ xuất'}
                       </td>
                     </tr>
                   )),

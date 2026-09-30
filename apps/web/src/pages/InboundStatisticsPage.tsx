@@ -26,11 +26,11 @@ const kinds = { RETAIL: 'Bán lẻ', WHOLESALE: 'Sỉ', ALL: 'Toàn hệ thống
 function MetricCells({ value }: { value: InboundMetric }) {
   return (
     <>
-      <td>
+      <td className="table-number">
         {formatInboundValue(value.bagQuantity)}
         {!value.bagsComplete && <small>Đã biết · thiếu dữ liệu</small>}
       </td>
-      <td>
+      <td className="table-number">
         {formatInboundValue(value.weightGrams, true)}
         {!value.weightComplete && <small>Đã biết · thiếu dữ liệu</small>}
       </td>
@@ -50,12 +50,12 @@ function BreakdownHeaders() {
   return (
     <>
       {['Kho', 'Đối tác khác', 'Tổng nhập'].flatMap((label) => [
-        <th key={`${label}-bags`}>
+        <th className="table-number" key={`${label}-bags`}>
           {label}
           <br />
           bao
         </th>,
-        <th key={`${label}-kg`}>
+        <th className="table-number" key={`${label}-kg`}>
           {label}
           <br />
           kg
@@ -425,7 +425,7 @@ export function InboundStatisticsPage() {
             <h2>Tổng hợp theo loại cửa hàng</h2>
             <p>Trong kỳ và phạm vi báo cáo đang hiển thị; phân loại theo loại cửa hàng hiện tại.</p>
             <div className="inbound-table-scroll" tabIndex={0} aria-label="Bảng loại cửa hàng">
-              <table>
+              <table className="table-density">
                 <thead>
                   <tr>
                     <th>Loại cửa hàng</th>
@@ -460,7 +460,7 @@ export function InboundStatisticsPage() {
               {sources[data.selectedSource]}.
             </p>
             <div className="inbound-table-scroll" tabIndex={0} aria-label="Bảng cửa hàng">
-              <table>
+              <table className="table-density">
                 <thead>
                   <tr>
                     <th>Cửa hàng</th>
@@ -531,7 +531,7 @@ export function InboundStatisticsPage() {
 
             <p>Tìm kiếm chỉ thu hẹp bảng; tỷ trọng, biểu đồ và dòng tổng tính trên toàn phạm vi.</p>
             <div className="inbound-table-scroll" tabIndex={0} aria-label="Bảng mặt hàng">
-              <table>
+              <table className="table-density">
                 <thead>
                   <tr>
                     <th>Mã / tên mặt hàng</th>

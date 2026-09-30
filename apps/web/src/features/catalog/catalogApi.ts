@@ -1,5 +1,5 @@
+import { requestJson } from '../../lib/http-request';
 import {
-  ErrorEnvelopeSchema,
   ListProductConversionsResponseSchema,
   ListProductsResponseSchema,
   ProductConversionResponseSchema,
@@ -12,11 +12,6 @@ import {
   type ProductStatus,
   type UpdateProductConversionRequest,
 } from '@idosi/contracts';
-import { reportUnauthorizedResponse } from '../../lib/session-expiry';
-import { addTabSessionHeader } from '../../lib/tab-session';
-
-const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
-const apiBaseUrl = (configuredBaseUrl || '/api/v1').replace(/\/$/, '');
 
 export class CatalogApiError extends Error {
   readonly code: string;
@@ -97,44 +92,7 @@ async function loadAllConversions(
 }
 
 async function request(path: string, init?: RequestInit): Promise<unknown> {
-  const headers = new Headers(init?.headers);
-  headers.set('Accept', 'application/json');
-  if (init?.body !== undefined && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
-  }
-  addTabSessionHeader(headers);
-
-  let response: Response;
-  try {
-    response = await fetch(`${apiBaseUrl}${path}`, {
-      ...init,
-      cache: 'no-store',
-      credentials: 'include',
-      headers,
-    });
-  } catch {
-    throw new CatalogApiError(
-      'Không thể kết nối máy chủ. Vui lòng kiểm tra mạng và thử lại.',
-      0,
-      'NETWORK_ERROR',
-    );
-  }
-
-  reportUnauthorizedResponse(response.status, path);
-  const payload: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const parsed = ErrorEnvelopeSchema.safeParse(payload);
-    if (parsed.success) {
-      throw new CatalogApiError(
-        parsed.data.error.message,
-        response.status,
-        parsed.data.error.code,
-        parsed.data.error.requestId,
-      );
-    }
-    throw new CatalogApiError(`Yêu cầu thất bại (${response.status}).`, response.status);
-  }
-  return payload;
+  return requestJson(path, { cache: 'no-store', ...init }, CatalogApiError);
 }
 
 export async function loadCatalogSnapshot(effectiveAt: string): Promise<CatalogSnapshot> {

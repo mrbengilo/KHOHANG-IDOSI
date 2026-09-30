@@ -285,7 +285,7 @@ export type WarehouseOutboundRequestStatus = z.infer<typeof WarehouseOutboundReq
 export const WarehouseOutboundRequestLineSchema = z
   .object({
     id: EntityIdSchema,
-    allocationLineId: EntityIdSchema,
+    allocationLineId: EntityIdSchema.nullable(),
     productId: EntityIdSchema,
     requestedUnits: z.number().int().positive().safe(),
     approvedUnits: z.number().int().positive().safe(),
@@ -346,7 +346,15 @@ export const WarehouseOutboundRequestSchema = z
   .strict()
   .superRefine((request, context) => {
     const dispatched = request.status !== 'RESERVED' && request.status !== 'CANCELLED';
-    if (dispatched !== (request.dispatchedAt !== null)) {
+    // Do not invent timestamps for historical shipments without allocation provenance.
+    // Allocation-backed shipments retain the strict dispatch timestamp invariant.
+    const missingLegacyDispatchTime =
+      dispatched &&
+      request.dispatchedAt === null &&
+      request.orderSessionId === null &&
+      request.allocationRunId === null &&
+      request.lines.every((line) => line.allocationLineId === null);
+    if (!missingLegacyDispatchTime && dispatched !== (request.dispatchedAt !== null)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['dispatchedAt'],

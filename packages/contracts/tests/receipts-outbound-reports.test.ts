@@ -196,6 +196,23 @@ describe('receipt, outbound and report contracts', () => {
       updatedAt: '2026-09-17T01:00:00Z',
     };
     expect(WarehouseOutboundRequestSchema.safeParse(reserved).success).toBe(true);
+    const legacy = {
+      ...reserved,
+      status: 'DISPATCHED',
+      orderSessionId: null,
+      allocationRunId: null,
+      lines: [{ ...reserved.lines[0], allocationLineId: null, dispatchedUnits: 3 }],
+    };
+    expect(WarehouseOutboundRequestSchema.safeParse(legacy).success).toBe(true);
+    expect(
+      WarehouseOutboundRequestSchema.safeParse({ ...legacy, allocationRunId: IDS.account }).success,
+    ).toBe(false);
+    expect(
+      WarehouseOutboundRequestSchema.safeParse({
+        ...legacy,
+        lines: [{ ...legacy.lines[0], receivedUnits: 4 }],
+      }).success,
+    ).toBe(false);
     expect(
       WarehouseOutboundRequestSchema.safeParse({
         ...reserved,

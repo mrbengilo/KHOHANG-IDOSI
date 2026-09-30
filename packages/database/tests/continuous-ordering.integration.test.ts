@@ -5,6 +5,7 @@ import {
   closeDatabase,
   db,
   orderRequests,
+  orderRequestItems,
   orderSessions,
   products,
   storeGroups,
@@ -102,14 +103,24 @@ describePostgres('24/7 ordering and allocation-completion quota', () => {
         createdByUserId: admin.id,
       })
       .returning();
-    await db.insert(orderRequests).values(
-      [1, 2].map((requestNumber) => ({
-        orderSessionId: previous!.id,
-        storeId: store.id,
-        requestNumber,
-        status: 'submitted' as const,
-        requestedByUserId: admin.id,
-        submittedAt: new Date(now),
+    const previousRequests = await db
+      .insert(orderRequests)
+      .values(
+        [1, 2].map((requestNumber) => ({
+          orderSessionId: previous!.id,
+          storeId: store.id,
+          requestNumber,
+          status: 'submitted' as const,
+          requestedByUserId: admin.id,
+          submittedAt: new Date(now),
+        })),
+      )
+      .returning();
+    await db.insert(orderRequestItems).values(
+      previousRequests.map((request) => ({
+        orderRequestId: request.id,
+        productId: product.id,
+        requestedQuantity: 1,
       })),
     );
     const [next] = await db
@@ -167,13 +178,23 @@ describePostgres('24/7 ordering and allocation-completion quota', () => {
     };
     const cancelled = await makeSession('cancelled');
     const next = await makeSession('open');
-    await db.insert(orderRequests).values(
-      [1, 2].map((requestNumber) => ({
-        orderSessionId: cancelled.id,
-        storeId: store.id,
-        requestNumber,
-        requestedByUserId: admin.id,
-        submittedAt: new Date(),
+    const cancelledRequests = await db
+      .insert(orderRequests)
+      .values(
+        [1, 2].map((requestNumber) => ({
+          orderSessionId: cancelled.id,
+          storeId: store.id,
+          requestNumber,
+          requestedByUserId: admin.id,
+          submittedAt: new Date(),
+        })),
+      )
+      .returning();
+    await db.insert(orderRequestItems).values(
+      cancelledRequests.map((request) => ({
+        orderRequestId: request.id,
+        productId: product.id,
+        requestedQuantity: 1,
       })),
     );
     expect(await db.transaction((tx) => countOrderingQuota(tx, store.id, next.id))).toBe(2);

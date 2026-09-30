@@ -6,8 +6,18 @@ const webOrigin = 'http://127.0.0.1:4175';
 
 export default defineConfig({
   ...smokeConfig,
+  outputDir: './test-results/production',
+  reporter: process.env.CI
+    ? [['github'], ['json', { outputFile: 'test-results/production-results.json' }]]
+    : 'list',
   testIgnore: [],
-  testMatch: ['**/sorting-reasons.spec.ts', '**/desktop-layout.spec.ts'],
+  testMatch: [
+    '**/sorting-reasons.spec.ts',
+    '**/desktop-layout.spec.ts',
+    '**/desktop-table-density.spec.ts',
+    '**/transfer-recovery.spec.ts',
+    '**/desktop-zoom.spec.ts',
+  ],
   use: { ...smokeConfig.use, baseURL: webOrigin },
   webServer: {
     command: 'npm run build && npm run preview -- --host 127.0.0.1 --port 4175',

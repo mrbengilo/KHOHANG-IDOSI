@@ -400,6 +400,7 @@ describePostgres('allocation result projection on fresh PostgreSQL', () => {
             acceptedQuantity: 1,
             roundNumber: 1,
             status: 'accepted',
+            createdAt: new Date(original.createdAt.getTime() - 60_000),
             responseDeadlineAt: original.createdAt,
             respondedAt: original.createdAt,
           })

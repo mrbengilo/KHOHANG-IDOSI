@@ -705,12 +705,12 @@ export function CatalogPage() {
             </div>
           ) : (
             <div className="responsive-table">
-              <table>
+              <table className="table-density">
                 <thead>
                   <tr>
                     <th>Mặt hàng</th>
-                    <th>Quy đổi số cái</th>
-                    <th>Khối lượng 1 cái</th>
+                    <th className="table-number">Quy đổi số cái</th>
+                    <th className="table-number">Khối lượng 1 cái</th>
                     <th>Phiên bản / hiệu lực</th>
                     <th>Trạng thái</th>
                     <th>Thao tác</th>
@@ -726,8 +726,12 @@ export function CatalogPage() {
                           <strong>{entry.product.name}</strong>
                           <small>{entry.product.sku}</small>
                         </td>
-                        <td data-label="Quy đổi số cái">{ratios.itemsPerKilogram}</td>
-                        <td data-label="Khối lượng 1 cái">{ratios.kilogramsPerItem}</td>
+                        <td className="table-number" data-label="Quy đổi số cái">
+                          {ratios.itemsPerKilogram}
+                        </td>
+                        <td className="table-number" data-label="Khối lượng 1 cái">
+                          {ratios.kilogramsPerItem}
+                        </td>
                         <td data-label="Phiên bản / hiệu lực">
                           {entry.conversion ? (
                             <>

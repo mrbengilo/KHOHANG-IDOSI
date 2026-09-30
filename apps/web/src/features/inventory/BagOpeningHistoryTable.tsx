@@ -55,7 +55,7 @@ export function BagOpeningHistoryTable({
         aria-label="Bảng lịch sử khui kiện, cuộn ngang để xem đủ cột"
         tabIndex={0}
       >
-        <table aria-label="Lịch sử khui kiện" aria-describedby={noteId}>
+        <table className="table-density" aria-label="Lịch sử khui kiện" aria-describedby={noteId}>
           <thead>
             <tr>
               <th scope="col">Thời gian khui</th>

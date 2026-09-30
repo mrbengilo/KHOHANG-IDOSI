@@ -7,12 +7,15 @@ const webOrigin = `http://127.0.0.1:${webPort}`;
 
 export default defineConfig({
   testDir: './e2e-live',
+  outputDir: './test-results/live',
   fullyParallel: false,
   // These workflows share the reference catalog, allocation calendar and admin
   // account. Independent concurrency behavior is covered by PostgreSQL tests.
   workers: 1,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? 'github' : 'list',
+  reporter: process.env.CI
+    ? [['github'], ['json', { outputFile: 'test-results/live-results.json' }]]
+    : 'list',
   timeout: 60_000,
   use: {
     baseURL: webOrigin,
@@ -28,13 +31,14 @@ export default defineConfig({
         API_PORT: String(apiPort),
         API_STORAGE: process.env.LIVE_E2E_API_STORAGE ?? 'postgres',
         DATABASE_URL: process.env.DATABASE_URL ?? '',
-        LOG_LEVEL: 'warn',
+        LOG_LEVEL: process.env.LIVE_E2E_LOG_LEVEL ?? 'warn',
         MEMORY_BOOTSTRAP_PASSWORD:
           process.env.LIVE_E2E_ADMIN_PASSWORD ?? 'ci-bootstrap-password-not-for-production',
         NODE_ENV: 'test',
         WEB_ORIGIN: webOrigin,
       },
       reuseExistingServer: !process.env.CI,
+      stdout: process.env.LIVE_E2E_LOG_LEVEL === 'info' ? 'pipe' : 'ignore',
       timeout: 120_000,
       url: `${apiOrigin}/ready`,
     },

@@ -223,7 +223,7 @@ function WarehouseInboundContent() {
           nhận. Tên người nhập là tên tài khoản hiện tại.
         </p>
         <div
-          className="document-history"
+          className="document-history document-history--compact"
           role="region"
           aria-label="Lịch sử nhập kho tổng"
           tabIndex={0}
@@ -240,7 +240,11 @@ function WarehouseInboundContent() {
                   'Tổng số lượng (bao)',
                   'Người thực hiện',
                 ].map((label) => (
-                  <th scope="col" key={label}>
+                  <th
+                    scope="col"
+                    key={label}
+                    className={label.includes('ố lượng') ? 'document-number' : undefined}
+                  >
                     {label}
                   </th>
                 ))}
@@ -290,10 +294,12 @@ function WarehouseInboundContent() {
                         </>
                       ) : null}
                       <td>{line.name}</td>
-                      <td>{line.quantity}</td>
+                      <td className="document-number">{line.quantity}</td>
                       {index === 0 ? (
                         <>
-                          <td rowSpan={lines.length}>{receipt.bags.length}</td>
+                          <td className="document-number" rowSpan={lines.length}>
+                            {receipt.bags.length}
+                          </td>
                           <td rowSpan={lines.length}>
                             {receipt.receivedByDisplayName ?? 'Chưa ghi nhận'}
                           </td>

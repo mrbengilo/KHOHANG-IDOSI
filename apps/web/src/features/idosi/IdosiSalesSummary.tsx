@@ -301,7 +301,7 @@ export function IdosiSalesSummary({
           {rows.length ? (
             <>
               <div className="responsive-table">
-                <table>
+                <table className="table-density table-density--metrics">
                   <thead>
                     <tr>
                       <th>Mặt hàng</th>

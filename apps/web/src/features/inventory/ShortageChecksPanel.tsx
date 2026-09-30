@@ -94,12 +94,12 @@ export function ShortageChecksPanel({
         <p>Không có hàng thiếu nào chờ xác nhận.</p>
       ) : (
         <div className="responsive-table">
-          <table>
+          <table className="table-density">
             <thead>
               <tr>
                 <th>Phiếu nhận / cửa hàng</th>
                 <th>Mặt hàng</th>
-                <th>Số bao thiếu</th>
+                <th className="table-number">Số bao thiếu</th>
                 <th>Lý do cửa hàng ghi</th>
                 <th>Xác nhận của kho</th>
               </tr>
@@ -116,7 +116,9 @@ export function ShortageChecksPanel({
                     <td data-label="Mặt hàng">
                       {productNames.get(check.productId) ?? check.productId}
                     </td>
-                    <td data-label="Số bao thiếu">{formatInteger(check.quantity)} bao</td>
+                    <td className="table-number" data-label="Số bao thiếu">
+                      {formatInteger(check.quantity)} bao
+                    </td>
                     <td data-label="Lý do cửa hàng ghi">{check.shortageReason ?? '—'}</td>
                     <td data-label="Xác nhận của kho">
                       <div className="shortage-check-actions">

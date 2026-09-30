@@ -416,7 +416,7 @@ export function SortedSaleTransferWorkspace({
             aria-label="Lịch sử điều chuyển Sale"
             tabIndex={0}
           >
-            <table>
+            <table className="table-density">
               <thead>
                 <tr>
                   {[
@@ -435,7 +435,13 @@ export function SortedSaleTransferWorkspace({
                     <th
                       scope="col"
                       key={label}
-                      className={label.includes('ố lượng') ? 'document-quantity' : undefined}
+                      className={
+                        label.includes('ố lượng')
+                          ? 'document-quantity table-number'
+                          : label.includes('khối lượng') || label.includes('Khối lượng')
+                            ? 'table-number'
+                            : undefined
+                      }
                     >
                       {label}
                     </th>
@@ -541,8 +547,8 @@ export function SortedSaleTransferWorkspace({
                           </>
                         ) : null}
                         <td>{productName(line.productId)}</td>
-                        <td className="document-quantity">{line.bagQuantity}</td>
-                        <td>
+                        <td className="document-quantity table-number">{line.bagQuantity}</td>
+                        <td className="table-number">
                           {line.bagWeightsKg.length ? (
                             line.bagWeightsKg.map((weight, i) => (
                               <div key={i}>
@@ -556,10 +562,12 @@ export function SortedSaleTransferWorkspace({
                         </td>
                         {index === 0 ? (
                           <>
-                            <td className="document-quantity" rowSpan={lines.length}>
+                            <td className="document-quantity table-number" rowSpan={lines.length}>
                               {totalBags}
                             </td>
-                            <td rowSpan={lines.length}>{formatKgExact(totalWeight)}</td>
+                            <td className="table-number" rowSpan={lines.length}>
+                              {formatKgExact(totalWeight)}
+                            </td>
                             <td rowSpan={lines.length}>
                               {transfer.createdByDisplayName ?? 'Chưa ghi nhận'}
                             </td>

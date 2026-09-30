@@ -1,5 +1,5 @@
+import { requestJson } from '../../lib/http-request';
 import {
-  ErrorEnvelopeSchema,
   GetIdosiStatisticsQuerySchema,
   IdosiStatisticsStateResponseSchema,
   ListIdosiStatisticsResponseSchema,
@@ -7,11 +7,6 @@ import {
   type IdosiStatisticsScope,
   type IdosiStatisticsState,
 } from '@idosi/contracts';
-import { reportUnauthorizedResponse } from '../../lib/session-expiry';
-import { addTabSessionHeader } from '../../lib/tab-session';
-
-const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
-const apiBaseUrl = (configuredBaseUrl || '/api/v1').replace(/\/$/u, '');
 
 export class IdosiStatisticsApiError extends Error {
   public readonly status: number;
@@ -28,45 +23,7 @@ export class IdosiStatisticsApiError extends Error {
 }
 
 async function request(path: string, init?: RequestInit): Promise<unknown> {
-  const headers = new Headers(init?.headers);
-  headers.set('Accept', 'application/json');
-  if (init?.body !== undefined) headers.set('Content-Type', 'application/json');
-  addTabSessionHeader(headers);
-
-  let response: Response;
-  try {
-    response = await fetch(`${apiBaseUrl}${path}`, {
-      ...init,
-      cache: 'no-store',
-      credentials: 'include',
-      headers,
-    });
-  } catch {
-    throw new IdosiStatisticsApiError(
-      'Không thể kết nối máy chủ để tải thống kê IDOSI.',
-      0,
-      'NETWORK_ERROR',
-    );
-  }
-
-  reportUnauthorizedResponse(response.status, path);
-  const payload: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const parsed = ErrorEnvelopeSchema.safeParse(payload);
-    if (parsed.success) {
-      throw new IdosiStatisticsApiError(
-        parsed.data.error.message,
-        response.status,
-        parsed.data.error.code,
-        parsed.data.error.requestId,
-      );
-    }
-    throw new IdosiStatisticsApiError(
-      `Yêu cầu thống kê IDOSI thất bại (${response.status}).`,
-      response.status,
-    );
-  }
-  return payload;
+  return requestJson(path, { cache: 'no-store', ...init }, IdosiStatisticsApiError, 180_000);
 }
 
 function scopeQuery(scope: IdosiStatisticsScope): string {

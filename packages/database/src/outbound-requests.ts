@@ -18,7 +18,7 @@ export type WarehouseOutboundDatabaseStatus =
 
 export interface WarehouseOutboundRequestLineRecord {
   readonly id: string;
-  readonly allocationLineId: string;
+  readonly allocationLineId: string | null;
   readonly productId: string;
   readonly requestedQuantity: number;
   readonly approvedQuantity: number;
@@ -418,11 +418,8 @@ async function assembleRecords(
     );
   const linesByRequest = new Map<string, WarehouseOutboundRequestLineRecord[]>();
   for (const line of lines) {
-    if (line.allocationLineId === null) {
-      throw new WarehouseOutboundValidationError(
-        `Outbound request line ${line.id} has no allocation provenance.`,
-      );
-    }
+    // Historical rows can lack allocation provenance. Reads preserve that absence;
+    // dispatchWarehouseOutboundInTransaction still requires it before any write.
     const group = linesByRequest.get(line.outboundRequestId) ?? [];
     group.push({
       id: line.id,

@@ -532,7 +532,7 @@ function AdminUsersContent() {
         ) : null}
         {accounts.length > 0 ? (
           <div className="admin-table-wrap">
-            <table className="admin-table">
+            <table className="table-density admin-table">
               <caption className="admin-sr-only">Danh sách tài khoản hệ thống</caption>
               <thead>
                 <tr>

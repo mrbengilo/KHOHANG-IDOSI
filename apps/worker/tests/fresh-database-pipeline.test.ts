@@ -222,13 +222,16 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
         dispatchedQuantity: 3,
         receivedQuantity: 0,
       });
+      const allocationLineId = outbound.lines[0]!.allocationLineId;
+      if (allocationLineId === null)
+        throw new Error('A new worker shipment must retain allocation provenance');
       const [linkedReservation] = await client.db
         .select({
           outboundRequestLineId: reservations.outboundRequestLineId,
           status: reservations.status,
         })
         .from(reservations)
-        .where(eq(reservations.allocationLineId, outbound.lines[0]!.allocationLineId))
+        .where(eq(reservations.allocationLineId, allocationLineId))
         .limit(1);
       // Dispatch keeps the stock reserved; it only leaves on-hand when HTKD finalizes the receipt.
       expect(linkedReservation).toEqual({

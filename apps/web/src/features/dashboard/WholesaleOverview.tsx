@@ -185,12 +185,12 @@ export function WholesaleOverview({
           <p>Chưa có số liệu trong kỳ đã chọn.</p>
         ) : (
           <div className="responsive-table">
-            <table>
+            <table className="table-density">
               <thead>
                 <tr>
                   <th>Mặt hàng</th>
-                  <th>Đặt hàng</th>
-                  <th>Thực nhận</th>
+                  <th className="table-number">Đặt hàng</th>
+                  <th className="table-number">Thực nhận</th>
                 </tr>
               </thead>
               <tbody>
@@ -204,8 +204,12 @@ export function WholesaleOverview({
                   .map(([id, total]) => (
                     <tr key={id}>
                       <td data-label="Mặt hàng">{productNames.get(id) ?? id}</td>
-                      <td data-label="Đặt hàng">{total.ordered} bao</td>
-                      <td data-label="Thực nhận">{total.received} bao</td>
+                      <td className="table-number" data-label="Đặt hàng">
+                        {total.ordered} bao
+                      </td>
+                      <td className="table-number" data-label="Thực nhận">
+                        {total.received} bao
+                      </td>
                     </tr>
                   ))}
               </tbody>
@@ -224,13 +228,13 @@ export function WholesaleOverview({
           <p>Chưa có cửa hàng sỉ được phân quyền.</p>
         ) : (
           <div className="responsive-table">
-            <table>
+            <table className="table-density">
               <thead>
                 <tr>
                   <th>Cửa hàng</th>
                   <th>Mặt hàng</th>
-                  <th>Đặt hàng</th>
-                  <th>Thực nhận</th>
+                  <th className="table-number">Đặt hàng</th>
+                  <th className="table-number">Thực nhận</th>
                 </tr>
               </thead>
               <tbody>
@@ -243,8 +247,12 @@ export function WholesaleOverview({
                           <td data-label="Mặt hàng">
                             {productNames.get(row.productId) ?? row.productId}
                           </td>
-                          <td data-label="Đặt hàng">{row.ordered} bao</td>
-                          <td data-label="Thực nhận">{row.received} bao</td>
+                          <td className="table-number" data-label="Đặt hàng">
+                            {row.ordered} bao
+                          </td>
+                          <td className="table-number" data-label="Thực nhận">
+                            {row.received} bao
+                          </td>
                         </tr>
                       ))
                     : [

@@ -952,7 +952,7 @@ function StoreGroupTable({
 }) {
   return (
     <div className="admin-table-wrap">
-      <table className="admin-table store-lifecycle-table">
+      <table className="table-density admin-table store-lifecycle-table">
         <caption className="admin-sr-only">Danh sách nhóm cửa hàng</caption>
         <thead>
           <tr>
@@ -1029,7 +1029,7 @@ function StoreTable({
 }) {
   return (
     <div className="admin-table-wrap">
-      <table className="admin-table store-lifecycle-table store-lifecycle-table--stores">
+      <table className="table-density admin-table store-lifecycle-table store-lifecycle-table--stores">
         <caption className="admin-sr-only">Danh sách cửa hàng</caption>
         <thead>
           <tr>
