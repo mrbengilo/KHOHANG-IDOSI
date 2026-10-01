@@ -1434,6 +1434,13 @@ describe('KHOHANG-IDOSI API', () => {
   });
 
   test('exposes exact conversions and replaces one with an immutable version', async () => {
+    // 2026-10-01 must stay a future effective date; with the real clock it expired on that day.
+    await app.close();
+    repository = await MemoryWarehouseRepository.create({
+      bootstrapPassword: PASSWORD,
+      now: () => new Date('2026-09-17T05:00:00.000Z'),
+    });
+    app = await createApi({ repository, corsOrigin: 'http://localhost:5173' });
     const adminCookie = cookieOf(await login('admin'));
     const products = await app.inject({
       method: 'GET',
