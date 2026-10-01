@@ -1,14 +1,12 @@
 import {
   InboundStatisticsQuerySchema,
-  type InboundBreakdown,
-  type InboundMetric,
   type InboundProductRow,
   type InboundSource,
   type InboundStatistics,
   type InboundStatisticsQuery,
 } from '@idosi/contracts';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Fragment, useEffect, useState } from 'react';
 import { PageHeader } from '../components/PageHeader';
 import { getInboundStatistics } from '../lib/api';
 import { businessDate } from '../lib/business-time';
@@ -18,52 +16,20 @@ import {
   inboundShare,
   inboundStatisticsKey,
 } from '../features/inbound-statistics/inboundStatisticsModel';
+import { InboundStoreDetails } from '../features/inbound-statistics/InboundStoreDetails';
+import {
+  BreakdownCells,
+  BreakdownHeaders,
+  InboundPagination,
+  InboundProductTable,
+  inboundSourceLabels as sources,
+} from '../features/inbound-statistics/InboundTables';
 import './inbound-statistics.css';
 
-const sources = { ALL: 'Tất cả', WAREHOUSE: 'Kho', PARTNER: 'Đối tác khác' };
 const kinds = { RETAIL: 'Bán lẻ', WHOLESALE: 'Sỉ', ALL: 'Toàn hệ thống' };
+// Cửa hàng, Loại, 6 cột kho/đối tác/tổng, Nhiều nhất, Ít nhất, Chi tiết.
+const storeTableColumns = 11;
 
-function MetricCells({ value }: { value: InboundMetric }) {
-  return (
-    <>
-      <td className="table-number">
-        {formatInboundValue(value.bagQuantity)}
-        {!value.bagsComplete && <small>Đã biết · thiếu dữ liệu</small>}
-      </td>
-      <td className="table-number">
-        {formatInboundValue(value.weightGrams, true)}
-        {!value.weightComplete && <small>Đã biết · thiếu dữ liệu</small>}
-      </td>
-    </>
-  );
-}
-function BreakdownCells({ value }: { value: InboundBreakdown }) {
-  return (
-    <>
-      <MetricCells value={value.warehouse} />
-      <MetricCells value={value.partner} />
-      <MetricCells value={value.total} />
-    </>
-  );
-}
-function BreakdownHeaders() {
-  return (
-    <>
-      {['Kho', 'Đối tác khác', 'Tổng nhập'].flatMap((label) => [
-        <th className="table-number" key={`${label}-bags`}>
-          {label}
-          <br />
-          bao
-        </th>,
-        <th className="table-number" key={`${label}-kg`}>
-          {label}
-          <br />
-          kg
-        </th>,
-      ])}
-    </>
-  );
-}
 function Ranking({ value }: { value: InboundStatistics['ranking'] }) {
   return (
     <div className="inbound-ranking">
@@ -86,29 +52,6 @@ function Ranking({ value }: { value: InboundStatistics['ranking'] }) {
         </p>
       )}
     </div>
-  );
-}
-function Pagination({
-  value,
-  onChange,
-  label,
-}: {
-  value: InboundStatistics['storePagination'];
-  onChange: (page: number) => void;
-  label: string;
-}) {
-  return (
-    <nav className="inbound-pagination" aria-label={`Phân trang ${label}`}>
-      <span>
-        {value.totalItems} dòng · Trang {value.page}/{Math.max(1, value.totalPages)}
-      </span>
-      <button disabled={value.page <= 1} onClick={() => onChange(value.page - 1)}>
-        Trước
-      </button>
-      <button disabled={value.page >= value.totalPages} onClick={() => onChange(value.page + 1)}>
-        Sau
-      </button>
-    </nav>
   );
 }
 function Chart({
@@ -213,8 +156,15 @@ export function InboundStatisticsPage() {
     placeholderData: keepPreviousData,
     enabled: valid.success,
   });
-  const update = (patch: Partial<InboundStatisticsQuery>) =>
+  // The expanded store is view state, not a report filter: opening a detail must never rewrite
+  // `query`, otherwise the whole report (list, totals, pages, searches) is reloaded for one store.
+  const [expandedStoreId, setExpandedStoreId] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const update = (patch: Partial<InboundStatisticsQuery>) => {
+    // Any parent change starts a new scope; a detail from the old scope must not stay open.
+    setExpandedStoreId(null);
     setQuery((current) => ({ ...current, storePage: 1, productPage: 1, ...patch }));
+  };
   const [storeOptions, setStoreOptions] = useState<InboundStatistics['storeOptions']>([]);
   useEffect(() => {
     if (report.data) setStoreOptions(report.data.result.storeOptions);
@@ -222,6 +172,10 @@ export function InboundStatisticsPage() {
   const data = valid.success ? report.data?.result : undefined;
   const displayScope = report.data?.scope ?? query;
   const refreshing = report.isPlaceholderData;
+  useEffect(() => {
+    if (data && expandedStoreId && !data.storeRows.some((row) => row.id === expandedStoreId))
+      setExpandedStoreId(null);
+  }, [data, expandedStoreId]);
   return (
     <div className="inbound-statistics">
       <PageHeader
@@ -290,7 +244,10 @@ export function InboundStatisticsPage() {
           </select>
         </label>
         <button
-          onClick={() => void report.refetch()}
+          onClick={() =>
+            // Refetches the parent report and the open store detail (same key prefix).
+            void queryClient.refetchQueries({ queryKey: ['inbound-statistics'], type: 'active' })
+          }
           disabled={!valid.success || report.isFetching}
         >
           Làm mới
@@ -452,7 +409,7 @@ export function InboundStatisticsPage() {
             <Chart rows={data.charts.bags} source={data.selectedSource} />
             <Chart rows={data.charts.weight} source={data.selectedSource} weight />
           </div>
-          <section className="inbound-panel">
+          <section className="inbound-panel inbound-store-panel">
             <h2>Theo cửa hàng</h2>
 
             <p>
@@ -472,43 +429,62 @@ export function InboundStatisticsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.storeRows.map((row) => (
-                    <tr key={row.id}>
-                      <th scope="row">
-                        {row.code}
-                        <small>{row.name}</small>
-                      </th>
-                      <td>{kinds[row.kind]}</td>
-                      <BreakdownCells value={row.amounts} />
-                      <td>
-                        {row.ranking.most
-                          ? `${row.ranking.most.productName} · ${inboundMetricLabel(row.ranking.most.selected)}`
-                          : 'Không có dữ liệu'}
-                        {row.ranking.mostTied && <small>Đồng hạng theo bao</small>}
-                      </td>
-                      <td>
-                        {row.ranking.least
-                          ? `${row.ranking.least.productName} · ${inboundMetricLabel(row.ranking.least.selected)}`
-                          : 'Không có dữ liệu'}
-                        {row.ranking.leastTied && <small>Đồng hạng theo bao</small>}
-                        {!row.ranking.complete && <small>Xếp hạng chưa đầy đủ</small>}
-                      </td>
-                      <td>
-                        <button
-                          onClick={() =>
-                            update({
-                              storeId: row.id,
-                              storeKind: row.kind,
-                              storeSearch: '',
-                              productSearch: '',
-                            })
-                          }
-                        >
-                          Xem chi tiết<span className="sr-only"> {row.name}</span>
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {data.storeRows.map((row) => {
+                    const expanded = row.id === expandedStoreId;
+                    const panelId = `inbound-store-detail-${row.id}`;
+                    return (
+                      <Fragment key={row.id}>
+                        <tr className={expanded ? 'is-expanded' : undefined}>
+                          <th scope="row">
+                            {row.code}
+                            <small>{row.name}</small>
+                          </th>
+                          <td>{kinds[row.kind]}</td>
+                          <BreakdownCells value={row.amounts} />
+                          <td>
+                            {row.ranking.most
+                              ? `${row.ranking.most.productName} · ${inboundMetricLabel(row.ranking.most.selected)}`
+                              : 'Không có dữ liệu'}
+                            {row.ranking.mostTied && <small>Đồng hạng theo bao</small>}
+                          </td>
+                          <td>
+                            {row.ranking.least
+                              ? `${row.ranking.least.productName} · ${inboundMetricLabel(row.ranking.least.selected)}`
+                              : 'Không có dữ liệu'}
+                            {row.ranking.leastTied && <small>Đồng hạng theo bao</small>}
+                            {!row.ranking.complete && <small>Xếp hạng chưa đầy đủ</small>}
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="inbound-store-toggle"
+                              aria-expanded={expanded}
+                              aria-controls={panelId}
+                              onClick={() =>
+                                setExpandedStoreId((current) =>
+                                  current === row.id ? null : row.id,
+                                )
+                              }
+                            >
+                              {expanded ? 'Thu gọn' : 'Xem chi tiết'}
+                              <span className="sr-only">
+                                {' '}
+                                {expanded ? 'chi tiết ' : ''}
+                                {row.code} · {row.name}
+                              </span>
+                            </button>
+                          </td>
+                        </tr>
+                        {expanded && (
+                          <tr className="inbound-store-detail-row">
+                            <td colSpan={storeTableColumns} className="inbound-store-detail-cell">
+                              <InboundStoreDetails id={panelId} store={row} scope={displayScope} />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
                 <tfoot>
                   <tr>
@@ -520,7 +496,7 @@ export function InboundStatisticsPage() {
               </table>
             </div>
             {data.storeRows.length === 0 && <p>Không có dữ liệu</p>}
-            <Pagination
+            <InboundPagination
               label="cửa hàng"
               value={data.storePagination}
               onChange={(storePage) => update({ storePage })}
@@ -530,76 +506,9 @@ export function InboundStatisticsPage() {
             <h2>Theo mặt hàng · {sources[data.selectedSource]}</h2>
 
             <p>Tìm kiếm chỉ thu hẹp bảng; tỷ trọng, biểu đồ và dòng tổng tính trên toàn phạm vi.</p>
-            <div className="inbound-table-scroll" tabIndex={0} aria-label="Bảng mặt hàng">
-              <table className="table-density">
-                <thead>
-                  <tr>
-                    <th>Mã / tên mặt hàng</th>
-                    {data.selectedSource === 'ALL' ? (
-                      <BreakdownHeaders />
-                    ) : (
-                      <>
-                        <th>{sources[data.selectedSource]} · bao</th>
-                        <th>{sources[data.selectedSource]} · kg</th>
-                      </>
-                    )}
-                    <th>Tỷ trọng bao</th>
-                    <th>Tỷ trọng kg</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.productRows.map((row) => (
-                    <tr key={row.productId}>
-                      <th scope="row">
-                        {row.sku}
-                        <small>{row.productName}</small>
-                      </th>
-                      {data.selectedSource === 'ALL' ? (
-                        <BreakdownCells value={row.amounts} />
-                      ) : (
-                        <MetricCells value={row.selected} />
-                      )}
-                      <td>
-                        {row.bagShareBasisPoints === null
-                          ? 'Chưa xác định'
-                          : `${row.bagShareBasisPoints / 100}%`}
-                      </td>
-                      <td>
-                        {row.weightShareBasisPoints === null
-                          ? 'Chưa xác định'
-                          : `${row.weightShareBasisPoints / 100}%`}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr>
-                    <th>Tổng toàn phạm vi</th>
-                    {data.selectedSource === 'ALL' ? (
-                      <BreakdownCells value={data.overviewAllSources} />
-                    ) : (
-                      <MetricCells value={data.selectedTotal} />
-                    )}
-                    <td>
-                      {inboundShare(
-                        data.selectedTotal.bagQuantity,
-                        data.selectedTotal.bagQuantity,
-                        data.selectedTotal.bagsComplete,
-                      )}
-                    </td>
-                    <td>
-                      {inboundShare(
-                        data.selectedTotal.weightGrams,
-                        data.selectedTotal.weightGrams,
-                        data.selectedTotal.weightComplete,
-                      )}
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
+            <InboundProductTable data={data} label="Bảng mặt hàng" totalLabel="Tổng toàn phạm vi" />
             {data.productRows.length === 0 && <p>Không có dữ liệu</p>}
-            <Pagination
+            <InboundPagination
               label="mặt hàng"
               value={data.productPagination}
               onChange={(productPage) => update({ productPage })}

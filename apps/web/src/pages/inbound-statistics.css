@@ -262,3 +262,78 @@
 .inbound-results[inert] {
   opacity: 0.65;
 }
+
+/* Inline store detail ("Xem chi tiết"). The panel is capped at the store section's width
+   (container query) and pinned with sticky left, so when the store table scrolls sideways the
+   detail stays in view and scrolls its own product table instead of widening the page. The table
+   wrapper itself is fit-content (styles.css), so the section is the size container. */
+.inbound-store-panel {
+  container-type: inline-size;
+}
+.inbound-statistics .inbound-store-toggle {
+  min-width: 8.5em;
+  white-space: nowrap;
+}
+.inbound-statistics .inbound-store-toggle[aria-expanded='true'] {
+  background: #152e53;
+  border-color: #152e53;
+  color: #fff;
+}
+.inbound-statistics tr.is-expanded > th,
+.inbound-statistics tr.is-expanded > td {
+  background: #f3f7fd;
+  border-bottom-color: transparent;
+}
+.inbound-statistics table.table-density > tbody > tr > td.inbound-store-detail-cell {
+  max-width: none;
+  min-width: 0;
+  padding: 0 0 12px;
+  background: #f3f7fd;
+  border-bottom: 1px solid #c9d6e8;
+}
+.inbound-store-detail {
+  position: sticky;
+  left: 0;
+  display: grid;
+  gap: 12px;
+  width: max-content;
+  min-width: min(100cqi, 20rem);
+  max-width: calc(100vw - 32px);
+  max-width: 100cqi;
+  padding: 4px 16px 4px;
+  border-left: 4px solid #3267ca;
+}
+.inbound-store-detail-heading h3 {
+  font-size: 1rem;
+  margin: 0 0 4px;
+}
+.inbound-store-detail p {
+  margin: 0;
+}
+.inbound-store-detail-heading p {
+  overflow-wrap: anywhere;
+}
+.inbound-store-detail-total strong {
+  display: inline;
+}
+.inbound-store-detail .inbound-table-scroll {
+  background: #fff;
+}
+.inbound-store-detail .inbound-pagination {
+  margin-top: 0;
+}
+.inbound-store-detail-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.inbound-store-detail-error span {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+@media (max-width: 700px) {
+  .inbound-store-detail {
+    padding: 4px 10px;
+  }
+}
