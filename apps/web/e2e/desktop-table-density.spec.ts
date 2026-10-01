@@ -22,6 +22,7 @@ for (const route of ['/inventory', '/warehouse-inbound']) {
           viewport: innerWidth,
           dpr: devicePixelRatio,
           tableWidth: element.getBoundingClientRect().width,
+          wrapperWidth: element.parentElement!.clientWidth,
           firstRowHeight: element.querySelector('tbody tr')!.getBoundingClientRect().height,
           visibleRows: Array.from(element.querySelectorAll('tbody tr')).filter((row) => {
             const box = row.getBoundingClientRect();
@@ -53,8 +54,9 @@ for (const route of ['/inventory', '/warehouse-inbound']) {
         for (const cell of numeric) {
           // Numbers align left like every other column (docs/responsive-table-layout-audit.md).
           expect(cell.align).toBe('left');
-          expect(cell.width).toBeLessThanOrEqual(route === '/inventory' ? 150 : 110);
         }
+        // The table spans its scroll container (docs/desktop-ui-consistency.md).
+        expect(Math.abs(measurement.tableWidth - measurement.wrapperWidth)).toBeLessThanOrEqual(1);
         expect(measurement.firstRowHeight).toBeLessThanOrEqual(route === '/inventory' ? 65 : 130);
         expect(measurement.rows).toBe(route === '/inventory' ? 24 : 4);
         expect(parseFloat(measurement.cells[0].font)).toBeGreaterThanOrEqual(

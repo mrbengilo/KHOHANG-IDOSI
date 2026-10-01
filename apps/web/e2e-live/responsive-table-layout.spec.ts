@@ -200,7 +200,7 @@ async function* routeStates(page: Page): AsyncGenerator<string> {
   }
 }
 
-test('tables are centred, content-sized, left aligned and scroll locally for every role', async ({
+test('tables span their box, stay left aligned and scroll locally for every role', async ({
   browser,
   request,
 }, testInfo) => {

@@ -171,7 +171,20 @@ export async function measureTableLayout(page: Page): Promise<PageTableLayout> {
   });
 }
 
-/** Human-readable violations of the centring, overflow, reachability and alignment rules. */
+/** Shared table scroll containers (styles.css, docs/desktop-ui-consistency.md). */
+const sharedScrollports = [
+  '.responsive-table',
+  '.document-history',
+  '.admin-table-wrap',
+  '.inbound-table-scroll',
+  '.bag-opening-history__scroll',
+];
+
+/**
+ * Human-readable violations of the fill, overflow, reachability and alignment rules.
+ * On desktop a table in a shared scroll container spans its whole box (only the container's
+ * 1px border may separate them), so the box and the table inside it always share one width.
+ */
 export function tableLayoutViolations(layout: PageTableLayout): string[] {
   const problems: string[] = [];
   if (layout.scrollWidth > layout.clientWidth + 1)
@@ -179,6 +192,16 @@ export function tableLayoutViolations(layout: PageTableLayout): string[] {
   for (const table of layout.tables) {
     if (Math.abs(table.gapLeft - table.gapRight) > 2)
       problems.push(`${table.id}: not centred (left ${table.gapLeft}, right ${table.gapRight})`);
+    const shared = sharedScrollports.some((name) => table.scrollport?.includes(name));
+    if (
+      layout.viewport > 820 &&
+      table.mode === 'table' &&
+      shared &&
+      (table.gapLeft > 1.5 || table.gapRight > 1.5)
+    )
+      problems.push(
+        `${table.id}: narrower than its box (left ${table.gapLeft}, right ${table.gapRight})`,
+      );
     if (table.gapLeft < -1 || table.gapRight < -1)
       problems.push(`${table.id}: escapes its container (${table.gapLeft}/${table.gapRight})`);
     if (!table.firstColumnReachable || !table.lastColumnReachable)
