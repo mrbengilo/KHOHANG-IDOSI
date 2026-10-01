@@ -51,7 +51,8 @@ for (const route of ['/inventory', '/warehouse-inbound']) {
         const numeric =
           route === '/inventory' ? measurement.cells.slice(1) : measurement.cells.slice(4, 6);
         for (const cell of numeric) {
-          expect(cell.align).toBe('right');
+          // Numbers align left like every other column (docs/responsive-table-layout-audit.md).
+          expect(cell.align).toBe('left');
           expect(cell.width).toBeLessThanOrEqual(route === '/inventory' ? 150 : 110);
         }
         expect(measurement.firstRowHeight).toBeLessThanOrEqual(route === '/inventory' ? 65 : 130);

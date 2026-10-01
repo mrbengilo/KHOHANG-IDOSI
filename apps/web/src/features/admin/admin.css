@@ -775,6 +775,13 @@
     padding: 0;
   }
 
+  /* Dòng phụ (tên đăng nhập, mã) nằm ở cột giá trị như các bảng dạng thẻ khác. */
+  .admin-table td > small {
+    grid-column: 2;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
   .admin-table td::before {
     color: var(--muted);
     content: attr(data-label);

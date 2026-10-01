@@ -546,12 +546,10 @@
   white-space: nowrap;
 }
 
+/* Lý do hiển thị đủ trong bảng; ô bị giới hạn bề rộng nên chữ dài xuống dòng thay vì bị cắt. */
 .adjustment-reason {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  display: block;
+  max-width: 32rem;
   overflow-wrap: anywhere;
 }
 
@@ -725,7 +723,7 @@
   }
 
   .adjustment-workspace__table td .button {
-    justify-self: end;
+    justify-self: start;
   }
 
   .adjustment-pager .button {

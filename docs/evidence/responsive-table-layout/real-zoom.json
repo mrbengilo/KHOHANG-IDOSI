@@ -1,0 +1,134 @@
+[
+  {
+    "route": "/inventory",
+    "zoom": 1,
+    "width": 1920,
+    "height": 993,
+    "dpr": 1,
+    "scrollWidth": 1920,
+    "tables": [
+      {
+        "id": "T\u1ed3n kho t\u1ed5ng theo m\u1eb7t h\u00e0ng [table.warehouse-stock-table]",
+        "columns": 5,
+        "rows": 24,
+        "visibleWidth": 847.6,
+        "containerWidth": 1630,
+        "gapLeft": 391.2,
+        "gapRight": 391.2,
+        "overflowing": false,
+        "lastColumnReachable": true,
+        "misaligned": 0
+      }
+    ]
+  },
+  {
+    "route": "/inventory",
+    "zoom": 1.25,
+    "width": 1536,
+    "height": 794,
+    "dpr": 1.25,
+    "scrollWidth": 1536,
+    "tables": [
+      {
+        "id": "T\u1ed3n kho t\u1ed5ng theo m\u1eb7t h\u00e0ng [table.warehouse-stock-table]",
+        "columns": 5,
+        "rows": 24,
+        "visibleWidth": 847.5,
+        "containerWidth": 1246.4,
+        "gapLeft": 199.4,
+        "gapRight": 199.4,
+        "overflowing": false,
+        "lastColumnReachable": true,
+        "misaligned": 0
+      }
+    ]
+  },
+  {
+    "route": "/inventory",
+    "zoom": 1.5,
+    "width": 1280,
+    "height": 662,
+    "dpr": 1.5,
+    "scrollWidth": 1280,
+    "tables": [
+      {
+        "id": "T\u1ed3n kho t\u1ed5ng theo m\u1eb7t h\u00e0ng [table.warehouse-stock-table]",
+        "columns": 5,
+        "rows": 24,
+        "visibleWidth": 847.6,
+        "containerWidth": 990.7,
+        "gapLeft": 71.6,
+        "gapRight": 71.6,
+        "overflowing": false,
+        "lastColumnReachable": true,
+        "misaligned": 0
+      }
+    ]
+  },
+  {
+    "route": "/warehouse-inbound",
+    "zoom": 1,
+    "width": 1920,
+    "height": 993,
+    "dpr": 1,
+    "scrollWidth": 1920,
+    "tables": [
+      {
+        "id": "L\u1ecbch s\u1eed nh\u1eadp kho t\u1ed5ng [table]",
+        "columns": 7,
+        "rows": 4,
+        "visibleWidth": 1442.7,
+        "containerWidth": 1630,
+        "gapLeft": 93.7,
+        "gapRight": 93.7,
+        "overflowing": false,
+        "lastColumnReachable": true,
+        "misaligned": 0
+      }
+    ]
+  },
+  {
+    "route": "/warehouse-inbound",
+    "zoom": 1.25,
+    "width": 1536,
+    "height": 794,
+    "dpr": 1.25,
+    "scrollWidth": 1536,
+    "tables": [
+      {
+        "id": "L\u1ecbch s\u1eed nh\u1eadp kho t\u1ed5ng [table]",
+        "columns": 7,
+        "rows": 4,
+        "visibleWidth": 1244.8,
+        "containerWidth": 1246.4,
+        "gapLeft": 0.8,
+        "gapRight": 0.8,
+        "overflowing": false,
+        "lastColumnReachable": true,
+        "misaligned": 0
+      }
+    ]
+  },
+  {
+    "route": "/warehouse-inbound",
+    "zoom": 1.5,
+    "width": 1280,
+    "height": 662,
+    "dpr": 1.5,
+    "scrollWidth": 1280,
+    "tables": [
+      {
+        "id": "L\u1ecbch s\u1eed nh\u1eadp kho t\u1ed5ng [table]",
+        "columns": 7,
+        "rows": 4,
+        "visibleWidth": 989.3,
+        "containerWidth": 990.7,
+        "gapLeft": 0.7,
+        "gapRight": 0.7,
+        "overflowing": false,
+        "lastColumnReachable": true,
+        "misaligned": 0
+      }
+    ]
+  }
+]

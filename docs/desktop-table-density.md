@@ -1,10 +1,12 @@
 # Mật độ bảng desktop — 2026-09-29
 
+> **Cập nhật 01/10/2026:** quy tắc căn phải cột số và độ rộng cố định 32rem của cột tên tồn kho trong tài liệu này đã được thay thế. Mọi ô dữ liệu (kể cả số lượng, kg, tiền, ngày, dòng tổng) căn trái; bảng rộng theo nội dung và được căn giữa trong vùng chứa trực tiếp, cuộn ngang cục bộ khi vượt vùng chứa. Xem [responsive-table-layout-audit.md](responsive-table-layout-audit.md). Các số đo bên dưới là lịch sử của đợt 29–30/09.
+
 Đo trên baseline 1991069f4f0542edec45ec3fd3fb79f46941db17 và nhánh sửa cùng fixture. Có 39 vị trí JSX table trong source; số này gồm demo/legacy và không đồng nghĩa 39 bảng đều xuất hiện trong mỗi vai trò.
 
 Ở viewport 2560px, bảng tồn kho baseline rộng khoảng 2270px; cột tên 635px, các cột số khoảng 378–479px. Lịch sử nhập rộng khoảng 2268px, hai cột số khoảng 218/285px. Nội dung số ít chữ số bị tách xa nhau do width:100% và tỷ lệ cột. Cỡ chữ không phải nguyên nhân và không bị giảm.
 
-Bảng tồn kho dùng tên tối đa 32rem, tối thiểu 18rem, các cột số căn phải và không xuống dòng. Thử nghiệm 24rem làm tên dài xuống dòng nhiều hơn nên không giữ phương án đó. Bảng chứng từ nhập dùng lớp compact và lớp số trên ô thật để bảo toàn rowSpan. Các bảng được đo khác nhận class table-density riêng, chỉ hoạt động từ 821px; các ô số dùng table-number hoặc biến thể metrics cho bảng không gộp cột.
+Bảng tồn kho dùng tên tối đa 32rem, tối thiểu 18rem, các cột số căn phải và không xuống dòng (đã thay thế ngày 01/10/2026: tên tối thiểu 12rem, rộng theo nội dung tới 32rem; cột số căn trái). Thử nghiệm 24rem làm tên dài xuống dòng nhiều hơn nên không giữ phương án đó. Bảng chứng từ nhập dùng lớp compact và lớp số trên ô thật để bảo toàn rowSpan. Các bảng được đo khác nhận class table-density riêng, chỉ hoạt động từ 821px; các ô số dùng table-number hoặc biến thể metrics cho bảng không gộp cột.
 
 Các bảng có form, giải thích dữ liệu thiếu và thông tin dài vẫn cho xuống dòng; không ellipsis số tiền/kg/mã. Mobile tiếp tục dùng quy tắc card/scroll của từng feature. Bảng lịch sử khui vẫn tabular; bỏ tỷ lệ phần trăm cột chỉ trên desktop opt-in.
 

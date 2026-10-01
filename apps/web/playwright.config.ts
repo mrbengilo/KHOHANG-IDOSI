@@ -9,6 +9,7 @@ export default defineConfig({
     '**/desktop-table-density.spec.ts',
     '**/transfer-recovery.spec.ts',
     '**/desktop-zoom.spec.ts',
+    '**/responsive-table-layout.spec.ts',
   ],
   fullyParallel: false,
   retries: process.env.CI ? 2 : 0,

@@ -1057,12 +1057,49 @@ textarea:focus {
 .table-panel {
   margin-top: 16px;
 }
+/*
+ * Bố cục bảng dùng chung (docs/responsive-table-layout-audit.md):
+ * vùng làm việc → vùng cuộn căn giữa trong vùng chứa trực tiếp → bảng rộng theo nội dung.
+ * Vùng cuộn rộng bằng nội dung bảng nhưng không vượt vùng chứa; khi bảng cần rộng hơn,
+ * vùng cuộn chiếm hết vùng chứa và cuộn ngang cục bộ từ cột đầu tới cột cuối.
+ * Tiền tố .app-main giữ thứ tự ưu tiên trước CSS feature được lazy-load sau file này.
+ */
+.app-main
+  :is(
+    .responsive-table,
+    .document-history,
+    .admin-table-wrap,
+    .inbound-table-scroll,
+    .bag-opening-history__scroll
+  ) {
+  box-sizing: border-box;
+  width: fit-content;
+  min-width: 0;
+  max-width: 100%;
+  margin-inline: auto;
+  overflow-x: auto;
+}
+.app-main
+  :is(
+    .responsive-table,
+    .document-history,
+    .admin-table-wrap,
+    .inbound-table-scroll,
+    .bag-opening-history__scroll
+  )
+  > table {
+  width: auto;
+  margin-inline: auto;
+}
+/* Dữ liệu trong ô luôn căn trái theo cột, kể cả số lượng, kg, tiền, ngày và dòng tổng. */
+.app-main table :is(th, td) {
+  text-align: left;
+}
 .responsive-table {
-  width: 100%;
   overflow-x: auto;
 }
 table {
-  width: 100%;
+  width: auto;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -1488,18 +1525,11 @@ td small {
   align-items: flex-start;
 }
 
-@media (max-width: 620px) {
-  .session-request-time {
-    align-items: flex-end;
-    text-align: right;
-  }
-}
-
 .allocation-session-actions {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: 7px;
 }
 
@@ -3157,6 +3187,15 @@ label:has(:required) > .field-label::after {
 }
 
 @media (max-width: 820px) {
+  /* Bảng quản trị chuyển thành thẻ ở mốc này: thẻ chiếm đủ vùng nội dung, không cuộn ngang. */
+  .app-main .admin-table-wrap {
+    width: 100%;
+    overflow: visible;
+  }
+  /* Lịch sử khui kiện giữ dạng bảng cố định 880px và cuộn ngang như trước trên màn hẹp. */
+  .app-main .bag-opening-history__scroll > table {
+    width: 100%;
+  }
   :root {
     --control-h: 44px;
   }
@@ -3620,7 +3659,9 @@ label:has(:required) > .field-label::after {
     grid-column: 2;
   }
 
-  .responsive-table {
+  /* Bảng dạng thẻ chiếm đủ vùng nội dung, gutter hai bên bằng nhau. */
+  .app-main .responsive-table {
+    width: 100%;
     overflow: visible;
   }
   table,
@@ -3657,7 +3698,7 @@ label:has(:required) > .field-label::after {
     gap: 8px;
     border: 0;
     padding: 0;
-    text-align: right;
+    text-align: left;
   }
   td::before {
     content: attr(data-label);
@@ -3683,14 +3724,23 @@ label:has(:required) > .field-label::after {
   }
   td strong,
   td small {
-    align-items: flex-end;
+    align-items: flex-start;
+  }
+  /*
+   * Dòng phụ (mã, tài khoản, ghi chú) thuộc cột giá trị của thẻ, không rơi xuống dưới nhãn;
+   * mã dài không có khoảng trắng chỉ xuống dòng khi không còn chỗ, không đẩy tràn trang.
+   */
+  td > small {
+    grid-column: 2;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
   .table-actions {
-    justify-content: flex-end;
+    justify-content: flex-start;
   }
   .allocation-session-actions {
     min-width: 0;
-    align-items: flex-end;
+    align-items: flex-start;
   }
   .login-visual {
     min-height: 300px;

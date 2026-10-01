@@ -14,9 +14,10 @@
     overflow-wrap: anywhere;
   }
 
+  /* Số liệu căn trái như mọi cột; giữ chữ số cùng bề rộng và không ngắt giữa số. */
   table.table-density .table-number,
   table.table-density--metrics tr > :not(:first-child):not([colspan]) {
-    text-align: right;
+    text-align: left;
     font-variant-numeric: tabular-nums;
     max-width: 16rem;
     overflow-wrap: normal;

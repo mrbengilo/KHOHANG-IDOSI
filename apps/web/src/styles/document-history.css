@@ -7,8 +7,8 @@
 }
 .document-history table {
   display: table;
-  width: 100%;
-  min-width: 100%;
+  width: auto;
+  min-width: 0;
   table-layout: auto;
   border-collapse: collapse;
 }
@@ -36,7 +36,6 @@
   vertical-align: top;
   padding: 0.75rem;
   border: 1px solid var(--border);
-  min-width: 7rem;
   max-width: 20rem;
   overflow-wrap: break-word;
   word-break: normal;
@@ -58,7 +57,7 @@
 .document-history--compact .document-number {
   width: 6rem;
   min-width: 4rem;
-  text-align: right;
+  text-align: left;
   font-variant-numeric: tabular-nums;
 }
 .document-history--compact td.document-number {
