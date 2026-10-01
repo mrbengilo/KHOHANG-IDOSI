@@ -270,10 +270,6 @@
 .inbound-store-panel {
   container-type: inline-size;
 }
-.inbound-statistics .inbound-store-toggle {
-  min-width: 8.5em;
-  white-space: nowrap;
-}
 .inbound-statistics .inbound-store-toggle[aria-expanded='true'] {
   background: #152e53;
   border-color: #152e53;
