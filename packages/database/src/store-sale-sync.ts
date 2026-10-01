@@ -221,9 +221,18 @@ export async function reconcileStoreSaleSnapshot(
   const namedProducts = await tx.select({ id: products.id, name: products.name }).from(products);
   const names = new Map(namedProducts.map((product) => [product.id, product.name]));
   const links = await linkIdosiProducts(tx, payload);
+  const resetProductIds = resetActive
+    ? [
+        ...new Set(
+          payload.products.items
+            .map((item) => links.get(idosiItemKey(item)))
+            .filter((id): id is string => id !== undefined),
+        ),
+      ]
+    : productIds;
   // Establish the reset boundary at the first usable source observation, even before any new
   // stock is sorted. Waiting for the first credit would silently discard later real sales.
-  for (const productId of resetActive ? namedProducts.map((p) => p.id) : productIds) {
+  for (const productId of resetProductIds) {
     const name = names.get(productId);
     if (!name) continue;
     if (resetActive) {
