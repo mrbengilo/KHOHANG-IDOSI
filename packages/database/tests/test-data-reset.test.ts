@@ -39,6 +39,20 @@ describe('reset plan safety', () => {
       classifyResetAudit({ ...row, entity_type: 'user', after: { receiptId: 'old-test-id' } }),
     ).toBe('REVIEW');
     expect(classifyResetAudit({ ...row, entity_type: 'unknown' })).toBe('REVIEW');
+    for (const [entity_type, action] of [
+      ['store', 'STORE_CREATED'],
+      ['store_group', 'STORE_GROUP_UPDATED'],
+      ['idosi_product_link', 'IDOSI_PRODUCT_LINK_CREATED'],
+    ]) {
+      expect(
+        classifyResetAudit({
+          ...row,
+          entity_type: entity_type!,
+          action: action!,
+          after: { name: 'Configuration' },
+        }),
+      ).toBe('KEEP');
+    }
     expect(
       classifyResetAudit({
         ...row,
