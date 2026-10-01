@@ -18,6 +18,8 @@ export default defineConfig({
     '**/transfer-recovery.spec.ts',
     '**/desktop-zoom.spec.ts',
     '**/responsive-table-layout.spec.ts',
+    // Store-detail regression must also pass against the production bundle (no mock fallback).
+    '**/inbound-statistics.spec.ts',
   ],
   use: { ...smokeConfig.use, baseURL: webOrigin },
   webServer: {

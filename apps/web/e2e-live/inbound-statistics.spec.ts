@@ -53,6 +53,51 @@ test('Admin browser to API to PostgreSQL reconciles original warehouse and partn
         animations: 'disabled',
       });
     }
+    // "Xem chi tiết" opens an inline store detail; the parent list, search and totals stay put.
+    await page.getByRole('combobox', { name: 'Cửa hàng', exact: true }).selectOption('');
+    await page
+      .getByRole('combobox', { name: 'Chi tiết theo nguồn', exact: true })
+      .selectOption('ALL');
+    const suffix = fixture.stores[0]!.code.replace('STAT-A-', '');
+    await page.getByLabel('Tìm cửa hàng', { exact: true }).fill(suffix);
+    const storeTable = page.getByLabel('Bảng cửa hàng', { exact: true });
+    const parentRows = storeTable.locator(':scope > table > tbody > tr > th[scope="row"]');
+    await expect(parentRows).toHaveCount(3);
+    const overview = await page.locator('.inbound-overview').innerText();
+    const toggleFor = (code: string) =>
+      storeTable
+        .getByRole('row')
+        .filter({ has: page.getByRole('rowheader', { name: code }) })
+        .getByRole('button');
+    const [storeA, , storeC] = fixture.stores;
+    await toggleFor(storeA!.code).click();
+    const detailA = page.getByRole('region', { name: `Chi tiết cửa hàng ${storeA!.code}` });
+    await expect(detailA).toContainText('58 bao · 700 kg');
+    await expect(detailA).toContainText('Kho 50 bao · 600 kg');
+    await expect(detailA).toContainText('Đối tác khác 8 bao · 100 kg');
+    await expect(parentRows).toHaveCount(3);
+    await expect(page.getByLabel('Tìm cửa hàng', { exact: true })).toHaveValue(suffix);
+    await expect(page.getByRole('combobox', { name: 'Cửa hàng', exact: true })).toHaveValue('');
+    expect(await page.locator('.inbound-overview').innerText()).toBe(overview);
+    const detailResponse = await api.get(
+      `http://127.0.0.1:3100/api/v1/reports/inbound-statistics?month=2026-09&storeKind=RETAIL&storeId=${storeA!.id}`,
+    );
+    const { data: detailData } = await detailResponse.json();
+    const detailRows = detailA.locator('tbody > tr');
+    await expect(detailRows).toHaveCount(detailData.productRows.length);
+    await expect(detailA.locator('tfoot')).toContainText(
+      String(detailData.overviewAllSources.total.bagQuantity),
+    );
+    await toggleFor(storeC!.code).click();
+    const detailC = page.getByRole('region', { name: `Chi tiết cửa hàng ${storeC!.code}` });
+    await expect(detailC).toContainText('30 bao · 500 kg');
+    await expect(detailA).toHaveCount(0);
+    await toggleFor(storeC!.code).click();
+    await expect(detailC).toHaveCount(0);
+    await expect(toggleFor(storeC!.code)).toHaveAttribute('aria-expanded', 'false');
+    await expect(parentRows).toHaveCount(3);
+    await page.getByLabel('Tìm cửa hàng', { exact: true }).fill('');
+
     await page
       .getByRole('combobox', { name: 'Loại cửa hàng', exact: true })
       .selectOption('WHOLESALE');
