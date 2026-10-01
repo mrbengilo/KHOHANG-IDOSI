@@ -306,6 +306,18 @@ describePg('one-shot reset on an isolated fully migrated PostgreSQL database', (
         (await fixture.pool.query('SELECT count(*)::int n FROM idosi_statistics_snapshots')).rows[0]
           .n,
       ).toBe(1);
+      await save(9, 0, false);
+      await save(9, 1000);
+      const resetType =
+        type === 'NORMAL' ? 'normal' : type === 'SALE_KG' ? 'sale_kg' : 'sale_piece';
+      expect(
+        (
+          await fixture.pool.query(
+            "SELECT baseline_grams::text FROM test_data_reset_baselines WHERE store_id=$1 AND product_id=$2 AND revenue_type=$3 AND status='ready'",
+            [storeId, productId, resetType],
+          )
+        ).rows,
+      ).toEqual([{ baseline_grams: '9000' }]);
       await createStorePartnerInbound(fixture.db, {
         storeId,
         partnerName: 'Fixture',
@@ -351,9 +363,6 @@ describePg('one-shot reset on an isolated fully migrated PostgreSQL database', (
                 'SELECT current_weight_kg AS weight FROM store_inventory_bags LIMIT 1',
               )
             ).rows[0].weight;
-      await save(9, 0, false);
-      expect(await stock()).toBe('10.000');
-      await save(9, 1000);
       expect(await stock()).toBe('10.000');
       await save(12, 2000);
       expect(await stock()).toBe('7.000');

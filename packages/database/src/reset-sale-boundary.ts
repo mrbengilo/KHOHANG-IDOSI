@@ -37,6 +37,10 @@ export function resetLinkSignature(productId: string, links: ReadonlyMap<string,
     .digest('hex');
 }
 
+export async function hasTestDataReset(tx: Transaction): Promise<boolean> {
+  return Boolean(await resetOperation(tx));
+}
+
 /** Fail closed for old months, missing/incomplete baselines and changed product mappings. */
 export async function resetSaleBoundary(
   tx: Transaction,

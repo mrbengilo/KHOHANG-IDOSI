@@ -22,7 +22,11 @@ import {
   StoreOperationValidationError,
 } from './store-operations.js';
 import type { Transaction } from './transaction.js';
-import { resetSaleBoundary, resetAllowsSettlement } from './reset-sale-boundary.js';
+import {
+  resetSaleBoundary,
+  resetAllowsSettlement,
+  hasTestDataReset,
+} from './reset-sale-boundary.js';
 
 type SaleType = 'sale_kg' | 'sale_piece';
 
@@ -212,13 +216,20 @@ export async function reconcileStoreSaleSnapshot(
   const productIds = [...firstCreditPeriod]
     .filter(([, creditPeriod]) => period >= creditPeriod)
     .map(([productId]) => productId);
-  if (productIds.length === 0) return;
+  const resetActive = await hasTestDataReset(tx);
+  if (productIds.length === 0 && !resetActive) return;
   const namedProducts = await tx.select({ id: products.id, name: products.name }).from(products);
   const names = new Map(namedProducts.map((product) => [product.id, product.name]));
   const links = await linkIdosiProducts(tx, payload);
-  for (const productId of productIds) {
+  // Establish the reset boundary at the first usable source observation, even before any new
+  // stock is sorted. Waiting for the first credit would silently discard later real sales.
+  for (const productId of resetActive ? namedProducts.map((p) => p.id) : productIds) {
     const name = names.get(productId);
     if (!name) continue;
+    if (resetActive) {
+      const items = idosiItemsForProduct(payload, name, { productId, links });
+      if (!items.length || items.some((item) => !item.weight.isComplete)) continue;
+    }
     for (const type of ['sale_kg', 'sale_piece'] as const) {
       const observed = idosiProductSaleGrams(payload, name, type, { productId, links });
       if (observed === null) continue;
