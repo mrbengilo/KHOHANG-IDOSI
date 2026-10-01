@@ -327,6 +327,8 @@ test('Xem chi tiết opens inline, keeps the store list and collapses again', as
   const before = await parentSnapshot(page);
   const url = page.url();
   const requestCount = state.fulfilled.length;
+  const tableWidth = () => storeTable(page).evaluate((element) => element.scrollWidth);
+  const closedWidth = await tableWidth();
 
   await toggle(page, alpha).click();
   await expect.poll(() => state.fulfilled.length).toBe(requestCount + 1);
@@ -337,6 +339,8 @@ test('Xem chi tiết opens inline, keeps the store list and collapses again', as
   expect(await parentSnapshot(page)).toEqual(before);
   expect(page.url()).toBe(url);
   expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  // Opening a detail must not widen the content-sized store table.
+  expect(await tableWidth()).toBe(closedWidth);
   // Exactly one request, scoped to Alpha, with page 1 and no inherited searches.
   expect(state.requests.slice(requestCount)).toEqual([
     expect.objectContaining({
