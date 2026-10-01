@@ -1,5 +1,7 @@
 # Căn giữa và co giãn bảng dữ liệu — kiểm kê và bằng chứng (01/10/2026)
 
+> **Cập nhật 01/10/2026:** quy tắc "bảng rộng theo nội dung, căn giữa trong box" đã được thay bằng "bảng rộng bằng box, cuộn ngang cục bộ khi thiếu chỗ" — xem [desktop-ui-consistency.md](desktop-ui-consistency.md). Quy tắc căn trái mọi ô và thẻ mobile vẫn giữ nguyên.
+
 Base: `ca3d0c4a207333bd28edbce96ddf278c5248a66f` (HEAD `main` lúc bắt đầu, chưa có commit mới khi tạo nhánh). Nhánh: `fix/responsive-centered-tables`.
 
 ## 1. Yêu cầu đã chốt

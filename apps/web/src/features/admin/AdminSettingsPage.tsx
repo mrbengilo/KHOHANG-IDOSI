@@ -6,7 +6,7 @@ import {
   type UpdateOperationalSettingsRequest,
 } from '@idosi/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Clock3, History, RefreshCw, Save, ShieldCheck } from 'lucide-react';
+import { Clock3, History, Percent, RefreshCw, Save, ShieldCheck } from 'lucide-react';
 import { useRef, useState, type FormEvent } from 'react';
 
 import { Badge } from '../../components/Badge';
@@ -273,8 +273,15 @@ function SettingsEditor({
         </section>
 
         <section className="settings-panel" aria-labelledby="settings-vat-heading">
-          <h2 id="settings-vat-heading">Thuế suất VAT</h2>
-          <p>Áp dụng khi chốt phiếu mới. Phiếu đã chốt giữ thuế suất riêng.</p>
+          <div className="settings-section-heading">
+            <span className="settings-section-icon settings-section-icon--vat">
+              <Percent aria-hidden="true" size={18} />
+            </span>
+            <div>
+              <h2 id="settings-vat-heading">Thuế suất VAT</h2>
+              <p>Áp dụng khi chốt phiếu mới. Phiếu đã chốt giữ thuế suất riêng.</p>
+            </div>
+          </div>
           <label className="settings-field">
             <span>Thuế suất (%)</span>
             <input

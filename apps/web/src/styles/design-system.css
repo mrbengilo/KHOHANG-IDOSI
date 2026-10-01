@@ -1,0 +1,358 @@
+/*
+ * Lớp đồng bộ giao diện desktop (docs/desktop-ui-consistency.md).
+ *
+ * Nạp sau styles.css; mọi rule có tiền tố .app-main nên vẫn thắng CSS feature được lazy-load
+ * sau. Chỉ áp dụng từ 821px — bố cục mobile (bảng thành thẻ, vùng chạm 44px) giữ nguyên.
+ *
+ * Ba nguyên tắc:
+ * 1. Nhịp dọc: khối cấp trang cách nhau đúng --stack-gap, không khối nào tự đặt margin.
+ * 2. Box: cùng bo góc, viền, nền, bóng và padding; box lồng bên trong dùng bo góc nhỏ hơn.
+ * 3. Bảng: luôn rộng bằng box chứa; tiêu đề cột, ô và chữ cùng một kiểu trên mọi màn.
+ */
+@media (min-width: 821px) {
+  /* ---------- 1. Nhịp dọc ---------- */
+  .app-main,
+  .app-main
+    :is(
+      .admin-feature,
+      .dashboard-page,
+      .inbound-statistics,
+      .inbound-results,
+      .tab-panel,
+      .idosi-sales-workspace,
+      .settings-form
+    ) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    gap: var(--stack-gap);
+  }
+
+  /*
+   * Khoảng cách giữa các khối do vùng chứa quyết định. !important vì margin cũ nằm rải
+   * trong nhiều file feature với độ ưu tiên khác nhau (0–24px), gây khối dính sát hoặc hở to.
+   */
+  .app-main > *,
+  .app-main
+    :is(
+      .admin-feature,
+      .dashboard-page,
+      .inbound-statistics,
+      .inbound-results,
+      .tab-panel,
+      .idosi-sales-workspace,
+      .settings-form
+    )
+    > * {
+    margin-block: 0 !important;
+  }
+
+  .app-main .tabs {
+    margin-bottom: 0;
+  }
+
+  /* ---------- 2. Box ---------- */
+  .app-main
+    :is(
+      .page-header,
+      .panel,
+      .admin-panel,
+      .settings-panel,
+      .settings-history,
+      .inbound-panel,
+      .filter-card,
+      .formula-card,
+      .quota-card,
+      .admin-security-note,
+      .settings-security-note,
+      .alerts-panel,
+      .waitlist-panel
+    ) {
+    border-radius: var(--card-radius);
+    padding: var(--card-pad);
+    box-shadow: var(--shadow-box);
+  }
+
+  .app-main .page-header {
+    padding: 14px 18px;
+  }
+
+  .app-main .page-header h1 {
+    font-size: var(--fs-2xl);
+  }
+
+  .app-main .page-header p,
+  .app-main .section-heading p {
+    font-size: var(--fs-sm);
+  }
+
+  /* Tiêu đề của mọi box cùng cỡ chữ, dù box thuộc feature nào. */
+  .app-main
+    :is(.panel, .admin-panel, .settings-panel, .settings-history, .inbound-panel, .table-panel)
+    > :is(h2, .section-heading h2, header h2, div > h2) {
+    font-size: var(--fs-lg);
+    line-height: 1.3;
+  }
+
+  .app-main .section-heading h2,
+  .app-main .section-heading h3 {
+    font-size: var(--fs-lg);
+  }
+
+  /* Box lồng trong box: không lặp bóng và bo góc nhỏ hơn box ngoài. */
+  .app-main
+    :is(.panel, .admin-panel, .settings-panel, .inbound-panel)
+    :is(.filter-card, .empty-state) {
+    border-radius: var(--inner-radius);
+    box-shadow: none;
+  }
+
+  .app-main .empty-state {
+    padding: 22px 16px;
+  }
+
+  .app-main .stat-card {
+    border-radius: var(--inner-radius);
+  }
+
+  /* ---------- 3. Bảng ---------- */
+  .app-main
+    :is(
+      .responsive-table,
+      .document-history,
+      .admin-table-wrap,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll
+    ) {
+    border: 1px solid var(--border);
+    border-radius: var(--inner-radius);
+    background: var(--surface);
+  }
+
+  .app-main table {
+    width: 100%;
+    min-width: 0;
+    border-collapse: collapse;
+    font-size: var(--fs-md);
+  }
+
+  .app-main table.admin-table {
+    min-width: 0;
+  }
+
+  .app-main table :is(th, td) {
+    padding: 10px 12px;
+    border-radius: 0;
+    text-align: left;
+  }
+
+  .app-main table thead th,
+  .app-main table > tr:first-child > th {
+    border-bottom: 1px solid var(--border);
+    background: var(--table-head-bg);
+    color: var(--text-secondary);
+    font-size: var(--fs-xs);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    line-height: 1.35;
+    text-transform: uppercase;
+    vertical-align: bottom;
+  }
+
+  .app-main table tbody :is(td, th) {
+    border-bottom: 1px solid var(--table-line);
+    vertical-align: middle;
+  }
+
+  .app-main table tbody tr:last-child :is(td, th) {
+    border-bottom: 0;
+  }
+
+  .app-main table tfoot :is(td, th) {
+    border-top: 1px solid var(--border);
+    background: var(--table-head-bg);
+    font-weight: 700;
+  }
+
+  .app-main table td small {
+    font-size: var(--fs-xs);
+  }
+
+  /* Bảng chứng từ gộp ô (rowspan) giữ đường kẻ dọc để đọc đúng cột của ô gộp. */
+  .app-main .document-history :is(th, td) {
+    border: 1px solid var(--table-line);
+  }
+
+  .app-main .document-history thead th {
+    border-bottom-color: var(--border);
+  }
+
+  /* Nút thao tác không ngắt chữ giữa nút; chỉ xuống hàng khi bảng thật sự hết chỗ. */
+  .app-main table :is(.table-actions, .admin-row-actions) > * {
+    white-space: nowrap;
+  }
+
+  /* ---------- 4. Ô nhập, nhãn và nút ---------- */
+  /*
+   * Nhiều feature đặt `font: inherit` cho ô nhập nên ô nhập ăn theo cỡ/độ đậm của nhãn
+   * (12px, đậm 760). :not(...) nâng độ ưu tiên để mọi ô nhập cùng một kiểu chữ và chiều cao.
+   */
+  .app-main :is(input, select, textarea):not([type='checkbox'], [type='radio'], [type='range']) {
+    border-radius: 8px;
+    font-size: var(--fs-md);
+    font-weight: 400;
+    line-height: 1.45;
+  }
+
+  /* Ô số bao giữ vùng chạm 44px của bộ tăng/giảm (product-bag-picker.css). */
+  .app-main
+    :is(input, select):not(
+      [type='checkbox'],
+      [type='radio'],
+      [type='range'],
+      .bag-picker__stepper input
+    ) {
+    min-height: var(--control-h);
+    padding-block: 7px;
+  }
+
+  .app-main
+    :is(input[type='date'], input[type='month'], input[type='week'], input[type='datetime-local']) {
+    padding-right: 40px;
+  }
+
+  /* Nhãn phía trên ô nhập: cùng cỡ và độ đậm; nhãn của ô tích giữ cỡ chữ nội dung. */
+  .app-main label:not(:has(> input[type='checkbox'], > input[type='radio'])) {
+    align-content: start;
+    font-size: var(--fs-sm);
+    font-weight: 700;
+  }
+
+  .app-main .button {
+    min-height: var(--control-h);
+    border-radius: 8px;
+    font-size: var(--fs-sm);
+  }
+
+  /* Nút trong ô bảng gọn hơn để mỗi dòng không bị cao. */
+  .app-main table :is(.button, .admin-action, .link-button) {
+    min-height: 32px;
+    padding: 4px 10px;
+    font-size: var(--fs-sm);
+  }
+
+  .app-main table :is(select) {
+    min-height: 32px;
+    padding-block: 4px;
+  }
+
+  .app-main table :is(.allocation-session-actions, .admin-status-control) {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+  }
+
+  /* Phân trang: nút, số trang và ô chọn số dòng nằm trên một hàng, ô chọn không kéo giãn. */
+  .app-main .button-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 10px;
+    font-size: var(--fs-sm);
+  }
+
+  .app-main .button-row label {
+    display: inline-flex;
+    flex: 0 0 auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .app-main .button-row select {
+    width: auto;
+  }
+
+  /* Ô tiêu đề dòng (th trong tbody) là dữ liệu, không mang kiểu tiêu đề cột. */
+  .app-main table tbody th {
+    background: transparent;
+    color: var(--text);
+    font-size: var(--fs-md);
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  /* Thông báo hàng ưu tiên: tiêu đề cùng bậc với tiêu đề box, không lấn tiêu đề trang. */
+  .app-main .priority-offer-notices {
+    border-radius: var(--card-radius);
+    padding: var(--card-pad);
+  }
+
+  .app-main .priority-offer-notices h2 {
+    font-size: var(--fs-xl);
+  }
+
+  /* ---------- 5. Danh sách chọn mặt hàng ---------- */
+  .app-main .product-bag-picker {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+    gap: 8px 10px;
+  }
+
+  .app-main .product-bag-picker > small,
+  .app-main .product-bag-picker > :not(.bag-picker__item),
+  .app-main .bag-picker__item:has(.bag-picker__details) {
+    grid-column: 1 / -1;
+  }
+
+  /* Ô số bao đứng ngay sau tên mặt hàng (không đẩy sang mép phải) để mắt không phải dò xa. */
+  .app-main .bag-picker__choice {
+    min-height: 40px;
+  }
+
+  .app-main .bag-picker__choice input[type='checkbox'] {
+    width: 18px;
+    height: 18px;
+    min-height: 18px;
+    flex-basis: 18px;
+  }
+}
+
+@media (min-width: 821px) {
+  /* Nút gửi nằm trực tiếp trong form/box dạng lưới không kéo giãn hết bề ngang box. */
+  .app-main :is(form, .panel, .admin-panel, .settings-panel) > .button {
+    justify-self: start;
+  }
+}
+
+@media (min-width: 821px) {
+  /* Thanh điều hướng gọn để đủ mọi mục trên màn 768–900px chiều cao mà không phải cuộn. */
+  .sidebar__nav,
+  .sidebar__group {
+    gap: 2px;
+  }
+
+  .sidebar__link {
+    min-height: 36px;
+    padding: 7px 12px;
+  }
+
+  /* Tiêu đề ở đầu box không cộng thêm margin vào padding của box. */
+  .app-main
+    :is(.panel, .admin-panel, .settings-panel, .inbound-panel)
+    > :is(.section-heading, header, h2):first-child {
+    margin-top: 0;
+  }
+
+  .app-main .admin-panel > :is(.empty-state, .admin-table-wrap) {
+    margin-top: 16px;
+  }
+}
+
+@media (min-width: 821px) {
+  /* Thanh phân trang trong box: cách nội dung phía trên và căn giữa chữ "Trang x / y" với nút. */
+  .app-main nav:is(.inventory-actions, .button-row) {
+    align-items: center;
+    margin-top: 12px;
+  }
+}

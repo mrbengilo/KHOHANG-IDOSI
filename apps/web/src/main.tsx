@@ -5,6 +5,7 @@ import { RouterProvider } from 'react-router-dom';
 import { router } from './router';
 import './styles.css';
 import './styles/table-density.css';
+import './styles/design-system.css';
 
 const queryClient = new QueryClient({
   defaultOptions: {

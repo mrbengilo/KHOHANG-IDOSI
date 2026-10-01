@@ -12,8 +12,9 @@ test.beforeEach(async ({ page }) => {
 
 /**
  * Synthetic primitive inside the real workspace: the shared wrapper class with a table whose
- * column count grows. Budgets were fixed before the fix: a short table equals its max-content
- * width (±1px) at every desktop width, and adding columns never shrinks the table.
+ * column count grows. Contract (docs/desktop-ui-consistency.md): the scroll container always
+ * spans its box and the table spans the scroll container, whatever the column count; once the
+ * columns need more room than the box, only the container scrolls.
  */
 async function mountSyntheticTable(page: Page, columns: number, rows = 3) {
   await page.evaluate(
@@ -40,23 +41,25 @@ async function mountSyntheticTable(page: Page, columns: number, rows = 3) {
   );
   return page.evaluate(() => {
     const wrapper = document.querySelector<HTMLElement>('#table-layout-probe')!;
-    const table = wrapper.querySelector('table')!;
-    const clone = table.cloneNode(true) as HTMLTableElement;
-    // Same container and inherited font as the real table, sized to its max-content width.
-    clone.style.cssText = 'position:absolute;visibility:hidden;width:max-content';
-    wrapper.parentElement!.append(clone);
-    const natural = clone.getBoundingClientRect().width;
-    clone.remove();
+    const host = wrapper.parentElement!;
+    const style = getComputedStyle(host);
+    const hostContent =
+      host.getBoundingClientRect().width -
+      parseFloat(style.paddingLeft) -
+      parseFloat(style.paddingRight) -
+      parseFloat(style.borderLeftWidth) -
+      parseFloat(style.borderRightWidth);
     return {
-      natural,
-      width: table.getBoundingClientRect().width,
+      host: hostContent,
+      table: wrapper.querySelector('table')!.getBoundingClientRect().width,
       wrapper: wrapper.getBoundingClientRect().width,
+      wrapperInner: wrapper.clientWidth,
       overflowing: wrapper.scrollWidth > wrapper.clientWidth + 1,
     };
   });
 }
 
-test('short tables keep their content width; wide tables grow then scroll locally', async ({
+test('tables span their box at every width; wide tables scroll locally', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-1440', 'desktop sizing primitive');
@@ -64,35 +67,37 @@ test('short tables keep their content width; wide tables grow then scroll locall
   await expect(page.locator('.warehouse-stock-panel tbody tr')).toHaveCount(24);
   const compact = [];
   for (const [width, height] of [
+    [1024, 768],
     [1440, 900],
     [1920, 1080],
     [2560, 1440],
   ] as const) {
     await page.setViewportSize({ width, height });
     const probe = await mountSyntheticTable(page, 3);
-    compact.push(probe);
-    expect(Math.abs(probe.width - probe.natural)).toBeLessThanOrEqual(1);
-    expect(probe.wrapper).toBeLessThan(width / 2);
+    compact.push({ width, ...probe });
+    // A short table never leaves an empty band inside its box.
+    expect(Math.abs(probe.wrapper - probe.host)).toBeLessThanOrEqual(1);
+    expect(Math.abs(probe.table - probe.wrapperInner)).toBeLessThanOrEqual(1);
+    expect(probe.overflowing).toBe(false);
   }
-  expect(Math.max(...compact.map((probe) => probe.width))).toBeLessThanOrEqual(
-    Math.min(...compact.map((probe) => probe.width)) + 1,
-  );
   await page.setViewportSize({ width: 1440, height: 900 });
   const growth = [];
   for (let columns = 2; columns <= 40; columns += 2) {
     const probe = await mountSyntheticTable(page, columns);
     const layout = await measureTableLayout(page);
     expect(tableLayoutViolations(layout), `${columns} columns`).toEqual([]);
+    expect(Math.abs(probe.wrapper - probe.host), `${columns} columns`).toBeLessThanOrEqual(1);
     growth.push({ columns, ...probe });
   }
   for (const [index, probe] of growth.entries())
-    if (index) expect(probe.width).toBeGreaterThanOrEqual(growth[index - 1]!.width);
+    if (index) expect(probe.table).toBeGreaterThanOrEqual(growth[index - 1]!.table);
   const fitting = growth.filter((probe) => !probe.overflowing);
   const scrolling = growth.filter((probe) => probe.overflowing);
   expect(fitting.length).toBeGreaterThan(3);
   expect(scrolling.length).toBeGreaterThan(0);
-  // Before the wrapper limit the table grows with its columns; after it the scrollport stays put.
-  expect(fitting.at(-1)!.width).toBeGreaterThan(fitting[0]!.width * 3);
+  // While the columns fit, the table is exactly as wide as its box; past that only it grows.
+  for (const probe of fitting)
+    expect(Math.abs(probe.table - probe.wrapperInner)).toBeLessThanOrEqual(1);
   for (const probe of scrolling) expect(probe.wrapper).toBe(scrolling[0]!.wrapper);
   await testInfo.attach('table-growth', {
     body: JSON.stringify({ compact, growth }, null, 2),
@@ -101,7 +106,7 @@ test('short tables keep their content width; wide tables grow then scroll locall
 });
 
 for (const route of ['/inventory', '/warehouse-inbound']) {
-  test(`fixture tables are centred and left aligned at every viewport ${route}`, async ({
+  test(`fixture tables span their box and stay left aligned at every viewport ${route}`, async ({
     page,
   }, testInfo) => {
     await page.goto(route);

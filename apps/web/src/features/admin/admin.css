@@ -35,7 +35,7 @@
 
 .admin-security-note span {
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .admin-editor {
@@ -64,13 +64,13 @@
 
 .admin-section-heading h2 {
   color: var(--navy);
-  font-size: 18px;
+  font-size: var(--fs-lg);
 }
 
 .admin-section-heading p {
   margin-top: 5px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .admin-icon-button {
@@ -144,7 +144,7 @@
   min-width: 0;
   gap: 7px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 
@@ -236,7 +236,7 @@
 .admin-feedback {
   border: 1px solid transparent;
   border-radius: 10px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   padding: 10px 12px;
 }
@@ -266,7 +266,7 @@
 .admin-state p {
   max-width: 560px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .admin-state--error {
@@ -330,7 +330,7 @@
 .admin-table th {
   background: var(--surface-muted);
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
@@ -351,7 +351,7 @@
 .admin-table td small {
   margin-top: 4px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .admin-row-actions,
@@ -366,7 +366,7 @@
   width: 138px;
   min-height: var(--control-h);
   padding: 6px 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .admin-action {
@@ -379,7 +379,7 @@
   border-radius: 9px;
   background: var(--brand-soft);
   color: var(--brand-dark);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   padding: 7px 10px;
   transition:
@@ -421,7 +421,7 @@
   gap: 12px;
   margin-top: 16px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .admin-assignment-form {
@@ -446,17 +446,17 @@
 
 .admin-assignment-count {
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .admin-assignment-count strong {
   color: var(--brand-dark);
-  font-size: 18px;
+  font-size: var(--fs-lg);
 }
 
 .admin-assignment-count small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .admin-store-choice-browser {
@@ -480,7 +480,7 @@
 .admin-assignment-fieldset legend {
   margin-bottom: 10px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 
@@ -551,13 +551,13 @@
 
 .admin-assignment-option strong {
   color: var(--navy);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .admin-assignment-option small,
 .admin-assignment-reason small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .admin-assignment-warning {
@@ -565,7 +565,7 @@
   border-radius: 10px;
   background: #fffbeb;
   color: #92400e;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   padding: 10px 12px;
 }
@@ -596,13 +596,13 @@
 
 .admin-audit-event__heading strong {
   color: var(--navy);
-  font-size: 14px;
+  font-size: var(--fs-md);
   overflow-wrap: anywhere;
 }
 
 .admin-audit-event__heading span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .admin-audit-meta {
@@ -621,7 +621,7 @@
 
 .admin-audit-meta dt {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -631,7 +631,7 @@
   margin: 5px 0 0;
   color: var(--text-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
 
@@ -644,7 +644,7 @@
   border-radius: 7px;
   color: var(--brand-dark);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   padding: 5px 2px;
 }
@@ -667,7 +667,7 @@
 .admin-audit-json-grid h3 {
   margin-bottom: 6px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .admin-audit-json-grid pre {
@@ -677,7 +677,7 @@
   border-radius: 9px;
   background: #0f172a;
   color: #dbeafe;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
   padding: 11px;
   white-space: pre-wrap;

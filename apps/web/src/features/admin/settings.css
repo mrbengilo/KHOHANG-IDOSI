@@ -17,12 +17,12 @@
 
 .settings-security-note strong {
   color: #1e3a8a;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .settings-security-note span {
   color: #1d4ed8;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
 }
 
@@ -62,12 +62,12 @@
 
 .settings-section-heading h2 {
   color: var(--navy);
-  font-size: 15px;
+  font-size: var(--fs-base);
 }
 
 .settings-section-heading p {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
 }
 
@@ -85,6 +85,11 @@
 .settings-section-icon--integration {
   background: var(--success-soft);
   color: var(--success);
+}
+
+.settings-section-icon--vat {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .settings-section-icon--history {
@@ -112,7 +117,7 @@
 
 .settings-field > span {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 
@@ -159,7 +164,7 @@
 .settings-field small,
 .settings-integration-status small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   line-height: 1.45;
 }
 
@@ -212,18 +217,21 @@
   flex-wrap: wrap;
   gap: 8px;
   color: var(--navy);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .settings-history-list span,
 .settings-history-list small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
 }
 
+/* Co lại và xuống dòng khi người sửa là mã dài (UUID) thay vì đẩy dòng ra ngoài box. */
 .settings-history-list small {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
   text-align: right;
 }
 
@@ -250,7 +258,7 @@
 
 .settings-sticky-actions span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
 }
 
@@ -262,7 +270,7 @@
 
 .settings-feedback {
   border-radius: 9px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   padding: 10px 12px;
 }
@@ -296,7 +304,7 @@
 .settings-state p {
   max-width: 560px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
 }
 
