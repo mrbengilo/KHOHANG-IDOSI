@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { mockLayoutAdmin } from './layout-fixtures';
+import { measureTableLayout, tableLayoutViolations } from './table-layout-metrics';
 
 test('real browser zoom keeps inventory and merged inbound documents usable', async ({
   browserName,
@@ -82,7 +83,10 @@ test('real browser zoom keeps inventory and merged inbound documents usable', as
           scrollWidth: document.documentElement.scrollWidth,
         }));
         expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.width + 1);
-        measurements.push({ route, zoom: actual, ...metrics });
+        // Tables stay centred, left aligned and scrollable to the last column at real zoom.
+        const tables = await measureTableLayout(page);
+        expect(tableLayoutViolations(tables), `${route} zoom ${factor}`).toEqual([]);
+        measurements.push({ route, zoom: actual, ...metrics, tables: tables.tables });
         await page.screenshot({
           path: testInfo.outputPath(`${route.slice(1)}-zoom-${factor}.png`),
           animations: 'disabled',
