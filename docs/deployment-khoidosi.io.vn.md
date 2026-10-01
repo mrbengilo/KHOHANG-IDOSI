@@ -3,6 +3,10 @@
 Tài liệu này là runbook production cho một VPS Linux chạy Docker Engine và Docker Compose v2.
 Không lưu mật khẩu, token registry, khóa SSH hoặc file môi trường production vào Git.
 
+Reset dữ liệu test là maintenance riêng theo [runbook giữ tài khoản và IDOSI](reset-test-data-preserve-idosi.md).
+Deploy/migration không chạy purge. Sau reset chỉ giữ backup sạch đã restore và đối soát;
+không dùng retention thông thường để tuyên bố đã xóa mọi backup test.
+
 ## Điều kiện bắt buộc
 
 - Nhánh phát hành đã được review, CI xanh và checkout đúng một commit SHA đầy đủ.
