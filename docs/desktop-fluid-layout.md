@@ -56,3 +56,7 @@ Rollback: revert the squash commit through a PR and let the existing watcher dep
 ## Update 2026-10-01 — tables inside the fluid workspace
 
 The fluid workspace and its 18px gutters are unchanged; no shared `max-width` was reintroduced. Tables no longer stretch to the panel width: each table wrapper is content-sized, centred in its direct container and scrolls horizontally on its own when the table needs more room. See [responsive-table-layout-audit.md](responsive-table-layout-audit.md).
+
+## Update 2026-10-01 (later) — tables span their box
+
+Content-sized, centred tables were replaced: table scroll containers now span their box and tables span the container, with the shared desktop rhythm, box and control rules in `styles/design-system.css`. See [desktop-ui-consistency.md](desktop-ui-consistency.md).
