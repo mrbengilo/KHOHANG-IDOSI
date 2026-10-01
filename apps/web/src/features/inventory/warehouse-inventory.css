@@ -28,16 +28,16 @@
     width: auto;
     max-width: 100%;
   }
+  /* Tên rộng theo nội dung tới 32rem rồi xuống dòng; cột số căn trái, không ngắt giữa số. */
   .warehouse-stock-table th:first-child,
   .warehouse-stock-table td:first-child {
-    width: 32rem;
-    min-width: 18rem;
+    min-width: 12rem;
     max-width: 32rem;
     overflow-wrap: anywhere;
   }
   .warehouse-stock-table th:not(:first-child),
   .warehouse-stock-table td:not(:first-child) {
-    text-align: right;
+    text-align: left;
     white-space: nowrap;
   }
 }

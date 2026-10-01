@@ -108,7 +108,7 @@
 }
 .inbound-statistics table {
   display: table;
-  width: 100%;
+  width: auto;
   border-collapse: collapse;
   font-size: 0.9rem;
 }
@@ -138,7 +138,7 @@
   display: table-cell;
   padding: 12px;
   border-bottom: 1px solid #e0e6ef;
-  text-align: right;
+  text-align: left;
   min-width: 95px;
   vertical-align: top;
 }
