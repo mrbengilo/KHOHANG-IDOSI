@@ -2,9 +2,9 @@
 @media (min-width: 821px) {
   /* Keep the opt-in stronger than feature CSS loaded after the app stylesheet. */
   .app-main table.table-density {
-    width: auto;
+    width: 100%;
     min-width: 0;
-    max-width: 100%;
+    max-width: none;
     table-layout: auto;
   }
 

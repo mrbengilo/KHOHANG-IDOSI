@@ -34,7 +34,7 @@
   display: grid;
   gap: 0.4rem;
   color: var(--text-secondary);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   font-weight: 760;
 }
 
@@ -57,7 +57,7 @@
 
 .transfer-create small {
   color: var(--muted);
-  font-size: 0.74rem;
+  font-size: var(--fs-xs);
 }
 
 .transfer-create > .button {
@@ -122,7 +122,7 @@
 .transfer-card__note,
 .transfer-card__reason {
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
 }
 
 .transfer-flow {
@@ -139,7 +139,7 @@
   flex: 0 0 auto;
   align-items: center;
   gap: 0.35rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 740;
 }
 
@@ -160,14 +160,14 @@
 
 .transfer-card dt {
   color: var(--muted);
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
 }
 
 .transfer-card dd {
   margin: 0.2rem 0 0;
   overflow-wrap: anywhere;
   color: var(--text);
-  font-size: 0.83rem;
+  font-size: var(--fs-sm);
   font-weight: 720;
 }
 
@@ -230,7 +230,7 @@
   margin: 0;
   padding-left: 1.1rem;
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--fs-sm);
 }
 .transfer-card__cancel {
   display: flex;

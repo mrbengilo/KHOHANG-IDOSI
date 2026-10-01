@@ -57,6 +57,24 @@
   --shadow-box: 0 1px 3px rgba(15, 23, 42, 0.07);
   /* Chiều cao chuẩn của nút và ô nhập; mobile nâng lên 44px để đủ vùng chạm. */
   --control-h: 38px;
+  /*
+   * Thang chữ dùng chung (serif cần lớn hơn sans-serif một bậc để dễ đọc).
+   * Mọi cỡ chữ trong CSS feature đều quy về các bậc này để to/nhỏ đồng bộ giữa các màn.
+   */
+  --fs-xs: 12px; /* chú thích, mã phụ, tiêu đề cột */
+  --fs-sm: 13px; /* nhãn ô nhập, mô tả, nút */
+  --fs-md: 14px; /* ô dữ liệu bảng, nội dung trong box */
+  --fs-base: 15px; /* chữ thường */
+  --fs-lg: 17px; /* tiêu đề box */
+  --fs-xl: 20px; /* số liệu nổi bật */
+  --fs-2xl: 24px; /* tiêu đề trang */
+  /* Khoảng cách và khung box dùng chung. */
+  --stack-gap: 16px;
+  --card-radius: 12px;
+  --card-pad: 16px 18px;
+  --inner-radius: 10px;
+  --table-head-bg: #f3f6fb;
+  --table-line: #e2e8f0;
 }
 
 * {
@@ -83,7 +101,7 @@ body {
   min-height: 100vh;
   margin: 0;
   /* Serif cần cỡ chữ lớn hơn sans-serif để giữ cùng mức dễ đọc. */
-  font-size: 15px;
+  font-size: var(--fs-base);
   line-height: 1.55;
 }
 
@@ -229,7 +247,7 @@ p {
 
 .sidebar__group-title {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   letter-spacing: 0.06em;
   padding: 2px 12px 4px;
@@ -244,7 +262,7 @@ p {
   border: 1px solid transparent;
   border-radius: 10px;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   /* Danh mục điều hướng chính luôn in đậm. */
   font-weight: 700;
   padding: 10px 12px;
@@ -310,7 +328,7 @@ p {
 .sidebar__profile label,
 .sidebar__profile span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 
 .sidebar__profile select {
@@ -318,13 +336,13 @@ p {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: white;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   padding: 7px 8px;
 }
 
 .sidebar__profile strong {
   margin-top: 3px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .sidebar__profile a,
@@ -335,7 +353,7 @@ p {
   border: 0;
   background: transparent;
   color: var(--danger);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   margin-top: 5px;
   padding: 0;
@@ -393,7 +411,7 @@ p {
 .page-header p,
 .section-heading p {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   margin-top: 4px;
 }
@@ -414,7 +432,7 @@ p {
   overflow: hidden;
   border: 1px solid transparent;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 700;
   line-height: 1.35;
   padding: 7px 14px;
@@ -525,7 +543,7 @@ p {
   border-radius: 999px;
   background: #f1f5f9;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   font-weight: 700;
   line-height: 1;
@@ -606,7 +624,7 @@ p {
   flex-direction: column;
   gap: 6px;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 
@@ -686,7 +704,7 @@ textarea:focus {
   border-radius: 6px;
   background: transparent;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   padding: 7px 12px;
 }
@@ -705,7 +723,7 @@ textarea:focus {
   align-items: center;
   gap: 7px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 
 .section-heading {
@@ -728,7 +746,7 @@ textarea:focus {
 
 .section-heading h2,
 .panel h2 {
-  font-size: 17px;
+  font-size: var(--fs-lg);
   letter-spacing: -0.02em;
 }
 
@@ -804,7 +822,7 @@ textarea:focus {
   justify-content: space-between;
   gap: 6px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   line-height: 1.3;
 }
@@ -845,7 +863,7 @@ textarea:focus {
 
 .stat-card p {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.4;
 }
 
@@ -870,7 +888,7 @@ textarea:focus {
  */
 .panel > p:not([class]) {
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .flow-grid {
@@ -893,11 +911,11 @@ textarea:focus {
 .flow-card span,
 .flow-card small {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--fs-xs);
 }
 
 .flow-card strong {
-  font-size: 16px;
+  font-size: var(--fs-lg);
   font-variant-numeric: tabular-nums;
 }
 .flow-card--info {
@@ -924,7 +942,7 @@ textarea:focus {
   border-radius: 8px;
   background: #eff6ff;
   color: #1d4ed8;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   margin-top: 12px;
   padding: 9px 11px;
@@ -954,20 +972,20 @@ textarea:focus {
 }
 
 .alert-row strong {
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 /* Chỉ áp cho dòng mô tả; không lan vào badge số liệu bên phải (badge giữ màu theo mức độ). */
 .alert-row > div > span {
   overflow: hidden;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 /* Số liệu công việc chờ đọc nhanh hơn khi lớn hơn nhãn đi kèm. */
 .alert-row .badge {
-  font-size: 14px;
+  font-size: var(--fs-md);
   padding: 5px 11px;
 }
 
@@ -1003,7 +1021,7 @@ textarea:focus {
 .alerts-panel__cta {
   width: fit-content;
   align-self: flex-start;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   min-height: 38px;
   padding: 8px 16px;
 }
@@ -1020,7 +1038,7 @@ textarea:focus {
 .allocation-meter > div {
   display: flex;
   flex-direction: column;
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 .allocation-meter > div span {
   color: var(--muted);
@@ -1046,10 +1064,10 @@ textarea:focus {
 }
 .mini-kpis span {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--fs-xs);
 }
 .mini-kpis strong {
-  font-size: 16px;
+  font-size: var(--fs-lg);
   font-variant-numeric: tabular-nums;
   margin-top: 2px;
 }
@@ -1058,10 +1076,9 @@ textarea:focus {
   margin-top: 16px;
 }
 /*
- * Bố cục bảng dùng chung (docs/responsive-table-layout-audit.md):
- * vùng làm việc → vùng cuộn căn giữa trong vùng chứa trực tiếp → bảng rộng theo nội dung.
- * Vùng cuộn rộng bằng nội dung bảng nhưng không vượt vùng chứa; khi bảng cần rộng hơn,
- * vùng cuộn chiếm hết vùng chứa và cuộn ngang cục bộ từ cột đầu tới cột cuối.
+ * Bố cục bảng dùng chung (docs/desktop-ui-consistency.md):
+ * vùng cuộn luôn rộng bằng box chứa nó và bảng lấp đầy vùng cuộn, nên box ngoài và bảng
+ * bên trong luôn cùng bề ngang. Bảng cần rộng hơn thì cuộn ngang cục bộ trong vùng cuộn.
  * Tiền tố .app-main giữ thứ tự ưu tiên trước CSS feature được lazy-load sau file này.
  */
 .app-main
@@ -1073,10 +1090,10 @@ textarea:focus {
     .bag-opening-history__scroll
   ) {
   box-sizing: border-box;
-  width: fit-content;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
-  margin-inline: auto;
+  margin-inline: 0;
   overflow-x: auto;
 }
 .app-main
@@ -1088,8 +1105,8 @@ textarea:focus {
     .bag-opening-history__scroll
   )
   > table {
-  width: auto;
-  margin-inline: auto;
+  width: 100%;
+  margin-inline: 0;
 }
 /* Dữ liệu trong ô luôn căn trái theo cột, kể cả số lượng, kg, tiền, ngày và dòng tổng. */
 .app-main table :is(th, td) {
@@ -1101,14 +1118,14 @@ textarea:focus {
 table {
   width: auto;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 /* Tiêu đề bảng in đậm và đủ lớn để đọc được với font serif. */
 th {
   background: var(--brand-soft);
   color: var(--brand-dark);
   border-bottom: 2px solid var(--brand);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-align: left;
@@ -1148,7 +1165,7 @@ td small {
   align-items: center;
   gap: 4px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 400;
   margin-top: 3px;
 }
@@ -1174,7 +1191,7 @@ td small {
   border-radius: 8px;
   background: var(--surface);
   color: var(--brand-dark);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   padding: 6px 10px;
 }
@@ -1248,16 +1265,16 @@ td small {
 }
 
 .priority-offer__eyebrow {
-  font-size: 9px;
+  font-size: var(--fs-xs);
   font-weight: 800;
   letter-spacing: 0.08em;
 }
 .priority-offer__copy strong {
-  font-size: 16px;
+  font-size: var(--fs-lg);
 }
 .priority-offer__copy > span:last-child {
   color: rgba(255, 255, 255, 0.82);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 .priority-offer__timer {
   display: flex;
@@ -1266,7 +1283,7 @@ td small {
   border-radius: 999px;
   background: white;
   color: #0a7a33;
-  font-size: 17px;
+  font-size: var(--fs-lg);
   font-variant-numeric: tabular-nums;
   font-weight: 800;
   padding: 8px 12px;
@@ -1300,7 +1317,7 @@ td small {
 }
 .priority-offer__decline label,
 .priority-offer__decline span {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 .priority-offer__decline input {
@@ -1332,12 +1349,12 @@ td small {
   border-color: #c7d2fe;
 }
 .permission-card span {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 700;
 }
 .permission-card small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 .quota-card > div,
 .policy-card > div,
@@ -1356,7 +1373,7 @@ td small {
 .conservation-banner span,
 .operation-step p {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   line-height: 1.45;
 }
 .quota-card progress {
@@ -1407,16 +1424,16 @@ td small {
 .timeline-strip span,
 .timeline-strip small {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--fs-xs);
 }
 .timeline-strip strong {
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .allocation-session-notice {
   border: 1px solid transparent;
   border-radius: 10px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   margin: 0 0 16px;
   padding: 11px 13px;
@@ -1457,7 +1474,7 @@ td small {
   min-width: 0;
   gap: 6px;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 
@@ -1469,7 +1486,7 @@ td small {
   border-radius: 8px;
   background: var(--warning-soft);
   color: #9a3412;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   margin: 0 0 12px;
   padding: 9px 11px;
@@ -1484,7 +1501,7 @@ td small {
 
 .allocation-session-state {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 18px 0;
 }
 
@@ -1512,7 +1529,7 @@ td small {
   border-radius: 5px;
   background: var(--brand-soft);
   color: var(--brand-dark);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   margin-bottom: 5px;
   padding: 2px 6px;
@@ -1540,7 +1557,7 @@ td small {
 
 .allocation-session-actions > span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 
 .allocation-cancel-form {
@@ -1558,7 +1575,7 @@ td small {
 
 .allocation-cancel-form p {
   color: #b91c1c;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   margin-top: 5px;
 }
@@ -1592,7 +1609,7 @@ td small {
 
 .allocation-result-refreshing {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   margin: 0 0 10px;
 }
 
@@ -1611,7 +1628,7 @@ td small {
   gap: 12px;
   border-top: 1px solid var(--border);
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   margin-top: 12px;
   padding-top: 12px;
 }
@@ -1626,7 +1643,7 @@ td small {
   align-items: center;
   gap: 8px;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -1650,11 +1667,11 @@ td small {
   gap: 7px;
 }
 .formula-card strong {
-  font-size: 16px;
+  font-size: var(--fs-lg);
 }
 .formula-card span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 .example-grid {
   display: grid;
@@ -1674,10 +1691,10 @@ td small {
 .example-grid span,
 .example-grid small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 .example-grid strong {
-  font-size: 16px;
+  font-size: var(--fs-lg);
 }
 .catalog-filters {
   align-items: end;
@@ -1715,7 +1732,7 @@ td small {
   border-radius: 9px;
   background: var(--success-soft);
   color: #166534;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   margin: 12px 0;
   padding: 10px 12px;
 }
@@ -1758,7 +1775,7 @@ body.dialog-open {
 }
 .dialog__header p {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   margin-top: 5px;
 }
 .dialog__header button {
@@ -1783,7 +1800,7 @@ body.dialog-open {
 }
 .dialog__summary span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .dialog__actions {
   display: flex;
@@ -1844,7 +1861,7 @@ body.dialog-open {
   align-items: center;
   gap: 5px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 .waitlist-panel {
   margin-top: 20px;
@@ -1889,7 +1906,7 @@ body.dialog-open {
   gap: 8px;
 }
 .waitlist-dialog__body h3 {
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .waitlist-dialog__body article {
   display: flex;
@@ -1901,7 +1918,7 @@ body.dialog-open {
 }
 .waitlist-dialog__body article span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   text-align: right;
 }
 .request-line button {
@@ -1930,7 +1947,7 @@ body.dialog-open {
   display: flex;
   justify-content: space-between;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .history-list {
   margin-top: 20px;
@@ -1967,7 +1984,7 @@ body.dialog-open {
 }
 .request-history-card__details p {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   margin-top: 8px;
   overflow-wrap: anywhere;
 }
@@ -1987,7 +2004,7 @@ body.dialog-open {
   min-width: 0;
   justify-content: flex-end;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   overflow-wrap: anywhere;
   text-align: right;
 }
@@ -2056,7 +2073,7 @@ body.dialog-open {
 .choice-grid span,
 .bag-picker span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 .receive-form {
   display: flex;
@@ -2076,7 +2093,7 @@ body.dialog-open {
 }
 .document-summary span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 
 .receipt-create {
@@ -2103,7 +2120,7 @@ body.dialog-open {
   flex-direction: column;
   gap: 6px;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 
@@ -2128,7 +2145,7 @@ body.dialog-open {
   flex-direction: column;
   gap: 6px;
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 
@@ -2236,7 +2253,7 @@ body.dialog-open {
 }
 
 .receipt-card__identity strong {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   overflow-wrap: anywhere;
 }
 
@@ -2253,7 +2270,7 @@ body.dialog-open {
 .receipt-review-line small {
   overflow: hidden;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   text-overflow: ellipsis;
 }
@@ -2266,7 +2283,7 @@ body.dialog-open {
 .receipt-card small,
 .receipt-card__count,
 .receipt-detail__header small {
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .receipt-detail__header,
@@ -2278,7 +2295,7 @@ body.dialog-open {
 }
 
 .receipt-detail__header h2 {
-  font-size: 22px;
+  font-size: var(--fs-xl);
   margin: 3px 0;
 }
 
@@ -2292,7 +2309,7 @@ body.dialog-open {
 .receipt-detail__references {
   border-top: 1px solid var(--border);
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   margin-top: 12px;
   padding-top: 8px;
 }
@@ -2328,7 +2345,7 @@ body.dialog-open {
 
 .receipt-review-guidance {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   margin: 0;
 }
 
@@ -2341,7 +2358,7 @@ body.dialog-open {
   align-items: flex-start;
   gap: 10px;
   border-radius: 10px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
   padding: 11px 12px;
 }
@@ -2387,7 +2404,7 @@ body.dialog-open {
   border-radius: 8px;
   background: transparent;
   color: inherit;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   padding: 7px 10px;
   transition:
@@ -2429,7 +2446,7 @@ body.dialog-open {
 
 .receipt-fees small {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.4;
 }
 
@@ -2456,7 +2473,7 @@ body.dialog-open {
 }
 
 .receipt-totals span {
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .receipt-totals strong {
@@ -2469,14 +2486,14 @@ body.dialog-open {
   grid-column: 1 / -1;
   margin: 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .receipt-totals .receipt-totals__grand {
   border-top: 1px solid var(--border);
   padding-top: 8px;
   color: var(--danger);
-  font-size: 15px;
+  font-size: var(--fs-base);
   font-weight: 700;
 }
 
@@ -2511,14 +2528,14 @@ body.dialog-open {
 }
 .bag-picker aside > span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 .bag-picker aside small,
 .sort-grid aside p,
 .transfer-form aside p,
 .transfer-form aside span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
 }
 .bag-picker aside svg {
@@ -2557,7 +2574,7 @@ body.dialog-open {
   align-items: center;
   gap: 7px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 .transfer-timeline > div svg {
@@ -2582,7 +2599,7 @@ body.dialog-open {
   grid-template-columns: 90px minmax(0, 1fr) 90px;
   align-items: center;
   gap: 10px;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   margin-top: 14px;
 }
 .funnel-row > div {
@@ -2612,7 +2629,7 @@ body.dialog-open {
 }
 .quality-list em {
   color: var(--success);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-style: normal;
 }
 
@@ -2628,7 +2645,7 @@ body.dialog-open {
   display: grid;
   gap: 7px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 
@@ -2655,12 +2672,12 @@ body.dialog-open {
 
 .report-controls__source strong {
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .report-controls__source span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   line-height: 1.45;
 }
 
@@ -2679,7 +2696,7 @@ body.dialog-open {
 
 .report-message span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.45;
 }
 
@@ -2718,7 +2735,7 @@ body.dialog-open {
 .report-period-note span,
 .report-period-note small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 
 .report-stats {
@@ -2764,12 +2781,12 @@ body.dialog-open {
 .report-ratio-row > span {
   min-width: 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .report-counts dd {
   color: var(--navy);
-  font-size: 16px;
+  font-size: var(--fs-lg);
   font-variant-numeric: tabular-nums;
   font-weight: 800;
 }
@@ -2784,13 +2801,13 @@ body.dialog-open {
 
 .report-metric strong {
   color: var(--navy);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
 
 .report-metric small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
@@ -2826,7 +2843,7 @@ body.dialog-open {
 .cost-layout aside dl div {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .cost-layout aside dt {
   color: var(--muted);
@@ -2861,7 +2878,7 @@ body.dialog-open {
 }
 .timeline-list time {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
 .timeline-list article > div {
@@ -2872,7 +2889,7 @@ body.dialog-open {
 .timeline-list article > div span,
 .timeline-list small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 
 .settings-grid {
@@ -2900,7 +2917,7 @@ body.dialog-open {
 }
 .sticky-actions span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 
 .skeleton-grid {
@@ -2935,7 +2952,7 @@ body.dialog-open {
   color: var(--text);
 }
 .empty-state p {
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 /*
@@ -3066,7 +3083,7 @@ label:has(:required) > .field-label::after {
   border-radius: 8px;
   background: var(--danger-soft);
   color: var(--danger);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   padding: 10px;
 }
 
@@ -3981,7 +3998,7 @@ label:has(:required) > .field-label::after {
   background: var(--surface);
   color: var(--brand-dark);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   padding: 7px 12px;
 }

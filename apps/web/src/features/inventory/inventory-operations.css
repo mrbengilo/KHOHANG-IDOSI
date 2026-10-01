@@ -34,7 +34,7 @@
 .oversight-banner label {
   display: grid;
   gap: 0.4rem;
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   font-weight: 760;
   color: var(--text-secondary);
 }
@@ -85,7 +85,7 @@
 
 .inventory-ledger h2 {
   margin-top: 0;
-  font-size: 1rem;
+  font-size: var(--fs-lg);
 }
 
 .inventory-ledger ol {
@@ -115,7 +115,7 @@
 .inventory-bag-card span,
 .outbound-form-grid small {
   color: var(--muted);
-  font-size: 0.76rem;
+  font-size: var(--fs-xs);
 }
 
 .source-error,
@@ -171,7 +171,7 @@
   gap: 0.4rem;
   min-width: 0;
   color: var(--text-secondary);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   font-weight: 760;
 }
 
@@ -236,12 +236,12 @@
 
 .open-bag-preview h3 {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: var(--fs-base);
 }
 
 .open-bag-preview p,
 .open-bag-preview dt {
-  font-size: 0.8rem;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   color: var(--text-secondary);
 }
@@ -354,7 +354,7 @@
   margin: 0;
   padding-left: 1.1rem;
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--fs-sm);
 }
 
 .sorted-charity-confirm {
@@ -386,7 +386,7 @@
 .sorting-history__filters label {
   display: grid;
   gap: 0.4rem;
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   font-weight: 760;
   color: var(--text-secondary);
 }
@@ -428,7 +428,7 @@
   gap: 0.75rem;
   margin-top: 1rem;
   color: var(--text-secondary);
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
 }
 
 .sorting-history time {
@@ -493,7 +493,7 @@
   max-width: 36rem;
   gap: 0.4rem;
   color: var(--text-secondary);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 
@@ -552,7 +552,7 @@
   overflow-wrap: anywhere;
 }
 .opening-reference {
-  font-size: 0.875rem;
+  font-size: var(--fs-md);
 }
 
 .bag-opening-history,
@@ -563,7 +563,7 @@
 .bag-opening-history__note,
 .bag-opening-history__store {
   color: var(--text-secondary);
-  font-size: 0.875rem;
+  font-size: var(--fs-md);
 }
 .bag-opening-history__scroll {
   overflow-x: auto;
@@ -576,7 +576,7 @@
   min-width: 880px;
   table-layout: fixed;
   border-collapse: collapse;
-  font-size: 0.875rem;
+  font-size: var(--fs-md);
 }
 /* The global mobile stylesheet turns tables into cards. History stays tabular. */
 .bag-opening-history thead {

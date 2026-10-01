@@ -30,7 +30,7 @@
   flex: 0 1 240px;
   min-width: 0;
   min-height: 44px;
-  font-size: 14px;
+  font-size: var(--fs-md);
   cursor: pointer;
 }
 .bag-picker__choice input[type='checkbox'] {
@@ -46,7 +46,7 @@
   padding: 0 12px 12px;
   min-width: 0;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .bag-picker__stepper {
   display: grid;

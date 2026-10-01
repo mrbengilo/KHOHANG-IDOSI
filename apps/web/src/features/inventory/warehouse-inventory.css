@@ -2,10 +2,10 @@
   width: 100%;
 }
 .warehouse-stock-panel table {
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 .warehouse-stock-panel th {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   text-transform: none;
 }
 .warehouse-stock-panel td,
@@ -13,7 +13,7 @@
   padding: 9px 12px;
 }
 .warehouse-stock-panel td small {
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .warehouse-stock-panel td:not(:first-child) {
   font-weight: 600;

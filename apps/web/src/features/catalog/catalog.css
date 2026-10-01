@@ -7,7 +7,7 @@
   border-radius: 10px;
   margin: 12px 0;
   padding: 11px 12px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 650;
 }
 
@@ -57,7 +57,7 @@
 .catalog-state p {
   max-width: 640px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
 }
 
@@ -80,12 +80,12 @@
   display: grid;
   place-items: center;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .catalog-missing {
   color: #b45309;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 
@@ -166,7 +166,7 @@
   border-radius: 10px;
   background: #f8fafc;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .catalog-history__state--error {
@@ -210,14 +210,14 @@
 
 .catalog-history__list dt {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 
 .catalog-history__list dd {
   margin: 0;
   overflow-wrap: anywhere;
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 @keyframes catalog-spin {

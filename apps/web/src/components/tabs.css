@@ -22,7 +22,7 @@
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
-  font-size: 15px;
+  font-size: var(--fs-base);
   padding: 8px 14px;
   white-space: nowrap;
 }
@@ -33,7 +33,7 @@
 
 .tabs--secondary .tabs__tab {
   min-height: 40px;
-  font-size: 14px;
+  font-size: var(--fs-md);
   padding: 6px 12px;
 }
 

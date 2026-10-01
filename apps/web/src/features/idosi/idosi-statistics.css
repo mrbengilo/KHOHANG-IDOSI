@@ -14,7 +14,7 @@
 .idosi-sales-workspace .inventory-toolbar p {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 0.8rem;
+  font-size: var(--fs-xs);
   line-height: 1.5;
 }
 
@@ -43,7 +43,7 @@
   min-width: min(100%, 13rem);
   gap: 6px;
   color: var(--text-secondary);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   font-weight: 760;
 }
 
@@ -81,7 +81,7 @@
 
 .idosi-statistics__message > div > span {
   color: var(--text-secondary);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   line-height: 1.5;
 }
 
@@ -140,7 +140,7 @@
 .idosi-statistics__details h3,
 .idosi-statistics__products h3 {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: var(--fs-base);
 }
 
 .idosi-statistics__details dl {
@@ -159,7 +159,7 @@
 
 .idosi-statistics__details dt {
   color: var(--text-secondary);
-  font-size: 0.76rem;
+  font-size: var(--fs-xs);
 }
 
 .idosi-statistics__details dd {
@@ -218,7 +218,7 @@
 .idosi-sales-coverage,
 .idosi-sales-sources {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .idosi-sales-sources {
   margin-bottom: 16px;
@@ -231,7 +231,7 @@
 .idosi-sales-summary .section-heading label {
   display: grid;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .idosi-sales-summary input,
 .idosi-sales-summary select {
@@ -259,7 +259,7 @@
   border-radius: 9px;
   background: #fffbeb;
   color: #78350f;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
   margin: 10px 0 0;
   padding: 10px 12px;
