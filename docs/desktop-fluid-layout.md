@@ -52,3 +52,7 @@ Screenshots were refreshed with animations disabled and the viewport set before 
 Final command results and CI links are recorded in the pull request. Local PostgreSQL 17 runs in a dedicated Docker container. Initial test setup omitted admin bootstrap; the fixture was corrected before rerunning gates. The Linux migration wrapper uses `spawn('npm')`, which fails on Windows; local migration used the existing `npm run db:migrate` command, while CI verifies the deployment wrapper on Linux.
 
 Rollback: revert the squash commit through a PR and let the existing watcher deploy the resulting green main SHA. No migration or data reversal is needed. Watcher backup, health, readiness, running SHA and post-deploy read-only smoke checks remain required.
+
+## Update 2026-10-01 — tables inside the fluid workspace
+
+The fluid workspace and its 18px gutters are unchanged; no shared `max-width` was reintroduced. Tables no longer stretch to the panel width: each table wrapper is content-sized, centred in its direct container and scrolls horizontally on its own when the table needs more room. See [responsive-table-layout-audit.md](responsive-table-layout-audit.md).
