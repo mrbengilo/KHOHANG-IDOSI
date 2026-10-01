@@ -22,6 +22,7 @@ import {
   StoreOperationValidationError,
 } from './store-operations.js';
 import type { Transaction } from './transaction.js';
+import { resetSaleBoundary, resetAllowsSettlement } from './reset-sale-boundary.js';
 
 type SaleType = 'sale_kg' | 'sale_piece';
 
@@ -221,6 +222,16 @@ export async function reconcileStoreSaleSnapshot(
     for (const type of ['sale_kg', 'sale_piece'] as const) {
       const observed = idosiProductSaleGrams(payload, name, type, { productId, links });
       if (observed === null) continue;
+      const boundary = await resetSaleBoundary(tx, {
+        storeId,
+        productId,
+        period,
+        type,
+        observed,
+        generatedAt: payload.generatedAt,
+        links,
+      });
+      if (!boundary.allow) continue;
       const [existing] = await tx
         .select()
         .from(storeSaleSyncProgress)
@@ -239,7 +250,7 @@ export async function reconcileStoreSaleSnapshot(
         await tx
           .update(storeSaleSyncProgress)
           .set({
-            baselineGrams: observed,
+            baselineGrams: boundary.baseline ?? observed,
             observedGrams: observed,
             baselinePending: false,
             sourceSnapshotId: snapshotId,
@@ -249,7 +260,12 @@ export async function reconcileStoreSaleSnapshot(
       } else if (existing) {
         await tx
           .update(storeSaleSyncProgress)
-          .set({ observedGrams: observed, sourceSnapshotId: snapshotId, updatedAt: now })
+          .set({
+            observedGrams: observed,
+            ...(boundary.baseline !== undefined ? { baselineGrams: boundary.baseline } : {}),
+            sourceSnapshotId: snapshotId,
+            updatedAt: now,
+          })
           .where(eq(storeSaleSyncProgress.id, existing.id));
       } else {
         await tx.insert(storeSaleSyncProgress).values({
@@ -257,7 +273,7 @@ export async function reconcileStoreSaleSnapshot(
           productId,
           period,
           saleType: type,
-          baselineGrams: 0n,
+          baselineGrams: boundary.baseline ?? 0n,
           observedGrams: observed,
           appliedGrams: 0n,
           sourceSnapshotId: snapshotId,
@@ -298,6 +314,10 @@ export async function settleProductSaleProgress(
   // Restore source corrections before applying later sales. Each lot is capped at its
   // total credited sale weight, so corrections cannot create stock from nothing.
   for (const checkpoint of progress) {
+    if (
+      !(await resetAllowsSettlement(tx, storeId, productId, checkpoint.period, checkpoint.saleType))
+    )
+      continue;
     const target =
       checkpoint.observedGrams > checkpoint.baselineGrams
         ? checkpoint.observedGrams - checkpoint.baselineGrams
@@ -333,6 +353,10 @@ export async function settleProductSaleProgress(
     }
   }
   for (const checkpoint of progress) {
+    if (
+      !(await resetAllowsSettlement(tx, storeId, productId, checkpoint.period, checkpoint.saleType))
+    )
+      continue;
     const target =
       checkpoint.observedGrams > checkpoint.baselineGrams
         ? checkpoint.observedGrams - checkpoint.baselineGrams

@@ -24,6 +24,32 @@ const repository =
       : throwUnsupportedStorage(storage);
 
 const app = await createApi({
+  ...(storage === 'postgres'
+    ? {
+        resetReplayKey: async (key: string) => {
+          const { pool } = await import('@idosi/database');
+          return (
+            (
+              await pool.query(
+                "SELECT 1 FROM test_data_reset_replay_keys WHERE key_hash=encode(sha256(convert_to($1,'UTF8')),'hex')",
+                [key],
+              )
+            ).rowCount !== 0
+          );
+        },
+      }
+    : {}),
+  ...(storage === 'postgres'
+    ? {
+        resetEpoch: async () => {
+          const { pool } = await import('@idosi/database');
+          const result = await pool.query(
+            'SELECT id::text FROM test_data_reset_operations ORDER BY committed_at DESC LIMIT 1',
+          );
+          return result.rows[0]?.id ?? '0';
+        },
+      }
+    : {}),
   idosiStoreIdMap,
   repository,
   sessionTtlMs,

@@ -13,6 +13,7 @@ import {
   numeric,
   pgEnum,
   pgTable,
+  primaryKey,
   smallint,
   text,
   time,
@@ -2754,7 +2755,7 @@ export const operationalSettingsVersions = pgTable(
   ],
 );
 
-/** Latest validated IDOSI aggregate for one store/filter scope. It never drives inventory. */
+/** Latest validated IDOSI aggregate; full-month snapshots reconcile NORMAL and Sale stock. */
 export const idosiStatisticsSnapshots = pgTable(
   'idosi_statistics_snapshots',
   {
@@ -2946,6 +2947,58 @@ export const workerHeartbeats = pgTable(
       'worker_heartbeats_failing_jobs_array',
       sql`jsonb_typeof(${table.failingJobs}) = 'array'`,
     ),
+  ],
+);
+
+/** One-shot reset journal. Never populated by migration, seed, or normal deployment. */
+export const testDataResetReplayKeys = pgTable('test_data_reset_replay_keys', {
+  keyHash: text('key_hash').primaryKey(),
+});
+export const testDataResetOperations = pgTable(
+  'test_data_reset_operations',
+  {
+    id: uuid('id').primaryKey(),
+    manifestHash: text('manifest_hash').notNull(),
+    cutoff: timestamp('cutoff', { withTimezone: true }).notNull(),
+    phase: text('phase').notNull(),
+    committedAt: timestamp('committed_at', { withTimezone: true }).notNull().defaultNow(),
+    evidence: jsonb('evidence').$type<JsonObject>().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      'test_data_reset_operations_phase_check',
+      sql`${table.phase} IN ('DATABASE_COMMITTED','VERIFIED','BACKUPS_PURGED','COMPLETE')`,
+    ),
+  ],
+);
+export const testDataResetBaselines = pgTable(
+  'test_data_reset_baselines',
+  {
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    period: text('period').notNull(),
+    revenueType: text('revenue_type').notNull(),
+    linkSignature: text('link_signature').notNull(),
+    status: text('status').notNull(),
+    baselineGrams: bigint('baseline_grams', { mode: 'bigint' }).notNull(),
+    establishedAt: timestamp('established_at', { withTimezone: true }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.storeId, table.productId, table.period, table.revenueType] }),
+    check(
+      'test_data_reset_baselines_revenue_type_check',
+      sql`${table.revenueType} IN ('normal','sale_kg','sale_piece')`,
+    ),
+    check(
+      'test_data_reset_baselines_status_check',
+      sql`${table.status} IN ('pending','ready','mapping_review')`,
+    ),
+    check('test_data_reset_baselines_baseline_grams_check', sql`${table.baselineGrams} >= 0`),
   ],
 );
 

@@ -9,6 +9,8 @@ type ClientError = new (
   requestId?: string,
 ) => Error;
 const baseUrl = (import.meta.env.VITE_API_BASE_URL?.trim() || '/api/v1').replace(/\/$/, '');
+// Pinned for this document lifetime: refetch must never authorize a pre-reset form/retry.
+let resetEpoch: string | undefined;
 
 /** Bound both headers and body consumption; aborting a write never proves a rollback. */
 export async function requestJson(
@@ -19,6 +21,7 @@ export async function requestJson(
 ): Promise<unknown> {
   const writing = !['GET', 'HEAD'].includes((init?.method ?? 'GET').toUpperCase());
   const headers = new Headers(init?.headers);
+  if (resetEpoch !== undefined) headers.set('x-idosi-reset-epoch', resetEpoch);
   if (!headers.has('Accept')) headers.set('Accept', 'application/json');
   if (init?.body !== undefined && !headers.has('Content-Type'))
     headers.set('Content-Type', 'application/json');
@@ -53,6 +56,19 @@ export async function requestJson(
           : 'Không thể kết nối máy chủ. Vui lòng kiểm tra mạng và thử lại.',
         0,
         'NETWORK_ERROR',
+      );
+    }
+    const responseEpoch = response.headers.get('x-idosi-reset-epoch');
+    if (responseEpoch && resetEpoch === undefined && (!writing || responseEpoch === '0'))
+      resetEpoch = responseEpoch;
+    if (responseEpoch && resetEpoch !== responseEpoch) {
+      // A full navigation drops query caches, mutation closures and in-memory drafts together.
+      // Never retry the interrupted write with the new epoch.
+      window.location.reload();
+      throw new ErrorType(
+        'Hệ thống đã được thiết lập lại. Đang tải dữ liệu mới.',
+        409,
+        'RESET_REQUIRED',
       );
     }
     reportUnauthorizedResponse(response.status, path);

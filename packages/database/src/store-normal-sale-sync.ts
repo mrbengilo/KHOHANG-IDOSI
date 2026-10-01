@@ -21,6 +21,7 @@ import {
 } from './store-operations.js';
 import type { Database } from './client.js';
 import type { Transaction } from './transaction.js';
+import { resetSaleBoundary, resetAllowsSettlement } from './reset-sale-boundary.js';
 
 type BagRow = typeof storeInventoryBags.$inferSelect;
 type ProgressRow = typeof storeNormalSaleProgress.$inferSelect;
@@ -90,6 +91,16 @@ export async function reconcileStoreNormalSaleSnapshot(
       continue;
     const observed = idosiNormalSaleGrams(payload, product.name, match);
     if (observed === null) continue;
+    const boundary = await resetSaleBoundary(tx, {
+      storeId,
+      productId: product.id,
+      period,
+      type: 'normal',
+      observed,
+      generatedAt: payload.generatedAt,
+      links,
+    });
+    if (!boundary.allow) continue;
     const [existing] = await tx
       .select()
       .from(storeNormalSaleProgress)
@@ -105,7 +116,12 @@ export async function reconcileStoreNormalSaleSnapshot(
     if (existing) {
       await tx
         .update(storeNormalSaleProgress)
-        .set({ observedGrams: observed, sourceSnapshotId: snapshotId, updatedAt: now })
+        .set({
+          observedGrams: observed,
+          ...(boundary.baseline !== undefined ? { baselineGrams: boundary.baseline } : {}),
+          sourceSnapshotId: snapshotId,
+          updatedAt: now,
+        })
         .where(eq(storeNormalSaleProgress.id, existing.id));
     } else {
       // The first month a product is tracked starts from what IDOSI already reports, so sales
@@ -115,7 +131,7 @@ export async function reconcileStoreNormalSaleSnapshot(
         storeId,
         productId: product.id,
         period,
-        baselineGrams: firstEver ? observed : 0n,
+        baselineGrams: boundary.baseline ?? (firstEver ? observed : 0n),
         observedGrams: observed,
         appliedGrams: 0n,
         sourceSnapshotId: snapshotId,
@@ -150,6 +166,8 @@ export async function settleStoreNormalSaleProgress(
     .orderBy(asc(storeNormalSaleProgress.period))
     .for('update');
   for (const checkpoint of progress) {
+    if (!(await resetAllowsSettlement(tx, storeId, productId, checkpoint.period, 'normal')))
+      continue;
     const target =
       checkpoint.observedGrams > checkpoint.baselineGrams
         ? checkpoint.observedGrams - checkpoint.baselineGrams

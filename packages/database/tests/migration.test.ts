@@ -404,7 +404,8 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(35);
+    expect(journal.entries).toHaveLength(36);
+    expect(journal.entries[35]).toMatchObject({ tag: '0035_test_data_reset', breakpoints: true });
     expect(journal.entries[34]).toMatchObject({
       tag: '0034_configurable_receipt_vat',
       breakpoints: true,
