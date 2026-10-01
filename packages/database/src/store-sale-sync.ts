@@ -237,7 +237,7 @@ export async function reconcileStoreSaleSnapshot(
     if (!name) continue;
     if (resetActive) {
       const items = idosiItemsForProduct(payload, name, { productId, links });
-      if (!items.length || items.some((item) => !item.weight.isComplete)) continue;
+      if (!items.length) continue;
     }
     for (const type of ['sale_kg', 'sale_piece'] as const) {
       const observed = idosiProductSaleGrams(payload, name, type, { productId, links });

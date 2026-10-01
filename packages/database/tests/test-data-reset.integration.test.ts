@@ -127,6 +127,41 @@ describePg('one-shot reset on an isolated fully migrated PostgreSQL database', (
       resumed: true,
     });
   });
+  it('rejects a future cutoff during plan and apply without changing business data', async () => {
+    const manifest = await planTestDataReset(fixture.pool, context);
+    const future = new Date(Date.now() + 86400000).toISOString();
+    await expect(planTestDataReset(fixture.pool, { ...context, cutoff: future })).rejects.toThrow(
+      /future/,
+    );
+    const { hash: _hash, ...body } = manifest;
+    const changed = { ...body, context: { ...context, cutoff: future } };
+    const tampered = { ...changed, hash: resetHash(changed) };
+    await expect(applyTestDataReset(fixture.pool, tampered, tampered.hash)).rejects.toThrow(
+      /future/,
+    );
+    expect((await fixture.pool.query('SELECT count(*)::int n FROM order_sessions')).rows[0].n).toBe(
+      1,
+    );
+  });
+  it('verification refuses an unmanaged connection and never advances its phase', async () => {
+    const manifest = await planTestDataReset(fixture.pool, context);
+    await applyTestDataReset(fixture.pool, manifest, manifest.hash);
+    const url = new URL(process.env.DATABASE_URL!);
+    url.pathname = '/' + databaseName;
+    const other = new pg.Pool({ connectionString: url.href, max: 1 });
+    try {
+      await other.query('SELECT 1');
+      await expect(verifyTestDataReset(fixture.pool, manifest)).rejects.toThrow(/other clients/);
+      expect(
+        (await fixture.pool.query('SELECT phase FROM test_data_reset_operations')).rows[0].phase,
+      ).toBe('DATABASE_COMMITTED');
+    } finally {
+      await other.end();
+    }
+    await expect(verifyTestDataReset(fixture.pool, manifest)).resolves.toMatchObject({
+      state: 'VERIFIED',
+    });
+  });
   it('dry-run is read only; reset preserves all protected data and triggers; resume preserves new work', async () => {
     const before = await planTestDataReset(fixture.pool, context);
     expect(before.review).toEqual([]);
@@ -347,7 +382,18 @@ describePg('one-shot reset on an isolated fully migrated PostgreSQL database', (
       context.cutoff = new Date(now.getTime() - 1000).toISOString();
       const save = async (kg: number, offset: number, complete = true) => {
         const at = new Date(now.getTime() + offset);
-        const payload = resetFixturePayload(product, kg, at, type, complete);
+        let payload = resetFixturePayload(product, kg, at, type, complete);
+        // Incomplete piece-weight data must not block complete kg observations for this product.
+        if (type === 'SALE_KG') {
+          const incompletePiece = resetFixturePayload(product, 2, at, 'SALE_PIECE', false);
+          payload = {
+            ...payload,
+            products: {
+              ...payload.products,
+              items: [...payload.products.items, ...incompletePiece.products.items],
+            },
+          };
+        }
         await recordIdosiStatisticsSuccess(fixture.db, {
           target: { storeId, storeCode: 'RESET_FIXTURE', storeName: 'Fixture' },
           scope: {

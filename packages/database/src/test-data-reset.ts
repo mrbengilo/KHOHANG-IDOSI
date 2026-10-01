@@ -290,6 +290,8 @@ function validateContext(context: ResetContext) {
     throw new Error('Expected schema and inventory digests required');
   if (!context.host || !context.project || !Number.isFinite(Date.parse(context.cutoff)))
     throw new Error('Explicit environment and cutoff required');
+  if (Date.parse(context.cutoff) > Date.now())
+    throw new Error('Reset cutoff cannot be in the future');
 }
 async function hasOtherWriters(client: PoolClient): Promise<boolean> {
   // Concurrent invocations can wait on our exact maintenance lock; they inspect the committed
@@ -384,6 +386,7 @@ export async function applyTestDataReset(
   manifest: ResetManifest,
   confirmation: string,
 ): Promise<Record<string, unknown>> {
+  validateContext(manifest.context);
   const { hash, ...body } = manifest;
   if (confirmation !== hash || resetHash(body) !== hash || manifest.review.length)
     throw new Error('Manifest is unconfirmed, changed, or requires review');
@@ -516,7 +519,16 @@ export async function verifyTestDataReset(
   assertResetManifest(manifest);
   const client = await pool.connect();
   try {
-    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+    await client.query('BEGIN');
+    await client.query("SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='120s'");
+    // Lock before reading digests so an unmanaged writer cannot commit behind a stale snapshot.
+    // All classified relations remain stable through verification and its journal update.
+    const locks = manifest.tables
+      .filter((t) => t.kind === 'r')
+      .map((t) => qualified(t.schema, t.name));
+    await client.query(`LOCK TABLE ${locks.join(',')} IN ACCESS EXCLUSIVE MODE`);
+    if (await hasOtherWriters(client))
+      throw new Error('Database still has other clients; stop and drain writers');
     const operation = await client.query(
       'SELECT * FROM test_data_reset_operations WHERE id=$1 FOR UPDATE',
       [manifest.context.operationId],
@@ -566,6 +578,7 @@ export async function verifyTestDataReset(
         "UPDATE test_data_reset_operations SET phase='VERIFIED',evidence=evidence||$2::jsonb,updated_at=now() WHERE id=$1 AND phase='DATABASE_COMMITTED'",
         [manifest.context.operationId, JSON.stringify({ verification: evidence })],
       );
+    if (await hasOtherWriters(client)) throw new Error('A writer connected during verification');
     await client.query('COMMIT');
     return { state: restore ? 'CLEAN_RESTORE_VERIFIED' : 'VERIFIED', protected: evidence };
   } catch (error) {
