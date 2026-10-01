@@ -1,10 +1,11 @@
 import { IdosiOrderStatisticsPayloadSchema } from '@idosi/contracts';
-import { and, asc, eq, isNull } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import { auditLogs, idosiProductLinks, idosiStatisticsSnapshots, products } from './schema.js';
 import { idosiItemKey, productKey, uniqueProductForName } from './store-sale-sync.js';
 import { withAdvisoryLock, withTransaction } from './transaction.js';
+import { hasTestDataReset } from './reset-sale-boundary.js';
 
 export interface IdosiProductLinkRecord {
   readonly idosiProductId: string;
@@ -168,6 +169,12 @@ export async function setIdosiProductLink(
             .values({ idosiProductId, productId: product.id, firstSeenName })
             .returning();
       if (!saved) throw new Error('IDOSI product link was not saved.');
+      if (existing?.productId !== product.id && (await hasTestDataReset(tx))) {
+        // Lock/update the same baseline rows as settlement, so a remap cannot return while
+        // a later bag opening still sees a ready checkpoint for the previous mapping.
+        await tx.execute(sql`UPDATE test_data_reset_baselines SET status='mapping_review'
+          WHERE status='ready' AND (product_id=${product.id} OR product_id=${existing?.productId ?? product.id})`);
+      }
       await tx.insert(auditLogs).values({
         requestId: input.requestId,
         actorUserId: input.actorUserId,

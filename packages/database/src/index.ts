@@ -456,3 +456,9 @@ export * from './store-bag-openings.js';
 export * from './session-documents.js';
 
 export * from './inbound-statistics.js';
+export {
+  planTestDataReset,
+  applyTestDataReset,
+  resetCatalog,
+  resetHash,
+} from './test-data-reset.js';

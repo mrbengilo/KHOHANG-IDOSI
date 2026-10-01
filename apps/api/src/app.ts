@@ -187,6 +187,8 @@ const StatisticsQuerySchema = z
   });
 
 export interface CreateApiOptions {
+  readonly resetEpoch?: () => Promise<string>;
+  readonly resetReplayKey?: (key: string) => Promise<boolean>;
   readonly repository?: WarehouseRepository;
   readonly sessionTtlMs?: number;
   readonly corsOrigin?: string | readonly string[];
@@ -240,6 +242,43 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     reply.header('x-request-id', request.id);
     applyCors(request, reply, options.corsOrigin);
     if (request.method === 'OPTIONS') return reply.status(204).send();
+    if (options.resetEpoch && request.url.startsWith('/api/')) {
+      const epoch = await options.resetEpoch();
+      reply.header('x-idosi-reset-epoch', epoch);
+      reply.header('cache-control', 'no-store');
+      const oldKey = request.headers['idempotency-key'];
+      if (
+        epoch !== '0' &&
+        !['GET', 'HEAD'].includes(request.method) &&
+        typeof oldKey === 'string' &&
+        (await options.resetReplayKey?.(oldKey))
+      ) {
+        return reply
+          .status(409)
+          .send(
+            errorEnvelope(
+              'RESET_REQUIRED',
+              'Yêu cầu thuộc dữ liệu trước lần thiết lập lại. Hãy tạo thao tác mới trên dữ liệu hiện tại.',
+              request.id,
+            ),
+          );
+      }
+      if (
+        !['GET', 'HEAD'].includes(request.method) &&
+        epoch !== '0' &&
+        request.headers['x-idosi-reset-epoch'] !== epoch
+      ) {
+        return reply
+          .status(409)
+          .send(
+            errorEnvelope(
+              'RESET_REQUIRED',
+              'Dữ liệu hệ thống đã được thiết lập lại. Tải lại trang trước khi thực hiện thao tác mới.',
+              request.id,
+            ),
+          );
+      }
+    }
     if (
       request.headers.origin &&
       ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method) &&
@@ -1965,8 +2004,9 @@ function applyCors(
   reply.header('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
   reply.header(
     'access-control-allow-headers',
-    'content-type,idempotency-key,x-request-id,x-idosi-tab-id',
+    'content-type,idempotency-key,x-request-id,x-idosi-tab-id,x-idosi-reset-epoch',
   );
+  reply.header('access-control-expose-headers', 'x-idosi-reset-epoch,x-request-id');
   reply.header('vary', 'Origin');
 }
 

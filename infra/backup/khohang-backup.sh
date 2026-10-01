@@ -78,7 +78,8 @@ rm -f -- "$before"
   report failed "" "" 'backup-db.sh finished but no new dump was found'
   exit 1
 }
-flock -u 9
+# Keep the deployment/maintenance lock through prune and offsite uploads. Otherwise an old
+# upload can outlive maintenance and recreate a purged backup after the reset has completed.
 
 stage=prune
 if [[ -f "$prune_script" ]]; then
@@ -105,3 +106,4 @@ else
   report succeeded "$latest" "$offsite" ''
 fi
 printf 'khohang-backup: %s (offsite: %s)\n' "$latest" "$offsite"
+flock -u 9

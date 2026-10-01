@@ -23,7 +23,31 @@ const repository =
       ? await createPostgresRepository()
       : throwUnsupportedStorage(storage);
 
+// Maintenance drains/stops this process before reset and restarts it only after verification.
+// The epoch is immutable for this process lifetime; ordinary reads need no extra DB query.
+const resetEpoch = storage === 'postgres' ? await loadResetEpoch() : undefined;
+
 const app = await createApi({
+  ...(storage === 'postgres'
+    ? {
+        resetReplayKey: async (key: string) => {
+          const { pool } = await import('@idosi/database');
+          return (
+            (
+              await pool.query(
+                "SELECT 1 FROM test_data_reset_replay_keys WHERE key_hash=encode(sha256(convert_to($1,'UTF8')),'hex')",
+                [key],
+              )
+            ).rowCount !== 0
+          );
+        },
+      }
+    : {}),
+  ...(storage === 'postgres'
+    ? {
+        resetEpoch: async () => resetEpoch!,
+      }
+    : {}),
   idosiStoreIdMap,
   repository,
   sessionTtlMs,
@@ -49,6 +73,14 @@ process.once('SIGINT', () => void shutdown('SIGINT'));
 process.once('SIGTERM', () => void shutdown('SIGTERM'));
 
 await app.listen({ host, port });
+
+async function loadResetEpoch(): Promise<string> {
+  const { pool } = await import('@idosi/database');
+  const result = await pool.query(
+    'SELECT id::text FROM test_data_reset_operations ORDER BY committed_at DESC LIMIT 1',
+  );
+  return result.rows[0]?.id ?? '0';
+}
 
 async function createMemoryRepository() {
   const { MemoryWarehouseRepository } = await import('./memory-repository.js');

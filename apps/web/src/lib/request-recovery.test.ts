@@ -14,6 +14,7 @@ it('bounds a response body that stalls after headers and keeps the command resul
     'fetch',
     vi.fn(async (_url, init: RequestInit) => ({
       status: 200,
+      headers: new Headers(),
       ok: true,
       json: () =>
         new Promise((_resolve, reject) =>

@@ -133,6 +133,12 @@ jobs:
           bash -n infra/autodeploy/install.sh
           bash -n infra/scripts/prune-backups.sh
           bash -n infra/backup/khohang-backup.sh
+          bash -n infra/scripts/reset-test-data.sh
+          bash infra/scripts/tests/reset-test-data.test.sh
+          node --check infra/scripts/reset-test-data.mjs
+          node --test infra/scripts/test-data-backups.test.mjs
+          node --test infra/scripts/reset-cli.integration.test.mjs
+          node --test infra/scripts/reset-accumulated-fixture.test.mjs
           bash infra/scripts/tests/deployment-scripts.test.sh
           bash infra/scripts/tests/autodeploy.test.sh
           node --check infra/scripts/run-migrations.mjs
