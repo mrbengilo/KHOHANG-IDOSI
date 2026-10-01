@@ -101,10 +101,19 @@ export async function resetAllowsSettlement(
   type: string,
 ): Promise<boolean> {
   if (!(await resetOperation(tx))) return true;
-  const result = await tx.execute<{
-    allowed: boolean;
-  }>(sql`SELECT NOT EXISTS(SELECT 1 FROM test_data_reset_operations) OR EXISTS(
-    SELECT 1 FROM test_data_reset_baselines b WHERE b.store_id=${storeId} AND b.product_id=${productId}
-    AND b.period=${period} AND b.revenue_type=${type} AND b.status='ready') AS allowed`);
-  return result.rows[0]?.allowed === true;
+  const result = await tx.execute<{ status: string; link_signature: string }>(sql`
+    SELECT status,link_signature FROM test_data_reset_baselines
+    WHERE store_id=${storeId} AND product_id=${productId} AND period=${period} AND revenue_type=${type} FOR UPDATE`);
+  const baseline = result.rows[0];
+  if (baseline?.status !== 'ready') return false;
+  const links = await tx.execute<{ idosi_product_id: string; product_id: string }>(sql`
+    SELECT idosi_product_id,product_id FROM idosi_product_links WHERE product_id=${productId}`);
+  const signature = resetLinkSignature(
+    productId,
+    new Map(links.rows.map((row) => [row.idosi_product_id, row.product_id])),
+  );
+  if (signature === baseline.link_signature) return true;
+  await tx.execute(sql`UPDATE test_data_reset_baselines SET status='mapping_review'
+    WHERE store_id=${storeId} AND product_id=${productId} AND period=${period} AND revenue_type=${type}`);
+  return false;
 }

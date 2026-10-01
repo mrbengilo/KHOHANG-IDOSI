@@ -70,3 +70,35 @@ test('refuses changed objects, unmanifested files, unreviewed entries and symlin
     await rm(outside, { recursive: true, force: true });
   }
 });
+
+test('missing or changed KEEP files block verification before and during purge', async () => {
+  for (const mode of ['missing-before', 'changed-before', 'missing-during']) {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'reset-keep-test-'));
+    try {
+      const retained = path.join(root, 'retained-config');
+      await writeFile(path.join(root, 'old.dump'), 'test');
+      await writeFile(retained, 'preserve');
+      const inventory = await inventoryBackupRoot(root);
+      inventory.files = inventory.files.map((f) => ({
+        ...f,
+        action: f.path === retained ? 'KEEP' : 'PURGE',
+      }));
+      await writeFile(path.join(root, 'clean.dump'), 'clean');
+      const clean = (await inventoryBackupRoot(root)).files.filter((f) =>
+        f.path.endsWith('clean.dump'),
+      );
+      if (mode === 'missing-before') await rm(retained);
+      if (mode === 'changed-before') await writeFile(retained, 'modified');
+      await assert.rejects(
+        purgeBackupInventory(inventory, clean, async () => {
+          if (mode === 'missing-during') await rm(retained);
+        }),
+        /Retained backup/,
+      );
+      if (mode !== 'missing-during')
+        assert.equal(await readFile(path.join(root, 'old.dump'), 'utf8'), 'test');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});

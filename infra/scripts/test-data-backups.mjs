@@ -61,6 +61,16 @@ export async function inventoryBackupRoot(root) {
   await walk(root);
   return { root, files: files.sort((a, b) => a.path.localeCompare(b.path)) };
 }
+export function verifyRetainedBackupFiles(inventory, cleanFiles, current) {
+  for (const expected of [...inventory.files.filter((f) => f.action === 'KEEP'), ...cleanFiles]) {
+    const { action: _action, ...identity } = expected;
+    if (
+      JSON.stringify(current.files.find((f) => f.path === expected.path)) !==
+      JSON.stringify(identity)
+    )
+      throw new Error('Retained backup file is missing or its identity changed');
+  }
+}
 /** No glob, shell expansion, directory removal, remote-wide deletion, or retention bypass. */
 export async function purgeBackupInventory(inventory, cleanFiles, report) {
   const root = await checkedRoot(inventory.root);
@@ -71,6 +81,7 @@ export async function purgeBackupInventory(inventory, cleanFiles, report) {
     return value;
   };
   const current = await inventoryBackupRoot(root);
+  verifyRetainedBackupFiles(inventory, cleanFiles, current);
   const permitted = new Set([
     ...inventory.files.map((f) => f.path),
     ...cleanFiles.map((f) => f.path),
@@ -100,6 +111,7 @@ export async function purgeBackupInventory(inventory, cleanFiles, report) {
     await report({ path: file.path, state: 'PURGED' });
   }
   const after = await inventoryBackupRoot(root);
+  verifyRetainedBackupFiles(inventory, cleanFiles, after);
   if (after.files.some((f) => !kept.has(f.path))) throw new Error('Backup purge incomplete');
   return { before: inventory.files.length, after: after.files.length, state: 'VERIFIED' };
 }

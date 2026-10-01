@@ -500,12 +500,20 @@ export async function applyTestDataReset(
   }
 }
 
+export function assertResetManifest(manifest: ResetManifest): void {
+  const { hash, ...body } = manifest;
+  validateContext(manifest.context);
+  if (resetHash(body) !== hash || manifest.review.length)
+    throw new Error('Manifest contents changed or require review');
+}
+
 /** Run while writers remain stopped. A completed verification is never a new purge. */
 export async function verifyTestDataReset(
   pool: Pool,
   manifest: ResetManifest,
   restore = false,
 ): Promise<Record<string, unknown>> {
+  assertResetManifest(manifest);
   const client = await pool.connect();
   try {
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');

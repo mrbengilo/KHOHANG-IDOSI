@@ -21,6 +21,7 @@ import {
   createStorePartnerInbound,
   openStoreInventoryBag,
   createStoreSorting,
+  setIdosiProductLink,
 } from '../src/index.js';
 import { resetFixturePayload } from './reset-fixture-payload.js';
 
@@ -138,6 +139,15 @@ describePg('one-shot reset on an isolated fully migrated PostgreSQL database', (
     await expect(applyTestDataReset(fixture.pool, before, before.hash)).resolves.toMatchObject({
       phase: 'DATABASE_COMMITTED',
     });
+    await expect(
+      verifyTestDataReset(fixture.pool, {
+        ...before,
+        tables: before.tables.filter((t) => t.name !== 'users'),
+      }),
+    ).rejects.toThrow(/Manifest contents changed/);
+    expect(
+      (await fixture.pool.query('SELECT phase FROM test_data_reset_operations')).rows[0].phase,
+    ).toBe('DATABASE_COMMITTED');
     await expect(verifyTestDataReset(fixture.pool, before)).resolves.toMatchObject({
       state: 'VERIFIED',
     });
@@ -263,6 +273,67 @@ describePg('one-shot reset on an isolated fully migrated PostgreSQL database', (
       ).toEqual({ allow: false });
       expect(await resetAllowsSettlement(tx, storeId, productId, '2026-09', 'normal')).toBe(false);
     });
+  });
+  it('a remap freezes settlement immediately, including before the next source sync', async () => {
+    const manifest = await planTestDataReset(fixture.pool, context);
+    await applyTestDataReset(fixture.pool, manifest, manifest.hash);
+    await fixture.pool.query(
+      "INSERT INTO idosi_product_links(idosi_product_id,product_id,first_seen_name) VALUES('source-id',$1,'Fixture')",
+      [productId],
+    );
+    await fixture.db.transaction((tx) =>
+      resetSaleBoundary(tx, {
+        storeId,
+        productId,
+        period: '2026-09',
+        type: 'normal',
+        observed: 9000n,
+        generatedAt: '2026-09-30T17:00:00Z',
+        links: new Map([['source-id', productId]]),
+      }),
+    );
+    expect(
+      await fixture.db.transaction((tx) =>
+        resetAllowsSettlement(tx, storeId, productId, '2026-09', 'normal'),
+      ),
+    ).toBe(true);
+    const otherProduct = (
+      await fixture.pool.query('SELECT id FROM products WHERE id<>$1 LIMIT 1', [productId])
+    ).rows[0].id;
+    const actor = (await fixture.pool.query("SELECT id FROM users WHERE role='admin'")).rows[0].id;
+    await setIdosiProductLink(fixture.db, {
+      idosiProductId: 'source-id',
+      idosiProductName: 'Fixture',
+      productId: otherProduct,
+      reason: 'Fixture remap',
+      actorUserId: actor,
+      requestId: randomUUID(),
+      ipAddress: null,
+      userAgent: null,
+    });
+    expect(
+      (
+        await fixture.pool.query(
+          "SELECT status FROM test_data_reset_baselines WHERE store_id=$1 AND product_id=$2 AND revenue_type='normal'",
+          [storeId, productId],
+        )
+      ).rows[0].status,
+    ).toBe('mapping_review');
+    expect(
+      await fixture.db.transaction((tx) =>
+        resetAllowsSettlement(tx, storeId, productId, '2026-09', 'normal'),
+      ),
+    ).toBe(false);
+    // A signature mismatch also fails closed if a link was changed outside the normal setter.
+    await fixture.pool.query(
+      "UPDATE test_data_reset_baselines SET status='ready' WHERE store_id=$1 AND product_id=$2 AND revenue_type='normal'",
+      [storeId, productId],
+    );
+    expect(
+      await fixture.db.transaction((tx) =>
+        resetAllowsSettlement(tx, storeId, productId, '2026-09', 'normal'),
+      ),
+    ).toBe(false);
   });
   it.each(['NORMAL', 'SALE_KG', 'SALE_PIECE'] as const)(
     'preserves IDOSI %s snapshots and prevents old sales consuming newly received stock',

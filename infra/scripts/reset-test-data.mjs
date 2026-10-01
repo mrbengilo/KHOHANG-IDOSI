@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { dirname, basename } from 'node:path';
 import pg from 'pg';
-import { inventoryBackupRoot } from './test-data-backups.mjs';
+import { inventoryBackupRoot, verifyRetainedBackupFiles } from './test-data-backups.mjs';
 import {
   planTestDataReset,
   applyTestDataReset,
@@ -12,6 +12,7 @@ import {
   verifyTestDataReset,
   EXPECTED_RESET_SCHEMA_HASH,
   inventoryDatabaseCopy,
+  assertResetManifest,
 } from '../../packages/database/dist/test-data-reset.js';
 
 const { values } = parseArgs({
@@ -49,6 +50,11 @@ const pool = new pg.Pool({
   application_name: 'idosi-test-reset',
   connectionTimeoutMillis: 10000,
 });
+async function loadReviewedManifest(path) {
+  const manifest = JSON.parse(await readFile(path, 'utf8'));
+  assertResetManifest(manifest);
+  return manifest;
+}
 function checkExecutionContext(context) {
   if (context.expectedSchemaHash !== EXPECTED_RESET_SCHEMA_HASH)
     throw new Error('Schema is not the reviewed release schema');
@@ -144,7 +150,7 @@ try {
   } else if (values.command === 'apply') {
     if (!values.manifest || !values.confirm)
       throw new Error('--manifest and --confirm HASH required');
-    const manifest = JSON.parse(await readFile(values.manifest, 'utf8'));
+    const manifest = await loadReviewedManifest(values.manifest);
     checkExecutionContext(manifest.context);
     // Once committed, resume must query the journal rather than validate a pre-reset inventory
     // that may already have been purged. It still cannot execute the database reset twice.
@@ -155,7 +161,7 @@ try {
     console.log(JSON.stringify(await applyTestDataReset(pool, manifest, values.confirm)));
   } else if (values.command === 'verify') {
     if (!values.manifest) throw new Error('--manifest required');
-    const manifest = JSON.parse(await readFile(values.manifest, 'utf8'));
+    const manifest = await loadReviewedManifest(values.manifest);
     const result = await verifyTestDataReset(pool, manifest, values.restore);
     if (values.restore) {
       if (!values.output || !values['clean-root'] || !values['clean-file'])
@@ -258,14 +264,21 @@ try {
       !values.output
     )
       throw new Error('Database/backup/restore manifests, proof and output required');
-    const manifest = JSON.parse(await readFile(values.manifest, 'utf8'));
+    const manifest = await loadReviewedManifest(values.manifest);
     const inventory = JSON.parse(await readFile(values.inventory, 'utf8'));
     const proof = JSON.parse(await readFile(values.proof, 'utf8'));
     const copies = JSON.parse(await readFile(values['restore-inventory'], 'utf8'));
+    const cleanDatabase = 'idosi_reset_verify_' + manifest.context.operationId.replaceAll('-', '_');
+    const originalCopies = copies.filter((copy) => copy.identity.database !== cleanDatabase);
+    if (
+      resetHash({ backups: inventory, restores: originalCopies }) !== manifest.context.inventoryHash
+    )
+      throw new Error('Backup or original restore inventory changed after reset');
     if (proof.state !== 'CLEAN_RESTORE_VERIFIED' || proof.manifestHash !== manifest.hash)
       throw new Error('Clean restore proof does not match reset');
     await checkCleanProof(proof);
     const after = await inventoryBackupRoot(inventory.root);
+    verifyRetainedBackupFiles(inventory, proof.cleanFiles, after);
     for (const clean of proof.cleanFiles)
       if (resetHash(after.files.find((f) => f.path === clean.path)) !== resetHash(clean))
         throw new Error('Clean backup no longer matches proof');
@@ -284,6 +297,14 @@ try {
           .rowCount
       )
         throw new Error('A restore database remains');
+    if (
+      (
+        await pool.query(
+          "SELECT 1 FROM pg_database WHERE NOT datistemplate AND datname NOT IN (current_database(),'postgres')",
+        )
+      ).rowCount
+    )
+      throw new Error('An unmanifested database copy remains');
     await verifyTestDataReset(pool, manifest);
     const evidence = {
       manifestHash: manifest.hash,
@@ -309,7 +330,7 @@ try {
   } else if (values.command === 'can-resume-writers') {
     if (!values.manifest || !values.proof)
       throw new Error('Manifest and completion evidence required');
-    const manifest = JSON.parse(await readFile(values.manifest, 'utf8'));
+    const manifest = await loadReviewedManifest(values.manifest);
     const proof = JSON.parse(await readFile(values.proof, 'utf8'));
     const result = await pool.query(
       "SELECT phase,evidence FROM test_data_reset_operations WHERE id=$1 AND manifest_hash=$2 AND phase IN ('BACKUPS_PURGED','COMPLETE')",
