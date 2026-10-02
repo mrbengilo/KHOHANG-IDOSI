@@ -2209,6 +2209,7 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
       .insert(orderSessions)
       .values({
         code: `ADJ-${token.slice(0, 8)}`,
+        kind: 'manual',
         businessDate: date,
         status: 'completed',
         inventorySnapshotDueAt: new Date(`${date}T08:00:00+07:00`),

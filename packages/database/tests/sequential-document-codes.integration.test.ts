@@ -16,6 +16,7 @@ describePostgres('sequential document codes', () => {
           .insert(orderSessions)
           .values({
             code: '',
+            kind: 'manual',
             businessDate: '2099-01-01',
             inventorySnapshotDueAt: new Date('2099-01-01T01:00:00Z'),
             requestDeadlineAt: new Date('2099-01-01T02:00:00Z'),

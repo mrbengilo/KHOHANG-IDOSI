@@ -1159,6 +1159,7 @@ async function finalizedReceipt(repository, { wholesale: wholesaleStore = false 
     .insert(orderSessions)
     .values({
       code: `X-${token.slice(0, 8)}`,
+      kind: 'manual',
       businessDate: date,
       status: 'completed',
       inventorySnapshotDueAt: new Date(`${date}T08:00:00+07:00`),

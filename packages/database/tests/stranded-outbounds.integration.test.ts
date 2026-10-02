@@ -502,6 +502,7 @@ describePostgres('stranded allocation outbound backfill', () => {
       .insert(orderSessions)
       .values({
         code: `STRAND-${token}`,
+        kind: 'manual',
         businessDate: date,
         status: 'completed',
         inventorySnapshotDueAt: new Date(`${date}T08:00:00+07:00`),
