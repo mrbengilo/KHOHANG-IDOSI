@@ -47,7 +47,8 @@ Các invariant sau là bắt buộc, trừ khi task mới thay đổi rõ ràng 
 - Khóa tài khoản hoặc gỡ quyền phải có hiệu lực ngay và thu hồi session liên quan.
 - Hiện có 14 cửa hàng nhưng cửa hàng và SKU phải quản lý động, tuyệt đối không hard-code số lượng.
 - Đặt hàng mở 24/7: yêu cầu ngoài giờ chốt được tiếp nhận cho đợt phân bổ kế tiếp, không cần Admin mở phiên thủ công.
-- Mỗi cửa hàng tối đa hai phiếu đặt thường trong một chu kỳ; chỉ hoàn tất phân bổ mới reset hạn mức, không reset khi vừa đóng phiên. Phiếu đã gửi cho đợt kế tiếp vẫn chiếm lượt của đợt đó.
+- Một ngày có thể có nhiều phiên phân bổ độc lập: một phiên mặc định do hệ thống mở và các phiên bổ sung do Admin tạo; không gộp phiên, không gộp kết quả giữa các phiên, chỉ gộp phiếu trong cùng phiên và cửa hàng. Đơn mới vào phiên đang nhận có giờ chốt sớm nhất; đơn đã gửi giữ nguyên phiên.
+- Mỗi cửa hàng tối đa hai phiếu đặt thường trong một chu kỳ (các phiếu còn chờ phân bổ); chỉ hoàn tất phân bổ mới reset hạn mức, không reset khi vừa đóng phiên. Phiếu đã gửi cho đợt kế tiếp vẫn chiếm lượt của đợt đó.
 - Phiếu ưu tiên không chiếm hai lượt đặt thường; hàng ưu tiên gộp cùng phiếu xuất/chuyến giao của đơn kế tiếp cùng cửa hàng, vẫn giữ nguồn gốc phân bổ để đối soát. Nếu chưa có đơn thường thì giữ hàng đã cấp, không xuất riêng; khi có đơn thường kế tiếp mới giao chung.
 - 08:00 là mốc chụp tồn và xử lý ưu tiên; 09:00 là mốc chốt phản hồi/phân bổ theo quy trình hiện hành.
 - Phân bổ theo thứ tự chính sách P0A đến P3 và theo vòng.
