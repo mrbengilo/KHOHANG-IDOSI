@@ -56,3 +56,9 @@ Rollback: revert the squash commit through a PR and let the existing watcher dep
 ## Update 2026-10-01 — tables inside the fluid workspace
 
 The fluid workspace and its 18px gutters are unchanged; no shared `max-width` was reintroduced. Tables no longer stretch to the panel width: each table wrapper is content-sized, centred in its direct container and scrolls horizontally on its own when the table needs more room. See [responsive-table-layout-audit.md](responsive-table-layout-audit.md).
+
+## Update 2026-10-02 — gutters superseded
+
+The 18px desktop gutter above is historical evidence. Current guidance: `--content-gutter` is 54px
+(3 × 18px) per side from 1280px and grows linearly 18 → 54px between 821 and 1279px; ≤820px keeps
+the 16/18px mobile padding. See [desktop-login-spacing-audit.md](desktop-login-spacing-audit.md).

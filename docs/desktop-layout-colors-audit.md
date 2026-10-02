@@ -40,3 +40,9 @@ Before/after screenshots and browser-zoom (100/125/150%) evidence were not produ
 ## Rollback
 
 Revert the squash commit via PR; the watcher deploys the new green `main` SHA. No schema change.
+
+## Update 2026-10-02
+
+The 18px gutter measured here was replaced by a 54px desktop gutter (fluid 18 → 54px from 821 to
+1279px); the role × route matrix now asserts it. See
+[desktop-login-spacing-audit.md](desktop-login-spacing-audit.md).
