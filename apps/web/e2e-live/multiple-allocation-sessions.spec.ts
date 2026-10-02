@@ -297,7 +297,12 @@ test('Admin runs three independent sessions on one day; history and results neve
     // 3. Order history keeps every original request with its own session.
     await page.goto('/allocations?tab=history');
     const history = page.getByRole('region', { name: 'Lịch sử đặt hàng theo cửa hàng' });
-    await history.getByLabel('Cửa hàng').selectOption(storeA.id);
+    // Scoped to the filter form: once rows render, their document buttons are labelled
+    // "… của Cửa hàng …" and would also match a bare getByLabel('Cửa hàng').
+    await history
+      .getByRole('form', { name: 'Bộ lọc lịch sử đặt hàng' })
+      .getByLabel('Cửa hàng')
+      .selectOption(storeA.id);
     await expect(page).toHaveURL(new RegExp(`ls\\.store=${storeA.id}`, 'u'));
     const rows = history.locator('tbody tr');
     await expect(rows).toHaveCount(3);
