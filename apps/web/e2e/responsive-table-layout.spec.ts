@@ -151,12 +151,13 @@ test('wide history scrolls inside its region by keyboard and keeps the page stil
   await region.focus();
   await page.keyboard.press('End');
   for (let step = 0; step < 40; step += 1) await page.keyboard.press('ArrowRight');
-  const after = await region.evaluate((element) => ({
-    scrollLeft: element.scrollLeft,
-    max: element.scrollWidth - element.clientWidth,
-  }));
-  expect(after.scrollLeft).toBeGreaterThan(0);
-  expect(after.scrollLeft).toBeGreaterThanOrEqual(after.max - 1);
+  // Chromium animates keyboard scrolling, so the last key press may still be settling.
+  await expect
+    .poll(() =>
+      region.evaluate((element) => element.scrollWidth - element.clientWidth - element.scrollLeft),
+    )
+    .toBeLessThanOrEqual(1);
+  expect(await region.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
   const last = await region.locator('thead th').last().boundingBox();
   const port = await region.boundingBox();
   expect(last!.x + last!.width).toBeLessThanOrEqual(port!.x + port!.width + 1);
