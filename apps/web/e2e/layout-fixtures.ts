@@ -76,27 +76,28 @@ export async function mockLayoutData(page: Page) {
   );
 }
 
-export async function mockLayoutAdmin(page: Page) {
+/** Admin session payload as returned by `/auth/session` and `/auth/login`. */
+export function layoutAdminSession(displayName = 'Layout test') {
+  return {
+    id: id(1),
+    createdAt: timestamp,
+    lastSeenAt: timestamp,
+    expiresAt: '2099-09-27T03:00:00.000Z',
+    principal: {
+      accountId: id(2),
+      assignedStoreIds: [],
+      displayName,
+      role: 'ADMIN',
+      status: 'ACTIVE',
+      storeId: null,
+      username: 'layout.test',
+    },
+  };
+}
+
+export async function mockLayoutAdmin(page: Page, displayName?: string) {
   await page.route('**/api/v1/auth/session', (route) =>
-    route.fulfill({
-      json: {
-        data: {
-          id: id(1),
-          createdAt: timestamp,
-          lastSeenAt: timestamp,
-          expiresAt: '2099-09-27T03:00:00.000Z',
-          principal: {
-            accountId: id(2),
-            assignedStoreIds: [],
-            displayName: 'Layout test',
-            role: 'ADMIN',
-            status: 'ACTIVE',
-            storeId: null,
-            username: 'layout.test',
-          },
-        },
-      },
-    }),
+    route.fulfill({ json: { data: layoutAdminSession(displayName) } }),
   );
   await mockLayoutData(page);
 }

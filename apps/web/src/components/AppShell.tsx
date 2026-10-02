@@ -334,15 +334,22 @@ export function AppShell() {
               </select>
             </>
           ) : null}
-          <strong>{profileName}</strong>
-          <span>{role === 'ADMIN' ? 'Toàn hệ thống' : 'Phạm vi đã phân quyền'}</span>
+          <strong className="sidebar__profile-name">{profileName}</strong>
+          <span className="sidebar__profile-scope">
+            {role === 'ADMIN' ? 'Toàn hệ thống' : 'Phạm vi đã phân quyền'}
+          </span>
           {signOutError ? (
             <span className="sidebar__error" role="alert">
               {signOutError}
             </span>
           ) : null}
-          <button disabled={signingOut} onClick={() => void signOut()} type="button">
-            <LogOut aria-hidden="true" size={16} />
+          <button
+            className="sidebar__logout"
+            disabled={signingOut}
+            onClick={() => void signOut()}
+            type="button"
+          >
+            <LogOut aria-hidden="true" size={20} />
             {signingOut ? 'Đang đăng xuất…' : 'Đăng xuất'}
           </button>
         </div>

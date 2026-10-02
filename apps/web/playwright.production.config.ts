@@ -20,6 +20,8 @@ export default defineConfig({
     '**/responsive-table-layout.spec.ts',
     // Store-detail regression must also pass against the production bundle (no mock fallback).
     '**/inbound-statistics.spec.ts',
+    // Desktop login/shell typography, gutters and sign-out states with route-mocked API.
+    '**/desktop-login-shell.spec.ts',
   ],
   use: { ...smokeConfig.use, baseURL: webOrigin },
   webServer: {
