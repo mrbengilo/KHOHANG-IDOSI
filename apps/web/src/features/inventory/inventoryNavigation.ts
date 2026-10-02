@@ -6,12 +6,14 @@ import type { ReceiptAdjustmentDateField, ReceiptAdjustmentStatus } from '@idosi
  * shared link stays short. Tab switches are history entries; filter edits replace the entry.
  */
 export type InventoryTab = 'warehouse' | 'store' | 'adjustments';
-export type WarehouseTab = 'stock' | 'shortage' | 'history';
+export type WarehouseTab = 'stock' | 'shortage' | 'history' | 'adjustments';
 export type StoreTab = 'stock' | 'ledger';
 export type AdjustmentStatusFilter = ReceiptAdjustmentStatus | 'ALL';
 
 const INVENTORY_TABS: readonly InventoryTab[] = ['warehouse', 'store', 'adjustments'];
-const WAREHOUSE_TABS: readonly WarehouseTab[] = ['stock', 'shortage', 'history'];
+const WAREHOUSE_TABS: readonly WarehouseTab[] = ['stock', 'shortage', 'history', 'adjustments'];
+const ADJUSTMENT_DIRECTIONS = ['ALL', 'INCREASE', 'DECREASE'] as const;
+export type WarehouseAdjustmentDirectionFilter = (typeof ADJUSTMENT_DIRECTIONS)[number];
 const STORE_TABS: readonly StoreTab[] = ['stock', 'ledger'];
 const ADJUSTMENT_STATUSES: readonly AdjustmentStatusFilter[] = [
   'ALL',
@@ -46,6 +48,11 @@ export const KEYS = {
   warehouseSearch: 'kt.q',
   warehousePage: 'kt.page',
   warehouseHistoryPage: 'kt.hpage',
+  warehouseAdjustmentPage: 'kt.dpage',
+  warehouseAdjustmentProduct: 'kt.dproduct',
+  warehouseAdjustmentDirection: 'kt.ddir',
+  warehouseAdjustmentFrom: 'kt.dfrom',
+  warehouseAdjustmentTo: 'kt.dto',
   storeTab: 'ch',
   store: 'ch.store',
   bagStatus: 'ch.status',
@@ -103,6 +110,13 @@ export interface InventoryNavigation {
     readonly search: string;
     readonly page: number;
     readonly historyPage: number;
+    readonly adjustments: {
+      readonly page: number;
+      readonly productId: string;
+      readonly direction: WarehouseAdjustmentDirectionFilter;
+      readonly from: string;
+      readonly to: string;
+    };
   };
   readonly store: {
     readonly tab: StoreTab;
@@ -117,6 +131,9 @@ export interface InventoryNavigation {
 export function readInventoryNavigation(params: URLSearchParams): InventoryNavigation {
   const from = validDate(params.get(KEYS.adjustmentFrom));
   const to = validDate(params.get(KEYS.adjustmentTo));
+  const stockFrom = validDate(params.get(KEYS.warehouseAdjustmentFrom));
+  const stockTo = validDate(params.get(KEYS.warehouseAdjustmentTo));
+  const stockRangeReversed = stockFrom !== '' && stockTo !== '' && stockFrom > stockTo;
   return {
     tab: oneOf(params.get(KEYS.tab), INVENTORY_TABS, 'warehouse'),
     warehouse: {
@@ -124,6 +141,17 @@ export function readInventoryNavigation(params: URLSearchParams): InventoryNavig
       search: text(params.get(KEYS.warehouseSearch), 120),
       page: positivePage(params.get(KEYS.warehousePage)),
       historyPage: positivePage(params.get(KEYS.warehouseHistoryPage)),
+      adjustments: {
+        page: positivePage(params.get(KEYS.warehouseAdjustmentPage)),
+        productId: uuidOrEmpty(params.get(KEYS.warehouseAdjustmentProduct)),
+        direction: oneOf(
+          params.get(KEYS.warehouseAdjustmentDirection),
+          ADJUSTMENT_DIRECTIONS,
+          'ALL',
+        ),
+        from: stockRangeReversed ? '' : stockFrom,
+        to: stockRangeReversed ? '' : stockTo,
+      },
     },
     store: {
       tab: oneOf(params.get(KEYS.storeTab), STORE_TABS, 'stock'),
@@ -155,6 +183,8 @@ const DEFAULTS: Partial<Record<string, string>> = {
   [KEYS.warehouseTab]: 'stock',
   [KEYS.warehousePage]: '1',
   [KEYS.warehouseHistoryPage]: '1',
+  [KEYS.warehouseAdjustmentPage]: '1',
+  [KEYS.warehouseAdjustmentDirection]: 'ALL',
   [KEYS.storeTab]: 'stock',
   [KEYS.bagStatus]: 'ALL',
   [KEYS.adjustmentStatus]: DEFAULT_ADJUSTMENT_STATUS,
@@ -238,6 +268,8 @@ export function refreshQueryKeys(navigation: InventoryNavigation): readonly (rea
       return [['warehouse-shortage-checks'], ...names];
     case 'history':
       return [['warehouse-outbound-history'], ...names];
+    case 'adjustments':
+      return [['warehouse-adjustments'], ['catalog']];
     default:
       return [['warehouse-inventory']];
   }

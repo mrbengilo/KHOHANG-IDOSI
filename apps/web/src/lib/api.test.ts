@@ -163,7 +163,9 @@ describe('API projections', () => {
                   allocationStartsAt: '2026-09-17T02:00:00.000Z',
                   businessDate: '2026-09-17',
                   createdAt: '2026-09-16T23:00:00.000Z',
+                  completedAt: null,
                   id: sessionId,
+                  kind: 'DEFAULT',
                   policyVersion: 'idosi-round-robin-p0a-p3-v1',
                   requestClosesAt: '2026-09-17T01:00:00.000Z',
                   requestOpensAt: '2026-09-17T00:00:00.000Z',
@@ -301,8 +303,10 @@ describe('API projections', () => {
     };
     const scheduled = {
       ...input,
+      completedAt: null,
       createdAt: '2026-09-17T10:00:00.000Z',
       id: sessionId,
+      kind: 'MANUAL' as const,
       status: 'SCHEDULED' as const,
       updatedAt: '2026-09-17T10:00:00.000Z',
       version: 0,

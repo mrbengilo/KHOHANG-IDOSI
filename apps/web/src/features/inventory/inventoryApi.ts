@@ -4,6 +4,14 @@ import {
   type ListStoreBagOpeningsQuery,
 } from '@idosi/contracts';
 import {
+  CreateWarehouseStockAdjustmentRequestSchema,
+  ListWarehouseStockAdjustmentsResponseSchema,
+  WarehouseStockAdjustmentResponseSchema,
+  type CreateWarehouseStockAdjustmentRequest,
+  type WarehouseAdjustmentDirection,
+  type WarehouseStockAdjustment,
+} from '@idosi/contracts';
+import {
   WarehouseInventoryResponseSchema,
   ListWarehouseOutboundRequestsResponseSchema,
   CreateStoreOutboundRequestSchema,
@@ -58,6 +66,45 @@ export async function loadWarehouseInventory(page: number, search: string, signa
       { signal: signal ?? null },
     ),
   );
+}
+
+export interface WarehouseAdjustmentFilters {
+  readonly productId?: string;
+  readonly direction?: WarehouseAdjustmentDirection;
+  readonly from?: string;
+  readonly to?: string;
+}
+
+export async function loadWarehouseAdjustments(
+  page: number,
+  filters: WarehouseAdjustmentFilters,
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams({ page: String(page), pageSize: '20' });
+  for (const [key, value] of Object.entries(filters)) {
+    if (value) query.set(key, value);
+  }
+  return ListWarehouseStockAdjustmentsResponseSchema.parse(
+    await request(`/warehouse-adjustments?${query}`, { signal: signal ?? null }),
+  );
+}
+
+/**
+ * The key belongs to one operation: a retry after a lost response reuses it with the same
+ * payload, so the server replays instead of adjusting twice.
+ */
+export async function createWarehouseAdjustment(
+  input: CreateWarehouseStockAdjustmentRequest,
+  idempotencyKey: string,
+): Promise<WarehouseStockAdjustment> {
+  const parsed = CreateWarehouseStockAdjustmentRequestSchema.parse(input);
+  return WarehouseStockAdjustmentResponseSchema.parse(
+    await request('/warehouse-adjustments', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(parsed),
+    }),
+  ).data;
 }
 
 export async function loadWarehouseOutboundHistory(page: number, signal?: AbortSignal) {

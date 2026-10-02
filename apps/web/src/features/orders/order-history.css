@@ -1,0 +1,113 @@
+.order-history {
+  margin-bottom: 18px;
+}
+.order-history__filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  align-items: end;
+  gap: 10px 12px;
+}
+.order-history__filters label {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+.order-history__filters select,
+.order-history__filters input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+}
+.order-history__filter-actions {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.order-history__filter-actions .button {
+  min-height: 44px;
+  white-space: nowrap;
+}
+.order-history__note {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 12px;
+}
+.order-history__table td {
+  vertical-align: top;
+}
+.order-history__table td small {
+  display: block;
+  margin-top: 2px;
+}
+.order-history__table td .link-button {
+  margin-top: 6px;
+  min-height: 36px;
+}
+.order-history__lines {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 4px;
+  padding: 0;
+  list-style: none;
+}
+.order-history__lines li {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 12px;
+}
+.order-history__lines li > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.order-history__lines li small {
+  display: inline;
+  color: var(--muted);
+}
+.order-history__lines strong {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.order-history__line--match {
+  border-radius: 6px;
+  background: var(--brand-soft);
+  padding: 2px 6px;
+}
+@media (min-width: 821px) {
+  .order-history__table th:nth-child(4),
+  .order-history__table td:nth-child(4) {
+    min-width: 16rem;
+  }
+}
+.allocation-tabs {
+  margin-bottom: 14px;
+}
+.allocation-session-kind {
+  display: inline-block;
+  margin-top: 4px;
+}
+.allocation-day-sessions__list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.allocation-day-sessions__list li {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 10px 12px;
+}
+.allocation-day-sessions__list li > span {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}

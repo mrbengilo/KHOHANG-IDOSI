@@ -1,6 +1,9 @@
 import type { WorkerStatus } from '@idosi/contracts';
 import { describe, expect, it } from 'vitest';
 import {
+  allocationTabs,
+  readAllocationTab,
+  sessionsOfBusinessDate,
   allocationRoundText,
   allocationResultsViewState,
   availableSessionTransitions,
@@ -82,6 +85,8 @@ describe('production allocation session helpers', () => {
     const session = {
       id: '10000000-0000-4000-8000-000000000001',
       businessDate: '2026-09-17',
+      kind: 'DEFAULT' as const,
+      completedAt: null,
       status: 'OPEN' as const,
       requestOpensAt: '2026-09-16T17:00:00.000Z',
       requestClosesAt: '2026-09-17T01:00:00.000Z',
@@ -177,11 +182,52 @@ describe('allocation worker notice', () => {
         },
       ],
     });
-    expect(notice).toContain('Chụp tồn 08:00 lúc 08:00: Opening snapshot is missing');
-    expect(notice).toContain('Chốt phân bổ 09:00 lúc 09:00: chờ bước 08:00');
+    expect(notice).toContain('Chụp tồn lúc 08:00: Opening snapshot is missing');
+    expect(notice).toContain('Chốt phân bổ lúc 09:00: chờ bước chụp tồn');
   });
 
   it('warns when the worker stopped reporting', () => {
     expect(workerStatusNotice({ ...base, status: 'STALE' })).toContain('không phản hồi từ 09:29');
+  });
+
+  it('shows order history to ADMIN and HTKD and the create tab to ADMIN only', () => {
+    const ids = (role: Parameters<typeof allocationTabs>[0]) =>
+      allocationTabs(role).map((tab) => tab.id);
+    expect(ids('ADMIN')).toEqual(['sessions', 'history', 'create']);
+    expect(ids('HTKD')).toEqual(['sessions', 'history']);
+    expect(ids('STORE')).toEqual(['sessions']);
+    expect(ids('WHOLESALE')).toEqual(['sessions']);
+    // A tab outside the role falls back to the shared one instead of rendering it.
+    expect(readAllocationTab(new URLSearchParams('tab=create'), 'HTKD')).toBe('sessions');
+    expect(readAllocationTab(new URLSearchParams('tab=history'), 'STORE')).toBe('sessions');
+    expect(readAllocationTab(new URLSearchParams('tab=history'), 'HTKD')).toBe('history');
+  });
+
+  it('lists the sessions of one business date in schedule order', () => {
+    const make = (id: string, close: string, created: string, businessDate = '2026-10-02') => ({
+      id,
+      businessDate,
+      kind: 'MANUAL' as const,
+      completedAt: null,
+      status: 'SCHEDULED' as const,
+      requestOpensAt: '2026-10-01T17:00:00.000Z',
+      requestClosesAt: close,
+      allocationStartsAt: close,
+      policyVersion: 'p',
+      version: 0,
+      createdAt: created,
+      updatedAt: created,
+    });
+    const sessions = [
+      make('late', '2026-10-02T07:00:00.000Z', '2026-10-01T00:00:00.000Z'),
+      make('early-b', '2026-10-02T01:00:00.000Z', '2026-10-01T02:00:00.000Z'),
+      make('early-a', '2026-10-02T01:00:00.000Z', '2026-10-01T01:00:00.000Z'),
+      make('other-day', '2026-10-03T01:00:00.000Z', '2026-10-01T00:00:00.000Z', '2026-10-03'),
+    ];
+    expect(sessionsOfBusinessDate(sessions, '2026-10-02').map((session) => session.id)).toEqual([
+      'early-a',
+      'early-b',
+      'late',
+    ]);
   });
 });

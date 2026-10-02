@@ -20,7 +20,13 @@ describe('inventory URL navigation', () => {
   it('defaults to the warehouse stock and the admin-pending discrepancy slice', () => {
     const navigation = read('');
     expect(navigation.tab).toBe('warehouse');
-    expect(navigation.warehouse).toEqual({ tab: 'stock', search: '', page: 1, historyPage: 1 });
+    expect(navigation.warehouse).toEqual({
+      tab: 'stock',
+      search: '',
+      page: 1,
+      historyPage: 1,
+      adjustments: { page: 1, productId: '', direction: 'ALL', from: '', to: '' },
+    });
     expect(navigation.store).toEqual({
       tab: 'stock',
       storeId: '',
@@ -139,5 +145,26 @@ describe('inventory URL navigation', () => {
     expect(adjustments).not.toContainEqual(['warehouse-inventory']);
     expect(matchesQueryPrefix(['receipt-adjustments', 'admin', 'ALL'], adjustments)).toBe(true);
     expect(matchesQueryPrefix(['warehouse-inventory', 1, ''], adjustments)).toBe(false);
+  });
+
+  it('keeps the stock adjustment history filters in their own namespace', () => {
+    const product = '30000000-0000-4000-8000-0000000000aa';
+    const navigation = read(
+      `kt=adjustments&kt.dpage=3&kt.dproduct=${product}&kt.ddir=DECREASE&kt.dfrom=2026-10-01&kt.dto=2026-09-01`,
+    );
+    expect(navigation.warehouse.tab).toBe('adjustments');
+    // A reversed window is dropped rather than sent to the server.
+    expect(navigation.warehouse.adjustments).toEqual({
+      page: 3,
+      productId: product,
+      direction: 'DECREASE',
+      from: '',
+      to: '',
+    });
+    expect(read('kt.ddir=SET').warehouse.adjustments.direction).toBe('ALL');
+    expect(refreshQueryKeys(read('kt=adjustments'))).toEqual([
+      ['warehouse-adjustments'],
+      ['catalog'],
+    ]);
   });
 });

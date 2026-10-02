@@ -1415,6 +1415,12 @@ td small {
   font-size: 10px;
   line-height: 1.45;
 }
+.quota-card .quota-card__session {
+  overflow-wrap: anywhere;
+}
+.quota-card__session strong {
+  color: var(--text);
+}
 .quota-card progress {
   width: min(340px, 38%);
   accent-color: var(--brand);
