@@ -4,6 +4,27 @@ import type { ReceiptSummary } from '@idosi/contracts';
 import { sessionDocument, type SessionDocument } from '@idosi/contracts';
 import { listSessionDocuments as listDatabaseSessionDocuments } from '@idosi/database';
 import { listStoreBagOpenings } from '@idosi/database';
+import {
+  createWarehouseStockAdjustment as createDatabaseWarehouseStockAdjustment,
+  getWarehouseStockAdjustment as getDatabaseWarehouseStockAdjustment,
+  listOrderHistory as listDatabaseOrderHistory,
+  listWarehouseStockAdjustments as listDatabaseWarehouseStockAdjustments,
+  WarehouseAdjustmentAuthorizationError,
+  WarehouseAdjustmentIdempotencyConflictError,
+  WarehouseAdjustmentInsufficientStockError,
+  WarehouseAdjustmentNotFoundError,
+  WarehouseAdjustmentValidationError,
+  WarehouseAdjustmentVersionConflictError,
+  type OrderHistoryRecord,
+  type WarehouseStockAdjustmentRecord,
+} from '@idosi/database';
+import type {
+  CreateWarehouseStockAdjustmentRequest,
+  ListOrderHistoryQuery,
+  ListWarehouseStockAdjustmentsQuery,
+  OrderHistoryEntry,
+  WarehouseStockAdjustment,
+} from '@idosi/contracts';
 import type { ListStoreBagOpeningsQuery, StoreBagOpening } from '@idosi/contracts';
 import {
   loadIdosiStatisticsStates,
@@ -218,6 +239,7 @@ import {
   OrderSessionConflictError,
   OrderSessionNotFoundError,
   OrderSessionUnavailableError,
+  OrderSessionScheduleConflictError,
   OrderSessionValidationError,
   pool,
   productConversions,
@@ -341,7 +363,12 @@ import type {
 } from './repository.js';
 import { assertActiveRetailStore, canAccessStore, pagination, slicePage } from './repository.js';
 import { hashPassword, hashSessionToken } from './security.js';
-import { asiaHoChiMinhDateRange, conversionRetirementDate } from './time.js';
+import {
+  asiaHoChiMinhDateRange,
+  asiaHoChiMinhDayEnd,
+  asiaHoChiMinhDayStart,
+  conversionRetirementDate,
+} from './time.js';
 import { workerStatusDto } from './worker-status.js';
 
 /** lastSeenAt is refreshed at most this often per session. */
@@ -377,6 +404,8 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
           sql<number>`(select coalesce(sum(${outboundRequestLines.dispatchedQuantity}), 0) from ${outboundRequestLines} where ${outboundRequestLines.productId} = ${products.id})`.mapWith(
             Number,
           ),
+        balanceVersion: sql<number>`coalesce(${warehouseBalances.version}, 0)`.mapWith(Number),
+        productActive: products.isActive,
       })
       .from(products)
       .leftJoin(warehouseBalances, eq(warehouseBalances.productId, products.id))
@@ -385,6 +414,111 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       .limit(query.pageSize)
       .offset((query.page - 1) * query.pageSize);
     return { data: rows, pagination: pagination(query.page, query.pageSize, total?.count ?? 0) };
+  }
+
+  public async listOrderHistory(
+    actor: AuthenticatedPrincipal,
+    query: ListOrderHistoryQuery,
+  ): Promise<Page<OrderHistoryEntry>> {
+    if (actor.role !== 'ADMIN' && actor.role !== 'HTKD') throw forbidden();
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    // HTKD scope is the live assignment list resolved with this request's session, so a revoked
+    // store disappears from list, filters and counts at once.
+    const storeIds =
+      query.storeId !== undefined
+        ? [query.storeId]
+        : actor.role === 'ADMIN'
+          ? undefined
+          : actor.assignedStoreIds;
+    const result = await listDatabaseOrderHistory(db, {
+      page: query.page,
+      pageSize: query.pageSize,
+      ...(storeIds === undefined ? {} : { storeIds }),
+      ...(query.sessionId === undefined ? {} : { sessionId: query.sessionId }),
+      ...(query.status === undefined
+        ? {}
+        : {
+            status:
+              query.status === 'SUBMITTED'
+                ? ('submitted' as const)
+                : query.status === 'MERGED'
+                  ? ('merged' as const)
+                  : ('cancelled' as const),
+          }),
+      ...(query.productId === undefined ? {} : { productId: query.productId }),
+      ...(query.code === undefined ? {} : { code: query.code }),
+      ...(query.submittedFrom === undefined
+        ? {}
+        : { submittedFrom: asiaHoChiMinhDayStart(query.submittedFrom) }),
+      ...(query.submittedTo === undefined
+        ? {}
+        : { submittedBefore: asiaHoChiMinhDayEnd(query.submittedTo) }),
+    });
+    return { data: result.data.map(orderHistoryDto), pagination: result.pagination };
+  }
+
+  public async createWarehouseStockAdjustment(
+    actor: AuthenticatedPrincipal,
+    input: CreateWarehouseStockAdjustmentRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<WarehouseStockAdjustment>> {
+    if (actor.role !== 'ADMIN') throw forbidden('Chỉ Admin được điều chỉnh tồn kho tổng.');
+    try {
+      const result = await createDatabaseWarehouseStockAdjustment(db, {
+        productId: input.productId,
+        direction: input.direction === 'INCREASE' ? 'increase' : 'decrease',
+        quantity: input.quantity,
+        reasonCode: databaseWarehouseAdjustmentReason(input.reasonCode),
+        reason: input.reason,
+        expectedVersion: input.expectedVersion,
+        compensatesAdjustmentId: input.compensatesAdjustmentId ?? null,
+        actorUserId: actor.accountId,
+        idempotencyKey,
+        requestHash,
+        requestId: context.requestId,
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+      });
+      return { data: warehouseStockAdjustmentDto(result.adjustment), replayed: result.replayed };
+    } catch (error) {
+      throw warehouseAdjustmentApiError(error);
+    }
+  }
+
+  public async listWarehouseStockAdjustments(
+    actor: AuthenticatedPrincipal,
+    query: ListWarehouseStockAdjustmentsQuery,
+  ): Promise<Page<WarehouseStockAdjustment>> {
+    if (actor.role !== 'ADMIN') throw forbidden('Chỉ Admin được xem lịch sử điều chỉnh kho tổng.');
+    const result = await listDatabaseWarehouseStockAdjustments(db, {
+      page: query.page,
+      pageSize: query.pageSize,
+      ...(query.productId === undefined ? {} : { productId: query.productId }),
+      ...(query.createdByAccountId === undefined
+        ? {}
+        : { createdByUserId: query.createdByAccountId }),
+      ...(query.direction === undefined
+        ? {}
+        : {
+            direction:
+              query.direction === 'INCREASE' ? ('increase' as const) : ('decrease' as const),
+          }),
+      ...(query.from === undefined ? {} : { createdFrom: asiaHoChiMinhDayStart(query.from) }),
+      ...(query.to === undefined ? {} : { createdBefore: asiaHoChiMinhDayEnd(query.to) }),
+    });
+    return { data: result.data.map(warehouseStockAdjustmentDto), pagination: result.pagination };
+  }
+
+  public async getWarehouseStockAdjustment(
+    actor: AuthenticatedPrincipal,
+    adjustmentId: string,
+  ): Promise<WarehouseStockAdjustment> {
+    if (actor.role !== 'ADMIN') throw forbidden('Chỉ Admin được xem lịch sử điều chỉnh kho tổng.');
+    const row = await getDatabaseWarehouseStockAdjustment(db, adjustmentId);
+    if (!row) throw notFound('Không tìm thấy phiếu điều chỉnh tồn kho');
+    return warehouseStockAdjustmentDto(row);
   }
 
   public async ready(): Promise<boolean> {
@@ -1309,7 +1443,13 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       .select()
       .from(orderSessions)
       .where(where)
-      .orderBy(desc(orderSessions.businessDate), desc(orderSessions.createdAt))
+      // Same-day sessions are listed by their own schedule, never collapsed into one per date.
+      .orderBy(
+        desc(orderSessions.businessDate),
+        desc(orderSessions.inventorySnapshotDueAt),
+        desc(orderSessions.createdAt),
+        desc(orderSessions.id),
+      )
       .limit(query.pageSize)
       .offset((query.page - 1) * query.pageSize);
     return {
@@ -5214,6 +5354,146 @@ function databaseOrderSessionStatus(
   }
 }
 
+function orderHistoryStatus(status: OrderHistoryRecord['status']): OrderHistoryEntry['status'] {
+  switch (status) {
+    case 'draft':
+    case 'submitted':
+      return 'SUBMITTED';
+    case 'merged':
+      return 'MERGED';
+    case 'allocated':
+      return 'ALLOCATED';
+    case 'partially_allocated':
+      return 'PARTIALLY_ALLOCATED';
+    case 'waitlisted':
+      return 'WAITLISTED';
+    case 'cancelled':
+      return 'CANCELLED';
+  }
+}
+
+function orderHistoryDto(row: OrderHistoryRecord): OrderHistoryEntry {
+  if (!row.submittedAt) throw new Error(`Order request ${row.id} has no submission time.`);
+  return {
+    id: row.id,
+    code: row.code,
+    requestSequence: row.requestNumber === 2 ? 2 : 1,
+    status: orderHistoryStatus(row.status),
+    storeId: row.storeId,
+    storeCode: row.storeCode,
+    storeName: row.storeName,
+    session: {
+      id: row.session.id,
+      code: row.session.code,
+      kind: row.session.kind === 'manual' ? 'MANUAL' : 'DEFAULT',
+      businessDate: row.session.businessDate,
+      status: orderSessionStatus(row.session.status),
+      requestOpensAt: (row.session.openedAt ?? row.session.createdAt).toISOString(),
+      requestClosesAt: row.session.requestClosesAt.toISOString(),
+      allocationStartsAt: row.session.allocationStartsAt.toISOString(),
+      completedAt: row.session.completedAt?.toISOString() ?? null,
+    },
+    submittedAt: row.submittedAt.toISOString(),
+    submittedBy: row.requestedByDisplayName
+      ? { accountId: row.requestedByUserId, displayName: row.requestedByDisplayName }
+      : null,
+    cancelledAt: row.cancelledAt?.toISOString() ?? null,
+    cancellationReason: row.cancellationReason,
+    mergedDocument: row.mergedDocument
+      ? {
+          sessionId: row.mergedDocument.sessionId,
+          storeId: row.mergedDocument.storeId,
+          mergedOrderId: row.mergedDocument.mergedOrderId,
+          version: row.mergedDocument.version,
+        }
+      : null,
+    lines: row.lines.map((line) => ({
+      id: line.id,
+      productId: line.productId,
+      sku: line.sku,
+      productName: line.productName,
+      unit: line.unit === 'item' ? 'ITEM' : line.unit === 'kilogram' ? 'KILOGRAM' : 'BAG',
+      requestedQuantity: line.requestedQuantity,
+      matchesFilter: line.matchesFilter,
+    })),
+  };
+}
+
+function databaseWarehouseAdjustmentReason(
+  reason: CreateWarehouseStockAdjustmentRequest['reasonCode'],
+): WarehouseStockAdjustmentRecord['reasonCode'] {
+  return reason.toLowerCase() as WarehouseStockAdjustmentRecord['reasonCode'];
+}
+
+function warehouseStockAdjustmentDto(
+  row: WarehouseStockAdjustmentRecord,
+): WarehouseStockAdjustment {
+  const delta = row.onHandAfter - row.onHandBefore;
+  return {
+    id: row.id,
+    code: row.code,
+    productId: row.productId,
+    sku: row.sku,
+    productName: row.productName,
+    direction: row.direction === 'increase' ? 'INCREASE' : 'DECREASE',
+    quantity: row.quantity,
+    delta,
+    reasonCode: row.reasonCode.toUpperCase() as WarehouseStockAdjustment['reasonCode'],
+    reason: row.reason,
+    before: {
+      onHand: row.onHandBefore,
+      reserved: row.reservedBefore,
+      available: row.onHandBefore - row.reservedBefore,
+    },
+    after: {
+      onHand: row.onHandAfter,
+      reserved: row.reservedAfter,
+      available: row.onHandAfter - row.reservedAfter,
+    },
+    balanceVersionBefore: row.balanceVersionBefore,
+    balanceVersionAfter: row.balanceVersionAfter,
+    ledgerEntryId: row.ledgerEntryId,
+    compensatesAdjustmentId: row.compensatesAdjustmentId,
+    createdBy: { accountId: row.createdByUserId, displayName: row.createdByDisplayName },
+    requestId: row.requestId,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function warehouseAdjustmentApiError(error: unknown): unknown {
+  if (error instanceof WarehouseAdjustmentAuthorizationError) {
+    return forbidden('Chỉ Admin đang hoạt động được điều chỉnh tồn kho tổng.');
+  }
+  if (error instanceof WarehouseAdjustmentValidationError) {
+    return new ApiError('VALIDATION_ERROR', error.message, 400);
+  }
+  if (error instanceof WarehouseAdjustmentNotFoundError) {
+    return notFound('Không tìm thấy mặt hàng hoặc phiếu điều chỉnh được tham chiếu');
+  }
+  if (error instanceof WarehouseAdjustmentVersionConflictError) {
+    return new ApiError(
+      'VERSION_CONFLICT',
+      `Tồn kho vừa thay đổi (đang có ${error.current.onHand} bao, đang giữ ${error.current.reserved} bao). Tải lại số liệu rồi kiểm tra trước khi điều chỉnh.`,
+      409,
+    );
+  }
+  if (error instanceof WarehouseAdjustmentInsufficientStockError) {
+    return new ApiError(
+      'INSUFFICIENT_STOCK',
+      `Chỉ giảm được tối đa ${error.available} bao đang khả dụng; hàng đang giữ/chờ xuất không được giảm.`,
+      409,
+    );
+  }
+  if (error instanceof WarehouseAdjustmentIdempotencyConflictError) {
+    return new ApiError(
+      'IDEMPOTENCY_CONFLICT',
+      'Khóa idempotency đã được dùng cho một điều chỉnh khác',
+      409,
+    );
+  }
+  return error;
+}
+
 function orderSessionStatus(
   status: typeof orderSessions.$inferSelect.status,
 ): OrderSession['status'] {
@@ -5238,10 +5518,12 @@ function orderSessionDto(row: typeof orderSessions.$inferSelect): OrderSession {
     id: row.id,
     code: row.code,
     businessDate: row.businessDate,
+    kind: row.kind === 'manual' ? 'MANUAL' : 'DEFAULT',
     status: orderSessionStatus(row.status),
     requestOpensAt: (row.openedAt ?? row.createdAt).toISOString(),
     requestClosesAt: row.inventorySnapshotDueAt.toISOString(),
     allocationStartsAt: row.requestDeadlineAt.toISOString(),
+    completedAt: row.completedAt?.toISOString() ?? null,
     policyVersion: row.policyVersion,
     version: row.version,
     createdAt: row.createdAt.toISOString(),
@@ -5519,6 +5801,9 @@ async function withOrderSessionErrors<T>(operation: () => Promise<T>): Promise<T
     }
     if (error instanceof OrderSessionValidationError) {
       throw new ApiError('VALIDATION_ERROR', error.message, 400);
+    }
+    if (error instanceof OrderSessionScheduleConflictError) {
+      throw new ApiError('CONFLICT', error.message, 409);
     }
     if (error instanceof OrderSessionConflictError) {
       throw new ApiError('VERSION_CONFLICT', error.message, 409);

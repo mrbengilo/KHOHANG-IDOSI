@@ -19,6 +19,16 @@ export function asiaHoChiMinhDateRange(from: string, to: string): DateRange {
   return { start, endExclusive };
 }
 
+/** Start of an inclusive Vietnam calendar date. */
+export function asiaHoChiMinhDayStart(date: string): Date {
+  return localMidnightInstant(date);
+}
+
+/** Exclusive end of an inclusive Vietnam calendar date (the next local midnight). */
+export function asiaHoChiMinhDayEnd(date: string): Date {
+  return localMidnightInstant(nextIsoDate(date));
+}
+
 /** The Vietnam calendar date of an instant (Asia/Ho_Chi_Minh has no daylight saving time). */
 export function asiaHoChiMinhDate(instant: Date): string {
   return new Date(instant.getTime() + 7 * 60 * 60 * 1_000).toISOString().slice(0, 10);

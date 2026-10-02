@@ -253,6 +253,13 @@
       "when": 1790812800000,
       "tag": "0035_test_data_reset",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1790955745087,
+      "tag": "0036_order_sessions_offers_adjustments",
+      "breakpoints": true
     }
   ]
 }

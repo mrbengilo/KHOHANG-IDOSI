@@ -84,9 +84,20 @@ export function isRequestDeadlineClosed(requestDeadlineAt: Date, instant: Date):
   return requestDeadlineAt.getTime() <= instant.getTime();
 }
 
-/** Closing a window is not a quota reset. Only a completed allocation starts a new cycle.
- * Orders already queued for the next session still consume that session's two slots.
- * A cancelled request never reaches allocation, so it gives its slot back. */
+/**
+ * Ordinary-request quota of a store: at most two requests may wait for allocation at a time.
+ *
+ * Closing a window is not a quota reset; only completing an allocation is. A request counts
+ * while it is in the target session or still waits for its own session's allocation.
+ *
+ * Invariant before multi-session days: "requests submitted after the latest completed
+ * allocation of any session". With several sessions per day that let a session finishing
+ * earlier release requests that another, later session had not allocated yet. Now a request
+ * is released by the completion of its own session, or of any session whose allocation is
+ * scheduled at or after its own (its own session is then behind, e.g. stuck past catch-up),
+ * which is exactly the old rule whenever sessions complete in schedule order.
+ * A cancelled request never reaches allocation, so it gives its slot back.
+ */
 export async function countOrderingQuota(
   tx: Transaction,
   storeId: string,
@@ -95,6 +106,7 @@ export async function countOrderingQuota(
   const [row] = await tx
     .select({ value: count() })
     .from(orderRequests)
+    .innerJoin(orderSessions, eq(orderSessions.id, orderRequests.orderSessionId))
     .where(
       and(
         eq(orderRequests.storeId, storeId),
@@ -102,7 +114,12 @@ export async function countOrderingQuota(
         isNull(orderRequests.deletedAt),
         or(
           eq(orderRequests.orderSessionId, sessionId),
-          sql`${orderRequests.submittedAt} > coalesce((select max(s.completed_at) from order_sessions s where s.status = 'completed' and s.deleted_at is null), '-infinity'::timestamptz)`,
+          and(
+            // Cancelling a session cancels its submitted requests; a legacy cancelled session
+            // that still holds submitted ones keeps them counted until a later completion.
+            ne(orderSessions.status, 'completed'),
+            sql`not exists (select 1 from order_sessions later where later.status = 'completed' and later.deleted_at is null and later.request_deadline_at >= ${orderSessions.requestDeadlineAt} and later.completed_at > ${orderRequests.submittedAt})`,
+          ),
         ),
       ),
     );

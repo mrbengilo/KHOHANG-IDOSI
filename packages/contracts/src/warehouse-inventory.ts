@@ -19,6 +19,9 @@ export const WarehouseInventoryRowSchema = z
     reservedBags: UnitQuantitySchema,
     availableBags: UnitQuantitySchema,
     dispatchedBags: UnitQuantitySchema,
+    /** Optimistic version of the balance row; 0 before the product's first movement. */
+    balanceVersion: z.number().int().nonnegative(),
+    productActive: z.boolean(),
   })
   .strict();
 export type WarehouseInventoryRow = z.infer<typeof WarehouseInventoryRowSchema>;

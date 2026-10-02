@@ -93,6 +93,7 @@ describePostgres('24/7 ordering and allocation-completion quota', () => {
       .insert(orderSessions)
       .values({
         code: `PREV-${randomUUID()}`,
+        kind: 'manual',
         businessDate: new Date(now - 86400000).toISOString().slice(0, 10),
         status: 'closed',
         openedAt: new Date(now - 7200000),
@@ -127,6 +128,7 @@ describePostgres('24/7 ordering and allocation-completion quota', () => {
       .insert(orderSessions)
       .values({
         code: `NEXT-${randomUUID()}`,
+        kind: 'manual',
         businessDate: new Date(now + 7 * 3600000).toISOString().slice(0, 10),
         status: 'open',
         openedAt: new Date(now - 1000),
@@ -165,6 +167,7 @@ describePostgres('24/7 ordering and allocation-completion quota', () => {
         .insert(orderSessions)
         .values({
           code: `RESET-${randomUUID()}`,
+          kind: 'manual',
           businessDate: new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10),
           status,
           openedAt: new Date(Date.now() - 3600000),
@@ -226,6 +229,7 @@ describePostgres('24/7 ordering and allocation-completion quota', () => {
       .insert(orderSessions)
       .values({
         code: `FREE-SLOT-${randomUUID()}`,
+        kind: 'manual',
         businessDate: new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10),
         status: 'open',
         openedAt: new Date(Date.now() - 3600000),
@@ -268,6 +272,7 @@ describePostgres('24/7 ordering and allocation-completion quota', () => {
         .insert(orderSessions)
         .values({
           code: `CANCEL-${randomUUID()}`,
+          kind: 'manual',
           businessDate: new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10),
           status: 'open',
           openedAt: new Date(Date.now() - 7200000),

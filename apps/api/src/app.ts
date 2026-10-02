@@ -5,6 +5,14 @@ import {
   ListSessionDocumentsResponseSchema,
 } from '@idosi/contracts';
 import { ListStoreBagOpeningsQuerySchema } from '@idosi/contracts';
+import {
+  CreateWarehouseStockAdjustmentRequestSchema,
+  ListOrderHistoryQuerySchema,
+  ListOrderHistoryResponseSchema,
+  ListWarehouseStockAdjustmentsQuerySchema,
+  ListWarehouseStockAdjustmentsResponseSchema,
+  WarehouseStockAdjustmentParamsSchema,
+} from '@idosi/contracts';
 import { randomUUID } from 'node:crypto';
 import { isRetryableTransactionError } from '@idosi/database';
 
@@ -694,6 +702,16 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return repository.listOrderSessions(query);
   });
 
+  app.get('/api/v1/order-history', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const query = ListOrderHistoryQuerySchema.parse(request.query);
+    reply.header('cache-control', 'no-store');
+    return ListOrderHistoryResponseSchema.parse(
+      await repository.listOrderHistory(session.principal, query),
+    );
+  });
+
   app.post('/api/v1/ordering-context', async (request, reply) => {
     const session = await authenticate(request, repository);
     const { storeId } = PrepareOrderingRequestSchema.parse(request.body);
@@ -880,6 +898,42 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
       session.principal,
       WarehouseInventoryQuerySchema.parse(request.query),
     );
+  });
+
+  app.get('/api/v1/warehouse-adjustments', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const query = ListWarehouseStockAdjustmentsQuerySchema.parse(request.query);
+    reply.header('cache-control', 'no-store');
+    return ListWarehouseStockAdjustmentsResponseSchema.parse(
+      await repository.listWarehouseStockAdjustments(session.principal, query),
+    );
+  });
+
+  app.get('/api/v1/warehouse-adjustments/:adjustmentId', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const { adjustmentId } = WarehouseStockAdjustmentParamsSchema.parse(request.params);
+    reply.header('cache-control', 'no-store');
+    return {
+      data: await repository.getWarehouseStockAdjustment(session.principal, adjustmentId),
+    };
+  });
+
+  app.post('/api/v1/warehouse-adjustments', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = CreateWarehouseStockAdjustmentRequestSchema.parse(request.body);
+    const result = await repository.createWarehouseStockAdjustment(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CREATE_WAREHOUSE_STOCK_ADJUSTMENT', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
   });
 
   app.get('/api/v1/warehouse-shortage-checks', async (request) => {
@@ -2366,6 +2420,47 @@ function openApiDocument(): Record<string, unknown> {
         get: {
           security: cookieSecurity,
           responses: { '200': { description: 'One partner inbound slip in scope' } },
+        },
+      },
+      '/api/v1/order-history': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': {
+              description:
+                'ADMIN all stores, HTKD assigned stores: original order requests with every line, newest first, server-side paging and filters',
+            },
+          },
+        },
+      },
+      '/api/v1/warehouse-adjustments': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'ADMIN immutable central-warehouse stock adjustment history' },
+          },
+        },
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '201': {
+              description:
+                'ADMIN stock adjustment written to ledger and audit; idempotency-replayed: true for the same key and payload',
+            },
+            '409': {
+              description:
+                'VERSION_CONFLICT (stale balance), INSUFFICIENT_STOCK (below reserved) or IDEMPOTENCY_CONFLICT',
+            },
+          },
+        },
+      },
+      '/api/v1/warehouse-adjustments/{adjustmentId}': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'ADMIN one stock adjustment' } },
         },
       },
       '/api/v1/order-requests': {

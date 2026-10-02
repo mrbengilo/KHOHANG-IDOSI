@@ -17,7 +17,9 @@ describe('continuous ordering schedule', () => {
       OrderSessionSchema.safeParse({
         ...window,
         id: '11111111-1111-4111-8111-111111111111',
+        kind: 'DEFAULT',
         status: 'OPEN',
+        completedAt: null,
         policyVersion: 'test-policy',
         version: 0,
         createdAt: now.toISOString(),

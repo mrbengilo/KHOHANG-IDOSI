@@ -95,4 +95,27 @@ describe('session request rows', () => {
     });
     expect(formatRequestSubmittedAt('2026-09-23T17:30:00.000Z').date).toBe('24/09/2026');
   });
+
+  it('keeps three same-day sessions apart with their own keys and session rows', () => {
+    const sessions = ['s1', 's2', 's3'].map((id) => ({
+      ...session(id),
+      status: 'OPEN' as const,
+    }));
+    const rows = sessionRequestRows(
+      sessions,
+      [
+        request('a', 's1', 'vl', '2026-09-23T01:00:00Z'),
+        request('b', 's2', 'vl', '2026-09-23T02:00:00Z'),
+        request('c', 's2', 'ct', '2026-09-23T02:30:00Z'),
+      ],
+      stores,
+    );
+    expect(rows.map((row) => [row.session.id, row.key, row.firstOfSession])).toEqual([
+      ['s1', 'a', true],
+      ['s2', 'c', true],
+      ['s2', 'b', false],
+      ['s3', 's3', true],
+    ]);
+    expect(new Set(rows.map((row) => row.key)).size).toBe(rows.length);
+  });
 });

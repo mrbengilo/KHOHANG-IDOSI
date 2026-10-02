@@ -259,33 +259,30 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
     'Phiếu kết quả phân bổ',
   );
 
-  const createSessionButton = page.getByRole('button', { name: 'Tạo phiên mới' });
-  expect(
-    await createSessionButton.evaluate((element) => getComputedStyle(element).transitionProperty),
-  ).toContain('transform');
-  await createSessionButton.hover();
-  await expect
-    .poll(() => createSessionButton.evaluate((element) => getComputedStyle(element).boxShadow))
-    .not.toBe('none');
-  await createSessionButton.click();
+  const createSessionTab = page.getByRole('tab', { name: 'Tạo phiên mới' });
+  await createSessionTab.click();
+  await expect(createSessionTab).toHaveAttribute('aria-selected', 'true');
 
   const businessDate = `2099-12-${String(20 + testInfo.retry).padStart(2, '0')}`;
   const sessionForm = page.locator('.allocation-session-form');
   await sessionForm.getByLabel('Ngày nghiệp vụ').fill(businessDate);
   await sessionForm.getByLabel('Mở nhận đơn').fill('00:00');
-  await sessionForm.getByLabel('Đóng nhận đơn / snapshot').fill('08:00');
+  await sessionForm.getByLabel('Chốt nhận đơn / chụp tồn').fill('08:00');
   await sessionForm.getByLabel('Bắt đầu phân bổ').fill('09:00');
   const createResponsePromise = page.waitForResponse(
     (response) =>
       response.url() === `${apiOrigin}/api/v1/order-sessions` &&
       response.request().method() === 'POST',
   );
-  await sessionForm.getByRole('button', { name: 'Tạo phiên đã lên lịch' }).click();
+  await sessionForm.getByRole('button', { name: 'Tạo phiên bổ sung' }).click();
   const createResponse = await createResponsePromise;
   expect(createResponse.status()).toBe(201);
-  await expect(page.getByText(`Đã tạo phiên ngày ${businessDate}`)).toBeVisible();
+  const createdSession = (await createResponse.json()).data as { code: string; kind: string };
+  expect(createdSession.kind).toBe('MANUAL');
+  await expect(page.getByText(`Đã tạo phiên bổ sung ${createdSession.code}`)).toBeVisible();
 
-  const sessionRow = page.getByRole('row').filter({ hasText: businessDate });
+  await page.getByRole('tab', { name: 'Phiên và kết quả' }).click();
+  const sessionRow = page.getByRole('row').filter({ hasText: createdSession.code });
   await expect(sessionRow.getByText('Đã lên lịch')).toBeVisible();
   const scopedResultsPromise = page.waitForResponse(
     (response) =>
@@ -294,7 +291,7 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
       response.request().method() === 'GET',
   );
   const sessionResultsButton = sessionRow.getByRole('button', {
-    name: `Xem kết quả phiên ${businessDate}`,
+    name: `Xem kết quả phiên ${createdSession.code}`,
   });
   await sessionResultsButton.click();
   expect((await scopedResultsPromise).status()).toBe(200);

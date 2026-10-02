@@ -77,6 +77,13 @@ export const OrderSessionStatusSchema = z.enum([
 ]);
 export type OrderSessionStatus = z.infer<typeof OrderSessionStatusSchema>;
 
+/**
+ * DEFAULT: the business date's own session, opened by the system. MANUAL: an extra session an
+ * Admin scheduled. Sessions of either kind are allocated independently and never merged.
+ */
+export const OrderSessionKindSchema = z.enum(['DEFAULT', 'MANUAL']);
+export type OrderSessionKind = z.infer<typeof OrderSessionKindSchema>;
+
 export const OrderSessionSchema = z
   .object({
     id: EntityIdSchema,
@@ -85,10 +92,13 @@ export const OrderSessionSchema = z
       .regex(/^PDH-[0-9]{6}$/)
       .optional(),
     businessDate: IsoDateSchema,
+    kind: OrderSessionKindSchema,
     status: OrderSessionStatusSchema,
     requestOpensAt: IsoDateTimeSchema,
     requestClosesAt: IsoDateTimeSchema,
     allocationStartsAt: IsoDateTimeSchema,
+    /** When the allocation run actually finished; null until the session is allocated. */
+    completedAt: IsoDateTimeSchema.nullable(),
     policyVersion: z.string().trim().min(1).max(80),
     version: z.number().int().nonnegative(),
     createdAt: IsoDateTimeSchema,

@@ -30,7 +30,7 @@ export interface PlanPriorityOffersInput {
 }
 
 /**
- * Plans the temporary 08:00 holds one unit per store per round. Persisting the
+ * Plans a session's temporary priority holds (at its snapshot time) one unit per store per round. Persisting the
  * returned offers is intentionally left to the caller's transaction.
  */
 export function planPriorityOffers(input: PlanPriorityOffersInput): readonly DailyPriorityOffer[] {
@@ -60,9 +60,8 @@ export function planPriorityOffers(input: PlanPriorityOffersInput): readonly Dai
     ]),
   );
   const ticketsByProduct = new Map<string, WaitTicket[]>();
-  // A ticket gets at most one priority offer per business date. When a session is cancelled
-  // and replaced on the same date, the replacement must not offer that ticket again: the
-  // deterministic offer id would collide and abort the whole 08:00 job for every store.
+  // A ticket gets at most one priority offer per session: a replayed snapshot must not offer it
+  // again, since the deterministic offer id would collide and abort the job for every store.
   const existingOfferIds = new Set(input.existingOffers.map((offer) => offer.id));
 
   for (const ticket of input.waitTickets) {
@@ -72,6 +71,10 @@ export function planPriorityOffers(input: PlanPriorityOffersInput): readonly Dai
     )
       continue;
     if (existingOfferIds.has(input.offerId(ticket.id))) continue;
+    // Several sessions can run on one day. While another session's offer for this ticket is
+    // still unanswered, or accepted but not yet allocated, the ticket is not offered again: the
+    // same wait is never held by two sessions at once. It is offered again once that settles.
+    if ((committedByTicket.get(ticket.id) ?? 0) > 0) continue;
     const group = ticketsByProduct.get(ticket.productId) ?? [];
     group.push(ticket);
     ticketsByProduct.set(ticket.productId, group);

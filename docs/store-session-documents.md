@@ -70,3 +70,13 @@ data rollback. Old tabs retain their endpoints; the new UI requires the new API.
 Regression coverage includes X=6/Y=1/Z=2, complete header pages, effective versions,
 source scope, prior-run priority holdings, real Sale receipt, three-line history
 computed styles and a 121-receipt pagination measurement against isolated PostgreSQL.
+
+## Lịch sử đặt hàng (phiếu gốc)
+
+Tab **Phân bổ hàng hóa → Lịch sử đặt hàng** (Admin: mọi cửa hàng; HTKD: cửa hàng được phân công)
+đọc `GET /api/v1/order-history`: phân trang theo phiếu gốc ở server, mỗi phiếu trả đủ dòng hàng nên
+không bị cắt ở ranh giới trang. Lọc cửa hàng, phiên, trạng thái, mặt hàng (giữ cả phiếu và đánh dấu
+dòng khớp), mã phiếu và khoảng **ngày gửi** (giờ Việt Nam — khác ngày nghiệp vụ của phiên). Số lượng
+luôn là số đã đặt; phiếu đã gộp có liên kết tới chứng từ `phiên:cửa hàng` của đúng phiên. Không dùng
+cửa sổ “phiên gần đây” để quyết định phiếu nào tồn tại. Bộ lọc nằm trong URL (`ls.*`) nên back/reload
+giữ nguyên phạm vi; HTKD chỉ định cửa hàng ngoài phân công nhận 403.

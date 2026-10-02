@@ -635,6 +635,7 @@ async function createFixture({
       .insert(orderSessions)
       .values({
         code: `ALLOC-${suffix}`,
+        kind: 'manual',
         businessDate,
         status: 'completed',
         inventorySnapshotDueAt: snapshotAt,

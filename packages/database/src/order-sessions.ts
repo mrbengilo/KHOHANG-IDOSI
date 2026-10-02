@@ -1,4 +1,4 @@
-import { and, eq, isNull, ne } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
@@ -22,6 +22,8 @@ export interface CreateOrderSessionInput {
   readonly idempotencyKey: string;
   readonly requestHash: string;
   readonly requestId?: string | null;
+  /** Server clock for tests; a new session may not be scheduled into the past. */
+  readonly now?: Date;
 }
 
 export interface TransitionOrderSessionInput {
@@ -56,6 +58,16 @@ export class OrderSessionConflictError extends Error {
   }
 }
 
+/** The new schedule would make the session unreachable for stores; nothing is created. */
+export class OrderSessionScheduleConflictError extends Error {
+  public readonly code = 'ORDER_SESSION_SCHEDULE_CONFLICT';
+
+  public constructor(message: string) {
+    super(message);
+    this.name = 'OrderSessionScheduleConflictError';
+  }
+}
+
 export class OrderSessionNotFoundError extends Error {
   public readonly code = 'ORDER_SESSION_NOT_FOUND';
 
@@ -74,6 +86,11 @@ export class OrderSessionValidationError extends Error {
   }
 }
 
+/**
+ * Adds an Admin (MANUAL) session. Any number of sessions may share a business date; each keeps
+ * its own requests, snapshot, offers, allocation run and documents. The system's DEFAULT session
+ * of the date is neither replaced, rescheduled, closed nor merged by this command.
+ */
 export async function createOrderSession(
   database: Database,
   input: CreateOrderSessionInput,
@@ -89,20 +106,30 @@ export async function createOrderSession(
     (tx) =>
       withAdvisoryLock(tx, 'order-session-business-date', input.businessDate, async () => {
         await assertActiveAdministrator(tx, input.createdByUserId);
-        const [existing] = await tx
-          .select({ id: orderSessions.id })
+        const now = input.now ?? new Date();
+        if (input.requestClosesAt.getTime() <= now.getTime()) {
+          // A session scheduled into the past would snapshot and allocate history it never saw.
+          throw new OrderSessionValidationError(
+            'Giờ chốt nhận đơn đã qua; chỉ tạo được phiên có giờ chốt trong tương lai.',
+          );
+        }
+        // Stores are routed to the open session that closes first, ties broken by creation
+        // order. A new session closing at exactly the same instant as an existing one would
+        // therefore never receive an order; it is refused instead of silently staying empty.
+        const [sameClose] = await tx
+          .select({ code: orderSessions.code })
           .from(orderSessions)
           .where(
             and(
-              eq(orderSessions.businessDate, input.businessDate),
-              ne(orderSessions.status, 'cancelled'),
+              eq(orderSessions.inventorySnapshotDueAt, input.requestClosesAt),
+              inArray(orderSessions.status, ['draft', 'open']),
               isNull(orderSessions.deletedAt),
             ),
           )
           .limit(1);
-        if (existing) {
-          throw new OrderSessionConflictError(
-            `An active order session already exists for ${input.businessDate}.`,
+        if (sameClose) {
+          throw new OrderSessionScheduleConflictError(
+            `Phiên ${sameClose.code} đã chốt nhận đơn đúng thời điểm này; chọn giờ chốt khác để cửa hàng gửi được đơn vào phiên mới.`,
           );
         }
 
@@ -111,12 +138,15 @@ export async function createOrderSession(
           .values({
             code: '', // Assigned by the database in the same transaction.
             businessDate: input.businessDate,
+            kind: 'manual',
             status: 'draft',
             openedAt: input.requestOpensAt,
             inventorySnapshotDueAt: input.requestClosesAt,
             requestDeadlineAt: input.allocationStartsAt,
             policyVersion: input.policyVersion.trim(),
             createdByUserId: input.createdByUserId,
+            createdAt: now,
+            updatedAt: now,
           })
           .returning();
         if (!created) throw new Error('Order session insert returned no row.');
@@ -140,6 +170,49 @@ export async function createOrderSession(
         };
       }),
   );
+}
+
+/**
+ * Opens every scheduled (draft) session, of any kind, whose request window has started and not
+ * yet closed. Each session keeps its own stored schedule; nothing here assumes 08:00/09:00.
+ */
+export async function openDueScheduledSessions(
+  tx: Transaction,
+  now: Date,
+  source: 'allocation_worker' | 'ordering_context',
+): Promise<readonly OrderSessionRecord[]> {
+  const due = await tx
+    .select()
+    .from(orderSessions)
+    .where(
+      and(
+        eq(orderSessions.status, 'draft'),
+        isNull(orderSessions.deletedAt),
+        sql`coalesce(${orderSessions.openedAt}, ${orderSessions.createdAt}) <= ${now}`,
+        sql`${orderSessions.inventorySnapshotDueAt} > ${now}`,
+      ),
+    )
+    .orderBy(orderSessions.inventorySnapshotDueAt, orderSessions.createdAt, orderSessions.id)
+    .for('update', { skipLocked: true });
+  const opened: OrderSessionRecord[] = [];
+  for (const session of due) {
+    const [row] = await tx
+      .update(orderSessions)
+      .set({ status: 'open', updatedAt: now })
+      .where(and(eq(orderSessions.id, session.id), eq(orderSessions.status, 'draft')))
+      .returning();
+    if (!row) continue;
+    await tx.insert(auditLogs).values({
+      action: 'ORDER_SESSION_AUTO_OPENED',
+      entityType: 'order_session',
+      entityId: row.id,
+      before: sessionAuditSnapshot(session),
+      after: sessionAuditSnapshot(row),
+      metadata: { source, reason: 'Scheduled request window started' },
+    });
+    opened.push(row);
+  }
+  return opened;
 }
 
 export async function transitionOrderSession(
@@ -271,6 +344,9 @@ function assertTransition(current: OrderSessionRecord, input: TransitionOrderSes
   if (
     input.targetStatus === 'cancelled' &&
     current.status !== 'cancelled' &&
+    // A scheduled session that never opened was never snapshotted by the worker (it only runs
+    // open/closed sessions), so no priority stock is held for it and it may still be cancelled.
+    current.status !== 'draft' &&
     transitionedAt >= current.inventorySnapshotDueAt
   ) {
     // From the 08:00 snapshot on, priority stock is held and stores are answering offers.
@@ -357,6 +433,8 @@ function hoChiMinhBusinessDate(instant: Date): string {
 
 function sessionAuditSnapshot(row: OrderSessionRecord): JsonObject {
   return {
+    code: row.code,
+    kind: row.kind,
     businessDate: row.businessDate,
     status: row.status,
     requestOpensAt: (row.openedAt ?? row.createdAt).toISOString(),

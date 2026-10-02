@@ -40,6 +40,13 @@ export const orderSessionStatusEnum = pgEnum('order_session_status', [
   'completed',
   'cancelled',
 ]);
+/**
+ * DEFAULT is the per-business-date session the system opens on its own (worker or the first
+ * ordering screen); MANUAL sessions are extra, independently scheduled sessions an Admin adds.
+ * The kind is stored, never inferred from created_by_user_id: automatic sessions may record the
+ * user whose ordering screen prepared them.
+ */
+export const orderSessionKindEnum = pgEnum('order_session_kind', ['default', 'manual']);
 export const orderRequestStatusEnum = pgEnum('order_request_status', [
   'draft',
   'submitted',
@@ -534,12 +541,110 @@ export const warehouseLedgerEntries = pgTable(
   ],
 );
 
+export const warehouseAdjustmentDirectionEnum = pgEnum('warehouse_adjustment_direction', [
+  'increase',
+  'decrease',
+]);
+export const warehouseAdjustmentReasonEnum = pgEnum('warehouse_adjustment_reason', [
+  'count_correction',
+  'damage',
+  'return',
+  'receipt_correction',
+  'outbound_correction',
+  'other',
+]);
+
+/**
+ * Admin correction of central-warehouse on-hand bags. Immutable: a mistake is fixed by a new,
+ * opposite adjustment that references the one it compensates. Reserved stock is never edited
+ * here, so holds for priority offers, allocations and pending dispatch stay protected.
+ */
+export const warehouseStockAdjustments = pgTable(
+  'warehouse_stock_adjustments',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    code: text('code').notNull().default(''),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    direction: warehouseAdjustmentDirectionEnum('direction').notNull(),
+    quantity: integer('quantity').notNull(),
+    reasonCode: warehouseAdjustmentReasonEnum('reason_code').notNull(),
+    reason: text('reason').notNull(),
+    onHandBefore: integer('on_hand_before').notNull(),
+    reservedBefore: integer('reserved_before').notNull(),
+    onHandAfter: integer('on_hand_after').notNull(),
+    reservedAfter: integer('reserved_after').notNull(),
+    balanceVersionBefore: integer('balance_version_before').notNull(),
+    balanceVersionAfter: integer('balance_version_after').notNull(),
+    ledgerEntryId: uuid('ledger_entry_id').notNull(),
+    compensatesAdjustmentId: uuid('compensates_adjustment_id'),
+    idempotencyKey: text('idempotency_key').notNull(),
+    requestHash: text('request_hash').notNull(),
+    requestId: text('request_id'),
+    createdByUserId: uuid('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.ledgerEntryId],
+      foreignColumns: [warehouseLedgerEntries.id],
+      name: 'warehouse_stock_adjustments_ledger_entry_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.compensatesAdjustmentId],
+      foreignColumns: [table.id],
+      name: 'warehouse_stock_adjustments_compensates_fk',
+    }).onDelete('restrict'),
+    uniqueIndex('warehouse_stock_adjustments_code_uidx').on(table.code),
+    uniqueIndex('warehouse_stock_adjustments_ledger_uidx').on(table.ledgerEntryId),
+    uniqueIndex('warehouse_stock_adjustments_actor_key_uidx').on(
+      table.createdByUserId,
+      table.idempotencyKey,
+    ),
+    index('warehouse_stock_adjustments_created_idx').on(table.createdAt.desc(), table.id.desc()),
+    index('warehouse_stock_adjustments_product_created_idx').on(
+      table.productId,
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
+    check('warehouse_stock_adjustments_quantity_positive', sql`${table.quantity} > 0`),
+    check(
+      'warehouse_stock_adjustments_reason_length',
+      sql`length(btrim(${table.reason})) BETWEEN 3 AND 500`,
+    ),
+    check(
+      'warehouse_stock_adjustments_delta_consistent',
+      sql`${table.onHandAfter} - ${table.onHandBefore} = CASE ${table.direction} WHEN 'increase' THEN ${table.quantity} ELSE -${table.quantity} END`,
+    ),
+    check(
+      'warehouse_stock_adjustments_reserved_untouched',
+      sql`${table.reservedAfter} = ${table.reservedBefore}`,
+    ),
+    check(
+      'warehouse_stock_adjustments_balance_valid',
+      sql`${table.onHandBefore} >= 0 AND ${table.reservedBefore} >= 0 AND ${table.reservedBefore} <= ${table.onHandBefore} AND ${table.reservedAfter} <= ${table.onHandAfter}`,
+    ),
+    check(
+      'warehouse_stock_adjustments_version_advances',
+      sql`${table.balanceVersionAfter} > ${table.balanceVersionBefore} AND ${table.balanceVersionBefore} >= 0`,
+    ),
+    check(
+      'warehouse_stock_adjustments_not_self_compensating',
+      sql`${table.compensatesAdjustmentId} IS NULL OR ${table.compensatesAdjustmentId} <> ${table.id}`,
+    ),
+  ],
+);
+
 export const orderSessions = pgTable(
   'order_sessions',
   {
     id: uuid('id').defaultRandom().primaryKey(),
     code: text('code').notNull().unique(),
     businessDate: date('business_date', { mode: 'string' }).notNull(),
+    kind: orderSessionKindEnum('kind').notNull().default('default'),
     status: orderSessionStatusEnum('status').notNull().default('draft'),
     inventorySnapshotDueAt: timestamp('inventory_snapshot_due_at', {
       withTimezone: true,
@@ -562,6 +667,11 @@ export const orderSessions = pgTable(
   },
   (table) => [
     index('order_sessions_business_date_status_idx').on(table.businessDate, table.status),
+    // One system-owned session per business date, cancelled or not: a cancelled default day is
+    // never silently recreated. Admin sessions (MANUAL) are unlimited and never merged.
+    uniqueIndex('order_sessions_one_default_per_day_uidx')
+      .on(table.businessDate)
+      .where(sql`${table.kind} = 'default' AND ${table.deletedAt} IS NULL`),
     check('order_sessions_code_not_blank', sql`length(btrim(${table.code})) > 0`),
     check(
       'order_sessions_deadline_order',
@@ -609,6 +719,13 @@ export const orderRequests = pgTable(
       .where(sql`${table.status} <> 'cancelled'`),
     index('order_requests_store_created_idx').on(table.storeId, table.createdAt),
     index('order_requests_session_status_idx').on(table.orderSessionId, table.status),
+    // Order history pages newest first, per store (HTKD/filters) or across all stores (Admin).
+    index('order_requests_store_submitted_idx').on(
+      table.storeId,
+      table.submittedAt.desc(),
+      table.id.desc(),
+    ),
+    index('order_requests_submitted_idx').on(table.submittedAt.desc(), table.id.desc()),
     check('order_requests_max_two_slots', sql`${table.requestNumber} BETWEEN 1 AND 2`),
     check(
       'order_requests_submission_timestamp',
@@ -800,6 +917,14 @@ export const dailyPriorityOffers = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     code: text('code').notNull().default(''),
     businessDate: date('business_date', { mode: 'string' }).notNull(),
+    /**
+     * The session whose snapshot created the offer. Several sessions can share a business date,
+     * so the date alone no longer identifies the owner. NULL only on legacy rows whose owner could
+     * not be proven during backfill; those keep the historical one-session-per-date scope.
+     */
+    orderSessionId: uuid('order_session_id').references(() => orderSessions.id, {
+      onDelete: 'restrict',
+    }),
     storeId: uuid('store_id')
       .notNull()
       .references(() => stores.id, { onDelete: 'restrict' }),
@@ -825,15 +950,24 @@ export const dailyPriorityOffers = pgTable(
     }),
   },
   (table) => [
-    uniqueIndex('daily_priority_offers_day_store_product_round_uidx').on(
-      table.businessDate,
-      table.storeId,
-      table.productId,
-      table.roundNumber,
-    ),
+    uniqueIndex('daily_priority_offers_session_store_product_round_uidx')
+      .on(table.orderSessionId, table.storeId, table.productId, table.roundNumber)
+      .where(sql`${table.orderSessionId} IS NOT NULL`),
+    uniqueIndex('daily_priority_offers_session_one_open_uidx')
+      .on(table.orderSessionId, table.storeId, table.productId)
+      .where(
+        sql`${table.orderSessionId} IS NOT NULL AND ${table.status} = 'offered' AND ${table.deletedAt} IS NULL`,
+      ),
+    // Legacy rows (and a previous release still writing during deploy) keep the date scope.
+    uniqueIndex('daily_priority_offers_day_store_product_round_uidx')
+      .on(table.businessDate, table.storeId, table.productId, table.roundNumber)
+      .where(sql`${table.orderSessionId} IS NULL`),
     uniqueIndex('daily_priority_offers_one_open_uidx')
       .on(table.businessDate, table.storeId, table.productId)
-      .where(sql`${table.status} = 'offered' AND ${table.deletedAt} IS NULL`),
+      .where(
+        sql`${table.orderSessionId} IS NULL AND ${table.status} = 'offered' AND ${table.deletedAt} IS NULL`,
+      ),
+    index('daily_priority_offers_session_status_idx').on(table.orderSessionId, table.status),
     index('daily_priority_offers_deadline_idx')
       .on(table.responseDeadlineAt)
       .where(sql`${table.status} = 'offered' AND ${table.deletedAt} IS NULL`),

@@ -13,12 +13,15 @@ import {
   type WarehouseTab,
 } from './inventoryNavigation';
 import { ShortageChecksPanel } from './ShortageChecksPanel';
+import { WarehouseAdjustmentDialog } from './WarehouseAdjustmentDialog';
+import { WarehouseAdjustmentHistory, signedBags } from './WarehouseAdjustmentHistory';
 import './warehouse-inventory.css';
 
 const WAREHOUSE_TAB_ITEMS: readonly TabItem<WarehouseTab>[] = [
   { id: 'stock', label: 'Tồn hiện tại' },
   { id: 'shortage', label: 'Kiểm hàng thiếu' },
   { id: 'history', label: 'Lịch sử xuất' },
+  { id: 'adjustments', label: 'Lịch sử điều chỉnh' },
 ];
 
 /** Product and store names for the sub-tabs that show codes of both. */
@@ -62,6 +65,8 @@ export function WarehouseInventory() {
       <TabPanel idPrefix="warehouse-inventory" tab={warehouse.tab}>
         {warehouse.tab === 'stock' ? (
           <WarehouseStock page={warehouse.page} search={warehouse.search} />
+        ) : warehouse.tab === 'adjustments' ? (
+          <WarehouseAdjustmentHistory filters={warehouse.adjustments} />
         ) : warehouse.tab === 'shortage' ? (
           <WarehouseShortages />
         ) : (
@@ -88,6 +93,10 @@ function WarehouseStock({ page, search }: { readonly page: number; readonly sear
     queryFn: ({ signal }) => loadWarehouseInventory(page, search, signal),
     retry: false,
   });
+  const [adjustingProductId, setAdjustingProductId] = useState<string | null>(null);
+  const [notice, setNotice] = useState('');
+  // The dialog follows the latest server row, so a reload after a conflict shows new numbers.
+  const adjustingRow = inventory.data?.data.find((row) => row.productId === adjustingProductId);
   return (
     <section className="panel warehouse-stock-panel" aria-label="Tồn kho tổng theo mặt hàng">
       <h2>Tồn kho hiện tại theo mặt hàng</h2>
@@ -95,6 +104,11 @@ function WarehouseStock({ page, search }: { readonly page: number; readonly sear
         Đang có tại kho = có thể xuất + đang giữ/chờ xuất. Đã xuất là số bao lũy kế trên phiếu xuất,
         không phải tồn hiện tại.
       </p>
+      {notice ? (
+        <div className="operation-notice operation-notice--success" role="status">
+          {notice}
+        </div>
+      ) : null}
       <form
         className="inventory-actions"
         onSubmit={(event) => {
@@ -135,6 +149,7 @@ function WarehouseStock({ page, search }: { readonly page: number; readonly sear
                   <th>Đang giữ / chờ xuất</th>
                   <th>Có thể xuất</th>
                   <th>Đã xuất lũy kế</th>
+                  <th>Thao tác</th>
                 </tr>
               </thead>
               <tbody>
@@ -148,12 +163,39 @@ function WarehouseStock({ page, search }: { readonly page: number; readonly sear
                     <td data-label="Đang giữ / chờ xuất">{formatInteger(row.reservedBags)} bao</td>
                     <td data-label="Có thể xuất">{formatInteger(row.availableBags)} bao</td>
                     <td data-label="Đã xuất lũy kế">{formatInteger(row.dispatchedBags)} bao</td>
+                    <td data-label="Thao tác">
+                      <Button
+                        aria-label={`Điều chỉnh tồn ${row.productName}`}
+                        className="warehouse-adjust-button"
+                        onClick={() => {
+                          setNotice('');
+                          setAdjustingProductId(row.productId);
+                        }}
+                        tone="secondary"
+                      >
+                        Điều chỉnh tồn
+                      </Button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           {!inventory.data.data.length ? <p>Không có mặt hàng phù hợp.</p> : null}
+          {adjustingRow ? (
+            <WarehouseAdjustmentDialog
+              onClose={() => setAdjustingProductId(null)}
+              onDone={(adjustment) => {
+                setAdjustingProductId(null);
+                setNotice(
+                  `Đã ghi phiếu ${adjustment.code}: ${signedBags(adjustment)} ${adjustment.productName}. Tồn tại kho ${formatInteger(adjustment.before.onHand)} → ${formatInteger(adjustment.after.onHand)} bao.`,
+                );
+              }}
+              onReload={() => void inventory.refetch()}
+              reloading={inventory.isFetching}
+              row={adjustingRow}
+            />
+          ) : null}
           <div className="inventory-actions">
             <Button tone="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>
               Trước

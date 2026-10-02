@@ -76,6 +76,7 @@ describePostgres('priority goods join the next ordinary shipment', () => {
             .insert(orderSessions)
             .values({
               code: `SHIP-${token}-${offset}`,
+              kind: 'manual',
               businessDate: date,
               status: 'completed',
               inventorySnapshotDueAt: new Date(`${date}T08:00:00+07:00`),

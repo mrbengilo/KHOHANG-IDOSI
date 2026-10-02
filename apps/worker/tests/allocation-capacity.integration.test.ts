@@ -66,6 +66,7 @@ describePostgres('09:00 allocation capacity', () => {
         .insert(orderSessions)
         .values({
           code: `CAP-${token}`,
+          kind: 'manual',
           businessDate,
           status: 'open',
           inventorySnapshotDueAt: snapshotDueAt,

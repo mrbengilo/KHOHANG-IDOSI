@@ -17,6 +17,11 @@ import type {
   ReceiptReturnActionRequest,
   WarehouseInventoryQuery,
   WarehouseInventoryResponse,
+  CreateWarehouseStockAdjustmentRequest,
+  ListOrderHistoryQuery,
+  ListWarehouseStockAdjustmentsQuery,
+  OrderHistoryEntry,
+  WarehouseStockAdjustment,
   WorkerStatus,
   IdosiProductLink,
   IdosiProductMatching,
@@ -407,11 +412,33 @@ export interface WarehouseRepository {
     context: RequestContext,
   ): Promise<IdempotentResource<OrderSession>>;
 
+  /** ADMIN: every store; HTKD: assigned stores only. Original requests, newest first. */
+  listOrderHistory(
+    actor: AuthenticatedPrincipal,
+    query: ListOrderHistoryQuery,
+  ): Promise<Page<OrderHistoryEntry>>;
+
   listWarehouseBalances(actor: AuthenticatedPrincipal): Promise<WarehouseBalancesResponse>;
   listWarehouseInventory(
     actor: AuthenticatedPrincipal,
     query: WarehouseInventoryQuery,
   ): Promise<WarehouseInventoryResponse>;
+  /** ADMIN only. Changes on-hand bags of the central warehouse through the ledger. */
+  createWarehouseStockAdjustment(
+    actor: AuthenticatedPrincipal,
+    input: CreateWarehouseStockAdjustmentRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<WarehouseStockAdjustment>>;
+  listWarehouseStockAdjustments(
+    actor: AuthenticatedPrincipal,
+    query: ListWarehouseStockAdjustmentsQuery,
+  ): Promise<Page<WarehouseStockAdjustment>>;
+  getWarehouseStockAdjustment(
+    actor: AuthenticatedPrincipal,
+    adjustmentId: string,
+  ): Promise<WarehouseStockAdjustment>;
   listWarehouseShortageChecks(
     actor: AuthenticatedPrincipal,
     query: ListWarehouseShortageChecksQuery,

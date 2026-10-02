@@ -4,6 +4,8 @@ import { InboundStatisticsResponseSchema, type InboundStatisticsQuery } from '@i
 import { ListReceiptSummariesResponseSchema } from '@idosi/contracts';
 import { ListSessionDocumentsResponseSchema } from '@idosi/contracts';
 import {
+  ListOrderHistoryResponseSchema,
+  type ListOrderHistoryQuery,
   OrderingContextResponseSchema,
   CreateInboundReceiptRequestSchema,
   ConfirmReceiptCostsRequestSchema,
@@ -452,6 +454,41 @@ export async function listStoreOrderRequests(
 }
 
 /** Order requests the account may see, submitted since `submittedFrom`; the server scopes them. */
+export interface OrderHistoryFilters {
+  readonly page: number;
+  readonly pageSize?: number;
+  readonly storeId?: string;
+  readonly sessionId?: string;
+  readonly status?: ListOrderHistoryQuery['status'];
+  readonly productId?: string;
+  readonly code?: string;
+  readonly submittedFrom?: string;
+  readonly submittedTo?: string;
+}
+
+/** One server page of original requests (headers with all lines); scope is enforced server-side. */
+export async function listOrderHistory(filters: OrderHistoryFilters, signal?: AbortSignal) {
+  const query = new URLSearchParams({
+    page: String(filters.page),
+    pageSize: String(filters.pageSize ?? 20),
+  });
+  for (const key of [
+    'storeId',
+    'sessionId',
+    'status',
+    'productId',
+    'code',
+    'submittedFrom',
+    'submittedTo',
+  ] as const) {
+    const value = filters[key];
+    if (value) query.set(key, value);
+  }
+  return ListOrderHistoryResponseSchema.parse(
+    await request(`/order-history?${query}`, { signal: signal ?? null }),
+  );
+}
+
 export async function listAccessibleOrderRequests(
   submittedFrom: string,
 ): Promise<StoreOrderRequest[]> {

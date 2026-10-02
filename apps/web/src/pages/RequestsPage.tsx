@@ -26,6 +26,7 @@ const ORDER_HISTORY_DAYS = 90;
 import { useSession } from '../lib/auth';
 import { formatKgExact } from '../lib/format';
 import { formatDocumentTime } from '../lib/business-time';
+import { sessionKindCopy, sessionLabel } from '../lib/session-label';
 import '../styles/document-history.css';
 import { productConversions } from '../lib/data';
 import { ProductBagPicker } from '../components/ProductBagPicker';
@@ -524,6 +525,12 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
             Còn {remainingSlots} phiếu đặt thường. Hạn mức mở lại sau khi phân bổ hoàn tất; phiếu ưu
             tiên không tính lượt.
           </span>
+          {activeSession ? (
+            <span className="quota-card__session">
+              Đơn gửi bây giờ vào {sessionKindCopy[activeSession.kind].toLocaleLowerCase('vi-VN')}{' '}
+              <strong>{sessionLabel(activeSession)}</strong>
+            </span>
+          ) : null}
         </div>
         <progress max="2" value={usedSlots} />
         <Badge tone={remainingSlots > 0 ? 'info' : 'warning'}>

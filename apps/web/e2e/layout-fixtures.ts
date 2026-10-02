@@ -37,6 +37,8 @@ export async function mockLayoutData(page: Page) {
           reservedBags: 123,
           availableBags: 1234444,
           dispatchedBags: 987654,
+          balanceVersion: 3,
+          productActive: true,
         })),
         pagination: pagination(24),
       },

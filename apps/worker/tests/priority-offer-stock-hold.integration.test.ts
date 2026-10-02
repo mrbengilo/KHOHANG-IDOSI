@@ -84,6 +84,7 @@ describePostgres('priority offer stock holds', () => {
         .insert(orderSessions)
         .values({
           code: `HOLD-SOURCE-${token}`,
+          kind: 'manual',
           businessDate,
           status: 'completed',
           inventorySnapshotDueAt: snapshotDueAt,
@@ -95,6 +96,7 @@ describePostgres('priority offer stock holds', () => {
         .insert(orderSessions)
         .values({
           code: `HOLD-ACTIVE-${token}`,
+          kind: 'manual',
           businessDate,
           status: 'open',
           inventorySnapshotDueAt: snapshotDueAt,
