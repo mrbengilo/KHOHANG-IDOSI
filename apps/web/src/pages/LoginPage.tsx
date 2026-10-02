@@ -58,9 +58,9 @@ export function LoginPage() {
           <strong>IDOSI</strong>
           <span>KHO HÀNG</span>
         </div>
-        <div>
+        <div className="login-visual__content">
           <p className="login-visual__title">Quản lý &amp; phân bổ hàng hóa hệ thống IDOSI</p>
-          <p>
+          <p className="login-visual__lead">
             Theo dõi nhập – xuất – tồn theo từng mã bao, phân bổ công bằng theo vòng và đối soát giá
             vốn trên cùng một nguồn số liệu.
           </p>
@@ -76,8 +76,8 @@ export function LoginPage() {
             width="112"
             height="84"
           />
-          <div>
-            <span>Chào mừng trở lại</span>
+          <div className="login-panel__intro">
+            <span className="login-panel__eyebrow">Chào mừng trở lại</span>
             <h1>Đăng nhập Kho hàng IDOSI</h1>
             <p className="login-slogan">QUẢN LÝ &amp; PHÂN BỔ HÀNG HÓA HỆ THỐNG IDOSI</p>
             <p>Sử dụng tài khoản được quản trị viên cấp.</p>
@@ -126,7 +126,7 @@ export function LoginPage() {
           <Button busy={busy || (!mockModeEnabled && sessionQuery.isPending)} type="submit">
             Đăng nhập <ArrowRight aria-hidden="true" size={17} />
           </Button>
-          <small>
+          <small className="login-panel__note">
             Nếu quên mật khẩu, liên hệ Admin để đặt lại. Hệ thống không thể xem mật khẩu hiện tại.
           </small>
         </form>

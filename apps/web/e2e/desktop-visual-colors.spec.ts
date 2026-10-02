@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { expectedGutter } from './desktop-gutter';
 import { desktopViewports, routesByRole } from './desktop-route-matrix';
 import { mockLayoutAdmin } from './layout-fixtures';
 
@@ -43,7 +44,18 @@ for (const [role, routes] of Object.entries(routesByRole)) {
           const blocks = [...document.querySelectorAll<HTMLElement>('.app-main > *')]
             .map((el) => el.getBoundingClientRect())
             .filter((r) => r.width > 0 && r.height > 0);
+          const sidebar = document.querySelector('.sidebar')!.getBoundingClientRect();
+          const header = document.querySelector('.page-header')?.getBoundingClientRect();
+          const size = (selector: string) =>
+            parseFloat(getComputedStyle(document.querySelector(selector)!).fontSize);
           return {
+            // Workspace gutters after the sidebar (page header spans the full workspace).
+            leftGap: header ? header.left - sidebar.right : null,
+            rightGap: header ? document.documentElement.clientWidth - header.right : null,
+            pageTitle: header ? size('.page-header h1') : null,
+            link: size('.sidebar__link'),
+            logoutHeight: document.querySelector('.sidebar__logout')!.getBoundingClientRect()
+              .height,
             scrollWidth: document.documentElement.scrollWidth,
             asymmetric: blocks.filter(
               (r) => Math.abs(r.left - main.left - (main.right - r.right)) > 2,
@@ -58,6 +70,14 @@ for (const [role, routes] of Object.entries(routesByRole)) {
         expect(m.blocks, label).toBeGreaterThan(0);
         expect(m.asymmetric, label).toBe(0);
         expect(m.escaped, label).toBe(0);
+        if (m.leftGap !== null && m.rightGap !== null) {
+          const gutter = expectedGutter(width)!;
+          expect(Math.abs(m.leftGap - gutter), `${label} left gutter`).toBeLessThanOrEqual(2);
+          expect(Math.abs(m.rightGap - gutter), `${label} right gutter`).toBeLessThanOrEqual(2);
+          expect(m.pageTitle!, `${label} page title`).toBeGreaterThanOrEqual(30);
+        }
+        expect(m.link, `${label} menu item`).toBeGreaterThanOrEqual(15);
+        expect(m.logoutHeight, `${label} sign-out`).toBeGreaterThanOrEqual(44);
       }
     }
   });

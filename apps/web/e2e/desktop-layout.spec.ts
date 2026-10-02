@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { expectedGutter } from './desktop-gutter';
 import { layoutProducts, mockLayoutAdmin } from './layout-fixtures';
 
 const desktop = [
@@ -6,6 +7,10 @@ const desktop = [
   [1440, 900],
   [1920, 1080],
   [2560, 1440],
+  [1281, 800],
+  [1280, 800],
+  [1279, 800],
+  [1100, 800],
   [1024, 768],
   [821, 900],
 ];
@@ -63,10 +68,19 @@ for (const route of ['/warehouse-inbound', '/inventory']) {
       if (width > 820) {
         const sidebar = (await page.locator('.sidebar').boundingBox())!;
         expect(main!.x).toBe(sidebar.width);
-        expect(box.x - sidebar.width).toBeGreaterThanOrEqual(16);
-        expect(box.x - sidebar.width).toBeLessThanOrEqual(24);
-        expect(width - box.x - box.width).toBeGreaterThanOrEqual(16);
-        expect(width - box.x - box.width).toBeLessThanOrEqual(24);
+        // Gutters are measured after the sidebar and against the real client width.
+        const clientWidth = await page.evaluate(() => document.documentElement.clientWidth);
+        const leftGap = box.x - sidebar.width;
+        const rightGap = clientWidth - box.x - box.width;
+        const gutter = expectedGutter(width)!;
+        expect(Math.abs(leftGap - gutter), `left gutter @${width}`).toBeLessThanOrEqual(2);
+        expect(Math.abs(rightGap - gutter), `right gutter @${width}`).toBeLessThanOrEqual(2);
+        expect(Math.abs(leftGap - rightGap), `symmetric gutters @${width}`).toBeLessThanOrEqual(2);
+        if (width >= 1280) expect(leftGap).toBeCloseTo(54, 0);
+        // 1440 → 1108px, 1920 → 1588px: full-width panels fill the space between gutters.
+        expect(
+          Math.abs(box.width - (clientWidth - sidebar.width - 2 * gutter)),
+        ).toBeLessThanOrEqual(2);
         expect(box.x).toBe(header.x);
         expect(box.width).toBe(header.width);
       } else {
@@ -97,6 +111,7 @@ for (const route of ['/warehouse-inbound', '/inventory']) {
       measurements.push({
         width,
         height,
+        gutter: expectedGutter(width),
         panelWidth: box.width,
         pageHeight: await page.evaluate(() => document.documentElement.scrollHeight),
         rows: await rows.count(),
