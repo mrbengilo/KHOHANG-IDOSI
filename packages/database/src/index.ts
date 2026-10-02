@@ -1,5 +1,9 @@
 export { closeDatabase, createDatabase, db, pool } from './client.js';
-export { prepareOrderingContext, ensureDailyOrderingSession } from './continuous-ordering.js';
+export {
+  prepareOrderingContext,
+  ensureDailyOrderingSession,
+  resolveOrderingSession,
+} from './continuous-ordering.js';
 export type { Database, DatabaseClient } from './client.js';
 
 export { allocationRoundsFromMetadata, listAllocationResults } from './allocation-results.js';
@@ -86,7 +90,9 @@ export {
   OrderSessionAuthorizationError,
   OrderSessionConflictError,
   OrderSessionNotFoundError,
+  OrderSessionScheduleConflictError,
   OrderSessionValidationError,
+  openDueScheduledSessions,
   transitionOrderSession,
 } from './order-sessions.js';
 export type {
@@ -462,3 +468,31 @@ export {
   resetCatalog,
   resetHash,
 } from './test-data-reset.js';
+
+export {
+  createWarehouseStockAdjustment,
+  getWarehouseStockAdjustment,
+  listWarehouseStockAdjustments,
+  MAX_WAREHOUSE_ADJUSTMENT_QUANTITY,
+  WAREHOUSE_ADJUSTMENT_SOURCE_TYPE,
+  WarehouseAdjustmentAuthorizationError,
+  WarehouseAdjustmentIdempotencyConflictError,
+  WarehouseAdjustmentInsufficientStockError,
+  WarehouseAdjustmentNotFoundError,
+  WarehouseAdjustmentValidationError,
+  WarehouseAdjustmentVersionConflictError,
+} from './warehouse-adjustments.js';
+export type {
+  CreateWarehouseStockAdjustmentInput,
+  CreatedWarehouseStockAdjustment,
+  ListWarehouseStockAdjustmentsInput,
+  WarehouseStockAdjustmentRecord,
+} from './warehouse-adjustments.js';
+
+export { listOrderHistory } from './order-history.js';
+export type {
+  ListOrderHistoryInput,
+  OrderHistoryPage,
+  OrderHistoryRecord,
+  OrderHistoryStatusFilter,
+} from './order-history.js';

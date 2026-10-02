@@ -37,6 +37,11 @@ import type {
   ConfirmReceiptCostsRequest,
   CancelWaitTicketRequest,
   CreateOrderSessionRequest,
+  CreateWarehouseStockAdjustmentRequest,
+  ListOrderHistoryQuery,
+  ListWarehouseStockAdjustmentsQuery,
+  OrderHistoryEntry,
+  WarehouseStockAdjustment,
   CreateProductConversionRequest,
   CreateProductRequest,
   CreateStoreOrderRequest,
@@ -344,9 +349,238 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
           .flatMap((outbound) => outbound.lines)
           .filter((line) => line.productId === product.id)
           .reduce((sum, line) => sum + line.dispatchedUnits, 0),
+        balanceVersion: balance?.version ?? 0,
+        productActive: product.status === 'ACTIVE',
       };
     });
     return { data, pagination: pagination(query.page, query.pageSize, values.length) };
+  }
+
+  /** Same scope and shape as PostgreSQL; memory mode has no merged documents. */
+  public async listOrderHistory(
+    actor: AuthenticatedPrincipal,
+    query: ListOrderHistoryQuery,
+  ): Promise<Page<OrderHistoryEntry>> {
+    if (actor.role !== 'ADMIN' && actor.role !== 'HTKD') throw forbidden();
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const from = query.submittedFrom
+      ? Date.parse(`${query.submittedFrom}T00:00:00+07:00`)
+      : Number.NEGATIVE_INFINITY;
+    const before = query.submittedTo
+      ? Date.parse(`${query.submittedTo}T00:00:00+07:00`) + 86_400_000
+      : Number.POSITIVE_INFINITY;
+    const values = [...this.orderRequests.values()]
+      .filter((request) => canAccessStore(actor, request.storeId))
+      .filter((request) => query.storeId === undefined || request.storeId === query.storeId)
+      .filter((request) => query.sessionId === undefined || request.sessionId === query.sessionId)
+      .filter((request) => query.status === undefined || request.status === query.status)
+      .filter(
+        (request) =>
+          query.productId === undefined ||
+          request.lines.some((line) => line.productId === query.productId),
+      )
+      .filter(
+        (request) =>
+          query.code === undefined ||
+          (request.code ?? '').toLowerCase().includes(query.code.toLowerCase()),
+      )
+      .filter((request) => {
+        const submitted = Date.parse(request.submittedAt);
+        return submitted >= from && submitted < before;
+      })
+      .sort(
+        (left, right) =>
+          right.submittedAt.localeCompare(left.submittedAt) || right.id.localeCompare(left.id),
+      );
+    const data = slicePage(values, query.page, query.pageSize).map((request): OrderHistoryEntry => {
+      const session = this.orderSessions.get(request.sessionId);
+      const store = this.stores.get(request.storeId);
+      if (!session || !store) throw new Error(`Order request ${request.id} lost its scope.`);
+      const submitter = this.accounts.get(request.submittedByAccountId);
+      return {
+        id: request.id,
+        code: request.code ?? request.id,
+        requestSequence: request.requestSequence,
+        status: request.status,
+        storeId: store.id,
+        storeCode: store.code,
+        storeName: store.name,
+        session: {
+          id: session.id,
+          code: session.code ?? session.id,
+          kind: session.kind,
+          businessDate: session.businessDate,
+          status: session.status,
+          requestOpensAt: session.requestOpensAt,
+          requestClosesAt: session.requestClosesAt,
+          allocationStartsAt: session.allocationStartsAt,
+          completedAt: session.completedAt,
+        },
+        submittedAt: request.submittedAt,
+        submittedBy: submitter
+          ? { accountId: submitter.id, displayName: submitter.displayName }
+          : null,
+        cancelledAt: request.cancelledAt,
+        cancellationReason: request.cancellationReason ?? null,
+        mergedDocument: null,
+        lines: request.lines.map((line, index) => {
+          const product = this.products.get(line.productId);
+          return {
+            id: deterministicLineId(request.id, index),
+            productId: line.productId,
+            sku: product?.sku ?? line.productId,
+            productName: product?.name ?? line.productId,
+            unit: 'BAG' as const,
+            requestedQuantity: line.requested.kind === 'UNIT' ? line.requested.quantity : 1,
+            matchesFilter: query.productId === undefined || line.productId === query.productId,
+          };
+        }),
+      };
+    });
+    return { data, pagination: pagination(query.page, query.pageSize, values.length) };
+  }
+
+  public async createWarehouseStockAdjustment(
+    actor: AuthenticatedPrincipal,
+    input: CreateWarehouseStockAdjustmentRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<WarehouseStockAdjustment>> {
+    if (actor.role !== 'ADMIN') throw forbidden('Chỉ Admin được điều chỉnh tồn kho tổng.');
+    const replayKey = `${actor.accountId}:${idempotencyKey}`;
+    const previous = this.warehouseAdjustmentKeys.get(replayKey);
+    if (previous) {
+      if (previous.hash !== requestHash) {
+        throw new ApiError(
+          'IDEMPOTENCY_CONFLICT',
+          'Khóa idempotency đã được dùng cho một điều chỉnh khác',
+          409,
+        );
+      }
+      const adjustment = this.warehouseAdjustments.find((row) => row.id === previous.id)!;
+      return { data: structuredClone(adjustment), replayed: true };
+    }
+    const product = this.products.get(input.productId);
+    if (!product) throw notFound('Không tìm thấy mặt hàng hoặc phiếu điều chỉnh được tham chiếu');
+    if (input.direction === 'INCREASE' && product.status !== 'ACTIVE') {
+      throw new ApiError(
+        'VALIDATION_ERROR',
+        'Mặt hàng đã ngừng kinh doanh; chỉ được giảm tồn, không được tăng tồn.',
+        400,
+      );
+    }
+    const now = this.now().toISOString();
+    const balance = this.warehouseBalances.get(input.productId) ?? {
+      onHandQuantity: 0,
+      reservedQuantity: 0,
+      version: 0,
+      updatedAt: now,
+    };
+    if (balance.version !== input.expectedVersion) {
+      throw versionConflict(
+        `Tồn kho vừa thay đổi (đang có ${balance.onHandQuantity} bao, đang giữ ${balance.reservedQuantity} bao). Tải lại số liệu rồi kiểm tra trước khi điều chỉnh.`,
+      );
+    }
+    const delta = input.direction === 'INCREASE' ? input.quantity : -input.quantity;
+    const onHandAfter = balance.onHandQuantity + delta;
+    if (onHandAfter < balance.reservedQuantity) {
+      throw new ApiError(
+        'INSUFFICIENT_STOCK',
+        `Chỉ giảm được tối đa ${balance.onHandQuantity - balance.reservedQuantity} bao đang khả dụng; hàng đang giữ/chờ xuất không được giảm.`,
+        409,
+      );
+    }
+    const updated = {
+      ...balance,
+      onHandQuantity: onHandAfter,
+      version: balance.version + 1,
+      updatedAt: now,
+    };
+    this.warehouseBalances.set(input.productId, updated);
+    const actorAccount = this.accounts.get(actor.accountId);
+    const adjustment: WarehouseStockAdjustment = {
+      id: randomUUID(),
+      code: this.nextDocumentCode('DCK'),
+      productId: product.id,
+      sku: product.sku,
+      productName: product.name,
+      direction: input.direction,
+      quantity: input.quantity,
+      delta,
+      reasonCode: input.reasonCode,
+      reason: input.reason,
+      before: {
+        onHand: balance.onHandQuantity,
+        reserved: balance.reservedQuantity,
+        available: balance.onHandQuantity - balance.reservedQuantity,
+      },
+      after: {
+        onHand: onHandAfter,
+        reserved: balance.reservedQuantity,
+        available: onHandAfter - balance.reservedQuantity,
+      },
+      balanceVersionBefore: balance.version,
+      balanceVersionAfter: updated.version,
+      ledgerEntryId: randomUUID(),
+      compensatesAdjustmentId: input.compensatesAdjustmentId ?? null,
+      createdBy: {
+        accountId: actor.accountId,
+        displayName: actorAccount?.displayName ?? actor.displayName,
+      },
+      requestId: context.requestId,
+      createdAt: now,
+    };
+    this.warehouseAdjustments.push(adjustment);
+    this.warehouseAdjustmentKeys.set(replayKey, { hash: requestHash, id: adjustment.id });
+    this.appendAudit(
+      actor,
+      context,
+      'WAREHOUSE_STOCK_ADJUSTED',
+      'warehouse_stock_adjustment',
+      adjustment.id,
+      adjustment.before,
+      adjustment.after,
+    );
+    return { data: structuredClone(adjustment), replayed: false };
+  }
+
+  public async listWarehouseStockAdjustments(
+    actor: AuthenticatedPrincipal,
+    query: ListWarehouseStockAdjustmentsQuery,
+  ): Promise<Page<WarehouseStockAdjustment>> {
+    if (actor.role !== 'ADMIN') throw forbidden('Chỉ Admin được xem lịch sử điều chỉnh kho tổng.');
+    const from = query.from ? Date.parse(`${query.from}T00:00:00+07:00`) : Number.NEGATIVE_INFINITY;
+    const before = query.to
+      ? Date.parse(`${query.to}T00:00:00+07:00`) + 86_400_000
+      : Number.POSITIVE_INFINITY;
+    const values = this.warehouseAdjustments
+      .filter((row) => query.productId === undefined || row.productId === query.productId)
+      .filter((row) => query.direction === undefined || row.direction === query.direction)
+      .filter(
+        (row) =>
+          query.createdByAccountId === undefined ||
+          row.createdBy.accountId === query.createdByAccountId,
+      )
+      .filter((row) => Date.parse(row.createdAt) >= from && Date.parse(row.createdAt) < before)
+      .toSorted(
+        (left, right) =>
+          right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
+      );
+    return {
+      data: slicePage(values, query.page, query.pageSize).map((row) => structuredClone(row)),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
+  }
+
+  public async getWarehouseStockAdjustment(
+    actor: AuthenticatedPrincipal,
+    adjustmentId: string,
+  ): Promise<WarehouseStockAdjustment> {
+    if (actor.role !== 'ADMIN') throw forbidden('Chỉ Admin được xem lịch sử điều chỉnh kho tổng.');
+    const row = this.warehouseAdjustments.find((adjustment) => adjustment.id === adjustmentId);
+    if (!row) throw notFound('Không tìm thấy phiếu điều chỉnh tồn kho');
+    return structuredClone(row);
   }
 
   private readonly now: () => Date;
@@ -423,6 +657,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     TransferMutationIdempotencyRecord
   >();
   private readonly warehouseBalances = new Map<string, MemoryWarehouseBalance>();
+  private readonly warehouseAdjustments: WarehouseStockAdjustment[] = [];
+  private readonly warehouseAdjustmentKeys = new Map<string, { hash: string; id: string }>();
   private readonly storeGroups = new Map<string, StoreGroup>();
   private readonly storeLifecycleIdempotency = new Map<string, StoreLifecycleIdempotencyRecord>();
   private readonly audit: AuditRecord[] = [];
@@ -1126,19 +1362,40 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     );
   }
 
+  /** Same rule as the PostgreSQL quota: requests still waiting for their own allocation. */
   private orderingQuota(storeId: string, sessionId: string): number {
-    const lastCompletedAt = Math.max(
-      0,
-      ...[...this.orderSessions.values()]
-        .filter((session) => session.status === 'ALLOCATED')
-        .map((session) => Date.parse(session.updatedAt)),
-    );
-    return [...this.orderRequests.values()].filter(
-      (request) =>
-        request.storeId === storeId &&
-        request.status !== 'CANCELLED' &&
-        (request.sessionId === sessionId || Date.parse(request.submittedAt) > lastCompletedAt),
-    ).length;
+    const sessions = [...this.orderSessions.values()];
+    return [...this.orderRequests.values()].filter((request) => {
+      if (request.storeId !== storeId || request.status === 'CANCELLED') return false;
+      if (request.sessionId === sessionId) return true;
+      const own = this.orderSessions.get(request.sessionId);
+      if (!own || own.status === 'ALLOCATED') return false;
+      return !sessions.some(
+        (later) =>
+          later.status === 'ALLOCATED' &&
+          later.completedAt !== null &&
+          later.allocationStartsAt >= own.allocationStartsAt &&
+          Date.parse(later.completedAt) > Date.parse(request.submittedAt),
+      );
+    }).length;
+  }
+
+  /** Scheduled sessions of any kind open on their own stored request window. */
+  private openDueScheduledSessions(now: Date): void {
+    for (const session of this.orderSessions.values()) {
+      if (
+        session.status === 'SCHEDULED' &&
+        Date.parse(session.requestOpensAt) <= now.getTime() &&
+        Date.parse(session.requestClosesAt) > now.getTime()
+      ) {
+        this.orderSessions.set(session.id, {
+          ...session,
+          status: 'OPEN',
+          version: session.version + 1,
+          updatedAt: now.toISOString(),
+        });
+      }
+    }
   }
 
   public async prepareOrderingContext(
@@ -1149,6 +1406,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (!canAccessStore(actor, storeId) || this.stores.get(storeId)?.status !== 'ACTIVE')
       throw forbidden();
     const now = this.now();
+    this.openDueScheduledSessions(now);
     const open = [...this.orderSessions.values()]
       .filter(
         (session) =>
@@ -1156,15 +1414,20 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
           Date.parse(session.requestOpensAt) <= now.getTime() &&
           Date.parse(session.requestClosesAt) > now.getTime(),
       )
-      .sort((a, b) => a.requestClosesAt.localeCompare(b.requestClosesAt))[0];
+      .sort(
+        (a, b) =>
+          a.requestClosesAt.localeCompare(b.requestClosesAt) ||
+          a.createdAt.localeCompare(b.createdAt) ||
+          a.id.localeCompare(b.id),
+      )[0];
     if (open)
       return { session: open, usedSlots: this.orderingQuota(storeId, open.id), maxSlots: 2 };
     const settings = this.operationalSettings.at(-1)!;
     let window = nextOrderingWindow(now, settings.snapshotTime, settings.cutoffTime);
     for (let attempt = 0; attempt < 31; attempt += 1) {
-      const existing = [...this.orderSessions.values()]
-        .filter((session) => session.businessDate === window.businessDate)
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+      const existing = [...this.orderSessions.values()].find(
+        (session) => session.businessDate === window.businessDate && session.kind === 'DEFAULT',
+      );
       if (
         !existing ||
         (['SCHEDULED', 'OPEN'].includes(existing.status) &&
@@ -1182,7 +1445,9 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
               ...window,
               id: randomUUID(),
               code: this.nextDocumentCode('PDH'),
+              kind: 'DEFAULT',
               status: 'OPEN',
+              completedAt: null,
               policyVersion: settings.policyVersion,
               version: 0,
               createdAt: now.toISOString(),
@@ -1214,7 +1479,13 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       .filter((session) => query.status === undefined || session.status === query.status)
       .filter((session) => query.dateFrom === undefined || session.businessDate >= query.dateFrom)
       .filter((session) => query.dateTo === undefined || session.businessDate <= query.dateTo)
-      .sort((left, right) => right.businessDate.localeCompare(left.businessDate));
+      .sort(
+        (left, right) =>
+          right.businessDate.localeCompare(left.businessDate) ||
+          right.requestClosesAt.localeCompare(left.requestClosesAt) ||
+          right.createdAt.localeCompare(left.createdAt) ||
+          right.id.localeCompare(left.id),
+      );
     return {
       data: slicePage(values, query.page, query.pageSize),
       pagination: pagination(query.page, query.pageSize, values.length),
@@ -1263,22 +1534,36 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const scopedKey = `${actor.accountId}:order-session:create:${idempotencyKey}`;
     const replay = this.replaySessionMutation(scopedKey, requestHash);
     if (replay) return { data: replay, replayed: true };
-    if (
-      [...this.orderSessions.values()].some(
-        (session) => session.businessDate === input.businessDate && session.status !== 'CANCELLED',
-      )
-    ) {
-      throw conflict('Ngày nghiệp vụ đã có một phiên đặt hàng đang hoạt động');
+    if (Date.parse(input.requestClosesAt) <= this.now().getTime()) {
+      throw new ApiError(
+        'VALIDATION_ERROR',
+        'Giờ chốt nhận đơn đã qua; chỉ tạo được phiên có giờ chốt trong tương lai.',
+        400,
+      );
+    }
+    const sameClose = [...this.orderSessions.values()].find(
+      (session) =>
+        Date.parse(session.requestClosesAt) === Date.parse(input.requestClosesAt) &&
+        ['SCHEDULED', 'OPEN'].includes(session.status),
+    );
+    if (sameClose) {
+      throw new ApiError(
+        'CONFLICT',
+        `Phiên ${sameClose.code ?? sameClose.id} đã chốt nhận đơn đúng thời điểm này; chọn giờ chốt khác để cửa hàng gửi được đơn vào phiên mới.`,
+        409,
+      );
     }
     const now = this.now().toISOString();
     const created: OrderSession = {
       id: randomUUID(),
       code: this.nextDocumentCode('PDH'),
       businessDate: input.businessDate,
+      kind: 'MANUAL',
       status: 'SCHEDULED',
       requestOpensAt: input.requestOpensAt,
       requestClosesAt: input.requestClosesAt,
       allocationStartsAt: input.allocationStartsAt,
+      completedAt: null,
       policyVersion: input.policyVersion,
       version: 0,
       createdAt: now,
@@ -1328,6 +1613,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (
       input.status === 'CANCELLED' &&
       current.status !== 'CANCELLED' &&
+      current.status !== 'SCHEDULED' &&
       now.getTime() >= Date.parse(current.requestClosesAt)
     ) {
       throw new ApiError(
@@ -5247,6 +5533,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       id: MEMORY_SEED_IDS.orderSession,
       code: this.nextDocumentCode('PDH'),
       businessDate: sessionBusinessDate,
+      kind: 'DEFAULT',
+      completedAt: null,
       status: 'OPEN',
       requestOpensAt: sessionOpen.toISOString(),
       requestClosesAt: sessionClose.toISOString(),
@@ -5940,6 +6228,12 @@ function validateMemoryFinalization(input: FinalizeReceiptRequest, current: Rece
       throw new ApiError('VALIDATION_ERROR', 'Số lượng thực nhận đã thay đổi', 400);
     }
   }
+}
+
+/** Stable synthetic id of a memory request line (the contract carries no line ids). */
+function deterministicLineId(requestId: string, index: number): string {
+  const suffix = (index + 1).toString(16).padStart(12, '0');
+  return `${requestId.slice(0, 24)}${suffix}`;
 }
 
 function versionConflict(message = 'Phiếu nhận đã thay đổi, vui lòng tải lại'): ApiError {

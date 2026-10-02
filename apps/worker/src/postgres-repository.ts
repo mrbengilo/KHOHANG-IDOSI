@@ -63,6 +63,12 @@ const LOCK_NAMESPACE = 'idosi-allocation-worker';
 /** Row key in worker_heartbeats; replicas share it because they run the same idempotent jobs. */
 export const ALLOCATION_WORKER_HEARTBEAT = 'allocation';
 const ACTIVE_SESSION_STATUSES = ['open', 'closed', 'allocating'] as const;
+/**
+ * Snapshots and final runs of every session take one lock. Sessions of the same day share the
+ * same warehouse stock and wait tickets, so a job always plans against holds and reservations
+ * already committed by the other sessions' jobs instead of two snapshots claiming the same bags.
+ */
+const STOCK_JOB_LOCK = 'stock-jobs';
 
 type SnapshotRow = typeof inventorySnapshots.$inferSelect;
 type SnapshotItemRow = typeof inventorySnapshotItems.$inferSelect;
@@ -147,7 +153,7 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
     processedAt: Date,
   ): Promise<JobExecutionResult> {
     return withSerializableTransaction(this.#database, (tx) =>
-      withAdvisoryLock(tx, LOCK_NAMESPACE, `snapshot:${session.id}:${session.businessDate}`, () =>
+      withAdvisoryLock(tx, LOCK_NAMESPACE, STOCK_JOB_LOCK, () =>
         this.#captureSnapshot(tx, session, processedAt),
       ),
     );
@@ -158,7 +164,7 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
     processedAt: Date,
   ): Promise<JobExecutionResult> {
     return withSerializableTransaction(this.#database, (tx) =>
-      withAdvisoryLock(tx, LOCK_NAMESPACE, 'finalize-0900', () =>
+      withAdvisoryLock(tx, LOCK_NAMESPACE, STOCK_JOB_LOCK, () =>
         this.#finalizeAllocation(tx, session, processedAt),
       ),
     );
@@ -316,8 +322,8 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
               ...allocatedOfferIds,
               ...offerRows.filter((offer) => offer.stockHeldQuantity > 0).map((offer) => offer.id),
             ]),
-            offerId: (ticketId) =>
-              deterministicUuid(`priority-offer:${session.businessDate}:${ticketId}:1`),
+            // Session-scoped identity: two sessions of one date may each offer a ticket, in turn.
+            offerId: (ticketId) => deterministicUuid(`priority-offer:${session.id}:${ticketId}:1`),
           })
         : [];
 
@@ -326,6 +332,7 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
         offers.map((offer) => ({
           id: offer.id,
           businessDate: offer.businessDate,
+          orderSessionId: session.id,
           storeId: offer.storeId,
           productId: offer.productId,
           waitTicketId: offer.waitTicketId,
@@ -349,7 +356,8 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
           sourceType: 'priority_offer',
           sourceId: offer.id,
           eventSequence: 1,
-          reason: `08:00 priority offer for ${session.businessDate}`,
+          reason: `Priority offer for session ${lockedSession.code} (${session.businessDate})`,
+          metadata: { orderSessionId: session.id, businessDate: session.businessDate },
           occurredAt: processedAt,
         });
       }
@@ -365,6 +373,8 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
       entityType: 'inventory_snapshot',
       entityId: persistedSnapshotId,
       metadata: {
+        orderSessionId: session.id,
+        orderSessionCode: lockedSession.code,
         businessDate: session.businessDate,
         productCount: historicalBalances.length,
         priorityOfferCount: offers.length,
@@ -424,29 +434,32 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
     const expiringOffers = await tx
       .select()
       .from(dailyPriorityOffers)
-      .where(
-        and(
-          eq(dailyPriorityOffers.status, 'offered'),
-          lte(dailyPriorityOffers.responseDeadlineAt, session.finalDueAt),
-          isNull(dailyPriorityOffers.deletedAt),
-        ),
-      )
+      .where(expirableOfferCondition(session))
       .for('update');
     for (const offer of expiringOffers) {
       if (offer.stockHeldQuantity > 0) {
         await releasePriorityOfferHold(tx, offer, offer.stockHeldQuantity, processedAt);
       }
     }
-    await tx
-      .update(dailyPriorityOffers)
-      .set({ status: 'expired', acceptedQuantity: 0, stockHeldQuantity: 0, updatedAt: processedAt })
-      .where(
-        and(
-          eq(dailyPriorityOffers.status, 'offered'),
-          lte(dailyPriorityOffers.responseDeadlineAt, session.finalDueAt),
-          isNull(dailyPriorityOffers.deletedAt),
-        ),
-      );
+    if (expiringOffers.length > 0) {
+      await tx
+        .update(dailyPriorityOffers)
+        .set({
+          status: 'expired',
+          acceptedQuantity: 0,
+          stockHeldQuantity: 0,
+          updatedAt: processedAt,
+        })
+        .where(
+          and(
+            inArray(
+              dailyPriorityOffers.id,
+              expiringOffers.map((offer) => offer.id),
+            ),
+            eq(dailyPriorityOffers.status, 'offered'),
+          ),
+        );
+    }
 
     const snapshotItems = await tx
       .select()
@@ -503,9 +516,11 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
       .from(dailyPriorityOffers)
       .where(
         and(
-          eq(dailyPriorityOffers.businessDate, session.businessDate),
+          ownedOfferCondition(session),
           eq(dailyPriorityOffers.status, 'accepted'),
           isNull(dailyPriorityOffers.deletedAt),
+          // Defensive: an offer is allocated once, by the run of the session that owns it.
+          sql`not exists (select 1 from ${allocationLines} where ${allocationLines.priorityOfferId} = ${dailyPriorityOffers.id})`,
         ),
       );
     const offers = acceptedRows.map((row) => toDomainOffer(row, false));
@@ -759,8 +774,12 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
           sourceType: 'allocation_run',
           sourceId: persistedRunId,
           eventSequence: 1,
-          reason: `09:00 allocation for ${session.businessDate}`,
-          metadata: { businessDate: session.businessDate, snapshotId: snapshot.id },
+          reason: `Allocation of session ${lockedSession.code} (${session.businessDate})`,
+          metadata: {
+            orderSessionId: session.id,
+            businessDate: session.businessDate,
+            snapshotId: snapshot.id,
+          },
           occurredAt: processedAt,
         });
       }
@@ -817,6 +836,8 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
       entityType: 'allocation_run',
       entityId: persistedRunId,
       metadata: {
+        orderSessionId: session.id,
+        orderSessionCode: lockedSession.code,
         allocatedQuantity,
         businessDate: session.businessDate,
         processedAt: processedAt.toISOString(),
@@ -1006,6 +1027,39 @@ export async function materializeOutboundRequests(
     affectedRows += 3;
   }
   return affectedRows;
+}
+
+/**
+ * Offers a session owns. Rows from before offer ownership (NULL) keep the historical rule of
+ * one session per business date.
+ */
+function ownedOfferCondition(session: ScheduledAllocationSession) {
+  return or(
+    eq(dailyPriorityOffers.orderSessionId, session.id),
+    and(
+      isNull(dailyPriorityOffers.orderSessionId),
+      eq(dailyPriorityOffers.businessDate, session.businessDate),
+    ),
+  )!;
+}
+
+/**
+ * Unanswered offers this run may expire: its own offers at its allocation time, and offers whose
+ * deadline passed strictly before it (their session is behind; an offer past its deadline can no
+ * longer be accepted, and expiring it only returns its held bags). Offers of another session due
+ * at the same instant or later are left to that session.
+ */
+function expirableOfferCondition(session: ScheduledAllocationSession) {
+  return and(
+    eq(dailyPriorityOffers.status, 'offered'),
+    isNull(dailyPriorityOffers.deletedAt),
+    lte(dailyPriorityOffers.responseDeadlineAt, session.finalDueAt),
+    or(
+      ownedOfferCondition(session),
+      isNull(dailyPriorityOffers.orderSessionId),
+      lt(dailyPriorityOffers.responseDeadlineAt, session.finalDueAt),
+    ),
+  )!;
 }
 
 async function lockSession(tx: Transaction, sessionId: string) {

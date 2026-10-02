@@ -27,3 +27,5 @@ export * from './worker-status.js';
 export * from './session-documents.js';
 
 export * from './inbound-statistics.js';
+export * from './order-history.js';
+export * from './warehouse-adjustments.js';
