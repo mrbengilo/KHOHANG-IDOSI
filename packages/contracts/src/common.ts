@@ -101,6 +101,7 @@ export const ApiErrorCodeSchema = z.enum([
   'INTEGRATION_NOT_CONFIGURED',
   'INTEGRATION_UNAVAILABLE',
   'INTEGRATION_RESPONSE_INVALID',
+  'SERVICE_BUSY',
   'INTERNAL_ERROR',
 ]);
 export type ApiErrorCode = z.infer<typeof ApiErrorCodeSchema>;

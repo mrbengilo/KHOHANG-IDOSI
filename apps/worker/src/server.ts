@@ -1,4 +1,4 @@
-import { createDatabase, pruneOperationalHistory } from '@idosi/database';
+import { createDatabase, pruneOperationalHistory, workerSessionTimeouts } from '@idosi/database';
 
 import { loadConfig } from './config.js';
 import { startHealthServer } from './health-server.js';
@@ -20,6 +20,7 @@ const client = createDatabase({
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
   application_name: 'idosi-allocation-worker',
+  ...workerSessionTimeouts,
 });
 const repository = new PostgresAllocationJobRepository(client);
 const worker = new AllocationWorker(repository, {
