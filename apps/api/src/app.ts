@@ -14,7 +14,11 @@ import {
   WarehouseStockAdjustmentParamsSchema,
 } from '@idosi/contracts';
 import { randomUUID } from 'node:crypto';
-import { isRetryableTransactionError } from '@idosi/database';
+import {
+  isLockTimeoutError,
+  isRetryableTransactionError,
+  isStatementTimeoutError,
+} from '@idosi/database';
 
 import {
   CreateReceiptAdjustmentRequestSchema,
@@ -332,14 +336,29 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
         .status(400)
         .send(errorEnvelope('VALIDATION_ERROR', 'Nội dung JSON không hợp lệ', request.id));
     }
-    if (isRetryableTransactionError(error)) {
-      request.log.warn({ requestId: request.id }, 'transaction contention exhausted retry budget');
+    if (isRetryableTransactionError(error) || isLockTimeoutError(error)) {
+      request.log.warn(
+        { requestId: request.id, lockTimeout: isLockTimeoutError(error) },
+        'transaction contention exhausted retry budget',
+      );
       return reply
         .status(409)
         .send(
           errorEnvelope(
             'CONFLICT',
             'Dữ liệu đang được xử lý đồng thời. Vui lòng thử lại thao tác.',
+            request.id,
+          ),
+        );
+    }
+    if (isStatementTimeoutError(error)) {
+      request.log.warn({ requestId: request.id }, 'statement timeout cancelled the request');
+      return reply
+        .status(503)
+        .send(
+          errorEnvelope(
+            'SERVICE_BUSY',
+            'Hệ thống đang bận nên thao tác đã bị hủy trước khi hoàn tất. Vui lòng kiểm tra lại dữ liệu rồi thử lại.',
             request.id,
           ),
         );

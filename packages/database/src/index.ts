@@ -1,4 +1,11 @@
-export { closeDatabase, createDatabase, db, pool } from './client.js';
+export {
+  apiSessionTimeouts,
+  closeDatabase,
+  createDatabase,
+  db,
+  pool,
+  workerSessionTimeouts,
+} from './client.js';
 export {
   prepareOrderingContext,
   ensureDailyOrderingSession,
@@ -328,7 +335,9 @@ export {
   withAdvisoryLock,
   withSerializableTransaction,
   withTransaction,
+  isLockTimeoutError,
   isRetryableTransactionError,
+  isStatementTimeoutError,
 } from './transaction.js';
 export type {
   RetryableTransactionOptions,

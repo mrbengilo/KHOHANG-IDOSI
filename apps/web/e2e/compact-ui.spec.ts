@@ -1,7 +1,11 @@
 import { test, expect } from '@playwright/test';
 
-test('admin menu and branding match the warehouse role', async ({ page }) => {
+test('admin menu and branding match the warehouse role', async ({ page }, testInfo) => {
   await page.goto('/');
+  // On phones the closed drawer is hidden from the accessibility tree; open it to inspect it.
+  if (testInfo.project.name === 'mobile-390') {
+    await page.getByRole('button', { name: 'Mở menu' }).click();
+  }
   const nav = page.getByRole('navigation', { name: 'Điều hướng chính' });
   for (const name of ['Đặt hàng', 'Nhận hàng', 'Khui kiện']) {
     await expect(nav.getByRole('link', { name, exact: true })).toHaveCount(0);

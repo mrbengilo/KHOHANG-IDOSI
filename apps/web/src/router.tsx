@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { createBrowserRouter } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
+import { RouteErrorBoundary } from './components/RouteErrorBoundary';
 import { DashboardSkeleton } from './components/Skeleton';
 
 const InboundStatisticsPage = lazy(() =>
@@ -81,32 +82,41 @@ const suspense = (element: React.ReactNode) => (
   <Suspense fallback={<DashboardSkeleton />}>{element}</Suspense>
 );
 
+const pageError = <RouteErrorBoundary layout="page" />;
+
 export const router = createBrowserRouter([
-  { path: '/login', element: suspense(<LoginPage />) },
+  { path: '/login', element: suspense(<LoginPage />), errorElement: pageError },
   {
     path: '/',
     element: <AppShell />,
+    errorElement: pageError,
     children: [
-      { index: true, element: suspense(<DashboardPage />) },
-      { path: 'allocations', element: suspense(<AllocationPage />) },
-      { path: 'requests', element: suspense(<RequestsPage />) },
-      { path: 'warehouse-inbound', element: suspense(<WarehouseInboundPage />) },
-      { path: 'receive', element: suspense(<ReceivePage />) },
-      { path: 'partner-inbound', element: suspense(<PartnerInboundPage />) },
-      { path: 'inventory', element: suspense(<InventoryPage />) },
-      { path: 'open-bag', element: suspense(<OpenBagPage />) },
-      { path: 'sales', element: suspense(<SalesPage />) },
-      { path: 'sorting', element: suspense(<SortingPage />) },
-      { path: 'transfers', element: suspense(<TransfersPage />) },
-      { path: 'catalog', element: suspense(<CatalogPage />) },
-      { path: 'costs', element: suspense(<ReceivePage />) },
-      { path: 'inbound-statistics', element: suspense(<InboundStatisticsPage />) },
-      { path: 'reports', element: suspense(<ReportsPage />) },
-      { path: 'stores', element: suspense(<StoresPage />) },
-      { path: 'users', element: suspense(<UsersPage />) },
-      { path: 'audit', element: suspense(<AuditPage />) },
-      { path: 'settings', element: suspense(<SettingsPage />) },
+      {
+        // A failed screen (render error, chunk that could not load) stays inside the shell.
+        errorElement: <RouteErrorBoundary layout="workspace" />,
+        children: [
+          { index: true, element: suspense(<DashboardPage />) },
+          { path: 'allocations', element: suspense(<AllocationPage />) },
+          { path: 'requests', element: suspense(<RequestsPage />) },
+          { path: 'warehouse-inbound', element: suspense(<WarehouseInboundPage />) },
+          { path: 'receive', element: suspense(<ReceivePage />) },
+          { path: 'partner-inbound', element: suspense(<PartnerInboundPage />) },
+          { path: 'inventory', element: suspense(<InventoryPage />) },
+          { path: 'open-bag', element: suspense(<OpenBagPage />) },
+          { path: 'sales', element: suspense(<SalesPage />) },
+          { path: 'sorting', element: suspense(<SortingPage />) },
+          { path: 'transfers', element: suspense(<TransfersPage />) },
+          { path: 'catalog', element: suspense(<CatalogPage />) },
+          { path: 'costs', element: suspense(<ReceivePage />) },
+          { path: 'inbound-statistics', element: suspense(<InboundStatisticsPage />) },
+          { path: 'reports', element: suspense(<ReportsPage />) },
+          { path: 'stores', element: suspense(<StoresPage />) },
+          { path: 'users', element: suspense(<UsersPage />) },
+          { path: 'audit', element: suspense(<AuditPage />) },
+          { path: 'settings', element: suspense(<SettingsPage />) },
+        ],
+      },
     ],
   },
-  { path: '*', element: suspense(<NotFoundPage />) },
+  { path: '*', element: suspense(<NotFoundPage />), errorElement: pageError },
 ]);

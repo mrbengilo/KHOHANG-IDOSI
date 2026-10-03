@@ -3574,6 +3574,43 @@ describe('KHOHANG-IDOSI API', () => {
     repository.receiveSupplierInbound = receive;
   });
 
+  test('maps PostgreSQL lock and statement timeouts to structured, non-500 errors', async () => {
+    const cookie = cookieOf(await login('admin'));
+    const productId = await firstProductId(cookie);
+    const receive = repository.receiveSupplierInbound.bind(repository);
+    const expected = [
+      { code: '55P03', status: 409, error: 'CONFLICT' },
+      { code: '57014', status: 503, error: 'SERVICE_BUSY' },
+    ];
+    try {
+      for (const { code, status, error } of expected) {
+        repository.receiveSupplierInbound = async () => {
+          throw new Error('sensitive SQL must not leave the server', {
+            cause: Object.assign(new Error('canceling statement'), { code }),
+          });
+        };
+        const response = await mutateReceipt(
+          cookie,
+          'POST',
+          '/api/v1/inbound-receipts',
+          `timeout-${code}`,
+          {
+            referenceCode: `TIMEOUT-${code}`,
+            supplierName: 'Test',
+            receivedAt: '2026-09-17T08:00:00+07:00',
+            bags: [{ productId, bagCode: `TIMEOUT-BAG-${code}`, weightKg: '1.000' }],
+          },
+        );
+        assert.equal(response.statusCode, status, response.body);
+        assert.equal(response.json().error.code, error);
+        assert.ok(response.json().error.requestId);
+        assert.ok(!response.body.includes('sensitive SQL'));
+      }
+    } finally {
+      repository.receiveSupplierInbound = receive;
+    }
+  });
+
   test('creates a server-numbered receipt for three unweighed bags and replays it', async () => {
     const cookie = cookieOf(await login('admin'));
     const productId = await firstProductId(cookie);

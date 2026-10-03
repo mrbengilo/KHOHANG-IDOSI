@@ -21,7 +21,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { DashboardSkeleton } from './Skeleton';
 import { PriorityOfferNotice } from './PriorityOfferNotice';
@@ -145,6 +145,8 @@ function readMode(): DemoMode {
 export function AppShell() {
   const [mode, setMode] = useState<DemoMode>(readMode);
   const [open, setOpen] = useState(false);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+  const menuCloseRef = useRef<HTMLButtonElement>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState('');
   const location = useLocation();
@@ -161,6 +163,24 @@ export function AppShell() {
       navigate('/login', { replace: true, state: { from: returnPath, sessionExpired: true } });
     });
   }, [location.hash, location.pathname, location.search, navigate, queryClient]);
+
+  // The phone/tablet drawer behaves like a modal: focus moves into it, Escape closes it and
+  // focus returns to the menu button.
+  useEffect(() => {
+    if (!open) return undefined;
+    menuCloseRef.current?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setOpen(false);
+      menuTriggerRef.current?.focus();
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [open]);
+  const closeMenu = () => {
+    setOpen(false);
+    menuTriggerRef.current?.focus();
+  };
 
   const principalStoreId = session?.principal.storeId;
   const storeKindQuery = useQuery({
@@ -266,8 +286,10 @@ export function AppShell() {
     <div className="app-shell">
       <button
         aria-label="Mở menu"
+        aria-expanded={open}
         className="mobile-menu-trigger"
         onClick={() => setOpen(true)}
+        ref={menuTriggerRef}
         type="button"
       >
         <Menu aria-hidden="true" size={22} />
@@ -284,7 +306,7 @@ export function AppShell() {
             />
             <span>QUẢN TRỊ HỆ THỐNG</span>
           </div>
-          <button aria-label="Đóng menu" onClick={() => setOpen(false)} type="button">
+          <button aria-label="Đóng menu" onClick={closeMenu} ref={menuCloseRef} type="button">
             <X aria-hidden="true" size={20} />
           </button>
         </div>
@@ -358,7 +380,8 @@ export function AppShell() {
         <button
           aria-label="Đóng menu"
           className="sidebar-backdrop"
-          onClick={() => setOpen(false)}
+          onClick={closeMenu}
+          tabIndex={-1}
           type="button"
         />
       ) : null}

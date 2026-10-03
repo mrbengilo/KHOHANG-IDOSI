@@ -1,3 +1,51 @@
+# Danh mục kiểm tra hệ thống — 2026-10-03
+
+Baseline: main `527f42640791d9f1451cfef91c6260736136ec9c` (CI run 617 xanh). Prompt khảo sát lấy `7c42a6d`; main đã tiến thêm #98 (tab nổi bật) nên file map được đối chiếu lại trên `527f426`. Nhánh: `claude/intelligent-cannon-mcjw7a`. Mục 2026-09-29 bên dưới là bằng chứng lịch sử, không được nâng trạng thái bởi đợt này.
+
+Môi trường local: Node 24.21.0, npm 11.x theo lockfile, PostgreSQL **16.14** (container chỉ có bản 16; CI dùng 17.6 — kết quả PostgreSQL local không thay CI), Chromium headless shell bản 1194 dùng cho Playwright 1.63 (không tải trình duyệt mới). Firefox/WebKit: **BLOCKED** (không cài được trong container). Thiết bị iPhone thật: **NOT TESTED**.
+
+## Kiểm kê
+
+- Router: 19 màn trong shell, `/login`, wildcard 404. Sau đợt này mọi route có `errorElement`.
+- Vai trò/phạm vi: ADMIN, HTKD, STORE bán lẻ, STORE sỉ, WHOLESALE (5 principal). Tổ hợp route × principal: 95; được phép 50 (ADMIN 18, HTKD 15, STORE bán lẻ 10, STORE sỉ 3, WHOLESALE 4), từ chối 45. Bảng kỳ vọng độc lập viết tay nằm trong `apps/web/src/lib/access.test.ts` và phải khớp đúng `routeAccessPolicies`.
+- Bản mock (e2e) chỉ giả lập 4 principal; WHOLESALE chạy ở `e2e-live/system-route-audit.spec.ts`.
+
+## Phát hiện
+
+| ID             | Mức | Loại              | Route / role / state                                            | Expected / actual                                                                                                                      | Nguyên nhân gốc                                                                                                           | Bằng chứng trước sửa                                                                                 | Sửa                                                                                                                                             | Test hồi quy                                                                                    | Commit  |
+| -------------- | --- | ----------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------- |
+| UI-ERR-01      | P1  | BUG tái hiện được | Mọi route, mọi role; chunk lazy tải lỗi hoặc lỗi render         | Giữ shell, có đường phục hồi / toàn app (cả sidebar) bị thay bằng trang "Unexpected Application Error! … Hey developer" kèm stack      | `createBrowserRouter` không có `errorElement`                                                                             | `route-error-recovery.spec.ts` FAIL trên 527f426; snapshot ARIA hiển thị trang lỗi mặc định          | `RouteErrorBoundary` cấp workspace (trong shell) và cấp trang (`/login`, shell, 404); chunk lỗi → tải lại, lỗi khác → hiển thị lại              | `route-error-recovery.spec.ts` (desktop + mobile), `RouteErrorBoundary.test.tsx`                | 730c7b4 |
+| DB-TIMEOUT-01  | P1  | RISK → đã sửa     | API/worker, mọi truy vấn bị khóa chặn hoặc transaction bị bỏ dở | Server kết thúc có kết quả rõ / `lock_timeout`, `statement_timeout`, `idle_in_transaction_session_timeout` đều `0` trên phiên pool API | Pool `pg` của API và worker không đặt timeout phía server                                                                 | Probe trên dist 527f426: `{ l: '0', s: '0', i: '0' }`                                                | API: lock 30s < statement 50s < deadline đọc 60s; idle-in-tx 60s. Worker: 60s / 5 phút / 5 phút. 55P03 → 409 CONFLICT, 57014 → 503 SERVICE_BUSY | `session-timeouts.integration.test.ts` (PostgreSQL thật), `transaction.test.ts`, `app.test.mjs` | b8d3e9f |
+| QUERY-RETRY-01 | P2  | BUG               | Mọi query dùng mặc định `retry: 1`                              | 401/403/404/409/validation/schema không lặp / mỗi lỗi gửi 2 request, trạng thái lỗi chậm thêm ~1s; timeout 60s bị lặp thành 120s       | QueryClient mặc định retry mọi lỗi                                                                                        | Phân tích cấu hình `main.tsx`                                                                        | `shouldRetryQuery`: chỉ lặp một lần cho NETWORK_ERROR, 429/502/503/504 (trừ SERVICE_BUSY)                                                       | `query-retry.test.ts`                                                                           | 6d65854 |
+| E2E-MATRIX-01  | P2  | Coverage gap      | e2e desktop matrix                                              | Phủ mọi route được phép / thiếu HTKD `/open-bag` `/sales` `/sorting`, STORE bán lẻ `/partner-inbound`                                  | Manifest viết tay lệch `access.ts`                                                                                        | So sánh tĩnh manifest với `canAccessRoute`                                                           | Sinh manifest từ `routeAccessPolicies`; thêm bảng kỳ vọng viết tay độc lập                                                                      | `access.test.ts`, `desktop-visual-colors.spec.ts`                                               | e2d1138 |
+| UI-HDR-01      | P2  | BUG tái hiện được | `/allocations` `/catalog` `/stores`, ADMIN/HTKD, 621–700px      | Nhãn nút nằm gọn trong nút / nhãn chạm và tràn viền (vd. 140/130px)                                                                    | `.button { overflow:hidden }` làm min-width tự động của flex item = 0; cột action 48% có scroller nên nút co thay vì cuộn | Quét hình học + ảnh 640px; `workspace-responsive.spec.ts` mới FAIL ở `/allocations` @621 trên CSS cũ | Nút giữ bề rộng theo nhãn (`flex-shrink:0`), hàng nút xuống dòng                                                                                | `workspace-responsive.spec.ts` (mọi route × 26 bề rộng, kiểm tra nút bị co)                     | 9b36563 |
+| A11Y-NAV-01    | P2  | BUG tái hiện được | Shell ≤820px, mọi role                                          | Menu đóng không nhận focus/không được đọc; Escape đóng menu / menu đóng vẫn trong tab order + cây trợ năng, Escape không có tác dụng   | Sidebar đóng chỉ `translateX(-102%)`                                                                                      | Test mới FAIL: `navigation "Điều hướng chính"` vẫn visible khi đóng                                  | `visibility:hidden` sau khi trượt ra; focus vào nút đóng khi mở; Escape đóng và trả focus                                                       | `smoke.spec.ts` (mobile)                                                                        | 61067db |
+
+## N/A có chứng cứ
+
+| Mục                                                                                       | Lý do                                                                                                                                 |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `thead` bị clip ở ≤620px (`/allocations`, `/inventory`, `/sales`, `/catalog`, `/reports`) | Kỹ thuật bảng→thẻ có chủ đích (`thead` ẩn kiểu sr-only, nhãn chuyển vào ô); không phải mất dữ liệu.                                   |
+| `/partner-inbound` hiện `UnavailableFeature` trong bản mock                               | `PartnerInboundPage` chỉ render placeholder khi `mockModeEnabled`; production dùng `PartnerInboundContent` với API thật (phủ ở live). |
+| `UnavailableFeature` ở nhánh `storeId === ''` của `PartnerInboundPage`                    | Không đạt được trong production: AppShell chặn STORE không có cửa hàng; ADMIN/WHOLESALE bị chặn route.                                |
+
+## Coverage hình học
+
+Quét khám phá (không commit): 4 principal mock × 46 cặp route được phép × 21 bề rộng mobile/tablet (360–820, gồm hai phía 390/420/520/600/620/700/760/768/820) và 14 bề rộng desktop (821–2560, gồm 900/1050/1100/1366) = 1.610 phép đo; đo overflow trang, phần tử thoát viewport không nằm trong scrollport, phần tử có chữ bị cắt bởi `overflow:hidden`, và nút có `scrollWidth > clientWidth`. Trước sửa: lỗi duy nhất là UI-HDR-01 (621–700px) cùng mục N/A thead. Sau sửa: 0.
+
+Regression cố định: `workspace-responsive.spec.ts` chạy 46 cặp × (16 bề rộng mobile + 10 desktop) = 1.196 phép đo mỗi lượt.
+
+Zoom: reflow do zoom tương đương bề rộng CSS nhỏ hơn (1366px ở 200% ≈ 683 CSS px) đã nằm trong dải đo; zoom trình duyệt thật 125/150% tiếp tục do `desktop-zoom.spec.ts` (production bundle) đảm nhiệm. Không gọi phép quét bề rộng là browser zoom.
+
+## Chưa kiểm tra / giới hạn
+
+- Firefox, WebKit, thiết bị thật: BLOCKED / NOT TESTED.
+- Dữ liệu 10×/100× và đo p95 theo caller `listAllPages()`: NOT TESTED đợt này; số đo 30/09 bên dưới là lịch sử.
+- Fault injection restart API/worker/DB toàn tiến trình: NOT TESTED đợt này (suite transaction-recovery hiện có vẫn chạy).
+- Production smoke: phụ thuộc quyền truy cập domain/VPS (xem báo cáo bàn giao).
+
+---
+
 # Danh mục kiểm tra hệ thống — 2026-09-29
 
 Baseline: 1991069f4f0542edec45ec3fd3fb79f46941db17. Kiểm kê source: 19 route có policy, /login và wildcard riêng, 113 endpoint đăng ký trực tiếp, 39 JSX table, 15 useMutation và 476 handler onClick/onSubmit/onChange. Số lượng source không phải số hành vi đã kiểm thử.

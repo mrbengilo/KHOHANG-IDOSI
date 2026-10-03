@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Database } from '../src/client.js';
-import { withSerializableTransaction, type Transaction } from '../src/transaction.js';
+import {
+  isLockTimeoutError,
+  isRetryableTransactionError,
+  isStatementTimeoutError,
+  withSerializableTransaction,
+  type Transaction,
+} from '../src/transaction.js';
 
 describe('serializable transaction retry', () => {
   it.each(['40001', '40P01'])('retries a wrapped PostgreSQL %s failure', async (sqlState) => {
@@ -65,5 +71,24 @@ describe('serializable transaction retry', () => {
     );
     expect(transaction).toHaveBeenCalledTimes(3);
     expect(operation).not.toHaveBeenCalled();
+  });
+});
+
+describe('PostgreSQL timeout classification', () => {
+  const wrapped = (code: string) =>
+    new Error('Drizzle query failed', { cause: Object.assign(new Error('pg'), { code }) });
+
+  it('recognises a wrapped lock timeout and statement timeout without treating them as retryable', () => {
+    expect(isLockTimeoutError(wrapped('55P03'))).toBe(true);
+    expect(isStatementTimeoutError(wrapped('57014'))).toBe(true);
+    expect(isRetryableTransactionError(wrapped('55P03'))).toBe(false);
+    expect(isRetryableTransactionError(wrapped('57014'))).toBe(false);
+  });
+
+  it('does not misclassify other failures', () => {
+    expect(isLockTimeoutError(wrapped('40001'))).toBe(false);
+    expect(isStatementTimeoutError(wrapped('55P03'))).toBe(false);
+    expect(isLockTimeoutError(null)).toBe(false);
+    expect(isStatementTimeoutError('57014')).toBe(false);
   });
 });

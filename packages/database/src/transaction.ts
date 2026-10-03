@@ -3,6 +3,8 @@ import { sql } from 'drizzle-orm';
 import type { Database } from './client.js';
 
 const RETRYABLE_TRANSACTION_SQLSTATES = new Set(['40001', '40P01']);
+const LOCK_TIMEOUT_SQLSTATES = new Set(['55P03']);
+const STATEMENT_TIMEOUT_SQLSTATES = new Set(['57014']);
 const RETRY_BASE_DELAY_MS = 5;
 const RETRY_MAX_DELAY_MS = 50;
 const MAX_ERROR_CAUSE_DEPTH = 8;
@@ -81,6 +83,21 @@ export async function withAdvisoryLock<T>(
 }
 
 export function isRetryableTransactionError(error: unknown): boolean {
+  return hasPostgresErrorCode(error, RETRYABLE_TRANSACTION_SQLSTATES);
+}
+
+/** The session `lock_timeout` ended a lock wait; the transaction was rolled back. */
+export function isLockTimeoutError(error: unknown): boolean {
+  return hasPostgresErrorCode(error, LOCK_TIMEOUT_SQLSTATES);
+}
+
+/** The session `statement_timeout` cancelled a statement; the transaction was rolled back. */
+export function isStatementTimeoutError(error: unknown): boolean {
+  return hasPostgresErrorCode(error, STATEMENT_TIMEOUT_SQLSTATES);
+}
+
+/** Drizzle wraps driver errors, so the SQLSTATE may sit several `cause` links deep. */
+function hasPostgresErrorCode(error: unknown, codes: ReadonlySet<string>): boolean {
   let current = error;
   const visited = new Set<object>();
 
@@ -92,7 +109,7 @@ export function isRetryableTransactionError(error: unknown): boolean {
 
     try {
       const code = Reflect.get(current, 'code');
-      if (typeof code === 'string' && RETRYABLE_TRANSACTION_SQLSTATES.has(code)) {
+      if (typeof code === 'string' && codes.has(code)) {
         return true;
       }
       current = Reflect.get(current, 'cause');
