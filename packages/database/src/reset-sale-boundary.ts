@@ -15,7 +15,8 @@ function resetOperation(tx: Transaction): Promise<ResetOperation | undefined> {
       if (!row.operation && !row.baseline) return undefined; // legacy migration rehearsal
       if (!row.operation || !row.baseline) throw new Error('Incomplete reset schema');
       const result = await tx.execute<ResetOperation>(
-        sql`SELECT cutoff,to_char(cutoff AT TIME ZONE 'Asia/Ho_Chi_Minh','YYYY-MM') AS period FROM test_data_reset_operations LIMIT 1`,
+        // Operations only move forward in time, so the latest cutoff is the one in effect.
+        sql`SELECT cutoff,to_char(cutoff AT TIME ZONE 'Asia/Ho_Chi_Minh','YYYY-MM') AS period FROM test_data_reset_operations ORDER BY cutoff DESC,committed_at DESC,id DESC LIMIT 1`,
       );
       return result.rows[0];
     })();

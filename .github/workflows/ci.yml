@@ -138,6 +138,7 @@ jobs:
           node --check infra/scripts/reset-test-data.mjs
           node --test infra/scripts/test-data-backups.test.mjs
           node --test infra/scripts/reset-cli.integration.test.mjs
+          node --test infra/scripts/reset-retention-cli.test.mjs
           node --test infra/scripts/reset-accumulated-fixture.test.mjs
           bash infra/scripts/tests/deployment-scripts.test.sh
           bash infra/scripts/tests/autodeploy.test.sh

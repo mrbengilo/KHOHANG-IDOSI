@@ -5,9 +5,9 @@ import { idosiProductSaleGrams, idosiItemsForProduct } from './store-sale-sync.j
 import { idosiNormalSaleGrams } from './store-normal-sale-sync.js';
 import { resetLinkSignature } from './reset-sale-boundary.js';
 
-/** Reviewed PostgreSQL 17 catalog built by migrations 0000..0036 in the isolated fixture. */
+/** Reviewed PostgreSQL 17 catalog built by migrations 0000..0038 in the isolated fixture. */
 export const EXPECTED_RESET_SCHEMA_HASH =
-  '4a87ce7e249d095b6e517dfceafe432965b58408282a180461808ae0c5cab430';
+  'a7d5123b6d10678e2b906d46c7ad5eb59d3d77b87b98f2161a877e7aa80b781c';
 
 /** Only this reviewed set can ever be passed to TRUNCATE. No SQL comes from a manifest. */
 export const RESET_PURGE_TABLES = [
@@ -116,7 +116,16 @@ export interface ResetContext {
   expectedSchemaHash: string;
   /** Digest of an independently reviewed inventory, not a claim that unknown copies are absent. */
   inventoryHash: string;
+  /**
+   * `purge` (default, original procedure): inventoried test backups are purged after a clean
+   * backup is proven. `retain`: every inventoried backup is kept as a recovery copy, a verified
+   * pre-reset backup is required, and the operation finishes with BACKUPS_RETAINED.
+   */
+  backupRetention?: ResetBackupRetention;
 }
+export type ResetBackupRetention = 'purge' | 'retain';
+/** Phases after which another, newer reset operation may start. */
+export const RESET_TERMINAL_PHASE = 'COMPLETE';
 export interface ResetTable {
   schema: string;
   name: string;
@@ -142,6 +151,7 @@ export interface ResetManifest {
 // Payload-bearing audit rows are classified by exact action/entity and structural payload keys.
 // Unknown/mixed rows block apply; there is no permissive "keep everything else" rule.
 const AUDIT_KEEP_ENTITIES = new Set([
+  'test_data_reset_operation',
   'user',
   'product',
   'product_conversion',
@@ -153,6 +163,8 @@ const AUDIT_KEEP_ENTITIES = new Set([
   'idosi_statistics_sync_attempt',
 ]);
 const AUDIT_KEEP_ACTIONS = new Set([
+  // The maintenance log of an earlier reset is kept by every later one.
+  'TEST_DATA_RESET',
   'ACCOUNT_CREATED',
   'ACCOUNT_UPDATED',
   'ACCOUNT_STATUS_UPDATED',
@@ -220,11 +232,15 @@ export async function resetCatalog(client: PoolClient): Promise<unknown[]> {
   return result.rows;
 }
 
-async function keptAuditDigest(client: PoolClient) {
+/** The running operation's own maintenance log row is written by apply; it is not pre-existing. */
+async function keptAuditDigest(client: PoolClient, operationId: string) {
   const result = await client.query('SELECT to_jsonb(a) AS row FROM public.audit_logs a');
   const hashes = result.rows
     .map(({ row }) => row)
     .filter((row) => classifyResetAudit(row) === 'KEEP')
+    .filter(
+      (row) => !(row.entity_type === 'test_data_reset_operation' && row.entity_id === operationId),
+    )
     .map((row) => resetHash(row))
     .sort();
   return { count: hashes.length, fingerprint: resetHash(hashes) };
@@ -293,6 +309,37 @@ function validateContext(context: ResetContext) {
     throw new Error('Explicit environment and cutoff required');
   if (Date.parse(context.cutoff) > Date.now())
     throw new Error('Reset cutoff cannot be in the future');
+  if (
+    context.backupRetention !== undefined &&
+    context.backupRetention !== 'purge' &&
+    context.backupRetention !== 'retain'
+  )
+    throw new Error('backupRetention must be purge or retain');
+}
+/**
+ * A new operation is allowed after earlier ones, but only one at a time and only forward in time:
+ * every earlier operation must be COMPLETE and the new cutoff must be after the latest one. The
+ * operation with the latest cutoff is the one in effect for epochs and sale baselines.
+ */
+async function previousOperationIssues(
+  client: PoolClient,
+  context: ResetContext,
+): Promise<string[]> {
+  const previous = await client.query(
+    `SELECT id::text,phase,cutoff FROM public.test_data_reset_operations
+    WHERE id<>$1 ORDER BY cutoff DESC,committed_at DESC,id DESC`,
+    [context.operationId],
+  );
+  const issues: string[] = [];
+  for (const row of previous.rows)
+    if (row.phase !== RESET_TERMINAL_PHASE)
+      issues.push(
+        `Previous reset operation ${row.id} is ${row.phase}, not ${RESET_TERMINAL_PHASE}`,
+      );
+  const latest = previous.rows[0];
+  if (latest && new Date(latest.cutoff).getTime() >= Date.parse(context.cutoff))
+    issues.push(`Cutoff must be after previous reset operation ${latest.id}`);
+  return issues;
 }
 async function hasOtherWriters(client: PoolClient): Promise<boolean> {
   // Concurrent invocations can wait on our exact maintenance lock; they inspect the committed
@@ -354,13 +401,14 @@ async function planInTransaction(
   for (const row of audit.rows)
     if (classifyResetAudit(row) === 'REVIEW')
       review.push(`Audit requires payload review: ${row.id}`);
+  review.push(...(await previousOperationIssues(client, context)));
   const data = {
     version: 1 as const,
     context,
     identity: await identity(client),
     schemaHash,
     securityHash: await securityHash(client),
-    keptAudit: await keptAuditDigest(client),
+    keptAudit: await keptAuditDigest(client, context.operationId),
     catalog,
     tables,
     review,
@@ -410,8 +458,10 @@ export async function applyTestDataReset(
       await client.query('COMMIT');
       return { resumed: true, phase: previous.rows[0].phase };
     }
-    if ((await client.query('SELECT 1 FROM public.test_data_reset_operations LIMIT 1')).rowCount)
-      throw new Error('One-shot reset already committed; refusing another operation');
+    // A repeated reset is a new, explicitly reviewed operation. Its own manifest already carries
+    // these checks (the plan reports them for review); they are re-asserted under the lock.
+    const previousIssues = await previousOperationIssues(client, manifest.context);
+    if (previousIssues.length) throw new Error(previousIssues.join('; '));
     // An advisory lock alone cannot exclude ordinary app writers. Maintenance must remove all
     // other database connections before this transaction, and all relations are locked here.
     if (await hasOtherWriters(client))
@@ -455,9 +505,13 @@ export async function applyTestDataReset(
         JSON.stringify({
           schemaHash: manifest.schemaHash,
           inventoryHash: manifest.context.inventoryHash,
+          backupRetention: manifest.context.backupRetention ?? 'purge',
         }),
       ],
     );
+    // Baselines belong to the operation in effect. A newer operation rebases every one of them on
+    // its own cutoff; the source snapshots they were derived from stay untouched.
+    await client.query('DELETE FROM public.test_data_reset_baselines');
     // Reconciliation establishes baselines from the next usable full-month source; with missing
     // or stale snapshots this deliberately records an unmeasured interval instead of guessing 0.
     await client.query(
@@ -487,7 +541,10 @@ export async function applyTestDataReset(
       throw new Error('Schema protections changed');
     if ((await securityHash(client)) !== manifest.securityHash)
       throw new Error('Database grants, policies or extensions changed');
-    if (resetHash(await keptAuditDigest(client)) !== resetHash(manifest.keptAudit))
+    if (
+      resetHash(await keptAuditDigest(client, manifest.context.operationId)) !==
+      resetHash(manifest.keptAudit)
+    )
       throw new Error('Protected audit changed');
     if (await hasOtherWriters(client)) throw new Error('A writer connected during maintenance');
     await client.query('COMMIT');
@@ -544,7 +601,10 @@ export async function verifyTestDataReset(
       throw new Error('Schema changed during reset');
     if ((await securityHash(client)) !== manifest.securityHash)
       throw new Error('Database security changed during reset/restore');
-    if (resetHash(await keptAuditDigest(client)) !== resetHash(manifest.keptAudit))
+    if (
+      resetHash(await keptAuditDigest(client, manifest.context.operationId)) !==
+      resetHash(manifest.keptAudit)
+    )
       throw new Error('Protected audit verification failed');
     const evidence: Record<string, unknown> = {};
     for (const table of manifest.tables.filter(

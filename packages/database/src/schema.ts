@@ -3126,7 +3126,10 @@ export const workerHeartbeats = pgTable(
   ],
 );
 
-/** One-shot reset journal. Never populated by migration, seed, or normal deployment. */
+/**
+ * Reset journal, one row per maintenance operation. Never populated by migration, seed, or normal
+ * deployment. The operation with the latest cutoff is the one in effect.
+ */
 export const testDataResetReplayKeys = pgTable('test_data_reset_replay_keys', {
   keyHash: text('key_hash').primaryKey(),
 });
@@ -3144,7 +3147,7 @@ export const testDataResetOperations = pgTable(
   (table) => [
     check(
       'test_data_reset_operations_phase_check',
-      sql`${table.phase} IN ('DATABASE_COMMITTED','VERIFIED','BACKUPS_PURGED','COMPLETE')`,
+      sql`${table.phase} IN ('DATABASE_COMMITTED','VERIFIED','BACKUPS_PURGED','BACKUPS_RETAINED','COMPLETE')`,
     ),
   ],
 );

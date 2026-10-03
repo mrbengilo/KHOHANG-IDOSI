@@ -31,10 +31,15 @@ const { values } = parseArgs({
     'restore-inventory': { type: 'string' },
     'health-url': { type: 'string' },
     'restore-database': { type: 'string' },
+    'pre-proof': { type: 'string' },
   },
 });
+const PRE_RESET_PROOF_STATE = 'PRE_RESET_BACKUP_VERIFIED';
+const retained = (context) => context.backupRetention === 'retain';
+const cleanVerifyDatabase = (operationId) =>
+  'idosi_reset_verify_' + operationId.replaceAll('-', '_');
 const connectionUrl = process.env.DATABASE_URL ? new URL(process.env.DATABASE_URL) : undefined;
-if (values['restore-database']) {
+if (values['restore-database'] && values.command !== 'verify-pre-backup') {
   if (
     !connectionUrl ||
     values.command !== 'verify' ||
@@ -65,6 +70,22 @@ function checkExecutionContext(context) {
   )
     throw new Error('Execution host/project/release differs from manifest');
 }
+async function checkPreResetProof(context, backups) {
+  // Retention mode keeps recovery copies instead of purging them, so it starts from a fresh
+  // pre-reset backup that was restored and compared with the live database before planning.
+  if (!values['pre-proof']) throw new Error('Retention mode requires a verified pre-reset backup');
+  const proof = JSON.parse(await readFile(values['pre-proof'], 'utf8'));
+  if (proof.state !== PRE_RESET_PROOF_STATE || proof.operationId !== context.operationId)
+    throw new Error('Pre-reset backup proof belongs to another operation');
+  for (const file of proof.files ?? []) {
+    const listed = backups.files.find((f) => f.path === file.path);
+    const { action, ...identity } = listed ?? {};
+    if (action !== 'KEEP' || resetHash(identity) !== resetHash(file))
+      throw new Error('Pre-reset backup must be inventoried unchanged as KEEP');
+  }
+  if (proof.files?.length !== 2) throw new Error('Pre-reset dump and checksum sidecar required');
+  return proof;
+}
 async function checkBackupInventory(context) {
   if (!values.inventory || !values['restore-inventory'])
     throw new Error('Reviewed backup and restore inventory required');
@@ -74,6 +95,11 @@ async function checkBackupInventory(context) {
     throw new Error('Inventory hash mismatch');
   if (backups.files.some((f) => !['KEEP', 'PURGE'].includes(f.action)))
     throw new Error('Backup classification incomplete');
+  if (retained(context)) {
+    if (backups.files.some((f) => f.action !== 'KEEP'))
+      throw new Error('Retention mode keeps every inventoried backup; PURGE is not allowed');
+    await checkPreResetProof(context, backups);
+  }
   const strip = ({ action: _action, ...file }) => file;
   if (
     resetHash(await inventoryBackupRoot(backups.root)) !==
@@ -100,6 +126,28 @@ async function checkBackupInventory(context) {
     }
   }
 }
+async function checkDumpWithSidecar(root, dumpPath) {
+  const inventory = await inventoryBackupRoot(root);
+  const files = inventory.files.filter(
+    (file) => file.path === dumpPath || file.path === dumpPath + '.sha256',
+  );
+  if (files.length !== 2) throw new Error('Dump and checksum sidecar both required');
+  const dump = files.find((file) => file.path === dumpPath);
+  if (
+    (await readFile(dumpPath + '.sha256', 'utf8')).trim() !==
+    `${dump.sha256}  ${basename(dump.path)}`
+  )
+    throw new Error('Backup checksum sidecar does not match dump');
+  return files;
+}
+function tableDigests(copy) {
+  return copy.tables.map(({ schema, name, count, fingerprint }) => ({
+    schema,
+    name,
+    count,
+    fingerprint,
+  }));
+}
 async function checkCleanProof(proof) {
   if (proof.state !== 'CLEAN_RESTORE_VERIFIED' || proof.cleanFiles?.length !== 2)
     throw new Error('Clean backup restore proof missing');
@@ -109,7 +157,7 @@ async function checkCleanProof(proof) {
     if (resetHash(current.files.find((f) => f.path === file.path) ?? null) !== resetHash(file))
       throw new Error('Clean backup changed or missing');
   const operation = await pool.query(
-    "SELECT 1 FROM test_data_reset_operations WHERE id=$1 AND manifest_hash=$2 AND phase IN ('VERIFIED','BACKUPS_PURGED','COMPLETE')",
+    "SELECT 1 FROM test_data_reset_operations WHERE id=$1 AND manifest_hash=$2 AND phase IN ('VERIFIED','BACKUPS_PURGED','BACKUPS_RETAINED','COMPLETE')",
     [proof.operationId, proof.manifestHash],
   );
   if (!operation.rowCount) throw new Error('Clean proof belongs to another operation');
@@ -327,13 +375,122 @@ try {
       { mode: 0o600 },
     );
     console.log(JSON.stringify({ phase: 'BACKUPS_PURGED' }));
+  } else if (values.command === 'verify-pre-backup') {
+    // Retention mode: prove the fresh pre-reset dump restores to exactly the live data, then drop
+    // only the rehearsal database this operation created. Nothing else is touched.
+    if (
+      !values.context ||
+      !values['restore-database'] ||
+      !values['clean-root'] ||
+      !values['clean-file'] ||
+      !values.output
+    )
+      throw new Error('Context, restore database, backup root/file and output required');
+    const context = JSON.parse(await readFile(values.context, 'utf8'));
+    checkExecutionContext(context);
+    if (!retained(context))
+      throw new Error('Pre-reset backup proof is used only in retention mode');
+    const rehearsal = cleanVerifyDatabase(context.operationId) + '_pre';
+    if (values['restore-database'] !== rehearsal)
+      throw new Error('Unexpected pre-reset rehearsal database');
+    const files = await checkDumpWithSidecar(values['clean-root'], values['clean-file']);
+    const live = await inventoryDatabaseCopy(pool);
+    const url = new URL(process.env.DATABASE_URL);
+    url.pathname = '/' + rehearsal;
+    const target = new pg.Pool({ connectionString: url.href, max: 1 });
+    let copy;
+    try {
+      copy = await inventoryDatabaseCopy(target);
+    } finally {
+      await target.end();
+    }
+    if (
+      copy.schemaHash !== live.schemaHash ||
+      resetHash(tableDigests(copy)) !== resetHash(tableDigests(live))
+    )
+      throw new Error('Pre-reset backup does not reproduce the live database');
+    if ((await pool.query('SELECT 1 FROM pg_stat_activity WHERE datname=$1', [rehearsal])).rowCount)
+      throw new Error('Pre-reset rehearsal database has active clients');
+    await pool.query(`DROP DATABASE "${rehearsal}"`);
+    await writeFile(
+      values.output,
+      JSON.stringify({
+        state: PRE_RESET_PROOF_STATE,
+        operationId: context.operationId,
+        liveSchemaHash: live.schemaHash,
+        liveDataHash: resetHash(tableDigests(live)),
+        files,
+      }) + '\n',
+      { mode: 0o600, flag: 'wx' },
+    );
+    console.log(JSON.stringify({ state: PRE_RESET_PROOF_STATE, rehearsalDropped: rehearsal }));
+  } else if (values.command === 'backups-retained') {
+    if (
+      !values.manifest ||
+      !values.inventory ||
+      !values.proof ||
+      !values['restore-inventory'] ||
+      !values['pre-proof'] ||
+      !values.output
+    )
+      throw new Error('Manifests, clean and pre-reset proofs, and output required');
+    const manifest = await loadReviewedManifest(values.manifest);
+    if (!retained(manifest.context)) throw new Error('Operation was not planned in retention mode');
+    const inventory = JSON.parse(await readFile(values.inventory, 'utf8'));
+    const proof = JSON.parse(await readFile(values.proof, 'utf8'));
+    const copies = JSON.parse(await readFile(values['restore-inventory'], 'utf8'));
+    const cleanDatabase = cleanVerifyDatabase(manifest.context.operationId);
+    const originalCopies = copies.filter((copy) => copy.identity.database !== cleanDatabase);
+    if (
+      resetHash({ backups: inventory, restores: originalCopies }) !== manifest.context.inventoryHash
+    )
+      throw new Error('Backup or original restore inventory changed after reset');
+    if (proof.state !== 'CLEAN_RESTORE_VERIFIED' || proof.manifestHash !== manifest.hash)
+      throw new Error('Clean restore proof does not match reset');
+    await checkCleanProof(proof);
+    if (inventory.files.some((f) => f.action !== 'KEEP'))
+      throw new Error('Retention mode keeps every inventoried backup; PURGE is not allowed');
+    const preProof = await checkPreResetProof(manifest.context, inventory);
+    // Every recovery copy that existed before the reset must still be there, byte for byte.
+    const after = await inventoryBackupRoot(inventory.root);
+    verifyRetainedBackupFiles(inventory, proof.cleanFiles, after);
+    for (const copy of originalCopies)
+      if (
+        !(await pool.query('SELECT 1 FROM pg_database WHERE datname=$1', [copy.identity.database]))
+          .rowCount
+      )
+        throw new Error('A retained restore copy disappeared');
+    await verifyTestDataReset(pool, manifest);
+    const evidence = {
+      manifestHash: manifest.hash,
+      cleanProofHash: resetHash(proof),
+      preResetProofHash: resetHash(preProof),
+      backupInventoryHash: resetHash(inventory),
+      restoreInventoryHash: resetHash(copies),
+      retainedBackupFiles: inventory.files.length,
+    };
+    const update = await pool.query(
+      "UPDATE test_data_reset_operations SET phase='BACKUPS_RETAINED',evidence=evidence||$2::jsonb,updated_at=now() WHERE id=$1 AND manifest_hash=$3 AND phase IN ('VERIFIED','BACKUPS_RETAINED') RETURNING id",
+      [manifest.context.operationId, JSON.stringify(evidence), manifest.hash],
+    );
+    if (!update.rowCount) throw new Error('Reset verification phase missing');
+    await writeFile(
+      values.output,
+      JSON.stringify({
+        ...evidence,
+        operationId: manifest.context.operationId,
+        phase: 'BACKUPS_RETAINED',
+      }) + '\n',
+      { mode: 0o600 },
+    );
+    console.log(JSON.stringify({ phase: 'BACKUPS_RETAINED' }));
   } else if (values.command === 'can-resume-writers') {
     if (!values.manifest || !values.proof)
       throw new Error('Manifest and completion evidence required');
     const manifest = await loadReviewedManifest(values.manifest);
     const proof = JSON.parse(await readFile(values.proof, 'utf8'));
     const result = await pool.query(
-      "SELECT phase,evidence FROM test_data_reset_operations WHERE id=$1 AND manifest_hash=$2 AND phase IN ('BACKUPS_PURGED','COMPLETE')",
+      "SELECT phase,evidence FROM test_data_reset_operations WHERE id=$1 AND manifest_hash=$2 AND phase IN ('BACKUPS_PURGED','BACKUPS_RETAINED','COMPLETE')",
       [manifest.context.operationId, manifest.hash],
     );
     if (
@@ -356,7 +513,7 @@ try {
       if (!response.ok) throw new Error('Service health/readiness verification failed');
     }
     const update = await pool.query(
-      "UPDATE test_data_reset_operations SET phase='COMPLETE',updated_at=now() WHERE id=$1 AND phase='BACKUPS_PURGED' RETURNING id",
+      "UPDATE test_data_reset_operations SET phase='COMPLETE',updated_at=now() WHERE id=$1 AND phase IN ('BACKUPS_PURGED','BACKUPS_RETAINED') RETURNING id",
       [values['operation-id']],
     );
     if (!update.rowCount) throw new Error('Backup phase not complete');
@@ -366,6 +523,12 @@ try {
     const result = await pool.query(
       'SELECT id,manifest_hash,cutoff,phase,committed_at,updated_at FROM test_data_reset_operations WHERE id=$1',
       [values['operation-id']],
+    );
+    console.log(JSON.stringify(result.rows));
+  } else if (values.command === 'history') {
+    // Journal of every operation, newest cutoff first; the first row is the one in effect.
+    const result = await pool.query(
+      'SELECT id,manifest_hash,cutoff,phase,committed_at,updated_at FROM test_data_reset_operations ORDER BY cutoff DESC,committed_at DESC,id DESC',
     );
     console.log(JSON.stringify(result.rows));
   } else throw new Error('Unsupported command');
