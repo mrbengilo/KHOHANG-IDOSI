@@ -22,6 +22,8 @@ export default defineConfig({
     '**/inbound-statistics.spec.ts',
     // Desktop login/shell typography, gutters and sign-out states with route-mocked API.
     '**/desktop-login-shell.spec.ts',
+    // Prominent allocation/Admin inventory tab bars: sizes, roles, keyboard, zoom, deep links.
+    '**/prominent-tabs.spec.ts',
   ],
   use: { ...smokeConfig.use, baseURL: webOrigin },
   webServer: {

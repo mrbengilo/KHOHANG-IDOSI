@@ -37,6 +37,34 @@
   padding: 6px 12px;
 }
 
+/*
+ * Thanh tab nổi bật (opt-in qua `emphasis="prominent"`): chỉ dùng ở Phân bổ hàng hóa (Admin/HTKD)
+ * và Tồn kho của Admin, nên không đổi `.tabs__tab` gốc mà các vai trò khác vẫn dùng. Mọi nhãn đều
+ * đậm sẵn để đổi tab không làm nhảy chiều rộng; tab đang mở vẫn nhận ra nhờ gạch chân và màu.
+ * Tăng kích thước bằng font/padding thật (không scale) để vùng bấm lớn đúng như hiển thị.
+ */
+.tabs--prominent .tabs__tab {
+  min-height: 56px;
+  font-size: 1.125rem;
+  font-weight: 700;
+  line-height: 1.4;
+  padding: 12px 20px;
+}
+
+.tabs--prominent.tabs--secondary .tabs__tab {
+  min-height: 48px;
+  font-size: 1rem;
+  padding: 10px 16px;
+}
+
+/*
+ * Gạch chân nằm trong thanh (bottom: 0) thay vì đè 1px lên viền: thanh có overflow-x: auto nên
+ * 1px thò ra tạo vùng cuộn dọc, thành thanh cuộn dọc vô nghĩa khi trình duyệt dùng scrollbar cổ điển.
+ */
+.tabs--prominent .tabs__tab--active::after {
+  bottom: 0;
+}
+
 .tabs__tab:hover {
   background: var(--brand-soft);
   color: var(--text);
@@ -78,5 +106,13 @@
 @media (max-width: 620px) {
   .tabs__tab {
     padding: 8px 12px;
+  }
+
+  /* Màn hẹp: một hàng cuộn ngang trong thanh tab, nhãn giữ đủ chữ, không co hay cắt bớt. */
+  .tabs--prominent .tabs__tab,
+  .tabs--prominent.tabs--secondary .tabs__tab {
+    min-height: 48px;
+    font-size: 1rem;
+    padding: 10px 14px;
   }
 }

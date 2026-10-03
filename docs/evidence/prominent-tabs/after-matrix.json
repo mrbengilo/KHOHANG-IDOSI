@@ -1,0 +1,600 @@
+[
+  {
+    "route": "/allocations",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 360,
+    "innerHeight": 800,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [48, 48, 48],
+      "widths": [142.3, 143, 127.5],
+      "padding": [10, 14, 10, 14],
+      "scrollWidth": 421,
+      "clientWidth": 328,
+      "scrolls": true
+    }
+  },
+  {
+    "route": "/allocations",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 390,
+    "innerHeight": 844,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [48, 48, 48],
+      "widths": [142.3, 143, 127.5],
+      "padding": [10, 14, 10, 14],
+      "scrollWidth": 421,
+      "clientWidth": 358,
+      "scrolls": true
+    }
+  },
+  {
+    "route": "/allocations",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 412,
+    "innerHeight": 915,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [48, 48, 48],
+      "widths": [142.3, 143, 127.5],
+      "padding": [10, 14, 10, 14],
+      "scrollWidth": 421,
+      "clientWidth": 380,
+      "scrolls": true
+    }
+  },
+  {
+    "route": "/allocations",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 620,
+    "innerHeight": 900,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [48, 48, 48],
+      "widths": [142.3, 143, 127.5],
+      "padding": [10, 14, 10, 14],
+      "scrollWidth": 588,
+      "clientWidth": 588,
+      "scrolls": false
+    }
+  },
+  {
+    "route": "/allocations",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 621,
+    "innerHeight": 900,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 18,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [56, 56, 56],
+      "widths": [168.5, 169.3, 152],
+      "padding": [12, 20, 12, 20],
+      "scrollWidth": 585,
+      "clientWidth": 585,
+      "scrolls": false
+    }
+  },
+  {
+    "route": "/allocations",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 768,
+    "innerHeight": 1024,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 18,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [56, 56, 56],
+      "widths": [168.5, 169.3, 152],
+      "padding": [12, 20, 12, 20],
+      "scrollWidth": 732,
+      "clientWidth": 732,
+      "scrolls": false
+    }
+  },
+  {
+    "route": "/allocations",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 819,
+    "innerHeight": 900,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 18,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [56, 56, 56],
+      "widths": [168.5, 169.3, 152],
+      "padding": [12, 20, 12, 20],
+      "scrollWidth": 783,
+      "clientWidth": 783,
+      "scrolls": false
+    }
+  },
+  {
+    "route": "/allocations",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 820,
+    "innerHeight": 900,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 18,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [56, 56, 56],
+      "widths": [168.5, 169.3, 152],
+      "padding": [12, 20, 12, 20],
+      "scrollWidth": 784,
+      "clientWidth": 784,
+      "scrolls": false
+    }
+  },
+  {
+    "route": "/allocations",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 821,
+    "innerHeight": 900,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 18,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [56, 56, 56],
+      "widths": [168.5, 169.3, 152],
+      "padding": [12, 20, 12, 20],
+      "scrollWidth": 561,
+      "clientWidth": 561,
+      "scrolls": false
+    }
+  },
+  {
+    "route": "/allocations",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 1366,
+    "innerHeight": 768,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 18,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [56, 56, 56],
+      "widths": [168.5, 169.3, 152],
+      "padding": [12, 20, 12, 20],
+      "scrollWidth": 1034,
+      "clientWidth": 1034,
+      "scrolls": false
+    }
+  },
+  {
+    "route": "/allocations",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 1440,
+    "innerHeight": 900,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 18,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [56, 56, 56],
+      "widths": [168.5, 169.3, 152],
+      "padding": [12, 20, 12, 20],
+      "scrollWidth": 1108,
+      "clientWidth": 1108,
+      "scrolls": false
+    }
+  },
+  {
+    "route": "/allocations",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 1920,
+    "innerHeight": 1080,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 18,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [56, 56, 56],
+      "widths": [168.5, 169.3, 152],
+      "padding": [12, 20, 12, 20],
+      "scrollWidth": 1588,
+      "clientWidth": 1588,
+      "scrolls": false
+    }
+  },
+  {
+    "route": "/allocations",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 2560,
+    "innerHeight": 1440,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 18,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [56, 56, 56],
+      "widths": [168.5, 169.3, 152],
+      "padding": [12, 20, 12, 20],
+      "scrollWidth": 2228,
+      "clientWidth": 2228,
+      "scrolls": false
+    }
+  },
+  {
+    "route": "/inventory?tab=warehouse",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 360,
+    "innerHeight": 800,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [48, 48, 48],
+      "widths": [91.6, 123.8, 121.3],
+      "padding": [10, 14, 10, 14],
+      "scrollWidth": 345,
+      "clientWidth": 328,
+      "scrolls": true
+    },
+    "secondary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700", "700"],
+      "heights": [48, 48, 48, 48],
+      "widths": [110.7, 141.8, 113.2, 154.5],
+      "padding": [10, 14, 10, 14],
+      "scrollWidth": 532,
+      "clientWidth": 328,
+      "scrolls": true
+    }
+  },
+  {
+    "route": "/inventory?tab=warehouse",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 390,
+    "innerHeight": 844,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [48, 48, 48],
+      "widths": [91.6, 123.8, 121.3],
+      "padding": [10, 14, 10, 14],
+      "scrollWidth": 358,
+      "clientWidth": 358,
+      "scrolls": false
+    },
+    "secondary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700", "700"],
+      "heights": [48, 48, 48, 48],
+      "widths": [110.7, 141.8, 113.2, 154.5],
+      "padding": [10, 14, 10, 14],
+      "scrollWidth": 532,
+      "clientWidth": 358,
+      "scrolls": true
+    }
+  },
+  {
+    "route": "/inventory?tab=warehouse",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 412,
+    "innerHeight": 915,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [48, 48, 48],
+      "widths": [91.6, 123.8, 121.3],
+      "padding": [10, 14, 10, 14],
+      "scrollWidth": 380,
+      "clientWidth": 380,
+      "scrolls": false
+    },
+    "secondary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700", "700"],
+      "heights": [48, 48, 48, 48],
+      "widths": [110.7, 141.8, 113.2, 154.5],
+      "padding": [10, 14, 10, 14],
+      "scrollWidth": 532,
+      "clientWidth": 380,
+      "scrolls": true
+    }
+  },
+  {
+    "route": "/inventory?tab=warehouse",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 620,
+    "innerHeight": 900,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [48, 48, 48],
+      "widths": [91.6, 123.8, 121.3],
+      "padding": [10, 14, 10, 14],
+      "scrollWidth": 588,
+      "clientWidth": 588,
+      "scrolls": false
+    },
+    "secondary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700", "700"],
+      "heights": [48, 48, 48, 48],
+      "widths": [110.7, 141.8, 113.2, 154.5],
+      "padding": [10, 14, 10, 14],
+      "scrollWidth": 588,
+      "clientWidth": 588,
+      "scrolls": false
+    }
+  },
+  {
+    "route": "/inventory?tab=warehouse",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 621,
+    "innerHeight": 900,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 18,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [56, 56, 56],
+      "widths": [111.5, 147.8, 145],
+      "padding": [12, 20, 12, 20],
+      "scrollWidth": 585,
+      "clientWidth": 585,
+      "scrolls": false
+    },
+    "secondary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700", "700"],
+      "heights": [48, 48, 48, 48],
+      "widths": [114.7, 145.8, 117.2, 158.5],
+      "padding": [10, 16, 10, 16],
+      "scrollWidth": 585,
+      "clientWidth": 585,
+      "scrolls": false
+    }
+  },
+  {
+    "route": "/inventory?tab=warehouse",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 768,
+    "innerHeight": 1024,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 18,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [56, 56, 56],
+      "widths": [111.5, 147.8, 145],
+      "padding": [12, 20, 12, 20],
+      "scrollWidth": 732,
+      "clientWidth": 732,
+      "scrolls": false
+    },
+    "secondary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700", "700"],
+      "heights": [48, 48, 48, 48],
+      "widths": [114.7, 145.8, 117.2, 158.5],
+      "padding": [10, 16, 10, 16],
+      "scrollWidth": 732,
+      "clientWidth": 732,
+      "scrolls": false
+    }
+  },
+  {
+    "route": "/inventory?tab=warehouse",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 819,
+    "innerHeight": 900,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 18,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [56, 56, 56],
+      "widths": [111.5, 147.8, 145],
+      "padding": [12, 20, 12, 20],
+      "scrollWidth": 783,
+      "clientWidth": 783,
+      "scrolls": false
+    },
+    "secondary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700", "700"],
+      "heights": [48, 48, 48, 48],
+      "widths": [114.7, 145.8, 117.2, 158.5],
+      "padding": [10, 16, 10, 16],
+      "scrollWidth": 783,
+      "clientWidth": 783,
+      "scrolls": false
+    }
+  },
+  {
+    "route": "/inventory?tab=warehouse",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 820,
+    "innerHeight": 900,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 18,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [56, 56, 56],
+      "widths": [111.5, 147.8, 145],
+      "padding": [12, 20, 12, 20],
+      "scrollWidth": 784,
+      "clientWidth": 784,
+      "scrolls": false
+    },
+    "secondary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700", "700"],
+      "heights": [48, 48, 48, 48],
+      "widths": [114.7, 145.8, 117.2, 158.5],
+      "padding": [10, 16, 10, 16],
+      "scrollWidth": 784,
+      "clientWidth": 784,
+      "scrolls": false
+    }
+  },
+  {
+    "route": "/inventory?tab=warehouse",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 821,
+    "innerHeight": 900,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 18,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [56, 56, 56],
+      "widths": [111.5, 147.8, 145],
+      "padding": [12, 20, 12, 20],
+      "scrollWidth": 561,
+      "clientWidth": 561,
+      "scrolls": false
+    },
+    "secondary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700", "700"],
+      "heights": [48, 48, 48, 48],
+      "widths": [114.7, 145.8, 117.2, 158.5],
+      "padding": [10, 16, 10, 16],
+      "scrollWidth": 561,
+      "clientWidth": 561,
+      "scrolls": false
+    }
+  },
+  {
+    "route": "/inventory?tab=warehouse",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 1366,
+    "innerHeight": 768,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 18,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [56, 56, 56],
+      "widths": [111.5, 147.8, 145],
+      "padding": [12, 20, 12, 20],
+      "scrollWidth": 1034,
+      "clientWidth": 1034,
+      "scrolls": false
+    },
+    "secondary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700", "700"],
+      "heights": [48, 48, 48, 48],
+      "widths": [114.7, 145.8, 117.2, 158.5],
+      "padding": [10, 16, 10, 16],
+      "scrollWidth": 1034,
+      "clientWidth": 1034,
+      "scrolls": false
+    }
+  },
+  {
+    "route": "/inventory?tab=warehouse",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 1440,
+    "innerHeight": 900,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 18,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [56, 56, 56],
+      "widths": [111.5, 147.8, 145],
+      "padding": [12, 20, 12, 20],
+      "scrollWidth": 1108,
+      "clientWidth": 1108,
+      "scrolls": false
+    },
+    "secondary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700", "700"],
+      "heights": [48, 48, 48, 48],
+      "widths": [114.7, 145.8, 117.2, 158.5],
+      "padding": [10, 16, 10, 16],
+      "scrollWidth": 1108,
+      "clientWidth": 1108,
+      "scrolls": false
+    }
+  },
+  {
+    "route": "/inventory?tab=warehouse",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 1920,
+    "innerHeight": 1080,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 18,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [56, 56, 56],
+      "widths": [111.5, 147.8, 145],
+      "padding": [12, 20, 12, 20],
+      "scrollWidth": 1588,
+      "clientWidth": 1588,
+      "scrolls": false
+    },
+    "secondary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700", "700"],
+      "heights": [48, 48, 48, 48],
+      "widths": [114.7, 145.8, 117.2, 158.5],
+      "padding": [10, 16, 10, 16],
+      "scrollWidth": 1588,
+      "clientWidth": 1588,
+      "scrolls": false
+    }
+  },
+  {
+    "route": "/inventory?tab=warehouse",
+    "project": "desktop-1440",
+    "browser": "141.0.7390.37",
+    "innerWidth": 2560,
+    "innerHeight": 1440,
+    "devicePixelRatio": 1,
+    "primary": {
+      "fontSize": 18,
+      "fontWeight": ["700", "700", "700"],
+      "heights": [56, 56, 56],
+      "widths": [111.5, 147.8, 145],
+      "padding": [12, 20, 12, 20],
+      "scrollWidth": 2228,
+      "clientWidth": 2228,
+      "scrolls": false
+    },
+    "secondary": {
+      "fontSize": 16,
+      "fontWeight": ["700", "700", "700", "700"],
+      "heights": [48, 48, 48, 48],
+      "widths": [114.7, 145.8, 117.2, 158.5],
+      "padding": [10, 16, 10, 16],
+      "scrollWidth": 2228,
+      "clientWidth": 2228,
+      "scrolls": false
+    }
+  }
+]
