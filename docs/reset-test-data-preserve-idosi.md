@@ -5,7 +5,7 @@ migration, watcher, timer hoặc endpoint HTTP. Ngoại lệ với `AGENTS.md` c
 cho dữ liệu nghiệp vụ thuộc manifest của đợt đó; vận hành thường vẫn giữ trigger bất biến
 và không xóa cứng phiếu chờ/chứng từ.
 
-## Đợt reset mới sau đợt cũ (từ migration 0038)
+## Đợt reset mới sau đợt cũ (từ migration 0037)
 
 Một hệ thống đã reset có thể được giao **đợt reset mới** cho toàn bộ dữ liệu nghiệp vụ hiện tại.
 Mỗi đợt là một operation riêng (UUID, manifest, cutoff, epoch, baseline, thư mục trạng thái riêng):
@@ -175,7 +175,7 @@ transaction rollback cả dữ liệu và scoped trigger. Mất kết nối sau 
 operation ID/hash chỉ tiếp tục phase thiếu, không reset/purge lần hai; operation ID mới chỉ được
 phép khi mọi operation trước đã COMPLETE và cutoff mới hơn (xem đầu tài liệu).
 
-Rollback code: chỉ dùng release tương thích schema/epoch hiện tại (≥ 0038). Khôi phục dữ liệu
+Rollback code: chỉ dùng release tương thích schema/epoch hiện tại (≥ 0037). Khôi phục dữ liệu
 trước reset là thao tác phục hồi riêng từ backup trước reset (chế độ `retain`), vào DB mới bằng
 `restore-db.sh`; không restore đè DB đang chạy sau khi đã có giao dịch mới.
 

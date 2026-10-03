@@ -5,7 +5,7 @@ import { idosiProductSaleGrams, idosiItemsForProduct } from './store-sale-sync.j
 import { idosiNormalSaleGrams } from './store-normal-sale-sync.js';
 import { resetLinkSignature } from './reset-sale-boundary.js';
 
-/** Reviewed PostgreSQL 17 catalog built by migrations 0000..0038 in the isolated fixture. */
+/** Reviewed PostgreSQL 17 catalog built by migrations 0000..0037 in the isolated fixture. */
 export const EXPECTED_RESET_SCHEMA_HASH =
   'a7d5123b6d10678e2b906d46c7ad5eb59d3d77b87b98f2161a877e7aa80b781c';
 

@@ -1,5 +1,5 @@
 {
-  "id": "caee89d6-3fd4-46d6-b163-1530f5ac1123",
+  "id": "3cadce5f-1541-4034-b919-82923c950d79",
   "prevId": "8a07e360-006c-4537-846c-c4b3a0e68d7a",
   "version": "7",
   "dialect": "postgresql",
@@ -10830,7 +10830,7 @@
       "checkConstraints": {
         "test_data_reset_operations_phase_check": {
           "name": "test_data_reset_operations_phase_check",
-          "value": "\"test_data_reset_operations\".\"phase\" IN ('DATABASE_COMMITTED','VERIFIED','BACKUPS_PURGED','COMPLETE')"
+          "value": "\"test_data_reset_operations\".\"phase\" IN ('DATABASE_COMMITTED','VERIFIED','BACKUPS_PURGED','BACKUPS_RETAINED','COMPLETE')"
         }
       },
       "isRLSEnabled": false
