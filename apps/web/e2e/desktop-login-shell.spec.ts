@@ -422,9 +422,10 @@ test('sign-out button: keyboard focus, busy state, error and success', async ({
   await page.locator('.sidebar__link').last().focus();
   await page.keyboard.press('Tab');
   await expect(logout).toBeFocused();
-  expect(await logout.evaluate((el) => getComputedStyle(el).boxShadow)).toContain(
-    'rgba(185, 28, 28',
-  );
+  // Buttons animate box-shadow over 140ms, so read the ring once the transition has settled.
+  await expect
+    .poll(() => logout.evaluate((el) => getComputedStyle(el).boxShadow))
+    .toContain('rgba(185, 28, 28');
 
   // Busy: same box, disabled, label changes, no overlap with the account name.
   let release!: () => void;
