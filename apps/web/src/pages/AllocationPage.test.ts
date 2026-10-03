@@ -67,6 +67,25 @@ describe('production allocation session helpers', () => {
         requestOpensTime: '08:00',
       }),
     ).toEqual({ error: 'Giờ đóng nhận đơn phải sau giờ mở nhận đơn.', input: null });
+    // Priority offers need a response window: allocation cannot start at the close itself.
+    expect(
+      orderSessionInputFromDraft({
+        allocationStartsTime: '14:00',
+        businessDate: '2026-09-18',
+        policyVersion: 'allocation-policy-v2',
+        requestClosesTime: '14:00',
+        requestOpensTime: '12:00',
+      }).error,
+    ).toContain('phải sau giờ đóng nhận đơn');
+    expect(
+      orderSessionInputFromDraft({
+        allocationStartsTime: '14:30',
+        businessDate: '2026-09-18',
+        policyVersion: 'allocation-policy-v2',
+        requestClosesTime: '14:00',
+        requestOpensTime: '12:00',
+      }).error,
+    ).toBeNull();
   });
 
   it('only exposes state transitions accepted by the backend', () => {

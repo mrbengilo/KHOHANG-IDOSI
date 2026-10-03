@@ -1,4 +1,7 @@
-import type { RespondPriorityOfferRequest } from '@idosi/contracts';
+import type {
+  PriorityOffer as PriorityOfferRecord,
+  RespondPriorityOfferRequest,
+} from '@idosi/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -19,6 +22,7 @@ export function PriorityOfferNotice({ role }: { readonly role: Role }) {
   const navigate = useNavigate();
   const [busy, setBusy] = useState<{ id: string; action: 'ACCEPT' | 'DECLINE' } | null>(null);
   const [error, setError] = useState<{ id: string; message: string } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const attempt = useRef<RetryAttempt | null>(null);
   const inFlight = useRef(false);
   const enabled =
@@ -52,9 +56,11 @@ export function PriorityOfferNotice({ role }: { readonly role: Role }) {
     attempt.current = retry;
     setBusy({ id: offerId, action: input.action });
     setError(null);
+    setNotice(null);
     try {
-      await respondPriorityOffer(offerId, input, retry.key);
+      const updated = await respondPriorityOffer(offerId, input, retry.key);
       attempt.current = null;
+      setNotice(responseNotice(updated));
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['priority-offer-notices'] }),
         queryClient.invalidateQueries({ queryKey: ['priority-offers'] }),
@@ -82,13 +88,28 @@ export function PriorityOfferNotice({ role }: { readonly role: Role }) {
       </aside>
     );
   }
-  if (offers.length === 0) return null;
+  if (offers.length === 0) {
+    return notice ? (
+      <aside className="priority-offer-notices" role="status">
+        <strong>{notice}</strong>
+      </aside>
+    ) : null;
+  }
   const productNames = new Map(catalogQuery.data?.map((product) => [product.id, product.name]));
   const storeNames = new Map(storesQuery.data?.map((store) => [store.id, store.name]));
   return (
     <aside aria-label="Thông báo xác nhận hàng ưu tiên" className="priority-offer-notices">
       <h2>Hàng ưu tiên đang giữ trong kho — xác nhận có nhận không?</h2>
-      <p>Cửa hàng hoặc HTKD quản lý có thể phản hồi. Người phản hồi đầu tiên sẽ được ghi nhận.</p>
+      <p>
+        Mỗi đề nghị ghi rõ số đang chờ, số được đề nghị và hạn phản hồi của phiên. Đề nghị một phần:
+        không nhận vẫn giữ phiếu chờ. Đề nghị đủ toàn bộ: không nhận hoặc quá hạn sẽ hủy phiếu chờ.
+        Cửa hàng hoặc HTKD quản lý có thể phản hồi; phản hồi đầu tiên được ghi nhận.
+      </p>
+      {notice ? (
+        <div className="inline-notice" role="status">
+          {notice}
+        </div>
+      ) : null}
       {offers.map((offer) => (
         <div key={offer.id}>
           <strong>{storeNames.get(offer.storeId) ?? 'Cửa hàng'}</strong>
@@ -107,4 +128,19 @@ export function PriorityOfferNotice({ role }: { readonly role: Role }) {
       ))}
     </aside>
   );
+}
+
+function responseNotice(offer: PriorityOfferRecord): string {
+  if (offer.status === 'ACCEPTED') {
+    return 'Đã nhận hàng ưu tiên. Hàng được giữ và giao chung với đơn thường kế tiếp.';
+  }
+  if (offer.status === 'DECLINED') {
+    return offer.coverage === 'FULL'
+      ? 'Đã ghi nhận không nhận đề nghị đủ hàng. Phiếu chờ đã được hủy.'
+      : 'Đã ghi nhận không nhận lượt này. Phiếu chờ vẫn được giữ cho phiên sau.';
+  }
+  if (offer.status === 'EXPIRED') {
+    return 'Đề nghị đã hết hạn trước khi phản hồi được ghi nhận.';
+  }
+  return 'Máy chủ đã ghi nhận phản hồi.';
 }

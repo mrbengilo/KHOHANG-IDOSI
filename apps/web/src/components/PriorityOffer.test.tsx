@@ -31,8 +31,8 @@ describe('controlled priority offer', () => {
       />,
     );
 
-    expect(html).toContain('Nhận đủ');
-    expect(html).toContain('Từ chối');
+    expect(html).toContain('Nhận hàng');
+    expect(html).toContain('Không nhận');
     expect(html).toContain('Mở phiếu');
   });
 
@@ -50,8 +50,8 @@ describe('controlled priority offer', () => {
       />,
     );
 
-    expect(html).not.toContain('Nhận đủ');
-    expect(html).not.toContain('Từ chối');
+    expect(html).not.toContain('Nhận hàng</span>');
+    expect(html).not.toContain('Không nhận</span>');
     expect(html).toContain('Mở phiếu');
   });
 
@@ -70,8 +70,8 @@ describe('controlled priority offer', () => {
       />,
     );
 
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Nhận đủ/s);
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Từ chối/s);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Nhận hàng/s);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Không nhận/s);
     expect(html).toContain('Mở phiếu');
   });
 
@@ -94,10 +94,78 @@ describe('controlled priority offer', () => {
 
       expect(html).toContain('Lượt ưu tiên đã hết hạn');
       expect(html).toContain('00:00');
-      expect(html).not.toContain('Nhận đủ</span>');
-      expect(html).not.toContain('Từ chối</span>');
+      expect(html).not.toContain('Nhận hàng</span>');
+      expect(html).not.toContain('Không nhận</span>');
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('explains that a partial offer keeps the wait when it is declined or missed', () => {
+    const html = renderToStaticMarkup(
+      <PriorityOffer
+        busyAction={null}
+        canRespond
+        error={null}
+        offer={{
+          ...offer,
+          coverage: 'PARTIAL',
+          offered: { kind: 'UNIT', quantity: 2 },
+          waitingAtOffer: { kind: 'UNIT', quantity: 5 },
+          sessionCode: 'PDH-000001',
+          sessionKind: 'DEFAULT',
+        }}
+        onExpired={vi.fn()}
+        onOpenTicket={vi.fn()}
+        onRespond={vi.fn()}
+        productName="Đồ nam"
+      />,
+    );
+    expect(html).toContain('MỘT PHẦN');
+    expect(html).toContain('5 bao');
+    expect(html).toContain('2 bao');
+    expect(html).toContain('Phiên chính PDH-000001');
+    expect(html).toContain('phiếu chờ vẫn được giữ nguyên');
+    expect(html).not.toContain('phiếu chờ sẽ bị hủy');
+  });
+
+  it('warns that declining or missing a full offer cancels the wait', () => {
+    const html = renderToStaticMarkup(
+      <PriorityOffer
+        busyAction={null}
+        canRespond
+        error={null}
+        offer={{
+          ...offer,
+          coverage: 'FULL',
+          waitingAtOffer: { kind: 'UNIT', quantity: 3 },
+          sessionKind: 'MANUAL',
+        }}
+        onExpired={vi.fn()}
+        onOpenTicket={vi.fn()}
+        onRespond={vi.fn()}
+        productName="Đồ nam"
+      />,
+    );
+    expect(html).toContain('ĐỦ TOÀN BỘ');
+    expect(html).toContain('Phiên bổ sung');
+    expect(html).toContain('phiếu chờ sẽ bị hủy');
+  });
+
+  it('treats a legacy offer without a recorded basis as partial', () => {
+    const html = renderToStaticMarkup(
+      <PriorityOffer
+        busyAction={null}
+        canRespond
+        error={null}
+        offer={offer}
+        onExpired={vi.fn()}
+        onOpenTicket={vi.fn()}
+        onRespond={vi.fn()}
+        productName="Đồ nam"
+      />,
+    );
+    expect(html).toContain('MỘT PHẦN');
+    expect(html).toContain('Chưa ghi nhận');
   });
 });

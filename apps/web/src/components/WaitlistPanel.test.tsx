@@ -106,12 +106,12 @@ describe('waitlist panel authorization projection', () => {
       storeId,
     );
 
-    expect(html.match(/Nhận đủ/g)).toHaveLength(2);
-    expect(html.match(/Hủy phiếu/g)).toHaveLength(2);
+    expect(html.match(/Nhận hàng<\/span>/g)).toHaveLength(2);
+    expect(html.match(/Hủy phiếu chờ<\/button>/g)).toHaveLength(2);
     expect(html).not.toContain(foreignTicketId);
   });
 
-  it('keeps global ADMIN oversight read-only', () => {
+  it('lets ADMIN cancel any store wait without answering offers on its behalf', () => {
     const session: Session = {
       ...storeSession(),
       principal: {
@@ -129,9 +129,10 @@ describe('waitlist panel authorization projection', () => {
       [priorityOffer('71000000-0000-4000-8000-000000000001', ticketId)],
     );
 
-    expect(html).toContain('Chỉ đọc');
-    expect(html).not.toContain('Nhận đủ</span>');
-    expect(html).not.toContain('Hủy phiếu</button>');
+    expect(html).not.toContain('Chỉ đọc');
+    expect(html).not.toContain('Nhận hàng</span>');
+    expect(html).not.toContain('Không nhận</span>');
+    expect(html).toContain('Hủy phiếu chờ</button>');
     expect(html).toContain('Mở phiếu');
   });
 
@@ -155,9 +156,36 @@ describe('waitlist panel authorization projection', () => {
         [priorityOffer('71000000-0000-4000-8000-000000000004', ticketId)],
         storeId,
       );
-      expect(html).toContain('Nhận đủ');
-      expect(html).toContain('Từ chối');
-      expect(html.includes('Hủy phiếu</button>')).toBe(role === 'WHOLESALE');
+      expect(html).toContain('Nhận hàng');
+      expect(html).toContain('Không nhận');
+      // HTKD answers offers for assigned stores but never cancels a store's wait.
+      expect(html.includes('Hủy phiếu chờ</button>')).toBe(role === 'WHOLESALE');
     },
   );
+
+  it('tags cancelled tickets with the policy reason and leaves partially declined ones waiting', () => {
+    const cancelledId = '70000000-0000-4000-8000-000000000011';
+    const waitingId = '70000000-0000-4000-8000-000000000012';
+    const html = renderPanel(
+      storeSession(),
+      'STORE',
+      [
+        {
+          ...waitTicket(cancelledId),
+          cancellationKind: 'FULL_OFFER_TIMEOUT',
+          resolutionReason: 'Quá hạn phản hồi đề nghị nhận đủ toàn bộ hàng đang chờ',
+          resolvedAt: '2026-09-17T02:00:00.000Z',
+          status: 'CANCELLED',
+        },
+        { ...waitTicket(waitingId), status: 'WAITING' },
+      ],
+      [],
+      storeId,
+    );
+    expect(html.match(/Đã hủy/g)).toHaveLength(1);
+    expect(html).toContain('Quá hạn phản hồi đề nghị đủ hàng');
+    expect(html).toContain('Đang chờ');
+    // Only the waiting ticket can still be cancelled.
+    expect(html.match(/Hủy phiếu chờ<\/button>/g)).toHaveLength(1);
+  });
 });
