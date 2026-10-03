@@ -1,8 +1,44 @@
-# Reset dữ liệu test, giữ tài khoản và dữ liệu IDOSI
+# Reset dữ liệu nghiệp vụ, giữ tài khoản và dữ liệu IDOSI
 
-Maintenance một lần được chủ hệ thống giao riêng. Không gọi từ boot, seed,
+Maintenance được chủ hệ thống giao riêng cho từng đợt. Không gọi từ boot, seed,
 migration, watcher, timer hoặc endpoint HTTP. Ngoại lệ với `AGENTS.md` chỉ áp dụng
-cho giao dịch test thuộc manifest này; vận hành thường vẫn giữ trigger bất biến.
+cho dữ liệu nghiệp vụ thuộc manifest của đợt đó; vận hành thường vẫn giữ trigger bất biến
+và không xóa cứng phiếu chờ/chứng từ.
+
+## Đợt reset mới sau đợt cũ (từ migration 0038)
+
+Một hệ thống đã reset có thể được giao **đợt reset mới** cho toàn bộ dữ liệu nghiệp vụ hiện tại.
+Mỗi đợt là một operation riêng (UUID, manifest, cutoff, epoch, baseline, thư mục trạng thái riêng):
+
+- Chỉ bắt đầu khi **mọi** operation trước đó ở `COMPLETE` và cutoff mới **sau** cutoff mới nhất.
+  `plan` ghi các vi phạm vào `review` (không apply được); `apply` kiểm tra lại dưới khóa.
+- Không xóa journal cũ, không giả operation ID. Cùng operation ID + manifest chỉ resume; manifest
+  của đợt cũ chạy lại chỉ trả `resumed` và không đụng dữ liệu mới.
+- Operation có hiệu lực là operation có **cutoff mới nhất**
+  (`ORDER BY cutoff DESC, committed_at DESC, id DESC`), dùng chung cho epoch API
+  (`x-idosi-reset-epoch`) và baseline đồng bộ Sale/NORMAL; không còn `LIMIT 1` không xác định.
+- `test_data_reset_baselines` là REBASE: đợt mới xóa baseline của đợt trước rồi tạo lại `pending`
+  theo kỳ của cutoff mới; snapshot IDOSI nguồn giữ nguyên. Payload/kỳ trước cutoff mới bị chặn.
+- `test_data_reset_replay_keys` tích lũy: key của mọi epoch cũ đều bị từ chối.
+- Audit `TEST_DATA_RESET` của đợt trước là nhật ký maintenance, được KEEP và fingerprint.
+
+### Chế độ giữ backup phục hồi (`backupRetention: "retain"`)
+
+Mặc định (`purge`, quy trình gốc) xóa các backup test đã inventory sau khi chứng minh backup sạch.
+Đợt reset dữ liệu vận hành **không** mặc nhiên xóa backup; dùng `retain` trong `context.json`:
+
+1. `enter` (như cũ) → `pre-backup`: tạo backup trước reset bằng `backup-db.sh` (có checksum).
+2. `pre-restore`: restore vào `idosi_reset_verify_<op>_pre`, CLI `verify-pre-backup` so schema và
+   fingerprint từng bảng với DB đang chạy, ghi `pre-proof.json`, rồi chỉ DROP đúng DB diễn tập đó.
+3. Inventory backup: **mọi** file là `KEEP` (CLI từ chối `PURGE` trong chế độ này) và backup trước
+   reset phải có trong inventory, không đổi. Tạo `restores.json`, `context.json` như phase 3–4.
+4. `plan` / `apply` / `verify` / `backup` / `restore` như cũ (wrapper tự truyền `pre-proof.json`).
+5. `inventory-restores` → `retain-backups`: kiểm tra clean proof, pre-proof, mọi file backup và DB
+   restore cũ còn nguyên, chạy lại verify, ghi phase `BACKUPS_RETAINED` + `complete.json`.
+   Không chạy `drop-restores`/`purge-backups`/`record-backups`.
+6. `leave` → smoke → `complete` (chấp nhận `BACKUPS_PURGED` hoặc `BACKUPS_RETAINED`).
+
+CLI `--command history` liệt kê mọi operation, dòng đầu là operation có hiệu lực.
 
 ## Phạm vi và điều kiện dừng
 
@@ -134,9 +170,14 @@ RESET_HOST/RESET_PROJECT/RESET_RELEASE thật. Không shell-eval JSON hoặc in 
 ## Resume và giới hạn
 
 PLANNED là manifest trên filesystem, dry-run không ghi DB. Journal:
-DATABASE_COMMITTED → VERIFIED → BACKUPS_PURGED → COMPLETE. Lỗi transaction rollback
-cả dữ liệu và scoped trigger. Mất kết nối sau COMMIT phải đọc status. Cùng operation
-ID/hash chỉ tiếp tục phase thiếu, không purge lần hai; operation ID mới bị chặn.
+DATABASE_COMMITTED → VERIFIED → (BACKUPS_PURGED | BACKUPS_RETAINED) → COMPLETE. Lỗi
+transaction rollback cả dữ liệu và scoped trigger. Mất kết nối sau COMMIT phải đọc status. Cùng
+operation ID/hash chỉ tiếp tục phase thiếu, không reset/purge lần hai; operation ID mới chỉ được
+phép khi mọi operation trước đã COMPLETE và cutoff mới hơn (xem đầu tài liệu).
+
+Rollback code: chỉ dùng release tương thích schema/epoch hiện tại (≥ 0038). Khôi phục dữ liệu
+trước reset là thao tác phục hồi riêng từ backup trước reset (chế độ `retain`), vào DB mới bằng
+`restore-db.sh`; không restore đè DB đang chạy sau khi đã có giao dịch mới.
 
 Purge resume ghi ABSENT cho file đã mất; identity đổi/file mới làm dừng. Nếu restore
 bị ngắt giữa chừng, kiểm tra restore.started và đúng database của operation trước
