@@ -79,7 +79,13 @@ describePostgres('priority wait policy across sessions (worker + PostgreSQL)', (
     const suffix = token();
     const [row] = await db()
       .insert(stores)
-      .values({ code: `POL-${label}-${suffix}`, name: `Store ${label}`, groupId, kind: 'retail' })
+      .values({
+        // Store codes are limited to 40 characters by the store contract.
+        code: `POL-${label.slice(0, 8)}-${suffix.slice(0, 16)}`,
+        name: `Store ${label}`,
+        groupId,
+        kind: 'retail',
+      })
       .returning();
     const [account] = await db()
       .insert(users)
