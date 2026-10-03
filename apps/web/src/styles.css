@@ -3141,7 +3141,8 @@ label:has(:required) > .field-label::after {
 }
 
 .access-load-error,
-.feature-unavailable {
+.feature-unavailable,
+.route-error {
   display: grid;
   justify-items: center;
   place-content: center;
@@ -3161,21 +3162,46 @@ label:has(:required) > .field-label::after {
   border-radius: 16px;
 }
 
+.route-error {
+  min-height: min(420px, 70vh);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+
+.route-error--page {
+  min-height: 100vh;
+  border: 0;
+  border-radius: 0;
+}
+
 .access-load-error svg,
 .feature-unavailable svg {
   color: var(--brand);
   margin-bottom: 12px;
 }
 
+.route-error svg {
+  color: var(--danger);
+  margin-bottom: 12px;
+}
+
 .access-load-error p,
-.feature-unavailable p {
+.feature-unavailable p,
+.route-error p {
   max-width: 560px;
   color: var(--muted);
   line-height: 1.6;
   margin: 8px 0 18px;
+  overflow-wrap: anywhere;
 }
 
-.access-load-error__actions {
+.route-error .route-error__request {
+  margin-top: -10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.access-load-error__actions,
+.route-error__actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
