@@ -453,8 +453,12 @@ export function orderSessionInputFromDraft(draft: OrderSessionDraft): {
   if (draft.requestOpensTime >= draft.requestClosesTime) {
     return { error: 'Giờ đóng nhận đơn phải sau giờ mở nhận đơn.', input: null };
   }
-  if (draft.requestClosesTime > draft.allocationStartsTime) {
-    return { error: 'Giờ bắt đầu phân bổ không được trước giờ đóng nhận đơn.', input: null };
+  if (draft.requestClosesTime >= draft.allocationStartsTime) {
+    return {
+      error:
+        'Giờ bắt đầu phân bổ phải sau giờ đóng nhận đơn để cửa hàng có thời gian xác nhận hàng ưu tiên.',
+      input: null,
+    };
   }
 
   const parsed = CreateOrderSessionRequestSchema.safeParse({

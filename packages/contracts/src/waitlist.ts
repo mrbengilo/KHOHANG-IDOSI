@@ -33,6 +33,19 @@ export const WaitTicketStatusSchema = z.enum([
 ]);
 export type WaitTicketStatus = z.infer<typeof WaitTicketStatusSchema>;
 
+/**
+ * Why the priority wait policy cancelled a ticket: by the store, by an Admin, or because the
+ * store declined / did not answer an offer covering everything it waited for. Declining or
+ * missing a partial offer never cancels a ticket and therefore has no kind.
+ */
+export const WaitTicketCancellationKindSchema = z.enum([
+  'STORE_CANCELLED',
+  'ADMIN_CANCELLED',
+  'FULL_OFFER_DECLINED',
+  'FULL_OFFER_TIMEOUT',
+]);
+export type WaitTicketCancellationKind = z.infer<typeof WaitTicketCancellationKindSchema>;
+
 export const WaitTicketSchema = z
   .object({
     id: EntityIdSchema,
@@ -49,11 +62,21 @@ export const WaitTicketSchema = z
     fulfilled: InventoryAmountSchema,
     remaining: InventoryAmountSchema,
     status: WaitTicketStatusSchema,
+    cancellationKind: WaitTicketCancellationKindSchema.nullable().optional(),
+    resolutionReason: z.string().max(1000).nullable().optional(),
+    resolvedAt: IsoDateTimeSchema.nullable().optional(),
     createdAt: IsoDateTimeSchema,
     updatedAt: IsoDateTimeSchema,
   })
   .strict()
   .superRefine((ticket, context) => {
+    if (ticket.cancellationKind && ticket.status !== 'CANCELLED') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['cancellationKind'],
+        message: 'Only a cancelled wait ticket can record a cancellation kind',
+      });
+    }
     if (new Set([ticket.requested.kind, ticket.fulfilled.kind, ticket.remaining.kind]).size !== 1) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -129,6 +152,14 @@ export const PriorityOfferStatusSchema = z.enum([
 ]);
 export type PriorityOfferStatus = z.infer<typeof PriorityOfferStatusSchema>;
 
+/**
+ * FULL: the offer covers everything the ticket still waited for when it was created, so "Không
+ * nhận" or no answer by the deadline cancels the ticket. PARTIAL: declining or missing it only
+ * returns the offered quantity and the ticket keeps waiting. Legacy offers are PARTIAL.
+ */
+export const PriorityOfferCoverageSchema = z.enum(['FULL', 'PARTIAL']);
+export type PriorityOfferCoverage = z.infer<typeof PriorityOfferCoverageSchema>;
+
 export const PriorityOfferSchema = z
   .object({
     id: EntityIdSchema,
@@ -145,9 +176,26 @@ export const PriorityOfferSchema = z
     expiresAt: IsoDateTimeSchema,
     respondedAt: IsoDateTimeSchema.nullable(),
     accepted: InventoryAmountSchema.nullable(),
+    coverage: PriorityOfferCoverageSchema.optional(),
+    /** What the ticket still waited for when the offer was created; null on legacy offers. */
+    waitingAtOffer: PositiveInventoryAmountSchema.nullable().optional(),
+    sessionId: EntityIdSchema.nullable().optional(),
+    sessionCode: z
+      .string()
+      .regex(/^PDH-[0-9]{6}$/)
+      .nullable()
+      .optional(),
+    sessionKind: z.enum(['DEFAULT', 'MANUAL']).nullable().optional(),
   })
   .strict()
   .superRefine((offer, context) => {
+    if (offer.waitingAtOffer && offer.waitingAtOffer.kind !== offer.offered.kind) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['waitingAtOffer', 'kind'],
+        message: 'Waiting and offered amounts must use the same measurement',
+      });
+    }
     if (Date.parse(offer.offeredAt) >= Date.parse(offer.expiresAt)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,

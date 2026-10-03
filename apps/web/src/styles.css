@@ -1367,6 +1367,47 @@ td small {
   color: var(--navy);
   padding: 8px 10px;
 }
+.priority-offer--full {
+  border-width: 2px;
+  border-color: #500724;
+}
+.priority-offer__coverage {
+  display: inline-block;
+  border-radius: 999px;
+  background: white;
+  color: var(--priority);
+  padding: 1px 7px;
+}
+.priority-offer__facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin: 6px 0 2px;
+}
+.priority-offer__facts div {
+  min-width: 0;
+}
+.priority-offer__facts dt {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 11px;
+}
+.priority-offer__facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  font-weight: 700;
+}
+.priority-offer__copy .priority-offer__consequence {
+  color: white;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.priority-offer__warning {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
 
 .permission-card,
 .quota-card,
@@ -3634,6 +3675,9 @@ label:has(:required) > .field-label::after {
   .priority-offer__decline {
     width: 100%;
   }
+  .priority-offer__facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .waitlist-panel article {
     align-items: flex-start;
     flex-wrap: wrap;
@@ -4247,4 +4291,12 @@ label:has(:required) > .field-label::after {
 .admin-back-link:disabled {
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+.waitlist-panel__cancellation {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }

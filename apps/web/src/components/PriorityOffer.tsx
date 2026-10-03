@@ -36,10 +36,33 @@ const formatCountdown = (seconds: number): string => {
   return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
 };
 
-function formatAmount(offer: PriorityOfferRecord): string {
-  return offer.offered.kind === 'UNIT'
-    ? `${offer.offered.quantity} bao`
-    : formatKg(offer.offered.value);
+function formatAmount(amount: PriorityOfferRecord['offered']): string {
+  return amount.kind === 'UNIT' ? `${amount.quantity} bao` : formatKg(amount.value);
+}
+
+function formatDeadline(iso: string): string {
+  return new Date(iso).toLocaleString('vi-VN', {
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    month: '2-digit',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  });
+}
+
+function sessionLabel(offer: PriorityOfferRecord): string {
+  const kind = offer.sessionKind === 'MANUAL' ? 'Phiên bổ sung' : 'Phiên chính';
+  return offer.sessionCode ? `${kind} ${offer.sessionCode}` : kind;
+}
+
+/**
+ * The server decides FULL versus PARTIAL from the quantity the store was waiting for when the
+ * offer was created; the browser only explains the consequence and never cancels on its own.
+ */
+function consequenceText(offer: PriorityOfferRecord, deadline: string): string {
+  return offer.coverage === 'FULL'
+    ? `Đề nghị này đủ toàn bộ số hàng đang chờ. Nếu bấm “Không nhận” hoặc không phản hồi trước ${deadline}, phiếu chờ sẽ bị hủy.`
+    : `Đề nghị này chỉ là một phần. Nếu bấm “Không nhận” hoặc không phản hồi trước ${deadline}, phiếu chờ vẫn được giữ nguyên và xét tiếp ở phiên sau.`;
 }
 
 function ControlledPriorityOffer({
@@ -66,6 +89,8 @@ function ControlledPriorityOffer({
   const displayedRemaining = active ? remaining : 0;
   const trimmedReason = declineReason.trim();
   const reasonInvalid = trimmedReason.length > 0 && trimmedReason.length < 3;
+  const full = offer.coverage === 'FULL';
+  const deadline = formatDeadline(offer.expiresAt);
 
   useEffect(() => {
     onExpiredRef.current = onExpired;
@@ -78,6 +103,7 @@ function ControlledPriorityOffer({
   }, [locallyExpired, offer.expiresAt, offer.id, offer.status]);
 
   useEffect(() => {
+    // Only refetch: the deadline is enforced and recorded by the server, never by this timer.
     if (!locallyExpired || expiryNotification.current === offer.id) return;
     expiryNotification.current = offer.id;
     onExpiredRef.current();
@@ -85,13 +111,21 @@ function ControlledPriorityOffer({
 
   const message = useMemo(() => {
     if (locallyExpired || offer.status === 'EXPIRED') {
-      return 'Lượt ưu tiên đã hết hạn; phiếu chờ gốc vẫn được giữ';
+      return full
+        ? 'Đã hết hạn phản hồi đề nghị đủ hàng; hệ thống sẽ hủy phiếu chờ khi chốt phân bổ'
+        : 'Lượt ưu tiên đã hết hạn; phiếu chờ gốc vẫn được giữ';
     }
-    if (offer.status === 'ACCEPTED') return `Đã nhận đủ ${formatAmount(offer)} ${productName}`;
-    if (offer.status === 'DECLINED') return 'Cửa hàng đã từ chối lượt ưu tiên này';
-    if (offer.status === 'CANCELLED') return 'Lượt ưu tiên đã được hủy';
-    return `Đề nghị ưu tiên ${formatAmount(offer)} ${productName}`;
-  }, [locallyExpired, offer, productName]);
+    if (offer.status === 'ACCEPTED') {
+      return `Đã nhận ${formatAmount(offer.offered)} ${productName}; hàng được giữ để giao chung đơn thường kế tiếp`;
+    }
+    if (offer.status === 'DECLINED') {
+      return full
+        ? 'Cửa hàng không nhận đề nghị đủ hàng; phiếu chờ đã bị hủy'
+        : 'Cửa hàng không nhận lượt này; phiếu chờ vẫn được giữ';
+    }
+    if (offer.status === 'CANCELLED') return 'Lượt ưu tiên đã được hủy cùng phiếu chờ';
+    return `Đề nghị nhận ${formatAmount(offer.offered)} ${productName}`;
+  }, [full, locallyExpired, offer, productName]);
 
   const decline = () => {
     if (reasonInvalid) return;
@@ -103,13 +137,42 @@ function ControlledPriorityOffer({
   };
 
   return (
-    <section aria-labelledby={headingId} aria-live="polite" className="priority-offer">
+    <section
+      aria-labelledby={headingId}
+      aria-live="polite"
+      className={`priority-offer${full ? ' priority-offer--full' : ' priority-offer--partial'}`}
+    >
       <div className="priority-offer__copy">
-        <span className="priority-offer__eyebrow">PHIẾU ƯU TIÊN</span>
-        <strong id={headingId}>{message}</strong>
-        <span>
-          {offer.code ?? offer.id} • hết hạn {new Date(offer.expiresAt).toLocaleString('vi-VN')}
+        <span className="priority-offer__eyebrow">
+          ĐỀ NGHỊ NHẬN HÀNG ƯU TIÊN •{' '}
+          <span className="priority-offer__coverage">{full ? 'ĐỦ TOÀN BỘ' : 'MỘT PHẦN'}</span>
         </span>
+        <strong id={headingId}>{message}</strong>
+        <dl className="priority-offer__facts">
+          <div>
+            <dt>Đang chờ</dt>
+            <dd>{offer.waitingAtOffer ? formatAmount(offer.waitingAtOffer) : 'Chưa ghi nhận'}</dd>
+          </div>
+          <div>
+            <dt>Được đề nghị</dt>
+            <dd>{formatAmount(offer.offered)}</dd>
+          </div>
+          <div>
+            <dt>Phiên</dt>
+            <dd>{sessionLabel(offer)}</dd>
+          </div>
+          <div>
+            <dt>Hạn phản hồi</dt>
+            <dd>{deadline}</dd>
+          </div>
+        </dl>
+        {active ? (
+          <span className="priority-offer__consequence">
+            Nhận hàng: hàng được giữ trong kho và giao chung với đơn thường kế tiếp, không chiếm
+            lượt đặt hàng. {consequenceText(offer, deadline)}
+          </span>
+        ) : null}
+        <span>{offer.code ?? offer.id}</span>
         {error ? (
           <span className="priority-offer__error" role="alert">
             {error}
@@ -132,7 +195,7 @@ function ControlledPriorityOffer({
               onClick={() => onRespond({ accepted: offer.offered, action: 'ACCEPT' })}
               tone="success"
             >
-              <Check aria-hidden="true" size={16} /> Nhận đủ
+              <Check aria-hidden="true" size={16} /> Nhận hàng
             </Button>
             <Button
               aria-controls={`${headingId}-decline`}
@@ -142,7 +205,7 @@ function ControlledPriorityOffer({
               onClick={() => setDeclining((value) => !value)}
               tone="secondary"
             >
-              <X aria-hidden="true" size={16} /> Từ chối
+              <X aria-hidden="true" size={16} /> Không nhận
             </Button>
           </>
         ) : null}
@@ -151,7 +214,12 @@ function ControlledPriorityOffer({
         </Button>
         {canRespond && active && declining ? (
           <div className="priority-offer__decline" id={`${headingId}-decline`}>
-            <label htmlFor={`${headingId}-reason`}>Lý do từ chối (không bắt buộc)</label>
+            <p className="priority-offer__warning" role={full ? 'alert' : undefined}>
+              {full
+                ? 'Không nhận đề nghị đủ hàng sẽ HỦY phiếu chờ ngay. Cửa hàng phải đặt lại nếu vẫn cần mặt hàng này.'
+                : 'Không nhận lượt này chỉ trả lại hàng đang giữ; phiếu chờ vẫn được giữ và xét ở phiên sau.'}
+            </p>
+            <label htmlFor={`${headingId}-reason`}>Lý do không nhận (không bắt buộc)</label>
             <input
               aria-describedby={reasonInvalid ? `${headingId}-reason-error` : undefined}
               disabled={interactionDisabled || busyAction !== null}
@@ -170,9 +238,9 @@ function ControlledPriorityOffer({
               busy={busyAction === 'DECLINE'}
               disabled={interactionDisabled || busyAction !== null || reasonInvalid}
               onClick={decline}
-              tone="secondary"
+              tone={full ? 'danger' : 'secondary'}
             >
-              Xác nhận từ chối
+              {full ? 'Xác nhận không nhận và hủy phiếu chờ' : 'Xác nhận không nhận lượt này'}
             </Button>
           </div>
         ) : null}
@@ -198,17 +266,17 @@ function MockPriorityOffer({
 
   const message = useMemo(() => {
     if (state === 'CONFIRMED') return `Đã xác nhận ${bags} bao ${product}`;
-    if (state === 'DECLINED') return 'Đã hủy lượt; phiếu chờ gốc vẫn được giữ';
+    if (state === 'DECLINED') return 'Không nhận lượt một phần; phiếu chờ gốc vẫn được giữ';
     if (remaining === 0) return 'Lượt ưu tiên đã hết hạn; phiếu chờ gốc vẫn được giữ';
-    return `Bạn đang có phiếu ưu tiên ${bags} bao ${product}`;
+    return `Đề nghị nhận ${bags} bao ${product} (một phần)`;
   }, [bags, product, remaining, state]);
 
   return (
     <section aria-live="polite" className="priority-offer">
       <div className="priority-offer__copy">
-        <span className="priority-offer__eyebrow">PHIẾU ƯU TIÊN</span>
+        <span className="priority-offer__eyebrow">ĐỀ NGHỊ NHẬN HÀNG ƯU TIÊN • MỘT PHẦN</span>
         <strong>{message}</strong>
-        <span>PU-GV-260912-003 • phản hồi đầu tiên được ghi nhận</span>
+        <span>Minh họa: không nhận hoặc hết hạn thì phiếu chờ vẫn được giữ</span>
       </div>
       <div className="priority-offer__timer">
         <AlarmClock aria-hidden="true" size={18} />
@@ -217,11 +285,11 @@ function MockPriorityOffer({
       {state === 'ACTIVE' && remaining > 0 ? (
         <div className="priority-offer__actions">
           <Button onClick={() => setState('CONFIRMED')} tone="success">
-            <Check aria-hidden="true" size={16} /> Xác nhận
+            <Check aria-hidden="true" size={16} /> Nhận hàng
           </Button>
           {!compact ? (
             <Button onClick={() => setState('DECLINED')} tone="secondary">
-              <X aria-hidden="true" size={16} /> Hủy lượt
+              <X aria-hidden="true" size={16} /> Không nhận
             </Button>
           ) : null}
           <Button tone="secondary">

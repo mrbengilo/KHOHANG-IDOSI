@@ -1,6 +1,8 @@
 // A complete CLI / pg_dump / pg_restore / purge rehearsal. All destructive targets are created
 // here in one disposable Docker cluster, never taken from DATABASE_URL or production config.
 import { test } from 'node:test';
+// Retention-mode rehearsal needs no Docker; it runs with this CLI suite in CI.
+import './reset-retention-cli.test.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {

@@ -77,7 +77,8 @@ await app.listen({ host, port });
 async function loadResetEpoch(): Promise<string> {
   const { pool } = await import('@idosi/database');
   const result = await pool.query(
-    'SELECT id::text FROM test_data_reset_operations ORDER BY committed_at DESC LIMIT 1',
+    // The operation in effect is the one with the latest cutoff (operations only move forward).
+    'SELECT id::text FROM test_data_reset_operations ORDER BY cutoff DESC, committed_at DESC, id DESC LIMIT 1',
   );
   return result.rows[0]?.id ?? '0';
 }

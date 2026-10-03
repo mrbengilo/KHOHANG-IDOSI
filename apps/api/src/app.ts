@@ -1858,7 +1858,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.post('/api/v1/wait-tickets/:waitTicketId/cancel', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['STORE', 'WHOLESALE']);
+    requireRole(session.principal, ['STORE', 'WHOLESALE', 'ADMIN']);
     const headers = IdempotencyHeadersSchema.parse(request.headers);
     const { waitTicketId } = WaitTicketParamsSchema.parse(request.params);
     const input = CancelWaitTicketRequestSchema.parse(request.body);
@@ -3117,7 +3117,16 @@ function openApiDocument(): Record<string, unknown> {
       '/api/v1/wait-tickets/{waitTicketId}/cancel': {
         post: {
           security: cookieSecurity,
-          responses: { '200': { description: 'Cancelled wait ticket' } },
+          summary:
+            'Cancel the unallocated demand of an active wait ticket (store/wholesale: own store; Admin: any store). Allocated quantity stays held for combined shipping.',
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Cancelled wait ticket with cancellationKind' },
+            '403': { description: 'Actor may not cancel this store wait (HTKD never may)' },
+            '409': { description: 'Ticket is no longer active' },
+          },
         },
       },
       '/api/v1/priority-offers': {
@@ -3129,7 +3138,12 @@ function openApiDocument(): Record<string, unknown> {
       '/api/v1/priority-offers/{offerId}/respond': {
         post: {
           security: cookieSecurity,
-          responses: { '200': { description: 'Accepted or declined priority offer' } },
+          summary:
+            'Accept or decline a priority offer before its session allocation starts. Declining a FULL offer also cancels its wait ticket; declining a PARTIAL offer keeps the ticket waiting.',
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Accepted, declined or expired priority offer' } },
         },
       },
       '/api/v1/reports/inbound-statistics': {

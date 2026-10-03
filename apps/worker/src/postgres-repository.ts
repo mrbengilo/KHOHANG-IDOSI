@@ -5,6 +5,7 @@ import {
   allocationRuns,
   applyWarehouseMovement,
   auditLogs,
+  cancelWaitTicketForFullOfferInTransaction,
   dailyPriorityOffers,
   dispatchWarehouseOutboundInTransaction,
   ensureDailyOrderingSession,
@@ -300,8 +301,12 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
     );
     const domainTickets = await toDomainWaitTickets(tx, ticketRows);
     const domainOffers = offerRows.map((row) => toDomainOffer(row, allocatedOfferIds.has(row.id)));
+    // Offers are answered until the session's allocation start. A late (catch-up) snapshot at or
+    // after that instant would only create offers nobody could answer, and a full one would then
+    // cancel the store's wait unseen; so no offer is created and the tickets keep waiting.
     const offers =
-      session.finalDueAt.getTime() > session.snapshotDueAt.getTime()
+      session.finalDueAt.getTime() > session.snapshotDueAt.getTime() &&
+      processedAt.getTime() < session.finalDueAt.getTime()
         ? planPriorityOffers({
             businessDate: session.businessDate,
             createdAt: session.snapshotDueAt.toISOString(),
@@ -339,6 +344,7 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
           priorityLevel: 'P0A' as const,
           roundNumber: 1,
           offeredQuantity: offer.offeredQuantity,
+          eligibleQuantityAtOffer: offer.eligibleQuantityAtOffer,
           stockHeldQuantity: offer.offeredQuantity,
           acceptedQuantity: 0,
           status: 'offered' as const,
@@ -378,6 +384,10 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
         businessDate: session.businessDate,
         productCount: historicalBalances.length,
         priorityOfferCount: offers.length,
+        fullPriorityOfferCount: offers.filter(
+          (offer) => offer.offeredQuantity >= offer.eligibleQuantityAtOffer,
+        ).length,
+        priorityOffersSkippedLate: processedAt.getTime() >= session.finalDueAt.getTime(),
         scheduledAt: session.snapshotDueAt.toISOString(),
         processedAt: processedAt.toISOString(),
       },
@@ -431,10 +441,34 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
       throw new Error(`Opening snapshot is missing for allocation session ${session.id}.`);
     }
 
+    // Unanswered offers lapse before anything is allocated. Lock order matches the API
+    // (wait ticket, then offer) so a store answering at the deadline and this run serialize
+    // instead of deadlocking; an acceptance committed before the deadline is no longer 'offered'
+    // here and is never overwritten.
+    const expiringTicketIds = await tx
+      .selectDistinct({ id: dailyPriorityOffers.waitTicketId })
+      .from(dailyPriorityOffers)
+      .where(expirableOfferCondition(session));
+    const lockedTickets =
+      expiringTicketIds.length === 0
+        ? []
+        : await tx
+            .select()
+            .from(waitTickets)
+            .where(
+              inArray(
+                waitTickets.id,
+                expiringTicketIds.map((row) => row.id),
+              ),
+            )
+            .orderBy(asc(waitTickets.id))
+            .for('update');
+    const lockedTicketById = new Map(lockedTickets.map((ticket) => [ticket.id, ticket]));
     const expiringOffers = await tx
       .select()
       .from(dailyPriorityOffers)
       .where(expirableOfferCondition(session))
+      .orderBy(asc(dailyPriorityOffers.id))
       .for('update');
     for (const offer of expiringOffers) {
       if (offer.stockHeldQuantity > 0) {
@@ -459,6 +493,46 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
             eq(dailyPriorityOffers.status, 'offered'),
           ),
         );
+      await tx.insert(auditLogs).values(
+        expiringOffers.map((offer) => ({
+          id: deterministicUuid(`audit:priority-offer-expired:${offer.id}`),
+          action: 'PRIORITY_OFFER_EXPIRED',
+          entityType: 'priority_offer',
+          entityId: offer.id,
+          actorStoreId: offer.storeId,
+          before: { status: offer.status, stockHeldQuantity: offer.stockHeldQuantity },
+          after: { status: 'expired', stockHeldQuantity: 0 },
+          metadata: {
+            waitTicketId: offer.waitTicketId,
+            orderSessionId: offer.orderSessionId,
+            expiredBySessionId: session.id,
+            responseDeadlineAt: offer.responseDeadlineAt.toISOString(),
+            offeredQuantity: offer.offeredQuantity,
+            eligibleQuantityAtOffer: offer.eligibleQuantityAtOffer,
+          },
+          createdAt: processedAt,
+        })),
+      );
+    }
+    // A full offer left unanswered ends the wait; a partial one leaves the ticket waiting for a
+    // later session. Cancelled tickets are excluded from the run below because only active
+    // tickets are loaded after this point.
+    let timedOutTicketCount = 0;
+    for (const offer of expiringOffers) {
+      const ticket = lockedTicketById.get(offer.waitTicketId);
+      if (!ticket) continue;
+      const cancelled = await cancelWaitTicketForFullOfferInTransaction(tx, {
+        ticket,
+        offer,
+        kind: 'full_offer_timeout',
+        actor: null,
+        occurredAt: processedAt,
+        auditId: deterministicUuid(`audit:priority-response-timeout:${offer.id}`),
+      });
+      if (cancelled) {
+        timedOutTicketCount += 1;
+        lockedTicketById.delete(ticket.id);
+      }
     }
 
     const snapshotItems = await tx
@@ -844,6 +918,8 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
         requestedQuantity,
         scheduledAt: session.finalDueAt.toISOString(),
         waitlistedQuantity,
+        expiredPriorityOfferCount: expiringOffers.length,
+        priorityResponseTimeoutCancellations: timedOutTicketCount,
       },
       createdAt: processedAt,
     });

@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
@@ -433,6 +433,7 @@ export async function submitStoreReceiptInTransaction(
         outboundRequestLineId: storeReceiptLines.outboundRequestLineId,
         approvedQuantity: storeReceiptLines.approvedQuantity,
         priorityQueuedQuantity: storeReceiptLines.priorityQueuedQuantity,
+        updatedAt: storeReceiptLines.updatedAt,
       })
       .from(storeReceiptLines)
       .where(eq(storeReceiptLines.storeReceiptId, receipt.id))
@@ -475,6 +476,7 @@ export async function submitStoreReceiptInTransaction(
             approvedQuantity: persistedLine.approvedQuantity,
             queuedQuantity: persistedLine.priorityQueuedQuantity,
             receivedQuantity: suppliedLine.receivedQuantity,
+            shortageDeclaredAt: persistedLine.updatedAt,
           });
           const queuedQuantity = persistedLine.approvedQuantity - suppliedLine.receivedQuantity;
           if (queuedQuantity > 0 && queuedQuantity !== persistedLine.priorityQueuedQuantity) {
@@ -495,30 +497,65 @@ export async function submitStoreReceiptInTransaction(
                 ),
               )
               .limit(1);
-            if (!ticket)
+            if (!ticket && queuedQuantity < persistedLine.priorityQueuedQuantity) {
+              // The store or an Admin cancelled this shortage's wait before the correction; the
+              // smaller shortage leaves nothing to queue. Record it on the cancelled ticket.
+              const [cancelledWait] = await tx
+                .select({ id: waitTickets.id })
+                .from(waitTickets)
+                .where(
+                  and(
+                    eq(waitTickets.storeId, receipt.storeId),
+                    eq(waitTickets.productId, persistedLine.productId),
+                    eq(waitTickets.status, 'cancelled'),
+                    isNotNull(waitTickets.cancellationKind),
+                    isNull(waitTickets.deletedAt),
+                  ),
+                )
+                .orderBy(desc(waitTickets.resolvedAt))
+                .limit(1);
+              if (!cancelledWait)
+                throw new StoreOperationValidationError('Priority wait ticket was not created.');
+              await tx.insert(auditLogs).values({
+                requestId: input.requestId ?? null,
+                actorUserId: input.submittedByUserId,
+                actorRole: declaringRole,
+                actorStoreId: receipt.storeId,
+                action: 'STORE_RECEIPT_SHORTAGE_REDUCED_AFTER_WAIT_CANCELLED',
+                entityType: 'wait_ticket',
+                entityId: cancelledWait.id,
+                metadata: {
+                  receiptId: receipt.id,
+                  productId: persistedLine.productId,
+                  previousShortageQuantity: persistedLine.priorityQueuedQuantity,
+                  shortageQuantity: queuedQuantity,
+                },
+              });
+            } else if (!ticket) {
               throw new StoreOperationValidationError('Priority wait ticket was not created.');
-            await tx.insert(auditLogs).values({
-              requestId: input.requestId ?? null,
-              actorUserId: input.submittedByUserId,
-              actorRole: declaringRole,
-              actorStoreId: receipt.storeId,
-              action: 'STORE_RECEIPT_SHORTAGE_PRIORITIZED',
-              entityType: 'wait_ticket',
-              entityId: ticket.id,
-              after: {
-                status: 'active',
-                priorityLevel: ticket.priorityLevel,
-                originalQuantity: ticket.originalQuantity,
-                remainingQuantity: ticket.remainingQuantity,
-              },
-              metadata: {
-                receiptId: receipt.id,
-                productId: persistedLine.productId,
-                autoApproved: true,
-                previousShortageQuantity: persistedLine.priorityQueuedQuantity,
-                shortageQuantity: queuedQuantity,
-              },
-            });
+            } else
+              await tx.insert(auditLogs).values({
+                requestId: input.requestId ?? null,
+                actorUserId: input.submittedByUserId,
+                actorRole: declaringRole,
+                actorStoreId: receipt.storeId,
+                action: 'STORE_RECEIPT_SHORTAGE_PRIORITIZED',
+                entityType: 'wait_ticket',
+                entityId: ticket.id,
+                after: {
+                  status: 'active',
+                  priorityLevel: ticket.priorityLevel,
+                  originalQuantity: ticket.originalQuantity,
+                  remainingQuantity: ticket.remainingQuantity,
+                },
+                metadata: {
+                  receiptId: receipt.id,
+                  productId: persistedLine.productId,
+                  autoApproved: true,
+                  previousShortageQuantity: persistedLine.priorityQueuedQuantity,
+                  shortageQuantity: queuedQuantity,
+                },
+              });
           }
           await tx
             .update(storeReceiptLines)

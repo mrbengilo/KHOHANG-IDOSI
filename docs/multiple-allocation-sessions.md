@@ -66,6 +66,22 @@ bản là run hoàn tất của đúng phiên đó.
   phần còn lại. Hàng ưu tiên giao chung chuyến sau vẫn mang run cấp gốc (`carriedAllocations`) và
   không cộng vào lượng cấp mới.
 
+## Đề nghị ưu tiên một phần/toàn bộ và deadline theo phiên (migration 0037)
+
+Chi tiết nghiệp vụ: [phiếu chờ ưu tiên](wait-ticket-cancellation.md).
+
+- Phiên chính và phiên bổ sung dùng cùng luồng. Tại giờ đóng nhận đơn của phiên, mọi phần chia
+  được > 0 trở thành đề nghị (kể cả một phần) và ghi `eligible_quantity_at_offer` làm căn cứ.
+- Hạn phản hồi của đề nghị là giờ bắt đầu phân bổ **của phiên tạo đề nghị** (ví dụ 09:00 cho phiên
+  chính 08:00, 14:30 cho phiên bổ sung 14:00), không lấy phiên tạo phiếu chờ ban đầu.
+- Phiên mới bắt buộc giờ phân bổ sau giờ đóng nhận đơn. Snapshot chạy bù tại/sau giờ phân bổ không
+  tạo đề nghị.
+- Lần chạy phân bổ khóa phiếu → khóa đề nghị, hết hạn đề nghị chưa phản hồi, hủy phiếu có đề nghị
+  toàn bộ không được phản hồi (`full_offer_timeout`), trả hold, rồi mới tính phân bổ. Đề nghị một
+  phần hết hạn chỉ trả hàng; phiếu tiếp tục được xét ở phiên sau.
+- Phiếu còn đề nghị chưa được phiên chủ chốt (kể cả khi worker trễ quá deadline) không được phiên
+  khác đề nghị tiếp, nên không có hai đề nghị sống cho cùng nhu cầu.
+
 ## Migration `0036_order_sessions_offers_adjustments` (expand-only)
 
 1. `order_sessions.kind` mặc định `default`; backfill `manual` cho phiên có audit

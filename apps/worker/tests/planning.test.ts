@@ -25,6 +25,70 @@ function ticket(id: string, storeId: string, quantity = 2) {
 }
 
 describe('domain-backed worker planning', () => {
+  it('offers any positive share, even partial, and records the basis for full versus partial', () => {
+    const waitingThree = ticket('ticket-a', 'store-a', 3);
+    const waitingOne = ticket('ticket-b', 'store-b', 1);
+    const offers = planPriorityOffers({
+      businessDate: '2026-09-10',
+      createdAt: '2026-09-10T01:00:00.000Z',
+      expiresAt: '2026-09-10T02:00:00.000Z',
+      snapshots: [
+        {
+          id: 'snapshot-basis',
+          version: '1',
+          productId: 'product-1',
+          availableQuantity: 2,
+          capturedAt: '2026-09-10T01:00:00.000Z',
+        },
+      ],
+      waitTickets: [waitingThree, waitingOne],
+      existingOffers: [],
+      offerId: (ticketId) => `offer-${ticketId}`,
+    });
+    // One unit per store per round: store A gets 1 of 3 (partial), store B 1 of 1 (full).
+    expect(
+      offers.map((offer) => [
+        offer.waitTicketId,
+        offer.offeredQuantity,
+        offer.eligibleQuantityAtOffer,
+      ]),
+    ).toEqual([
+      ['ticket-a', 1, 3],
+      ['ticket-b', 1, 1],
+    ]);
+  });
+
+  it('does not offer a ticket again while another session has not settled its offer', () => {
+    const waiting = ticket('ticket-late', 'store-late', 2);
+    const unsettled = createDailyPriorityOffer(waiting, [], {
+      id: 'offer-main-session',
+      businessDate: '2026-09-10',
+      offeredQuantity: 1,
+      createdAt: '2026-09-10T01:00:00.000Z',
+      expiresAt: '2026-09-10T02:00:00.000Z',
+    });
+    // The main session's run is late: its offer is past its deadline but still unsettled.
+    const offers = planPriorityOffers({
+      businessDate: '2026-09-10',
+      createdAt: '2026-09-10T07:00:00.000Z',
+      expiresAt: '2026-09-10T07:30:00.000Z',
+      snapshots: [
+        {
+          id: 'snapshot-extra',
+          version: '2',
+          productId: 'product-1',
+          availableQuantity: 5,
+          capturedAt: '2026-09-10T07:00:00.000Z',
+        },
+      ],
+      waitTickets: [waiting],
+      existingOffers: [unsettled],
+      alreadyReservedOfferIds: new Set([unsettled.id]),
+      offerId: (ticketId) => `offer-extra-${ticketId}`,
+    });
+    expect(offers).toEqual([]);
+  });
+
   it('does not offer stock already committed by an earlier confirmed offer', () => {
     const first = ticket('ticket-1', 'store-1');
     const second = ticket('ticket-2', 'store-2');

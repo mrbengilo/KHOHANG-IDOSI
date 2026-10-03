@@ -17,6 +17,8 @@ shipped in the current cycle remain separate from newly allocated quantities.
 - The allocation run releases each shipment it creates: the outbound is dispatched in the same serializable transaction that materializes it, so the store sees it on `/receive` as soon as the allocation is published. Dispatch only changes the shipment state; warehouse on-hand stock leaves once, when HTKD finalizes the store receipt, and store inventory grows only then.
 - Held priority goods are visible, not silent: `GET /api/v1/held-allocations` lists them by store and product (Admin: all stores; HTKD and the wholesale desk: their stores; a store account: its own store), and the allocation page and the store's `/receive` page show them as "Hàng ưu tiên đang giữ chờ giao chung".
 - Receiving acknowledges physical delivery separately from accepting a priority offer. Only actual received bags enter store inventory. Shortages release unused reservations and restore demand to the corresponding source waits.
+- Priority offers may be partial or full ([wait ticket policy](wait-ticket-cancellation.md)). Accepting either one protects the offered units, converts the hold into an allocation reservation exactly once in the owning session's run, and the units then wait here for the store's next ordinary shipment. Accepting never adds to store stock and never ships on its own.
+- Cancelling a wait (store, wholesale desk, or Admin) cancels only the unallocated remainder: goods already allocated stay reserved and still ship with the next ordinary order. A receipt shortage on goods allocated from a cancelled wait is queued as new demand; the cancelled remainder is never reopened.
 
 ## Persistence and compatibility
 

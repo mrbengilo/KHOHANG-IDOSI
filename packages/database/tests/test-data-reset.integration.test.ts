@@ -26,7 +26,7 @@ import {
 import { resetFixturePayload } from './reset-fixture-payload.js';
 
 const describePg = process.env.RUN_POSTGRES_TESTS === '1' ? describe : describe.skip;
-describePg('one-shot reset on an isolated fully migrated PostgreSQL database', () => {
+describePg('controlled reset operations on an isolated fully migrated PostgreSQL database', () => {
   let admin: pg.Pool;
   let fixture: DatabaseClient;
   let databaseName: string;
@@ -489,4 +489,172 @@ describePg('one-shot reset on an isolated fully migrated PostgreSQL database', (
       expect(await stock()).toBe('10.000');
     },
   );
+
+  it('a new reviewed operation after a completed one resets current data and becomes the epoch', async () => {
+    const first = await planTestDataReset(fixture.pool, context);
+    await applyTestDataReset(fixture.pool, first, first.hash);
+    await verifyTestDataReset(fixture.pool, first);
+    await fixture.db.transaction((tx) =>
+      resetSaleBoundary(tx, {
+        storeId,
+        productId,
+        period: '2026-09',
+        type: 'normal',
+        observed: 9000n,
+        generatedAt: '2026-09-30T17:00:00Z',
+        links: new Map([['source-id', productId]]),
+      }),
+    );
+    await fixture.pool.query("UPDATE test_data_reset_operations SET phase='COMPLETE' WHERE id=$1", [
+      context.operationId,
+    ]);
+    // Business data accumulated after the first reset, including a write's idempotency key.
+    await fixture.pool.query(
+      `INSERT INTO order_sessions(code,business_date,inventory_snapshot_due_at,request_deadline_at,policy_version) VALUES ('AFTER','2026-10-01','2026-10-01T01:00:00Z','2026-10-01T02:00:00Z','real')`,
+    );
+    await fixture.pool
+      .query(`INSERT INTO idempotency_keys(scope,key,request_hash,status,response_status,response_body,locked_until,expires_at)
+      VALUES('fixture-order','second-key','fixture-hash','completed',200,'{"testPayload":"second"}',now(),now()+interval '1 day')`);
+
+    const secondContext: ResetContext = {
+      ...context,
+      operationId: randomUUID(),
+      cutoff: '2026-10-01T17:00:00.000Z',
+      backupRetention: 'retain',
+    };
+    const second = await planTestDataReset(fixture.pool, secondContext);
+    expect(second.review).toEqual([]);
+    await expect(applyTestDataReset(fixture.pool, second, second.hash)).resolves.toMatchObject({
+      resumed: false,
+      phase: 'DATABASE_COMMITTED',
+    });
+    await expect(verifyTestDataReset(fixture.pool, second)).resolves.toMatchObject({
+      state: 'VERIFIED',
+    });
+    expect((await fixture.pool.query('SELECT count(*)::int n FROM order_sessions')).rows[0].n).toBe(
+      0,
+    );
+    // Both generations of old keys are tombstoned; neither payload is kept.
+    expect(
+      (
+        await fixture.pool.query(
+          "SELECT count(*)::int n FROM test_data_reset_replay_keys WHERE key_hash IN (encode(sha256(convert_to('old-key','UTF8')),'hex'),encode(sha256(convert_to('second-key','UTF8')),'hex'))",
+        )
+      ).rows[0].n,
+    ).toBe(2);
+    // Baselines are rebased on the new cutoff's period; the first operation's are gone.
+    expect(
+      (
+        await fixture.pool.query(
+          'SELECT DISTINCT period,status FROM test_data_reset_baselines ORDER BY period',
+        )
+      ).rows,
+    ).toEqual([{ period: '2026-10', status: 'pending' }]);
+    // The maintenance log of the first operation is protected data for the second.
+    expect(
+      (
+        await fixture.pool.query(
+          "SELECT count(*)::int n FROM audit_logs WHERE action='TEST_DATA_RESET'",
+        )
+      ).rows[0].n,
+    ).toBe(2);
+    // Same query as the API epoch and the sale boundary: the latest cutoff is in effect.
+    expect(
+      (
+        await fixture.pool.query(
+          'SELECT id::text FROM test_data_reset_operations ORDER BY cutoff DESC, committed_at DESC, id DESC LIMIT 1',
+        )
+      ).rows[0].id,
+    ).toBe(secondContext.operationId);
+    expect(
+      (
+        await fixture.pool.query(
+          "SELECT evidence->>'backupRetention' AS r FROM test_data_reset_operations WHERE id=$1",
+          [secondContext.operationId],
+        )
+      ).rows[0].r,
+    ).toBe('retain');
+    await fixture.db.transaction(async (tx) => {
+      const base = {
+        storeId,
+        productId,
+        type: 'normal',
+        observed: 4000n,
+        links: new Map([['source-id', productId]]),
+      };
+      expect(
+        await resetSaleBoundary(tx, {
+          ...base,
+          period: '2026-09',
+          generatedAt: '2026-10-01T18:00:00Z',
+        }),
+      ).toEqual({ allow: false });
+      expect(
+        await resetSaleBoundary(tx, {
+          ...base,
+          period: '2026-10',
+          generatedAt: '2026-10-01T16:00:00Z',
+        }),
+      ).toEqual({ allow: false });
+      expect(
+        await resetSaleBoundary(tx, {
+          ...base,
+          period: '2026-10',
+          generatedAt: '2026-10-01T18:00:00Z',
+        }),
+      ).toEqual({ allow: true, baseline: 4000n });
+    });
+
+    // Replaying either earlier manifest only resumes; new work after the reset survives.
+    await fixture.pool.query(
+      `INSERT INTO order_sessions(code,business_date,inventory_snapshot_due_at,request_deadline_at,policy_version) VALUES ('NEW','2026-10-02','2026-10-02T01:00:00Z','2026-10-02T02:00:00Z','real')`,
+    );
+    await expect(applyTestDataReset(fixture.pool, first, first.hash)).resolves.toMatchObject({
+      resumed: true,
+    });
+    await expect(applyTestDataReset(fixture.pool, second, second.hash)).resolves.toMatchObject({
+      resumed: true,
+    });
+    expect((await fixture.pool.query('SELECT count(*)::int n FROM order_sessions')).rows[0].n).toBe(
+      1,
+    );
+  });
+  it('refuses a new operation until the previous one is COMPLETE and its cutoff is passed', async () => {
+    const first = await planTestDataReset(fixture.pool, context);
+    await applyTestDataReset(fixture.pool, first, first.hash);
+    const nextContext: ResetContext = {
+      ...context,
+      operationId: randomUUID(),
+      cutoff: '2026-10-01T17:00:00.000Z',
+    };
+    const blocked = await planTestDataReset(fixture.pool, nextContext);
+    expect(blocked.review).toContain(
+      `Previous reset operation ${context.operationId} is DATABASE_COMMITTED, not COMPLETE`,
+    );
+    // A manifest stripped of its review findings is still refused under the maintenance lock.
+    const { hash: _hash, ...body } = blocked;
+    const forged = { ...body, review: [] };
+    const forgedManifest = { ...forged, hash: resetHash(forged) };
+    await expect(
+      applyTestDataReset(fixture.pool, forgedManifest, forgedManifest.hash),
+    ).rejects.toThrow(/not COMPLETE/);
+
+    await fixture.pool.query("UPDATE test_data_reset_operations SET phase='COMPLETE' WHERE id=$1", [
+      context.operationId,
+    ]);
+    expect(
+      (await planTestDataReset(fixture.pool, { ...nextContext, cutoff: context.cutoff })).review,
+    ).toContain(`Cutoff must be after previous reset operation ${context.operationId}`);
+    await expect(
+      planTestDataReset(fixture.pool, {
+        ...nextContext,
+        backupRetention: 'keep-everything' as never,
+      }),
+    ).rejects.toThrow(/backupRetention/);
+    expect((await planTestDataReset(fixture.pool, nextContext)).review).toEqual([]);
+    expect(
+      (await fixture.pool.query('SELECT count(*)::int n FROM test_data_reset_operations')).rows[0]
+        .n,
+    ).toBe(1);
+  });
 });

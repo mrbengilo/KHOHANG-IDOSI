@@ -2,8 +2,11 @@
 set -Eeuo pipefail
 umask 077
 
-# One-shot maintenance wrapper, never invoked by deploy, seed, migrate, or a timer.
+# Maintenance wrapper for one reviewed reset operation (a later operation uses a new state
+# directory and operation ID). Never invoked by deploy, seed, migrate, or a timer.
 # Locks cover the entire selected phase. Timers and app writers remain stopped between phases.
+# Retention mode (context.backupRetention="retain"): pre-backup -> pre-restore before plan, and
+# retain-backups instead of drop-restores/purge-backups/record-backups. No backup is deleted.
 command="${1:-help}"
 shift || true
 state_dir=""
@@ -18,7 +21,7 @@ while (($#)); do
   esac
 done
 fail() { printf 'reset-test-data: %s\n' "$*" >&2; exit 1; }
-[[ "$command" =~ ^(enter|plan|apply|verify|status|backup|restore|inventory-restores|drop-restores|purge-backups|record-backups|leave)$ ]] || fail 'unknown maintenance phase'
+[[ "$command" =~ ^(enter|pre-backup|pre-restore|plan|apply|verify|status|backup|restore|inventory-restores|drop-restores|purge-backups|record-backups|retain-backups|leave)$ ]] || fail 'unknown maintenance phase'
 [[ "$release_sha" =~ ^[a-f0-9]{40}$ ]] || fail 'full reviewed merged release SHA required'
 [[ "$state_dir" == /var/lib/khohang-reset/* && "$state_dir" != *..* ]] || fail 'state directory must be under /var/lib/khohang-reset/'
 [[ "$(id -u)" == 0 ]] || fail 'root maintenance session required'
@@ -80,12 +83,35 @@ cli() {
 file_cli() {
   "${compose[@]}" run --rm --no-deps --pull never --user 0:0 --volume "$state_dir:/reset" --volume /var/backups/khohang-idosi:/var/backups/khohang-idosi --entrypoint node migrate infra/scripts/purge-test-data-backups.mjs "$@"
 }
+pre_proof_args=()
+[[ ! -f "$state_dir/pre-proof.json" ]] || pre_proof_args=(--pre-proof /reset/pre-proof.json)
 context_operation() {
   "${compose[@]}" run --rm --no-deps --pull never --user 0:0 --volume "$state_dir:/reset:ro" --entrypoint node migrate -e 'console.log(require("/reset/context.json").operationId)'
 }
 case "$command" in
-  plan) cli --command plan --context /reset/context.json --inventory /reset/backups.json --restore-inventory /reset/restores.json --output /reset/manifest.json ;;
-  apply) [[ "$confirmation" =~ ^[a-f0-9]{64}$ ]] || fail 'explicit --confirm manifest hash required'; cli --command apply --manifest /reset/manifest.json --inventory /reset/backups.json --restore-inventory /reset/restores.json --confirm "$confirmation" ;;
+  pre-backup)
+    # Fresh recovery copy of the live data, taken with writers already stopped.
+    [[ ! -e "$state_dir/pre.path" ]] || fail 'pre-reset backup already recorded; continue with pre-restore'
+    bash "$release_dir/infra/scripts/backup-db.sh" --compose-file "$release_dir/docker-compose.yml" --env-file /etc/khohang-idosi/production.env --output-dir /var/backups/khohang-idosi >"$state_dir/pre-backup.log"
+    pre_path="$(sed -n 's/^Verified backup: //p' "$state_dir/pre-backup.log")"
+    [[ "$pre_path" =~ ^/var/backups/khohang-idosi/idosi-[0-9TZ]+\.dump$ ]] || fail 'unexpected pre-reset backup path; inspect protected log'
+    printf '%s\n' "$pre_path" >"$state_dir/pre.path"
+    ;;
+  pre-restore)
+    operation="$(context_operation)"
+    [[ "$operation" =~ ^[a-f0-9-]{36}$ ]] || fail 'invalid operation ID'
+    restore_db="idosi_reset_verify_${operation//-/_}_pre"
+    pre_path="$(cat "$state_dir/pre.path")"
+    [[ "$pre_path" =~ ^/var/backups/khohang-idosi/idosi-[0-9TZ]+\.dump$ ]] || fail 'unexpected pre-reset backup path'
+    if [[ ! -e "$state_dir/pre-restore.started" ]]; then
+      printf '%s\n' "$restore_db" >"$state_dir/pre-restore.started"
+      bash "$release_dir/infra/scripts/restore-db.sh" --compose-file "$release_dir/docker-compose.yml" --env-file /etc/khohang-idosi/production.env --backup "$pre_path" --target-db "$restore_db" --confirm-db "$restore_db"
+    fi
+    # Compares the restored copy with the live database, then drops only this rehearsal copy.
+    cli --command verify-pre-backup --context /reset/context.json --restore-database "$restore_db" --clean-root /var/backups/khohang-idosi --clean-file "$pre_path" --output /reset/pre-proof.json
+    ;;
+  plan) cli --command plan --context /reset/context.json --inventory /reset/backups.json --restore-inventory /reset/restores.json "${pre_proof_args[@]}" --output /reset/manifest.json ;;
+  apply) [[ "$confirmation" =~ ^[a-f0-9]{64}$ ]] || fail 'explicit --confirm manifest hash required'; cli --command apply --manifest /reset/manifest.json --inventory /reset/backups.json --restore-inventory /reset/restores.json "${pre_proof_args[@]}" --confirm "$confirmation" ;;
   verify) cli --command verify --manifest /reset/manifest.json ;;
   backup)
     cli --command verify --manifest /reset/manifest.json
@@ -119,9 +145,13 @@ case "$command" in
     file_cli --command purge --manifest /reset/backups.json --proof /reset/clean-proof.json --confirm "$confirmation" --journal /reset/backup-purge.jsonl
     ;;
   record-backups) cli --command backups-verified --manifest /reset/manifest.json --inventory /reset/backups.json --restore-inventory /reset/restores-final.json --proof /reset/clean-proof.json --output /reset/complete.json ;;
+  retain-backups)
+    [[ -f "$state_dir/pre-proof.json" ]] || fail 'retention mode requires the verified pre-reset backup proof'
+    cli --command backups-retained --manifest /reset/manifest.json --inventory /reset/backups.json --restore-inventory /reset/restores-final.json --proof /reset/clean-proof.json --pre-proof /reset/pre-proof.json --output /reset/complete.json
+    ;;
   status) cli --command status --operation-id "$("${compose[@]}" run --rm --no-deps --pull never --user 0:0 --volume "$state_dir:/reset:ro" --entrypoint node migrate -e 'console.log(require("/reset/context.json").operationId)')" ;;
   leave)
-    [[ -f "$state_dir/complete.json" ]] || fail 'clean restore, backup purge and final verification evidence required before leaving maintenance'
+    [[ -f "$state_dir/complete.json" ]] || fail 'clean restore, backup purge/retention and final verification evidence required before leaving maintenance'
     cli --command can-resume-writers --manifest /reset/manifest.json --proof /reset/complete.json
     "${compose[@]}" up --detach --no-deps --pull never --wait --wait-timeout 120 api worker
     "${compose[@]}" up --detach --no-deps --pull never --wait --wait-timeout 120 caddy

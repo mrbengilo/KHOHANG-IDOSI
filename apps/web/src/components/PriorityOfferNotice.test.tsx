@@ -39,6 +39,11 @@ describe('priority offer notification', () => {
         offeredAt: '2026-09-17T00:05:00.000Z',
         expiresAt: '2099-09-17T01:00:00.000Z',
         respondedAt: null,
+        coverage: 'PARTIAL',
+        waitingAtOffer: { kind: 'UNIT', quantity: 5 },
+        sessionId: '10000000-0000-4000-8000-000000000001',
+        sessionCode: 'PDH-000042',
+        sessionKind: 'MANUAL',
       };
       const client = new QueryClient();
       client.setQueryData(sessionQueryKey, session);
@@ -58,8 +63,11 @@ describe('priority offer notification', () => {
       expect(html).toContain('xác nhận có nhận không?');
       expect(html).toContain('Cửa hàng thử');
       expect(html).toContain('Áo nam');
-      expect(html).toContain('Nhận đủ');
-      expect(html).toContain('Từ chối');
+      expect(html).toContain('Nhận hàng');
+      expect(html).toContain('Không nhận');
+      expect(html).toContain('Phiên bổ sung PDH-000042');
+      expect(html).toContain('MỘT PHẦN');
+      expect(html).toContain('phiếu chờ vẫn được giữ nguyên');
     },
   );
 });

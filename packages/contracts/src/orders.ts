@@ -39,7 +39,7 @@ function validateOrderSessionWindow(
     readonly allocationStartsAt: string;
   },
   context: z.RefinementCtx,
-  allowEarlierOpening = false,
+  storedSession = false,
 ): void {
   if (Date.parse(value.requestOpensAt) >= Date.parse(value.requestClosesAt)) {
     context.addIssue({
@@ -54,9 +54,20 @@ function validateOrderSessionWindow(
       path: ['allocationStartsAt'],
       message: 'Allocation cannot start before the request window closes',
     });
+  } else if (
+    !storedSession &&
+    Date.parse(value.requestClosesAt) === Date.parse(value.allocationStartsAt)
+  ) {
+    // Priority offers are created at the close and answered until allocation starts. A new
+    // session needs that window; stored legacy sessions with none are still readable.
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['allocationStartsAt'],
+      message: 'Allocation must start after the request window closes',
+    });
   }
   for (const field of ['requestOpensAt', 'requestClosesAt', 'allocationStartsAt'] as const) {
-    if (field === 'requestOpensAt' && allowEarlierOpening) continue;
+    if (field === 'requestOpensAt' && storedSession) continue;
     if (hoChiMinhBusinessDate(value[field]) !== value.businessDate) {
       context.addIssue({
         code: z.ZodIssueCode.custom,

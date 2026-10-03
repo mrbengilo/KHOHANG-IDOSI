@@ -253,6 +253,7 @@ import {
   receiveSupplierInbound as receiveDatabaseSupplierInbound,
   RequestLimitExceededError,
   respondPriorityOffer as respondDatabasePriorityOffer,
+  priorityOfferCoverage,
   reviewStoreOutbound as reviewDatabaseStoreOutbound,
   sessions,
   StoreOperationConflictError,
@@ -4080,7 +4081,11 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     context: RequestContext,
   ): Promise<IdempotentResource<WaitTicket>> {
     if (actor.role === 'STORE') await this.authorizeRetailStoreOperation(actor);
-    if (actor.role !== 'STORE' && actor.role !== 'WHOLESALE') throw forbidden();
+    // Store and wholesale accounts cancel their own waits; an Admin may cancel any store's wait,
+    // inactive stores included. HTKD answers offers but does not cancel waits.
+    if (actor.role !== 'STORE' && actor.role !== 'WHOLESALE' && actor.role !== 'ADMIN') {
+      throw forbidden();
+    }
     return withWaitErrors(async () => {
       const result = await cancelDatabaseWaitTicket(db, {
         waitTicketId,
@@ -4592,18 +4597,29 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     actor: AuthenticatedPrincipal,
     offerId: string,
   ): Promise<PriorityOffer> {
-    const [offer] = await db
-      .select()
+    const [row] = await db
+      .select({
+        offer: dailyPriorityOffers,
+        orderSessionCode: orderSessions.code,
+        orderSessionKind: orderSessions.kind,
+      })
       .from(dailyPriorityOffers)
+      .leftJoin(orderSessions, eq(orderSessions.id, dailyPriorityOffers.orderSessionId))
       .where(and(eq(dailyPriorityOffers.id, offerId), isNull(dailyPriorityOffers.deletedAt)))
       .limit(1);
-    if (!offer) throw notFound('Không tìm thấy đề nghị ưu tiên');
+    if (!row) throw notFound('Không tìm thấy đề nghị ưu tiên');
+    const { offer } = row;
     if (!canAccessStore(actor, offer.storeId)) throw forbidden();
     const effectiveStatus =
       offer.status === 'offered' && offer.responseDeadlineAt.getTime() <= Date.now()
         ? 'expired'
         : offer.status;
-    return priorityOfferDto({ ...offer, effectiveStatus });
+    return priorityOfferDto({
+      ...offer,
+      orderSessionCode: row.orderSessionCode,
+      orderSessionKind: row.orderSessionKind,
+      effectiveStatus,
+    });
   }
 
   private async inventoryBagDto(bagId: string): Promise<StoreInventoryBag> {
@@ -5687,6 +5703,12 @@ function waitTicketDto(ticket: WaitTicketRecord): WaitTicket {
             ? 'PARTIALLY_FULFILLED'
             : 'WAITING'
         : (ticket.status.toUpperCase() as WaitTicket['status']),
+    cancellationKind:
+      ticket.status === 'cancelled' && ticket.cancellationKind
+        ? (ticket.cancellationKind.toUpperCase() as NonNullable<WaitTicket['cancellationKind']>)
+        : null,
+    resolutionReason: ticket.resolutionReason,
+    resolvedAt: ticket.resolvedAt?.toISOString() ?? null,
     createdAt: ticket.createdAt.toISOString(),
     updatedAt: ticket.updatedAt.toISOString(),
   };
@@ -5718,7 +5740,10 @@ function contractPriorityOfferStatus(
   }
 }
 
-function priorityOfferDto(offer: PriorityOfferRecord): PriorityOffer {
+function priorityOfferDto(
+  offer: Omit<PriorityOfferRecord, 'orderSessionCode' | 'orderSessionKind' | 'coverage'> &
+    Partial<Pick<PriorityOfferRecord, 'orderSessionCode' | 'orderSessionKind'>>,
+): PriorityOffer {
   const status = contractPriorityOfferStatus(offer.effectiveStatus);
   return {
     id: offer.id,
@@ -5732,6 +5757,19 @@ function priorityOfferDto(offer: PriorityOfferRecord): PriorityOffer {
     expiresAt: offer.responseDeadlineAt.toISOString(),
     respondedAt: offer.respondedAt?.toISOString() ?? null,
     accepted: status === 'ACCEPTED' ? { kind: 'UNIT', quantity: offer.acceptedQuantity } : null,
+    coverage: priorityOfferCoverage(offer) === 'full' ? 'FULL' : 'PARTIAL',
+    waitingAtOffer:
+      offer.eligibleQuantityAtOffer === null
+        ? null
+        : { kind: 'UNIT', quantity: offer.eligibleQuantityAtOffer },
+    sessionId: offer.orderSessionId,
+    sessionCode: offer.orderSessionCode || null,
+    sessionKind:
+      offer.orderSessionKind === undefined || offer.orderSessionKind === null
+        ? null
+        : offer.orderSessionKind === 'manual'
+          ? 'MANUAL'
+          : 'DEFAULT',
   };
 }
 

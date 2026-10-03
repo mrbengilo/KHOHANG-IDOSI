@@ -50,6 +50,13 @@ const ticketStatusLabel: Record<WaitTicket['status'], string> = {
   WAITING: 'Đang chờ',
 };
 
+const cancellationKindLabel: Record<NonNullable<WaitTicket['cancellationKind']>, string> = {
+  ADMIN_CANCELLED: 'Admin hủy phiếu',
+  FULL_OFFER_DECLINED: 'Cửa hàng không nhận đề nghị đủ hàng',
+  FULL_OFFER_TIMEOUT: 'Quá hạn phản hồi đề nghị đủ hàng',
+  STORE_CANCELLED: 'Cửa hàng hủy phiếu',
+};
+
 const offerStatusLabel: Record<PriorityOfferRecord['status'], string> = {
   ACCEPTED: 'Đã xác nhận ưu tiên',
   CANCELLED: 'Đã hủy',
@@ -63,9 +70,13 @@ const auditActionLabel: Readonly<Record<string, string>> = {
   PRIORITY_OFFER_CANCELLED: 'Hủy lượt ưu tiên',
   PRIORITY_OFFER_CANCELLED_WITH_WAIT_TICKET: 'Hủy lượt ưu tiên cùng phiếu chờ',
   PRIORITY_OFFER_CREATED: 'Tạo lượt ưu tiên',
-  PRIORITY_OFFER_DECLINED: 'Cửa hàng từ chối lượt ưu tiên',
+  PRIORITY_OFFER_DECLINED: 'Cửa hàng không nhận lượt ưu tiên',
   PRIORITY_OFFER_EXPIRED: 'Lượt ưu tiên hết hạn',
+  WAIT_TICKET_ADMIN_CANCELLED: 'Admin hủy phiếu chờ',
   WAIT_TICKET_CANCELLED: 'Cửa hàng hủy phiếu chờ',
+  WAIT_TICKET_PRIORITY_RESPONSE_TIMEOUT: 'Hủy do quá hạn phản hồi đề nghị đủ hàng',
+  WAIT_TICKET_STORE_CANCELLED: 'Cửa hàng hủy phiếu chờ',
+  WAIT_TICKET_STORE_DECLINED_FULL_PRIORITY: 'Hủy do cửa hàng không nhận đề nghị đủ hàng',
   WAIT_TICKET_CREATED: 'Tạo phiếu chờ',
   WAIT_TICKET_FULFILLED: 'Cấp đủ phiếu chờ',
   WAIT_TICKET_UPDATED: 'Cập nhật phiếu chờ',
@@ -98,9 +109,11 @@ export function WaitlistPanel({
       principal.storeId === scopeStoreId) ||
     (role === 'HTKD' && principal?.role === 'HTKD') ||
     (role === 'WHOLESALE' && principal?.role === 'WHOLESALE');
+  // Server-enforced as well: store/wholesale cancel their own waits, Admin any store's wait.
   const canCancelTicket =
     (role === 'STORE' && principal?.role === 'STORE' && principal.storeId === scopeStoreId) ||
-    (role === 'WHOLESALE' && principal?.role === 'WHOLESALE');
+    (role === 'WHOLESALE' && principal?.role === 'WHOLESALE') ||
+    (role === 'ADMIN' && principal?.role === 'ADMIN');
   const ticketFilters = scopeStoreId ? { storeId: scopeStoreId } : {};
   const scopeQueryKey = scopeStoreId ?? 'accessible';
   const ticketQueryKey = ['wait-tickets', viewerAccountId, scopeQueryKey] as const;
@@ -182,9 +195,13 @@ export function WaitlistPanel({
       });
       offerAttempt.current = null;
       setNotice(
-        input.action === 'ACCEPT'
-          ? 'Đã xác nhận ưu tiên. Hàng được cấp sẽ giữ lại và giao chung với đơn thường kế tiếp, không tính vào 2 lượt đặt hàng.'
-          : 'Máy chủ đã ghi nhận từ chối lượt ưu tiên.',
+        updated.status === 'ACCEPTED'
+          ? 'Đã nhận hàng ưu tiên. Hàng được cấp sẽ giữ lại và giao chung với đơn thường kế tiếp, không tính vào 2 lượt đặt hàng.'
+          : updated.status === 'DECLINED' && updated.coverage === 'FULL'
+            ? 'Đã ghi nhận không nhận đề nghị đủ hàng. Phiếu chờ đã được hủy.'
+            : updated.status === 'DECLINED'
+              ? 'Đã ghi nhận không nhận lượt này. Phiếu chờ vẫn được giữ cho phiên sau.'
+              : 'Đề nghị đã hết hạn trước khi phản hồi được ghi nhận.',
       );
       await refetchWaitState();
     } catch (cause) {
@@ -235,7 +252,9 @@ export function WaitlistPanel({
       cancelAttempt.current = null;
       setCancelTarget(null);
       setCancelReason('');
-      setNotice('Máy chủ đã hủy phiếu chờ và lưu lý do vào lịch sử.');
+      setNotice(
+        'Đã hủy phần nhu cầu còn chờ của phiếu. Hàng đã được cấp (nếu có) vẫn giữ để giao chung; lý do đã lưu vào lịch sử.',
+      );
       await refetchWaitState();
     } catch (cause) {
       setCancelError(
@@ -281,11 +300,13 @@ export function WaitlistPanel({
             <h2>{title}</h2>
             <p>
               {canRespond
-                ? 'Xác nhận toàn bộ số lượng ưu tiên được đề nghị. Hàng được cấp sẽ giữ lại để giao chung với đơn thường kế tiếp, không chiếm lượt đặt thường.'
-                : 'Chế độ giám sát chỉ đọc.'}
+                ? 'Nhận toàn bộ số lượng được đề nghị trong phiên. Hàng được cấp sẽ giữ lại để giao chung với đơn thường kế tiếp, không chiếm lượt đặt thường.'
+                : canCancelTicket
+                  ? 'Admin có thể hủy phiếu chờ còn hiệu lực của mọi cửa hàng; phần đã được cấp vẫn giữ để giao chung.'
+                  : 'Chế độ giám sát chỉ đọc.'}
             </p>
           </div>
-          {!canRespond ? <Badge tone="info">Chỉ đọc</Badge> : null}
+          {!canRespond && !canCancelTicket ? <Badge tone="info">Chỉ đọc</Badge> : null}
         </div>
 
         {notice ? (
@@ -323,6 +344,7 @@ export function WaitlistPanel({
                         ? ` • ${storeNameById.get(ticket.storeId)}`
                         : ''}
                     </span>
+                    {ticket.status === 'CANCELLED' ? <CancellationNote ticket={ticket} /> : null}
                   </div>
                   <Badge
                     tone={
@@ -356,7 +378,7 @@ export function WaitlistPanel({
                         }}
                         type="button"
                       >
-                        <Ban aria-hidden="true" size={15} /> Hủy phiếu
+                        <Ban aria-hidden="true" size={15} /> Hủy phiếu chờ
                       </button>
                     ) : null}
                   </div>
@@ -390,6 +412,8 @@ export function WaitlistPanel({
           }}
           productName={productNameById.get(cancelTarget.productId) ?? cancelTarget.productId}
           reason={cancelReason}
+          remaining={amountLabel(cancelTarget.remaining)}
+          storeName={storeNameById.get(cancelTarget.storeId) ?? null}
         />
       ) : null}
     </>
@@ -452,8 +476,13 @@ function HistoryDialog({
                   {productNameById.get(history.ticket.productId) ?? history.ticket.productId}
                 </strong>
                 <span>Còn {amountLabel(history.ticket.remaining)}</span>
+                {history.ticket.status === 'CANCELLED' ? (
+                  <CancellationNote ticket={history.ticket} />
+                ) : null}
               </div>
-              <Badge tone="info">{ticketStatusLabel[history.ticket.status]}</Badge>
+              <Badge tone={history.ticket.status === 'CANCELLED' ? 'neutral' : 'info'}>
+                {ticketStatusLabel[history.ticket.status]}
+              </Badge>
             </div>
             <section>
               <h3>Lượt ưu tiên</h3>
@@ -465,7 +494,13 @@ function HistoryDialog({
                   </strong>
                   <span>
                     {offerStatusLabel[offer.status]} •{' '}
-                    {new Date(offer.offeredAt).toLocaleString('vi-VN')}
+                    {offer.coverage === 'FULL' ? 'đủ toàn bộ' : 'một phần'}
+                    {offer.waitingAtOffer
+                      ? ` (đang chờ ${amountLabel(offer.waitingAtOffer)})`
+                      : ''}{' '}
+                    • {offer.sessionKind === 'MANUAL' ? 'phiên bổ sung' : 'phiên chính'}
+                    {offer.sessionCode ? ` ${offer.sessionCode}` : ''} • hạn{' '}
+                    {new Date(offer.expiresAt).toLocaleString('vi-VN')}
                   </span>
                 </article>
               ))}
@@ -509,6 +544,8 @@ interface CancelDialogProps {
   readonly onReasonChange: (value: string) => void;
   readonly productName: string;
   readonly reason: string;
+  readonly remaining: string;
+  readonly storeName: string | null;
 }
 
 function CancelDialog({
@@ -520,6 +557,8 @@ function CancelDialog({
   onReasonChange,
   productName,
   reason,
+  remaining,
+  storeName,
 }: CancelDialogProps) {
   const dialogRef = useDialogAccessibility(busy ? undefined : onCancel);
   const titleId = 'cancel-wait-ticket-title';
@@ -538,7 +577,11 @@ function CancelDialog({
         <div className="dialog__header">
           <div>
             <h2 id={titleId}>Hủy phiếu chờ</h2>
-            <p>{productName} • thao tác sẽ được ghi vào nhật ký hệ thống.</p>
+            <p>
+              {storeName ? `${storeName} • ` : ''}
+              {productName} • hủy {remaining} còn chờ. Hàng đã được cấp vẫn giữ để giao chung; thao
+              tác được ghi vào nhật ký hệ thống.
+            </p>
           </div>
           <button
             aria-label="Đóng hộp thoại hủy phiếu"
@@ -584,5 +627,19 @@ function CancelDialog({
         </div>
       </section>
     </div>
+  );
+}
+
+function CancellationNote({ ticket }: { readonly ticket: WaitTicket }) {
+  const label = ticket.cancellationKind ? cancellationKindLabel[ticket.cancellationKind] : null;
+  if (!label && !ticket.resolutionReason) return null;
+  return (
+    <span className="waitlist-panel__cancellation">
+      {label ?? 'Đã hủy'}
+      {ticket.resolutionReason && ticket.resolutionReason !== label
+        ? ` — ${ticket.resolutionReason}`
+        : ''}
+      {ticket.resolvedAt ? ` • ${new Date(ticket.resolvedAt).toLocaleString('vi-VN')}` : ''}
+    </span>
   );
 }
