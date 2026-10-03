@@ -25,13 +25,13 @@ import {
   mergedOrderSources,
   orderRequestItems,
   orderRequests,
-  storeReceiptLines,
-  storeReceipts,
   stores,
   users,
   waitTickets,
+  orderSessions,
   type DatabaseUserRole,
   type JsonObject,
+  type WaitTicketCancellationKind,
 } from './schema.js';
 import { livePriorityOfferCondition } from './priority-offer-state.js';
 import { withAdvisoryLock, type Transaction } from './transaction.js';
@@ -65,6 +65,7 @@ export type WaitTicketEffectiveStatus = 'waiting' | 'offered' | 'partially_fulfi
 export type PriorityOfferDatabaseStatus = typeof dailyPriorityOffers.$inferSelect.status;
 export type PriorityOfferResponseAction = 'accept' | 'decline' | 'expire';
 export type PriorityOfferEffectiveAction = PriorityOfferResponseAction | 'cancel';
+export type PriorityOfferCoverage = 'full' | 'partial';
 
 interface ActiveActor {
   readonly id: string;
@@ -110,6 +111,8 @@ export interface WaitTicketRecord {
   readonly queuedAt: Date;
   readonly resolvedAt: Date | null;
   readonly resolutionReason: string | null;
+  readonly cancellationKind: WaitTicketCancellationKind | null;
+  readonly cancelledByOfferId: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly hasOpenOffer: boolean;
@@ -137,6 +140,11 @@ export interface PriorityOfferRecord {
   readonly priorityLevel: WaitTicketPriority;
   readonly roundNumber: number;
   readonly offeredQuantity: number;
+  readonly eligibleQuantityAtOffer: number | null;
+  readonly coverage: PriorityOfferCoverage;
+  readonly orderSessionId: string | null;
+  readonly orderSessionCode: string | null;
+  readonly orderSessionKind: 'default' | 'manual' | null;
   readonly acceptedQuantity: number;
   readonly status: PriorityOfferDatabaseStatus;
   readonly effectiveStatus: PriorityOfferDatabaseStatus;
@@ -190,6 +198,7 @@ export interface CancelWaitTicketInput {
 export interface CancelledWaitTicket {
   readonly waitTicketId: string;
   readonly status: 'cancelled';
+  readonly cancellationKind: WaitTicketCancellationKind;
   readonly cancelledOfferIds: readonly string[];
   readonly resolvedAt: Date;
 }
@@ -230,6 +239,8 @@ export interface RespondedPriorityOffer {
   readonly acceptedQuantity: number;
   readonly effectiveAction: PriorityOfferEffectiveAction;
   readonly respondedAt: Date;
+  /** True when the declined/expired offer was a full offer and its wait ticket was cancelled. */
+  readonly waitTicketCancelled: boolean;
 }
 
 export interface PriorityOfferTransitionInput {
@@ -398,6 +409,8 @@ export async function listWaitTickets(
         queuedAt: waitTickets.queuedAt,
         resolvedAt: waitTickets.resolvedAt,
         resolutionReason: waitTickets.resolutionReason,
+        cancellationKind: waitTickets.cancellationKind,
+        cancelledByOfferId: waitTickets.cancelledByOfferId,
         createdAt: waitTickets.createdAt,
         updatedAt: waitTickets.updatedAt,
       })
@@ -466,6 +479,10 @@ export async function listPriorityOffers(
         priorityLevel: dailyPriorityOffers.priorityLevel,
         roundNumber: dailyPriorityOffers.roundNumber,
         offeredQuantity: dailyPriorityOffers.offeredQuantity,
+        eligibleQuantityAtOffer: dailyPriorityOffers.eligibleQuantityAtOffer,
+        orderSessionId: dailyPriorityOffers.orderSessionId,
+        orderSessionCode: orderSessions.code,
+        orderSessionKind: orderSessions.kind,
         acceptedQuantity: dailyPriorityOffers.acceptedQuantity,
         status: dailyPriorityOffers.status,
         responseDeadlineAt: dailyPriorityOffers.responseDeadlineAt,
@@ -474,6 +491,7 @@ export async function listPriorityOffers(
         updatedAt: dailyPriorityOffers.updatedAt,
       })
       .from(dailyPriorityOffers)
+      .leftJoin(orderSessions, eq(orderSessions.id, dailyPriorityOffers.orderSessionId))
       .where(predicate)
       .orderBy(desc(dailyPriorityOffers.createdAt), desc(dailyPriorityOffers.id))
       .limit(pagination.pageSize)
@@ -484,6 +502,7 @@ export async function listPriorityOffers(
   return {
     data: rows.map((row) => ({
       ...row,
+      coverage: priorityOfferCoverage(row),
       effectiveStatus: effectivePriorityOfferStatus(row, now),
     })),
     pagination: pageMetadata(pagination.page, pagination.pageSize, totalItems),
@@ -519,6 +538,8 @@ export async function getWaitTicketHistory(
       queuedAt: waitTickets.queuedAt,
       resolvedAt: waitTickets.resolvedAt,
       resolutionReason: waitTickets.resolutionReason,
+      cancellationKind: waitTickets.cancellationKind,
+      cancelledByOfferId: waitTickets.cancelledByOfferId,
       createdAt: waitTickets.createdAt,
       updatedAt: waitTickets.updatedAt,
     })
@@ -547,6 +568,10 @@ export async function getWaitTicketHistory(
       priorityLevel: dailyPriorityOffers.priorityLevel,
       roundNumber: dailyPriorityOffers.roundNumber,
       offeredQuantity: dailyPriorityOffers.offeredQuantity,
+      eligibleQuantityAtOffer: dailyPriorityOffers.eligibleQuantityAtOffer,
+      orderSessionId: dailyPriorityOffers.orderSessionId,
+      orderSessionCode: orderSessions.code,
+      orderSessionKind: orderSessions.kind,
       acceptedQuantity: dailyPriorityOffers.acceptedQuantity,
       status: dailyPriorityOffers.status,
       responseDeadlineAt: dailyPriorityOffers.responseDeadlineAt,
@@ -555,6 +580,7 @@ export async function getWaitTicketHistory(
       updatedAt: dailyPriorityOffers.updatedAt,
     })
     .from(dailyPriorityOffers)
+    .leftJoin(orderSessions, eq(orderSessions.id, dailyPriorityOffers.orderSessionId))
     .where(
       and(
         eq(dailyPriorityOffers.waitTicketId, ticket.id),
@@ -567,6 +593,7 @@ export async function getWaitTicketHistory(
   const historyReadAt = new Date();
   const offers = offerRows.map((offer) => ({
     ...offer,
+    coverage: priorityOfferCoverage(offer),
     effectiveStatus: effectivePriorityOfferStatus(offer, historyReadAt),
   }));
 
@@ -635,6 +662,7 @@ export async function cancelWaitTicket(
       const responseBody: JsonObject = {
         waitTicketId: cancelled.waitTicketId,
         status: cancelled.status,
+        cancellationKind: cancelled.cancellationKind,
         cancelledOfferIds: [...cancelled.cancelledOfferIds],
         resolvedAt: cancelled.resolvedAt.toISOString(),
       };
@@ -669,7 +697,7 @@ export async function cancelWaitTicketInTransaction(
     if (!scope) {
       throw new WaitTicketNotFoundError();
     }
-    const actor = await assertActorMayAccessStore(tx, input.actorUserId, scope.storeId);
+    const actor = await assertActorMayCancelWaitTicket(tx, input.actorUserId, scope.storeId);
 
     return withAdvisoryLock(
       tx,
@@ -689,30 +717,15 @@ export async function cancelWaitTicketInTransaction(
           throw new WaitTicketConflictError('The wait ticket scope changed during cancellation.');
         }
         if (ticket.status !== 'active') {
+          // A completed or already cancelled ticket is never rewritten; an exact retry of the
+          // original command is answered by its idempotency record instead.
           throw new WaitTicketConflictError('Only an active wait ticket can be cancelled.');
         }
 
-        const [unsettledShortage] = await tx
-          .select({ id: storeReceiptLines.id })
-          .from(storeReceiptLines)
-          .innerJoin(storeReceipts, eq(storeReceiptLines.storeReceiptId, storeReceipts.id))
-          .where(
-            and(
-              eq(storeReceipts.storeId, ticket.storeId),
-              eq(storeReceiptLines.productId, ticket.productId),
-              gt(storeReceiptLines.priorityQueuedQuantity, 0),
-              inArray(storeReceipts.status, ['pending_htkd', 'returned']),
-              isNull(storeReceipts.deletedAt),
-            ),
-          )
-          .limit(1);
-        if (unsettledShortage) {
-          throw new WaitTicketConflictError(
-            'A store-confirmed receipt shortage is still awaiting finalization; its priority wait cannot be cancelled.',
-          );
-        }
-
-        const pendingOffers = await tx
+        // Only unanswered offers and accepted offers that the allocation run has not consumed
+        // still claim this ticket. Allocated quantity is history: it stays reserved for the
+        // store and ships with its next ordinary order; only the unallocated demand is cancelled.
+        const liveOffers = await tx
           .select()
           .from(dailyPriorityOffers)
           .where(
@@ -725,22 +738,15 @@ export async function cancelWaitTicketInTransaction(
           .orderBy(asc(dailyPriorityOffers.id))
           .for('update');
 
-        if (pendingOffers.some((offer) => offer.status === 'accepted')) {
-          throw new WaitTicketConflictError(
-            'A wait ticket with an accepted priority offer cannot be cancelled.',
-          );
-        }
-
         const now = new Date();
-        const cancelledOffers = pendingOffers.filter((offer) => offer.status === 'offered');
-        const cancelledOfferIds = cancelledOffers.map((offer) => offer.id);
-        if (cancelledOfferIds.length > 0) {
-          for (const offer of cancelledOffers) {
-            if (offer.stockHeldQuantity > 0) {
-              await releasePriorityOfferStock(tx, offer, now);
-            }
+        for (const offer of liveOffers) {
+          if (offer.stockHeldQuantity > 0) {
+            await releasePriorityOfferStock(tx, offer, now);
           }
-          await tx
+        }
+        const cancelledOfferIds = liveOffers.map((offer) => offer.id);
+        if (cancelledOfferIds.length > 0) {
+          const updatedOffers = await tx
             .update(dailyPriorityOffers)
             .set({
               status: 'cancelled',
@@ -752,17 +758,24 @@ export async function cancelWaitTicketInTransaction(
             .where(
               and(
                 inArray(dailyPriorityOffers.id, cancelledOfferIds),
-                eq(dailyPriorityOffers.status, 'offered'),
+                inArray(dailyPriorityOffers.status, ['offered', 'accepted']),
               ),
-            );
+            )
+            .returning({ id: dailyPriorityOffers.id });
+          if (updatedOffers.length !== cancelledOfferIds.length) {
+            throw new WaitTicketConflictError('A priority offer changed during cancellation.');
+          }
         }
 
+        const cancellationKind: WaitTicketCancellationKind =
+          actor.role === 'admin' ? 'admin_cancelled' : 'store_cancelled';
         const [updated] = await tx
           .update(waitTickets)
           .set({
             status: 'cancelled',
             resolvedAt: now,
             resolutionReason: normalizedReason,
+            cancellationKind,
             updatedAt: now,
           })
           .where(and(eq(waitTickets.id, ticket.id), eq(waitTickets.status, 'active')))
@@ -776,7 +789,8 @@ export async function cancelWaitTicketInTransaction(
           actorUserId: actor.id,
           actorRole: actor.role,
           actorStoreId: ticket.storeId,
-          action: 'WAIT_TICKET_CANCELLED',
+          action:
+            actor.role === 'admin' ? 'WAIT_TICKET_ADMIN_CANCELLED' : 'WAIT_TICKET_STORE_CANCELLED',
           entityType: 'wait_ticket',
           entityId: ticket.id,
           before: waitTicketAuditSnapshot(ticket),
@@ -785,13 +799,19 @@ export async function cancelWaitTicketInTransaction(
             status: 'cancelled',
             resolvedAt: now.toISOString(),
             resolutionReason: normalizedReason,
+            cancellationKind,
           },
-          metadata: { cancelledOfferIds },
+          metadata: {
+            cancellationKind,
+            cancelledOfferIds,
+            cancelledQuantity: ticket.remainingQuantity,
+            retainedFulfilledQuantity: ticket.fulfilledQuantity,
+          },
         });
 
-        if (cancelledOfferIds.length > 0) {
+        if (liveOffers.length > 0) {
           await tx.insert(auditLogs).values(
-            cancelledOffers.map((offer) => ({
+            liveOffers.map((offer) => ({
               requestId: input.requestId ?? null,
               actorUserId: actor.id,
               actorRole: actor.role,
@@ -806,7 +826,12 @@ export async function cancelWaitTicketInTransaction(
                 acceptedQuantity: 0,
                 stockHeldQuantity: 0,
                 respondedAt: now.toISOString(),
+              },
+              metadata: {
                 waitTicketId: ticket.id,
+                orderSessionId: offer.orderSessionId,
+                previousStatus: offer.status,
+                releasedHoldQuantity: offer.stockHeldQuantity,
               },
             })),
           );
@@ -815,12 +840,131 @@ export async function cancelWaitTicketInTransaction(
         return {
           waitTicketId: ticket.id,
           status: 'cancelled',
+          cancellationKind,
           cancelledOfferIds,
           resolvedAt: now,
         };
       },
     );
   });
+}
+
+/**
+ * Whether an offer proves the store was offered everything it was still waiting for.
+ *
+ * The basis is the quantity recorded when the offer was created, never the stock at the deadline.
+ * A legacy offer without a basis, or a ticket whose demand grew beyond the offer afterwards, is
+ * partial: the policy cancels a ticket only when the offer is proven to cover all of it.
+ */
+export function priorityOfferCoverage(
+  offer: { readonly offeredQuantity: number; readonly eligibleQuantityAtOffer: number | null },
+  ticketRemainingQuantity?: number,
+): PriorityOfferCoverage {
+  if (offer.eligibleQuantityAtOffer === null) return 'partial';
+  if (offer.offeredQuantity < offer.eligibleQuantityAtOffer) return 'partial';
+  if (ticketRemainingQuantity !== undefined && ticketRemainingQuantity > offer.offeredQuantity) {
+    return 'partial';
+  }
+  return 'full';
+}
+
+export interface CancelWaitTicketForFullOfferInput {
+  /** Locked by the caller (FOR UPDATE) in this transaction. */
+  readonly ticket: typeof waitTickets.$inferSelect;
+  /** The offer as it was before it was declined or expired. */
+  readonly offer: typeof dailyPriorityOffers.$inferSelect;
+  readonly kind: 'full_offer_declined' | 'full_offer_timeout';
+  readonly actor: {
+    readonly id: string;
+    readonly role: DatabaseUserRole;
+  } | null;
+  readonly occurredAt: Date;
+  readonly requestId?: string | null;
+  readonly auditId?: string;
+}
+
+/**
+ * Shared by the API (decline, late answer) and the worker (deadline): cancels the ticket of a
+ * declined or unanswered full offer in the caller's transaction. The caller has already moved the
+ * offer to declined/expired and returned its hold. Returns false, changing nothing, when the
+ * ticket is no longer active or the offer cannot be proven to cover its whole demand.
+ */
+export async function cancelWaitTicketForFullOfferInTransaction(
+  tx: Transaction,
+  input: CancelWaitTicketForFullOfferInput,
+): Promise<boolean> {
+  const { ticket, offer } = input;
+  if (ticket.id !== offer.waitTicketId) {
+    throw new PriorityOfferConflictError('The priority offer does not belong to the wait ticket.');
+  }
+  if (ticket.status !== 'active') return false;
+  if (priorityOfferCoverage(offer, ticket.remainingQuantity) !== 'full') return false;
+  // Another live claim on the same ticket means this offer no longer stands for the whole demand.
+  const [otherLive] = await tx
+    .select({ id: dailyPriorityOffers.id })
+    .from(dailyPriorityOffers)
+    .where(
+      and(
+        eq(dailyPriorityOffers.waitTicketId, ticket.id),
+        livePriorityOfferCondition(),
+        isNull(dailyPriorityOffers.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (otherLive && otherLive.id !== offer.id) return false;
+
+  const reason =
+    input.kind === 'full_offer_declined'
+      ? 'Cửa hàng từ chối đề nghị nhận đủ toàn bộ hàng đang chờ'
+      : 'Quá hạn phản hồi đề nghị nhận đủ toàn bộ hàng đang chờ';
+  const [updated] = await tx
+    .update(waitTickets)
+    .set({
+      status: 'cancelled',
+      resolvedAt: input.occurredAt,
+      resolutionReason: reason,
+      cancellationKind: input.kind,
+      cancelledByOfferId: offer.id,
+      updatedAt: input.occurredAt,
+    })
+    .where(and(eq(waitTickets.id, ticket.id), eq(waitTickets.status, 'active')))
+    .returning({ id: waitTickets.id });
+  if (!updated) return false;
+
+  await tx.insert(auditLogs).values({
+    ...(input.auditId ? { id: input.auditId } : {}),
+    requestId: input.requestId ?? null,
+    actorUserId: input.actor?.id ?? null,
+    actorRole: input.actor?.role ?? null,
+    actorStoreId: ticket.storeId,
+    action:
+      input.kind === 'full_offer_declined'
+        ? 'WAIT_TICKET_STORE_DECLINED_FULL_PRIORITY'
+        : 'WAIT_TICKET_PRIORITY_RESPONSE_TIMEOUT',
+    entityType: 'wait_ticket',
+    entityId: ticket.id,
+    before: waitTicketAuditSnapshot(ticket),
+    after: {
+      ...waitTicketAuditSnapshot(ticket),
+      status: 'cancelled',
+      resolvedAt: input.occurredAt.toISOString(),
+      resolutionReason: reason,
+      cancellationKind: input.kind,
+    },
+    metadata: {
+      cancellationKind: input.kind,
+      offerId: offer.id,
+      orderSessionId: offer.orderSessionId,
+      responseDeadlineAt: offer.responseDeadlineAt.toISOString(),
+      basis: {
+        offeredQuantity: offer.offeredQuantity,
+        eligibleQuantityAtOffer: offer.eligibleQuantityAtOffer,
+        ticketRemainingQuantity: ticket.remainingQuantity,
+      },
+    },
+    createdAt: input.occurredAt,
+  });
+  return true;
 }
 
 export async function respondPriorityOffer(
@@ -844,6 +988,7 @@ export async function respondPriorityOffer(
         acceptedQuantity: responded.acceptedQuantity,
         effectiveAction: responded.effectiveAction,
         respondedAt: responded.respondedAt.toISOString(),
+        waitTicketCancelled: responded.waitTicketCancelled,
       };
       return {
         value: responded,
@@ -896,13 +1041,7 @@ export async function respondPriorityOfferInTransaction(
       `${scope.storeId}:${scope.productId}`,
       async () => {
         const [ticket] = await tx
-          .select({
-            id: waitTickets.id,
-            storeId: waitTickets.storeId,
-            productId: waitTickets.productId,
-            status: waitTickets.status,
-            remainingQuantity: waitTickets.remainingQuantity,
-          })
+          .select()
           .from(waitTickets)
           .where(and(eq(waitTickets.id, scope.waitTicketId), isNull(waitTickets.deletedAt)))
           .for('update')
@@ -970,6 +1109,7 @@ export async function respondPriorityOfferInTransaction(
         }
 
         const reason = input.action === 'decline' ? (input.reason?.trim() ?? null) : null;
+        const coverage = priorityOfferCoverage(offer, ticket.remainingQuantity);
         await tx.insert(auditLogs).values({
           requestId: input.requestId ?? null,
           actorUserId: actor?.id ?? null,
@@ -990,8 +1130,27 @@ export async function respondPriorityOfferInTransaction(
             requestedAction: input.action,
             effectiveAction: transition.effectiveAction,
             reason,
+            orderSessionId: offer.orderSessionId,
+            coverage,
+            eligibleQuantityAtOffer: offer.eligibleQuantityAtOffer,
+            ticketRemainingQuantity: ticket.remainingQuantity,
           },
         });
+
+        // Declining or letting a full offer lapse ends the wait in this same transaction; a
+        // partial offer only gives its quantity back and the ticket keeps waiting.
+        const waitTicketCancelled =
+          transition.status === 'declined' || transition.status === 'expired'
+            ? await cancelWaitTicketForFullOfferInTransaction(tx, {
+                ticket,
+                offer,
+                kind:
+                  transition.status === 'declined' ? 'full_offer_declined' : 'full_offer_timeout',
+                actor: actor ? { id: actor.id, role: actor.role } : null,
+                occurredAt: respondedAt,
+                requestId: input.requestId ?? null,
+              })
+            : false;
 
         return {
           offerId: offer.id,
@@ -1000,6 +1159,7 @@ export async function respondPriorityOfferInTransaction(
           acceptedQuantity: transition.acceptedQuantity,
           effectiveAction: transition.effectiveAction,
           respondedAt,
+          waitTicketCancelled,
         };
       },
     );
@@ -1189,6 +1349,41 @@ async function assertActorMayAccessStore(
   return actor;
 }
 
+/**
+ * Cancelling a wait is a store decision: the store (or wholesale account) for its own store and
+ * an Admin for every store, including an inactive one whose stale demand must still be closable.
+ * HTKD may answer offers for assigned stores but is deliberately not given cancellation rights.
+ */
+async function assertActorMayCancelWaitTicket(
+  tx: Transaction,
+  actorUserId: string,
+  storeId: string,
+): Promise<ActiveActor> {
+  const [actor] = await tx
+    .select({ id: users.id, role: users.role, status: users.status, storeId: users.storeId })
+    .from(users)
+    .where(and(eq(users.id, actorUserId), isNull(users.deletedAt)))
+    .for('share')
+    .limit(1);
+  if (!actor || actor.status !== 'active') {
+    throw new WaitTicketAuthorizationError();
+  }
+  const [store] = await tx
+    .select({ id: stores.id, kind: stores.kind, isActive: stores.isActive })
+    .from(stores)
+    .where(and(eq(stores.id, storeId), isNull(stores.deletedAt)))
+    .for('share')
+    .limit(1);
+  if (!store) {
+    throw new WaitTicketAuthorizationError();
+  }
+  if (actor.role === 'admin') return actor;
+  if (!store.isActive) throw new WaitTicketAuthorizationError();
+  if (actor.role === 'store' && actor.storeId === storeId) return actor;
+  if (actor.role === 'wholesale' && store.kind === 'wholesale') return actor;
+  throw new WaitTicketAuthorizationError();
+}
+
 async function findOpenOfferTicketIds(
   database: Database,
   ticketIds: readonly string[],
@@ -1291,6 +1486,7 @@ function waitTicketAuditSnapshot(ticket: typeof waitTickets.$inferSelect): JsonO
     queuedAt: ticket.queuedAt.toISOString(),
     resolvedAt: ticket.resolvedAt?.toISOString() ?? null,
     resolutionReason: ticket.resolutionReason,
+    cancellationKind: ticket.cancellationKind,
   };
 }
 
@@ -1298,7 +1494,9 @@ function priorityOfferAuditSnapshot(offer: typeof dailyPriorityOffers.$inferSele
   return {
     waitTicketId: offer.waitTicketId,
     status: offer.status,
+    orderSessionId: offer.orderSessionId,
     offeredQuantity: offer.offeredQuantity,
+    eligibleQuantityAtOffer: offer.eligibleQuantityAtOffer,
     stockHeldQuantity: offer.stockHeldQuantity,
     acceptedQuantity: offer.acceptedQuantity,
     responseDeadlineAt: offer.responseDeadlineAt.toISOString(),

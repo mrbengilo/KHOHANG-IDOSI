@@ -171,4 +171,63 @@ describe('wait-list API contracts', () => {
       }).success,
     ).toBe(true);
   });
+
+  it('records why the priority wait policy cancelled a ticket, only on cancelled tickets', () => {
+    for (const kind of [
+      'STORE_CANCELLED',
+      'ADMIN_CANCELLED',
+      'FULL_OFFER_DECLINED',
+      'FULL_OFFER_TIMEOUT',
+    ]) {
+      expect(
+        WaitTicketSchema.safeParse(
+          waitTicket({
+            status: 'CANCELLED',
+            cancellationKind: kind,
+            resolutionReason: 'Cửa hàng không nhận đề nghị đủ hàng',
+            resolvedAt: TIMESTAMP,
+          }),
+        ).success,
+      ).toBe(true);
+    }
+    expect(
+      WaitTicketSchema.safeParse(waitTicket({ cancellationKind: 'STORE_CANCELLED' })).success,
+    ).toBe(false);
+    expect(
+      WaitTicketSchema.safeParse(waitTicket({ status: 'CANCELLED', cancellationKind: 'BOGUS' }))
+        .success,
+    ).toBe(false);
+    // Legacy responses without the new fields stay valid.
+    expect(WaitTicketSchema.safeParse(waitTicket()).success).toBe(true);
+  });
+
+  it('describes full and partial offers with their session and waiting quantity', () => {
+    const partial = {
+      ...priorityOffer(),
+      coverage: 'PARTIAL',
+      waitingAtOffer: { kind: 'UNIT', quantity: 5 },
+      sessionId: IDS.session,
+      sessionCode: 'PDH-000012',
+      sessionKind: 'MANUAL',
+    };
+    expect(PriorityOfferSchema.safeParse(partial).success).toBe(true);
+    expect(
+      PriorityOfferSchema.safeParse({
+        ...partial,
+        coverage: 'FULL',
+        waitingAtOffer: { kind: 'UNIT', quantity: 2 },
+      }).success,
+    ).toBe(true);
+    expect(
+      PriorityOfferSchema.safeParse({
+        ...partial,
+        waitingAtOffer: { kind: 'WEIGHT', value: '5.000' },
+      }).success,
+    ).toBe(false);
+    expect(PriorityOfferSchema.safeParse({ ...partial, coverage: 'SOME' }).success).toBe(false);
+    expect(
+      PriorityOfferSchema.safeParse({ ...priorityOffer(), waitingAtOffer: null, sessionId: null })
+        .success,
+    ).toBe(true);
+  });
 });

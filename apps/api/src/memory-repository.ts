@@ -4970,7 +4970,9 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     context: RequestContext,
   ): Promise<IdempotentResource<WaitTicket>> {
     if (actor.role === 'STORE') await this.authorizeRetailStoreOperation(actor);
-    if (actor.role !== 'STORE' && actor.role !== 'WHOLESALE') throw forbidden();
+    if (actor.role !== 'STORE' && actor.role !== 'WHOLESALE' && actor.role !== 'ADMIN') {
+      throw forbidden();
+    }
     const current = this.waitTickets.get(waitTicketId);
     if (!current) throw notFound('Không tìm thấy phiếu chờ');
     if (!canAccessStore(actor, current.storeId)) throw forbidden();
@@ -4988,15 +4990,22 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const relatedOffers = [...this.priorityOffers.values()].filter(
       (offer) => offer.waitTicketId === waitTicketId,
     );
-    if (relatedOffers.some((offer) => offer.status === 'ACCEPTED')) {
-      throw conflict('Phiếu chờ đã nhận ưu tiên không thể hủy');
-    }
 
+    // Mirrors PostgreSQL: unanswered and accepted-but-unallocated offers are released with the
+    // wait. The memory store has no allocation link, so every accepted offer is still live here.
     const now = this.now().toISOString();
-    const updated: WaitTicket = { ...current, status: 'CANCELLED', updatedAt: now };
+    const updated: WaitTicket = {
+      ...current,
+      status: 'CANCELLED',
+      cancellationKind: actor.role === 'ADMIN' ? 'ADMIN_CANCELLED' : 'STORE_CANCELLED',
+      resolutionReason: input.reason,
+      resolvedAt: now,
+      updatedAt: now,
+    };
     this.waitTickets.set(waitTicketId, updated);
     for (const offer of relatedOffers) {
-      if (this.effectivePriorityOffer(offer).status !== 'PENDING') continue;
+      const status = this.effectivePriorityOffer(offer).status;
+      if (status !== 'PENDING' && status !== 'ACCEPTED') continue;
       this.priorityOffers.set(offer.id, {
         ...offer,
         status: 'CANCELLED',
@@ -5012,7 +5021,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     this.appendAudit(
       actor,
       context,
-      'WAIT_TICKET_CANCELLED',
+      actor.role === 'ADMIN' ? 'WAIT_TICKET_ADMIN_CANCELLED' : 'WAIT_TICKET_STORE_CANCELLED',
       'wait_ticket',
       waitTicketId,
       current,
@@ -5089,6 +5098,35 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       accepted: input.action === 'ACCEPT' ? input.accepted : null,
     };
     this.priorityOffers.set(offerId, updated);
+    // Declining a full offer ends the wait in the same command; a partial offer keeps it.
+    const remaining = ticket.remaining.kind === 'UNIT' ? ticket.remaining.quantity : null;
+    const offered = current.offered.kind === 'UNIT' ? current.offered.quantity : null;
+    const declinedFullOffer =
+      input.action === 'DECLINE' &&
+      current.coverage === 'FULL' &&
+      remaining !== null &&
+      offered !== null &&
+      remaining <= offered;
+    if (declinedFullOffer) {
+      const cancelledTicket: WaitTicket = {
+        ...ticket,
+        status: 'CANCELLED',
+        cancellationKind: 'FULL_OFFER_DECLINED',
+        resolutionReason: 'Cửa hàng từ chối đề nghị nhận đủ toàn bộ hàng đang chờ',
+        resolvedAt: now,
+        updatedAt: now,
+      };
+      this.waitTickets.set(ticket.id, cancelledTicket);
+      this.appendAudit(
+        actor,
+        context,
+        'WAIT_TICKET_STORE_DECLINED_FULL_PRIORITY',
+        'wait_ticket',
+        ticket.id,
+        ticket,
+        cancelledTicket,
+      );
+    }
     this.waitMutationIdempotency.set(scopedKey, {
       requestHash,
       resourceType: 'PRIORITY_OFFER',
@@ -5850,6 +5888,11 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       expiresAt: new Date(this.now().getTime() + 2 * 60 * 60 * 1_000).toISOString(),
       respondedAt: null,
       accepted: null,
+      coverage: 'FULL',
+      waitingAtOffer: { kind: 'UNIT', quantity: 3 },
+      sessionId: MEMORY_SEED_IDS.orderSession,
+      sessionCode: null,
+      sessionKind: 'DEFAULT',
     });
     const seededAccounts: MutableAccount[] = [
       {

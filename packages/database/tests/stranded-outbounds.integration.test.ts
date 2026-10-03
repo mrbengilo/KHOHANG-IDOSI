@@ -219,15 +219,23 @@ describePostgres('stranded allocation outbound backfill', () => {
       await db.select().from(waitTickets).where(eq(waitTickets.storeId, fixture.storeId)),
     ).toHaveLength(1);
 
-    await expect(
-      cancelWaitTicket(db, {
-        waitTicketId: tickets[0]!.id,
-        actorUserId: storeUser.id,
-        reason: 'Không cần nữa',
-        idempotencyKey: `cancel-${token}`,
-        requestHash: `cancel-${token}`,
-      }),
-    ).rejects.toThrow('awaiting finalization');
+    // HTKD answers offers for assigned stores but may never cancel a store's wait.
+    const [htkd] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.role, 'htkd'), eq(users.status, 'active')))
+      .limit(1);
+    if (htkd) {
+      await expect(
+        cancelWaitTicket(db, {
+          waitTicketId: tickets[0]!.id,
+          actorUserId: htkd.id,
+          reason: 'HTKD thử hủy',
+          idempotencyKey: `htkd-cancel-${token}`,
+          requestHash: `htkd-cancel-${token}`,
+        }),
+      ).rejects.toMatchObject({ code: 'WAIT_TICKET_FORBIDDEN' });
+    }
 
     const [admin] = await db
       .select({ id: users.id })
@@ -381,6 +389,98 @@ describePostgres('stranded allocation outbound backfill', () => {
           .where(eq(warehouseBalances.productId, fixture.productId))
       )[0],
     ).toMatchObject({ onHandQuantity: 0, reservedQuantity: 0 });
+  });
+
+  it('lets the store cancel a shortage wait before finalization without reviving it later', async () => {
+    const fixture = await createStrandedOutbound(5);
+    await dispatchStrandedAllocationOutbounds(db, { apply: true });
+    const token = randomUUID().replaceAll('-', '');
+    const [storeUser] = await db
+      .insert(users)
+      .values({
+        storeId: fixture.storeId,
+        email: `cancel-short-${token}@example.test`,
+        passwordHash: 'integration-test-placeholder-hash',
+        displayName: 'Cancelling store',
+        role: 'store',
+      })
+      .returning({ id: users.id });
+    const [admin] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.role, 'admin'), eq(users.status, 'active')))
+      .limit(1);
+    if (!storeUser || !admin) throw new Error('Fixture users are missing.');
+    const lines = [{ productId: fixture.productId, approvedQuantity: 5, receivedQuantity: 3 }];
+    const declared = await declareStoreReceipt(db, {
+      outboundRequestId: fixture.outboundId,
+      storeId: fixture.storeId,
+      declaredByUserId: storeUser.id,
+      lines,
+      discrepancyNote: 'Thiếu hai bao',
+      idempotencyKey: `cdeclare-${token}`,
+      requestHash: `cdeclare-${token}`,
+    });
+    if (declared.replayed) throw new Error('Unexpected declaration replay.');
+    const submitted = await submitStoreReceipt(db, {
+      receiptId: declared.value.receiptId,
+      expectedVersion: declared.value.version,
+      submittedByUserId: storeUser.id,
+      lines,
+      discrepancyNote: 'Thiếu hai bao',
+      idempotencyKey: `csubmit-${token}`,
+      requestHash: `csubmit-${token}`,
+    });
+    if (submitted.replayed) throw new Error('Unexpected submit replay.');
+    const [ticket] = await db
+      .select()
+      .from(waitTickets)
+      .where(and(eq(waitTickets.storeId, fixture.storeId), eq(waitTickets.status, 'active')));
+    expect(ticket).toMatchObject({ remainingQuantity: 2 });
+
+    const cancelled = await cancelWaitTicket(db, {
+      waitTicketId: ticket!.id,
+      actorUserId: storeUser.id,
+      reason: 'Cửa hàng không cần bù hàng thiếu',
+      idempotencyKey: `ccancel-${token}`,
+      requestHash: `ccancel-${token}`,
+    });
+    expect(cancelled.replayed).toBe(false);
+    const [afterCancel] = await db.select().from(waitTickets).where(eq(waitTickets.id, ticket!.id));
+    expect(afterCancel).toMatchObject({
+      status: 'cancelled',
+      cancellationKind: 'store_cancelled',
+      remainingQuantity: 2,
+      fulfilledQuantity: 0,
+    });
+
+    // The receipt is returned and corrected to a smaller shortage. The cancelled demand is not
+    // reduced, re-created, or allowed to block the correction.
+    const returned = await returnStoreReceiptForCorrection(db, {
+      receiptId: declared.value.receiptId,
+      expectedVersion: submitted.value.version,
+      reviewedByUserId: admin.id,
+      reason: 'Kiểm tra lại số bao thực nhận',
+      idempotencyKey: `creturn-${token}`,
+      requestHash: `creturn-${token}`,
+    });
+    if (returned.replayed) throw new Error('Unexpected return replay.');
+    const corrected = await submitStoreReceipt(db, {
+      receiptId: declared.value.receiptId,
+      expectedVersion: returned.value.version,
+      submittedByUserId: storeUser.id,
+      lines: [{ productId: fixture.productId, approvedQuantity: 5, receivedQuantity: 4 }],
+      discrepancyNote: 'Thiếu một bao',
+      idempotencyKey: `cresubmit-${token}`,
+      requestHash: `cresubmit-${token}`,
+    });
+    expect(corrected.replayed).toBe(false);
+    const ticketsAfter = await db
+      .select()
+      .from(waitTickets)
+      .where(eq(waitTickets.storeId, fixture.storeId));
+    expect(ticketsAfter).toHaveLength(1);
+    expect(ticketsAfter[0]).toMatchObject({ status: 'cancelled', remainingQuantity: 2 });
   });
 
   it('still queues a legacy pending shortage during finalization', async () => {

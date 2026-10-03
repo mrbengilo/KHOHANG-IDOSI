@@ -360,12 +360,14 @@ export type {
 
 export {
   cancelWaitTicket,
+  cancelWaitTicketForFullOfferInTransaction,
   cancelWaitTicketInTransaction,
   effectivePriorityOfferStatus,
   getWaitTicketHistory,
   listPriorityOffers,
   listWaitTickets,
   planPriorityOfferResponse,
+  priorityOfferCoverage,
   PriorityOfferConflictError,
   PriorityOfferNotFoundError,
   respondPriorityOffer,
@@ -402,9 +404,11 @@ export type {
 } from './warehouse-shortage-checks.js';
 export type {
   CancelledWaitTicket,
+  CancelWaitTicketForFullOfferInput,
   CancelWaitTicketInput,
   PageInput as WaitTicketPageInput,
   PageMetadata as WaitTicketPageMetadata,
+  PriorityOfferCoverage,
   PriorityOfferDatabaseStatus,
   PriorityOfferEffectiveAction,
   PriorityOfferListInput,

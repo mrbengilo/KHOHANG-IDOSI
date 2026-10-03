@@ -1,5 +1,5 @@
 import { calculateReceiptVat, DomainError } from '@idosi/domain';
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
@@ -292,6 +292,7 @@ export async function finalizeStoreReceiptInTransaction(
         approvedQuantity: storeReceiptLines.approvedQuantity,
         receivedQuantity: storeReceiptLines.receivedQuantity,
         priorityQueuedQuantity: storeReceiptLines.priorityQueuedQuantity,
+        updatedAt: storeReceiptLines.updatedAt,
       })
       .from(storeReceiptLines)
       .where(eq(storeReceiptLines.storeReceiptId, receipt.id))
@@ -447,6 +448,7 @@ export async function finalizeStoreReceiptInTransaction(
           approvedQuantity: persistedLine.approvedQuantity,
           queuedQuantity: persistedLine.priorityQueuedQuantity,
           receivedQuantity: persistedLine.receivedQuantity,
+          shortageDeclaredAt: persistedLine.updatedAt,
         });
         await settleReservations(tx, activeReservations, persistedLine.receivedQuantity, now);
 
@@ -817,6 +819,8 @@ export async function reconcileReceiptShortageWait(
     readonly approvedQuantity: number;
     readonly queuedQuantity: number;
     readonly receivedQuantity: number;
+    /** When the currently queued shortage was declared (the receipt line's last update). */
+    readonly shortageDeclaredAt?: Date | null;
   },
 ): Promise<void> {
   const targetShortage = input.approvedQuantity - input.receivedQuantity;
@@ -857,6 +861,7 @@ export async function reconcileReceiptShortageWait(
         input.productId,
         -change,
         reservation.allocationLineId,
+        input.queuedQuantity > 0 ? (input.shortageDeclaredAt ?? null) : null,
       );
     }
   }
@@ -868,7 +873,28 @@ async function undoShortageWait(
   productId: string,
   quantity: number,
   allocationLineId: string | null,
+  shortageDeclaredAt: Date | null,
 ): Promise<void> {
+  // The store or an Admin may cancel a wait while its receipt shortage is still being settled.
+  // The demand of that shortage is then already gone: reducing the shortage afterwards has no
+  // wait left to reduce and must neither fail the receipt nor touch a later, unrelated ticket.
+  if (shortageDeclaredAt !== null) {
+    const [cancelledAfterDeclaration] = await tx
+      .select({ id: waitTickets.id })
+      .from(waitTickets)
+      .where(
+        and(
+          eq(waitTickets.storeId, storeId),
+          eq(waitTickets.productId, productId),
+          eq(waitTickets.status, 'cancelled'),
+          isNotNull(waitTickets.cancellationKind),
+          gte(waitTickets.resolvedAt, shortageDeclaredAt),
+          isNull(waitTickets.deletedAt),
+        ),
+      )
+      .limit(1);
+    if (cancelledAfterDeclaration) return;
+  }
   const [allocation] = allocationLineId
     ? await tx
         .select({ waitTicketId: allocationLines.waitTicketId })
@@ -994,7 +1020,24 @@ async function restoreShortageWait(
     .for('update')
     .limit(1);
 
-  const sourceWaitId = sourceWaitIds[0];
+  // A wait the store or an Admin cancelled stays cancelled: a new shortage on goods allocated from
+  // it is new demand and is queued on its own, never by reopening the cancelled remainder.
+  let sourceWaitId = sourceWaitIds[0];
+  let cancelledSourceOrderItemId: string | null = null;
+  if (sourceWaitId) {
+    const [source] = await tx
+      .select({
+        cancellationKind: waitTickets.cancellationKind,
+        sourceOrderRequestItemId: waitTickets.sourceOrderRequestItemId,
+      })
+      .from(waitTickets)
+      .where(eq(waitTickets.id, sourceWaitId))
+      .limit(1);
+    if (source?.cancellationKind) {
+      sourceWaitId = undefined;
+      cancelledSourceOrderItemId = source.sourceOrderRequestItemId;
+    }
+  }
   if (activeWait) {
     if (activeWait.id === sourceWaitId) {
       if (activeWait.fulfilledQuantity < shortage) {
@@ -1085,9 +1128,9 @@ async function restoreShortageWait(
     return;
   }
 
-  const sourceOrderRequestItemId = allocations.find(
-    (allocation) => allocation.orderRequestItemId !== null,
-  )?.orderRequestItemId;
+  const sourceOrderRequestItemId =
+    allocations.find((allocation) => allocation.orderRequestItemId !== null)?.orderRequestItemId ??
+    cancelledSourceOrderItemId;
   if (!sourceOrderRequestItemId) {
     throw new StoreOperationValidationError('Receipt shortage has no originating order item.');
   }

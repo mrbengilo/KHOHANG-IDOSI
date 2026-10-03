@@ -398,9 +398,11 @@ function validateCreateInput(input: CreateOrderSessionInput): void {
   if (input.requestOpensAt >= input.requestClosesAt) {
     throw new OrderSessionValidationError('Request close time must be after request open time.');
   }
-  if (input.requestClosesAt > input.allocationStartsAt) {
+  if (input.requestClosesAt >= input.allocationStartsAt) {
+    // Priority offers are created at the request close and stores answer them until allocation
+    // starts; a session without that window could only create offers that are already expired.
     throw new OrderSessionValidationError(
-      'Allocation start time cannot precede the request close time.',
+      'Giờ bắt đầu phân bổ phải sau giờ chốt nhận đơn để cửa hàng có thời gian xác nhận hàng ưu tiên.',
     );
   }
   if (input.policyVersion.trim().length === 0 || input.policyVersion.trim().length > 80) {

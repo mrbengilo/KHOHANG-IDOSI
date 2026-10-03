@@ -2900,16 +2900,15 @@ describe('KHOHANG-IDOSI API', () => {
     const url = `/api/v1/wait-tickets/${MEMORY_SEED_IDS.cancellableWaitTicket}/cancel`;
     const payload = { reason: 'Cửa hàng không còn nhu cầu nhận mặt hàng này' };
 
-    for (const username of ['admin', 'htkd']) {
-      const denied = await mutateWait(
-        cookieOf(await login(username)),
-        url,
-        `wait-ticket-cancel-${username}`,
-        payload,
-      );
-      assert.equal(denied.statusCode, 403);
-      assert.equal(denied.json().error.code, 'FORBIDDEN');
-    }
+    // HTKD answers offers for assigned stores but never cancels a store's wait.
+    const denied = await mutateWait(
+      cookieOf(await login('htkd')),
+      url,
+      'wait-ticket-cancel-htkd',
+      payload,
+    );
+    assert.equal(denied.statusCode, 403);
+    assert.equal(denied.json().error.code, 'FORBIDDEN');
 
     const cancelled = await mutateWait(storeCookie, url, 'wait-ticket-cancel-0001', payload);
     assert.equal(cancelled.statusCode, 200);
@@ -2944,10 +2943,56 @@ describe('KHOHANG-IDOSI API', () => {
     });
     assert.equal(history.statusCode, 200);
     assert.equal(history.json().data.ticket.status, 'CANCELLED');
+    assert.equal(history.json().data.ticket.cancellationKind, 'STORE_CANCELLED');
     assert.equal(
-      history.json().data.audit.some((event) => event.action === 'WAIT_TICKET_CANCELLED'),
+      history.json().data.audit.some((event) => event.action === 'WAIT_TICKET_STORE_CANCELLED'),
       true,
     );
+  });
+
+  test('lets an admin cancel any store wait and releases its pending offer', async () => {
+    const adminCookie = cookieOf(await login('admin'));
+    const cancelled = await mutateWait(
+      adminCookie,
+      `/api/v1/wait-tickets/${MEMORY_SEED_IDS.waitTicket}/cancel`,
+      'wait-ticket-admin-cancel',
+      { reason: 'Admin đóng phiếu chờ cũ của cửa hàng' },
+    );
+    assert.equal(cancelled.statusCode, 200);
+    assert.equal(cancelled.json().data.status, 'CANCELLED');
+    assert.equal(cancelled.json().data.cancellationKind, 'ADMIN_CANCELLED');
+    const history = await app.inject({
+      method: 'GET',
+      url: `/api/v1/wait-tickets/${MEMORY_SEED_IDS.waitTicket}/history`,
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(history.json().data.offers[0].status, 'CANCELLED');
+  });
+
+  test('declining a full priority offer cancels the wait in the same command', async () => {
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const offers = await app.inject({
+      method: 'GET',
+      url: `/api/v1/priority-offers?waitTicketId=${MEMORY_SEED_IDS.waitTicket}`,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(offers.json().data[0].coverage, 'FULL');
+    assert.deepEqual(offers.json().data[0].waitingAtOffer, { kind: 'UNIT', quantity: 3 });
+    const declined = await mutateWait(
+      storeCookie,
+      `/api/v1/priority-offers/${MEMORY_SEED_IDS.priorityOffer}/respond`,
+      'wait-offer-full-decline',
+      { action: 'DECLINE', reason: 'Không còn chỗ chứa hàng' },
+    );
+    assert.equal(declined.statusCode, 200);
+    assert.equal(declined.json().data.status, 'DECLINED');
+    const ticket = await app.inject({
+      method: 'GET',
+      url: `/api/v1/wait-tickets/${MEMORY_SEED_IDS.waitTicket}/history`,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(ticket.json().data.ticket.status, 'CANCELLED');
+    assert.equal(ticket.json().data.ticket.cancellationKind, 'FULL_OFFER_DECLINED');
   });
 
   test('returns JSON-safe monthly reports and enforces report scopes', async () => {

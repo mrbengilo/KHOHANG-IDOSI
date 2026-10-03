@@ -260,6 +260,13 @@
       "when": 1790955745087,
       "tag": "0036_order_sessions_offers_adjustments",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1790999267651,
+      "tag": "0037_priority_wait_policy",
+      "breakpoints": true
     }
   ]
 }

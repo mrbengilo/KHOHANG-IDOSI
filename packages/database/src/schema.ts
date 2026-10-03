@@ -1,6 +1,7 @@
 import type { SortedSaleTransferLine } from '@idosi/contracts';
 import { sql } from 'drizzle-orm';
 import {
+  type AnyPgColumn,
   bigint,
   boolean,
   check,
@@ -25,6 +26,14 @@ import {
 export type JsonPrimitive = boolean | number | string | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: JsonValue };
 export type JsonObject = { readonly [key: string]: JsonValue };
+
+export const WAIT_TICKET_CANCELLATION_KINDS = [
+  'store_cancelled',
+  'admin_cancelled',
+  'full_offer_declined',
+  'full_offer_timeout',
+] as const;
+export type WaitTicketCancellationKind = (typeof WAIT_TICKET_CANCELLATION_KINDS)[number];
 
 export const userRoleEnum = pgEnum('user_role', ['admin', 'htkd', 'store', 'wholesale']);
 /** Derived from the enum so adding a role cannot leave a hand-written union behind. */
@@ -882,6 +891,16 @@ export const waitTickets = pgTable(
     queuedAt: timestamp('queued_at', { withTimezone: true }).notNull().defaultNow(),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
     resolutionReason: text('resolution_reason'),
+    /**
+     * Why a ticket was cancelled by the priority wait policy, so the UI and audits can tell a
+     * store/admin cancellation from a declined or unanswered full offer. NULL on legacy rows and
+     * on cancellations made by other workflows (merges, receipt corrections).
+     */
+    cancellationKind: text('cancellation_kind').$type<WaitTicketCancellationKind>(),
+    cancelledByOfferId: uuid('cancelled_by_offer_id').references(
+      (): AnyPgColumn => dailyPriorityOffers.id,
+      { onDelete: 'restrict' },
+    ),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
@@ -890,6 +909,18 @@ export const waitTickets = pgTable(
     }),
   },
   (table) => [
+    check(
+      'wait_tickets_cancellation_kind_valid',
+      sql`${table.cancellationKind} IS NULL OR ${table.cancellationKind} IN ('store_cancelled', 'admin_cancelled', 'full_offer_declined', 'full_offer_timeout')`,
+    ),
+    check(
+      'wait_tickets_cancellation_kind_requires_cancelled',
+      sql`${table.cancellationKind} IS NULL OR ${table.status} = 'cancelled'`,
+    ),
+    check(
+      'wait_tickets_offer_cancellation_has_offer',
+      sql`coalesce(${table.cancellationKind} IN ('full_offer_declined', 'full_offer_timeout'), false) = (${table.cancelledByOfferId} IS NOT NULL)`,
+    ),
     uniqueIndex('wait_tickets_one_active_store_product_uidx')
       .on(table.storeId, table.productId)
       .where(sql`${table.status} = 'active' AND ${table.deletedAt} IS NULL`),
@@ -937,6 +968,13 @@ export const dailyPriorityOffers = pgTable(
     priorityLevel: priorityLevelEnum('priority_level').notNull(),
     roundNumber: integer('round_number').notNull().default(1),
     offeredQuantity: integer('offered_quantity').notNull(),
+    /**
+     * The ticket quantity still eligible for an offer when this offer was created (unallocated
+     * demand minus other live commitments). It is the auditable basis for "full" versus "partial":
+     * offeredQuantity >= eligibleQuantityAtOffer means the store was offered everything it waited
+     * for. NULL on legacy rows, which are never treated as full offers.
+     */
+    eligibleQuantityAtOffer: integer('eligible_quantity_at_offer'),
     stockHeldQuantity: integer('stock_held_quantity').notNull().default(0),
     acceptedQuantity: integer('accepted_quantity').notNull().default(0),
     status: priorityOfferStatusEnum('status').notNull().default('offered'),
@@ -973,6 +1011,10 @@ export const dailyPriorityOffers = pgTable(
       .where(sql`${table.status} = 'offered' AND ${table.deletedAt} IS NULL`),
     index('daily_priority_offers_wait_history_idx').on(table.waitTicketId, table.createdAt),
     check('daily_priority_offers_round_positive', sql`${table.roundNumber} > 0`),
+    check(
+      'daily_priority_offers_eligible_covers_offer',
+      sql`${table.eligibleQuantityAtOffer} IS NULL OR ${table.eligibleQuantityAtOffer} >= ${table.offeredQuantity}`,
+    ),
     check('daily_priority_offers_quantity_positive', sql`${table.offeredQuantity} > 0`),
     check('daily_priority_offers_stock_held_nonnegative', sql`${table.stockHeldQuantity} >= 0`),
     check(

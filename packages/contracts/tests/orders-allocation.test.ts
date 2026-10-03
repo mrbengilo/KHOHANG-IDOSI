@@ -28,12 +28,21 @@ const IDS = {
 
 describe('order, allocation and wait-list contracts', () => {
   it('requires ordered request and allocation windows', () => {
+    // A new session needs a priority response window between its close and allocation start.
     expect(
       CreateOrderSessionRequestSchema.safeParse({
         businessDate: '2026-09-10',
         requestOpensAt: '2026-09-10T07:00:00+07:00',
         requestClosesAt: '2026-09-10T09:00:00+07:00',
         allocationStartsAt: '2026-09-10T09:00:00+07:00',
+      }).success,
+    ).toBe(false);
+    expect(
+      CreateOrderSessionRequestSchema.safeParse({
+        businessDate: '2026-09-10',
+        requestOpensAt: '2026-09-10T12:00:00+07:00',
+        requestClosesAt: '2026-09-10T14:00:00+07:00',
+        allocationStartsAt: '2026-09-10T14:30:00+07:00',
       }).success,
     ).toBe(true);
     expect(

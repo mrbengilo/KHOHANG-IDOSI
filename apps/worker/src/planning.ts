@@ -29,13 +29,29 @@ export interface PlanPriorityOffersInput {
   offerId(ticketId: string): string;
 }
 
+/** A planned offer with the auditable basis that decides whether it is a full or partial offer. */
+export interface PlannedPriorityOffer extends DailyPriorityOffer {
+  /** Ticket quantity still eligible for an offer when this one was planned. */
+  readonly eligibleQuantityAtOffer: number;
+}
+
 /**
- * Plans a session's temporary priority holds (at its snapshot time) one unit per store per round. Persisting the
- * returned offers is intentionally left to the caller's transaction.
+ * Plans a session's temporary priority holds (at its request close) one unit per store per round.
+ * Any share above zero becomes an offer, even when it covers only part of the ticket; the store
+ * is told and may answer. Persisting the returned offers is left to the caller's transaction.
  */
-export function planPriorityOffers(input: PlanPriorityOffersInput): readonly DailyPriorityOffer[] {
+export function planPriorityOffers(
+  input: PlanPriorityOffersInput,
+): readonly PlannedPriorityOffer[] {
   const committedByProduct = new Map<string, number>();
   const committedByTicket = new Map<string, number>();
+  // An offer still awaiting its own session's settlement keeps its claim even past its deadline:
+  // only that session's run may expire it, so a late run never leaves one wait held twice.
+  const unsettledTicketIds = new Set(
+    input.existingOffers
+      .filter((offer) => offer.status === 'PENDING')
+      .map((offer) => offer.waitTicketId),
+  );
   for (const offer of input.existingOffers) {
     const committed =
       offer.status === 'CONFIRMED'
@@ -74,13 +90,13 @@ export function planPriorityOffers(input: PlanPriorityOffersInput): readonly Dai
     // Several sessions can run on one day. While another session's offer for this ticket is
     // still unanswered, or accepted but not yet allocated, the ticket is not offered again: the
     // same wait is never held by two sessions at once. It is offered again once that settles.
-    if ((committedByTicket.get(ticket.id) ?? 0) > 0) continue;
+    if ((committedByTicket.get(ticket.id) ?? 0) > 0 || unsettledTicketIds.has(ticket.id)) continue;
     const group = ticketsByProduct.get(ticket.productId) ?? [];
     group.push(ticket);
     ticketsByProduct.set(ticket.productId, group);
   }
 
-  const planned: DailyPriorityOffer[] = [];
+  const planned: PlannedPriorityOffer[] = [];
   for (const [productId, rawTickets] of [...ticketsByProduct].sort(([left], [right]) =>
     left.localeCompare(right),
   )) {
@@ -118,7 +134,13 @@ export function planPriorityOffers(input: PlanPriorityOffersInput): readonly Dai
         createdAt: input.createdAt,
         expiresAt: input.expiresAt,
       });
-      planned.push(offer);
+      planned.push(
+        Object.freeze({
+          ...offer,
+          eligibleQuantityAtOffer:
+            ticket.openQuantity - ticket.reservedQuantity - (committedByTicket.get(ticket.id) ?? 0),
+        }),
+      );
     }
   }
 
