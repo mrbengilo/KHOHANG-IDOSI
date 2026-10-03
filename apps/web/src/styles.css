@@ -3359,7 +3359,16 @@ label:has(:required) > .field-label::after {
   }
   .page-header__actions {
     max-width: 48%;
-    overflow-x: auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  /*
+   * `.button` clips its overflow, which turns a flex item's automatic minimum width into 0:
+   * squeezed into the 48% column the buttons shrank below their labels. Keep each label whole
+   * and let the row wrap instead of hiding buttons in a scroller.
+   */
+  .page-header__actions > * {
+    flex-shrink: 0;
   }
   .report-detail-grid {
     grid-template-columns: 1fr;
