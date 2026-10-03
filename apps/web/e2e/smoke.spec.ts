@@ -192,6 +192,35 @@ test('mobile navigation remains usable at 390px', async ({ page }, testInfo) => 
   expect(undersizedTargets).toEqual([]);
 });
 
+test('the closed mobile menu is out of the tab order and Escape closes the open one', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile-390', 'mobile-only assertion');
+  await page.addInitScript(() => localStorage.setItem('idosi-demo-role:v2', 'HTKD'));
+  await page.goto('/');
+  await expect(page.locator('.page-header')).toBeVisible();
+  const trigger = page.getByRole('button', { name: 'Mở menu' });
+  const primaryNavigation = page.getByRole('navigation', { name: 'Điều hướng chính' });
+
+  // Off-canvas links must not be reachable by keyboard or announced while the drawer is shut.
+  await expect(primaryNavigation).toBeHidden();
+  await trigger.focus();
+  await page.keyboard.press('Tab');
+  const focusedOffscreen = await page.evaluate(() => {
+    const active = document.activeElement;
+    return active instanceof HTMLElement && active.closest('.sidebar') !== null;
+  });
+  expect(focusedOffscreen).toBe(false);
+
+  await trigger.click();
+  await expect(primaryNavigation).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Đóng menu' }).first()).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.sidebar')).not.toHaveClass(/sidebar--open/);
+  await expect(primaryNavigation).toBeHidden();
+  await expect(trigger).toBeFocused();
+});
+
 test('store administration stays responsive with visible button feedback at 390px and 360px', async ({
   page,
 }, testInfo) => {
