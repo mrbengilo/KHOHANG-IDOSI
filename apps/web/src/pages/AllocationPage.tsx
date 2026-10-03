@@ -915,6 +915,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
 
       <Tabs
         active={activeTab}
+        emphasis={role === 'ADMIN' || role === 'HTKD' ? 'prominent' : 'default'}
         idPrefix="allocation"
         items={allocationTabs(role)}
         label="Nội dung phân bổ hàng hóa"

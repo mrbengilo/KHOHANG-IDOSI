@@ -310,6 +310,7 @@ function AdminInventoryWorkspace() {
       />
       <Tabs
         active={navigation.tab}
+        emphasis="prominent"
         idPrefix="inventory"
         items={INVENTORY_TAB_ITEMS}
         label="Phạm vi tồn kho"
@@ -519,6 +520,9 @@ function StoreInventoryPage({
 
       <Tabs
         active={tab}
+        // Embedded only inside the Admin workspace, where it matches the Kho tổng sub-tabs; the
+        // standalone HTKD/store page keeps the default bar.
+        emphasis={embedded ? 'prominent' : 'default'}
         idPrefix="store-inventory"
         items={STORE_TAB_ITEMS}
         label="Nội dung kho cửa hàng"

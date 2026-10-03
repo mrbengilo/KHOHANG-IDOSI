@@ -54,6 +54,7 @@ export function WarehouseInventory() {
     <>
       <Tabs
         active={warehouse.tab}
+        emphasis="prominent"
         idPrefix="warehouse-inventory"
         items={WAREHOUSE_TAB_ITEMS}
         label="Nội dung kho tổng"

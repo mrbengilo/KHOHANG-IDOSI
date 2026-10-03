@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 
 import './tabs.css';
 
@@ -37,9 +37,12 @@ export function nextTabIndex(key: string, index: number, count: number): number 
 /**
  * WAI-ARIA tab list with roving focus. Only the active tab's panel should be mounted by the
  * caller; this component renders the tab bar alone so panels can be lazy and unmounted.
+ * `emphasis="prominent"` opts a call site into larger, all-bold labels; which screens use it is
+ * the caller's decision, so this component stays free of role logic.
  */
 export function Tabs<T extends string>({
   active,
+  emphasis = 'default',
   idPrefix,
   items,
   label,
@@ -47,13 +50,26 @@ export function Tabs<T extends string>({
   size = 'primary',
 }: {
   readonly active: T;
+  readonly emphasis?: 'default' | 'prominent';
   readonly idPrefix: string;
   readonly items: readonly TabItem<T>[];
   readonly label: string;
   readonly onChange: (tab: T) => void;
   readonly size?: 'primary' | 'secondary';
 }) {
+  const listRef = useRef<HTMLDivElement>(null);
   const refs = useRef(new Map<T, HTMLButtonElement>());
+  // A deep link can select a tab that starts outside the bar's horizontal scroller on narrow
+  // screens. Adjust only the bar's scrollLeft: scrollIntoView would also scroll the page.
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const tab = refs.current.get(active);
+    if (!list || !tab) return;
+    const listBox = list.getBoundingClientRect();
+    const tabBox = tab.getBoundingClientRect();
+    if (tabBox.left < listBox.left) list.scrollLeft -= listBox.left - tabBox.left;
+    else if (tabBox.right > listBox.right) list.scrollLeft += tabBox.right - listBox.right;
+  }, [active]);
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     const next = nextTabIndex(event.key, index, items.length);
     if (next === null) return;
@@ -64,7 +80,12 @@ export function Tabs<T extends string>({
     onChange(target.id);
   };
   return (
-    <div aria-label={label} className={clsx('tabs', `tabs--${size}`)} role="tablist">
+    <div
+      aria-label={label}
+      className={clsx('tabs', `tabs--${size}`, emphasis === 'prominent' && 'tabs--prominent')}
+      ref={listRef}
+      role="tablist"
+    >
       {items.map((item, index) => {
         const selected = item.id === active;
         return (
