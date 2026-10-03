@@ -1,3 +1,30 @@
+# Hồ sơ release — rà soát toàn hệ thống 2026-10-03
+
+Baseline main `527f42640791d9f1451cfef91c6260736136ec9c` (CI run 617 xanh). Nhánh `claude/intelligent-cannon-mcjw7a`, PR #99.
+
+## Kiểm tra local có bằng chứng
+
+Môi trường: Node 24.21.0, PostgreSQL 16.14 (CI: 17.6), Chromium 1194 (headless shell và bản đầy đủ) liên kết cho Playwright 1.63.
+
+| Lớp                                       | Lệnh                                                                        | SHA                | Kết quả                                                                             |
+| ----------------------------------------- | --------------------------------------------------------------------------- | ------------------ | ----------------------------------------------------------------------------------- |
+| Quality baseline                          | `format:check`, `lint`, `typecheck`, `build`                                | 527f426            | exit 0                                                                              |
+| Migration/seed/bootstrap                  | `run-migrations.mjs` ×2, `seed:production` ×2, `bootstrap-admin:production` | 527f426            | exit 0                                                                              |
+| Workspace tests baseline                  | `npm run test` (RUN_POSTGRES_TESTS=1)                                       | 527f426            | API 88, database 333, domain 77, contracts 129, web 275, worker 33 — 0 fail, 0 skip |
+| Browser mock                              | `npm run e2e`                                                               | 9b36563            | 46 pass, 12 skip theo project, 0 fail                                               |
+| Browser live (API 3100 → PostgreSQL test) | `npm run e2e:live`                                                          | 61067db            | 27 pass, 0 fail                                                                     |
+| Browser production bundle                 | `npm run e2e:production -w @idosi/web`                                      | ca14489 + sửa test | 60 pass, 10 skip theo project, 0 flaky, 0 fail                                      |
+
+Lượt `e2e:production` đầu tiên không dùng làm bằng chứng: một build mock chạy song song đã ghi đè `dist` mà preview 4175 đang phục vụ. Lượt thứ hai có 2 fail do thiếu Chromium đầy đủ cho persistent context (môi trường) và 1 flaky ở `desktop-login-shell.spec.ts`: test đọc `box-shadow` ngay khi focus trong lúc transition 140ms còn chạy — đã sửa bằng `expect.poll`, không đổi giá trị kỳ vọng.
+
+## Điều kiện triển khai
+
+Không có migration. CI đúng HEAD phải xanh trước merge. Sau merge, watcher VPS tự triển khai merge SHA; xác minh `running=<merge SHA>`, `state=deployed|up-to-date`, `/health`, `/ready`, `/openapi.json`, asset và smoke chỉ đọc. Rollback: image SHA trước theo runbook (thay đổi không đụng dữ liệu).
+
+Giới hạn: môi trường agent bị chặn egress tới `khoidosi.io.vn` và không có SSH, nên phần xác minh production phải do người có quyền thực hiện hoặc sau khi mở quyền mạng/SSH.
+
+---
+
 # Hồ sơ release desktop tables / workflow audit
 
 Baseline khảo sát: 1991069f4f0542edec45ec3fd3fb79f46941db17. Nhánh: fix/desktop-tables-workflow-audit.
