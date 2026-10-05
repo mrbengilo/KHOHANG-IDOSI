@@ -147,6 +147,10 @@ test('Admin runs three independent sessions on one day; history and results neve
     // 1. Admin adds two extra sessions from the "Tạo phiên mới" tab.
     await page.goto('/allocations?tab=create');
     const form = page.locator('.allocation-session-form');
+    await expect(form.getByLabel('Phiên bản chính sách')).toHaveValue(
+      'idosi-round-robin-p0a-p3-v1',
+    );
+    await expect(form.getByLabel('Phiên bản chính sách')).toHaveAttribute('readonly', '');
     const createSession = async (close: string, allocate: string) => {
       await form.getByLabel('Ngày nghiệp vụ').fill(date);
       await form.getByLabel('Mở nhận đơn').fill('00:00');

@@ -116,3 +116,29 @@ cũ giữ phạm vi theo ngày.
   đã nhận theo ngày và có thể hỏng job phiên thứ hai; API cũ chặn tạo phiên và mở nhầm phiên Admin
   theo ngày. Ưu tiên forward-fix. Nếu buộc phải rollback: dừng worker, hủy (khi còn được phép) các
   phiên bổ sung chưa chụp tồn, không xóa phiên hay restore đè dữ liệu.
+
+## Chính sách được hỗ trợ và khôi phục phiên bị kẹt
+
+Lệnh tạo phiên và cập nhật cấu hình chỉ nhận chính sách mà worker hiện hỗ trợ:
+`idosi-round-robin-p0a-p3-v1`. Form hiển thị giá trị này ở chế độ chỉ đọc. Chuỗi chính
+sách là mã thuật toán, không phải số thứ tự phiên; không tăng thành v2/v3 khi tạo
+phiên bổ sung. Schema đọc vẫn chấp nhận nhãn lịch sử để giữ khả năng kiểm toán.
+
+Nếu phiên cũ báo `Unsupported allocation policy`:
+
+1. Đối chiếu SHA đang chạy, log worker, audit tạo phiên và cấu hình hiện tại. Không
+   bỏ kiểm tra trong worker hoặc mặc định coi chính sách lạ là v1.
+2. Sao lưu có checksum trước mọi sửa dữ liệu. Xác minh đúng phiên, phiên bản, trạng
+   thái và chưa có allocation run; kiểm tra snapshot, đơn gốc và hàng ưu tiên đã giữ.
+3. Khi đã được chủ hệ thống yêu cầu khôi phục bằng chính sách được hỗ trợ, sửa đúng
+   trường chính sách trong transaction với khóa `idosi-allocation-worker:stock-jobs`,
+   khóa dòng và điều kiện version; tăng version và ghi audit before/after, lý do,
+   request ID và đường dẫn backup. Nếu điều kiện thay đổi thì dừng và kiểm tra lại.
+4. Để worker tự catch-up qua transaction/idempotency hiện có. Đối soát đúng một run,
+   số cấp mới/còn chờ, nguồn hàng giao chung, ledger và heartbeat. Không tạo run,
+   reservation hay phiếu xuất thủ công, không chạy lại phiên đã hoàn tất.
+5. Admin bấm **Tải lại** để cập nhật cả kết quả và trạng thái worker.
+
+Bản vá chặn đầu vào không cần migration hoặc thay thuật toán. Rollback code qua quy
+trình phát hành không hoàn tác phiên đã phân bổ; không restore đè database chỉ để
+hoàn tác nhãn chính sách của một phiên đã có giao dịch.

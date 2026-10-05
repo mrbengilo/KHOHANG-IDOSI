@@ -19,13 +19,21 @@ const current: OperationalSettingsVersion = {
 };
 
 describe('admin operational settings UI helpers', () => {
+  it('rejects unsupported policy overrides', () => {
+    expect(
+      settingsUpdateFromDraft(
+        { ...settingsDraftFromVersion(current), policyVersion: 'idosi-round-robin-p0a-p3-v3' },
+        current.version,
+      ).input,
+    ).toBeNull();
+  });
   it('maps the immutable current version into an editable draft', () => {
     expect(settingsDraftFromVersion(current)).toEqual({
       timezone: 'Asia/Ho_Chi_Minh',
       snapshotTime: '08:00',
       cutoffTime: '09:00',
       maxRequestsPerStore: '2',
-      policyVersion: 'ALLOC-v1.2',
+      policyVersion: 'idosi-round-robin-p0a-p3-v1',
       idosiSyncIntervalMinutes: 15,
       vatRatePercent: '8',
     });
@@ -36,7 +44,7 @@ describe('admin operational settings UI helpers', () => {
       {
         ...settingsDraftFromVersion(current),
         maxRequestsPerStore: '3',
-        policyVersion: '  ALLOC-v1.3  ',
+        policyVersion: '  idosi-round-robin-p0a-p3-v1  ',
         idosiSyncIntervalMinutes: 30,
         vatRatePercent: '8',
       },
@@ -49,7 +57,7 @@ describe('admin operational settings UI helpers', () => {
       snapshotTime: '08:00',
       cutoffTime: '09:00',
       maxRequestsPerStore: 3,
-      policyVersion: 'ALLOC-v1.3',
+      policyVersion: 'idosi-round-robin-p0a-p3-v1',
       idosiSyncIntervalMinutes: 30,
       vatRatePercent: 8,
     });

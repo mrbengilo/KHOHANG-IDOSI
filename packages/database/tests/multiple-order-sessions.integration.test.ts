@@ -83,6 +83,27 @@ describePostgres('several independent allocation sessions on one business date',
       now,
     });
 
+  it('rejects unsupported policies without persisting a session', async () => {
+    const { admin } = await fixture();
+    const date = isolatedBusinessDate();
+    await expect(
+      createOrderSession(db, {
+        businessDate: date,
+        requestOpensAt: at(date, '00:00'),
+        requestClosesAt: at(date, '10:00'),
+        allocationStartsAt: at(date, '11:00'),
+        policyVersion: 'idosi-round-robin-p0a-p3-v3',
+        createdByUserId: admin.id,
+        idempotencyKey: randomUUID(),
+        requestHash: randomUUID(),
+        now: at(date, '00:00'),
+      }),
+    ).rejects.toThrow(OrderSessionValidationError);
+    expect(
+      await db.select().from(orderSessions).where(eq(orderSessions.businessDate, date)),
+    ).toHaveLength(0);
+  });
+
   it('creates any number of Admin sessions beside the default one, each with its own code', async () => {
     const { admin, htkd } = await fixture();
     const date = isolatedBusinessDate();

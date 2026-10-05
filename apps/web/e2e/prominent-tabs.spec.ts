@@ -754,3 +754,40 @@ test('real 200% browser zoom keeps the prominent bars readable and contained', a
     await attach(testInfo, 'prominent-tabs-zoom', results);
   });
 });
+
+test('allocation policy is read-only and manual reload clears a recovered worker error', async ({
+  page,
+}, testInfo) => {
+  const log = await mockApi(page, 'ADMIN');
+  let recovered = false;
+  await page.route('**/api/v1/admin/worker-status', (route) =>
+    route.fulfill({
+      json: {
+        data: {
+          worker: 'allocation',
+          status: recovered ? 'HEALTHY' : 'DEGRADED',
+          lastTickStartedAt: time,
+          lastTickCompletedAt: time,
+          lastSuccessfulTickAt: time,
+          lastError: recovered ? null : 'Unsupported allocation policy idosi-round-robin-p0a-p3-v3',
+          failingJobs: [],
+          updatedAt: time,
+        },
+      },
+    }),
+  );
+  await page.goto('/allocations?tab=create');
+  const policy = page.getByLabel('Phiên bản chính sách');
+  await expect(policy).toHaveValue('idosi-round-robin-p0a-p3-v1');
+  await expect(policy).toHaveAttribute('readonly', '');
+  await expect(page.getByRole('alert')).toContainText('Unsupported allocation policy');
+  recovered = true;
+  await page.getByRole('button', { name: 'Tải lại', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await page.screenshot({
+    path: testInfo.outputPath('supported-allocation-policy.png'),
+    fullPage: true,
+  });
+  expect(log.mutations).toEqual([]);
+  expect(log.unexpected).toEqual([]);
+});

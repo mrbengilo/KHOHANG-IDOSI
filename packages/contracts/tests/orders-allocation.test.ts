@@ -5,6 +5,7 @@ import {
   CancelStoreOrderRequestSchema,
   AllocationResultSchema,
   CreateOrderSessionRequestSchema,
+  OrderSessionSchema,
   CreateStoreOrderRequestSchema,
   CreateWarehouseAdjustmentRequestSchema,
   PriorityOfferSchema,
@@ -27,6 +28,33 @@ const IDS = {
 };
 
 describe('order, allocation and wait-list contracts', () => {
+  it('rejects unsupported policy commands but keeps historical sessions readable', () => {
+    const schedule = {
+      businessDate: '2026-10-05',
+      requestOpensAt: '2026-10-05T12:49:00+07:00',
+      requestClosesAt: '2026-10-05T12:53:00+07:00',
+      allocationStartsAt: '2026-10-05T12:55:00+07:00',
+    };
+    for (const policyVersion of ['idosi-round-robin-p0a-p3-v3', 'ALLOC-v1.2', 'unknown']) {
+      expect(
+        CreateOrderSessionRequestSchema.safeParse({ ...schedule, policyVersion }).success,
+      ).toBe(false);
+      expect(
+        OrderSessionSchema.safeParse({
+          ...schedule,
+          policyVersion,
+          id: IDS.session,
+          kind: 'MANUAL',
+          status: 'OPEN',
+          completedAt: null,
+          version: 1,
+          createdAt: schedule.requestOpensAt,
+          updatedAt: schedule.requestOpensAt,
+        }).success,
+      ).toBe(true);
+    }
+  });
+
   it('requires ordered request and allocation windows', () => {
     // A new session needs a priority response window between its close and allocation start.
     expect(

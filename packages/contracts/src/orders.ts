@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
-import { NewOrderPrioritySchema } from './allocation-policy.js';
+import {
+  DEFAULT_ALLOCATION_POLICY_VERSION,
+  NewOrderPrioritySchema,
+  SupportedAllocationPolicyVersionSchema,
+} from './allocation-policy.js';
 import {
   AuditReasonSchema,
   EntityIdSchema,
@@ -11,8 +15,6 @@ import {
   PositiveUnitQuantitySchema,
 } from './common.js';
 import { InventoryAmountSchema, PositiveInventoryAmountSchema } from './warehouse.js';
-
-export const DEFAULT_ALLOCATION_POLICY_VERSION = 'idosi-round-robin-p0a-p3-v1';
 
 const HO_CHI_MINH_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
@@ -128,7 +130,9 @@ export const CreateOrderSessionRequestSchema = z
     requestOpensAt: IsoDateTimeSchema,
     requestClosesAt: IsoDateTimeSchema,
     allocationStartsAt: IsoDateTimeSchema,
-    policyVersion: z.string().trim().min(1).max(80).default(DEFAULT_ALLOCATION_POLICY_VERSION),
+    policyVersion: SupportedAllocationPolicyVersionSchema.default(
+      DEFAULT_ALLOCATION_POLICY_VERSION,
+    ),
   })
   .strict()
   .superRefine(validateOrderSessionWindow);
