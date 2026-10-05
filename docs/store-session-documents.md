@@ -36,6 +36,21 @@ Completed-session navigation has one row per store. Original submissions remain
 in order history, and open-session navigation still shows individual submissions.
 Product spelling is preserved; product cells explicitly use regular typography.
 
+## Store decision on each result
+
+Each `(allocation run, store)` result has a durable decision row
+(`allocation_result_decisions`) with its own server ID, status (`PENDING`, `ACCEPTED`,
+`REJECTED`, `NOT_REQUIRED`, `LEGACY`), command version (`version`, independent of the run
+`version` above), granted snapshot, responder and time, and an optional rejection reason.
+`GET /api/v1/session-documents?includeDecision=true` attaches it as `decision` together with
+shipment and receipt progress; without the parameter the response keeps its previous shape so
+older bundles stay valid. `decisionStatus` filters documents by decision without multiplying
+headers. Older or newer runs keep their own decision rows, so a REJECTED or ACCEPTED history is
+never hidden; `GET /api/v1/allocation-decisions/:id` reads any of them in scope. The allocation
+page shows the decision tag on every document (rejections are tagged “đã từ chối nhận”) and opens
+the decision panel for answering or tracing result → reservations → shipment → receipt. See
+[allocation result confirmation](allocation-result-confirmation.md).
+
 ## Receipt navigation
 
 `GET /api/v1/store-receipt-summaries` accepts existing receipt filters and pagination
@@ -62,7 +77,7 @@ Sale, receipt increases destination Sale, and cancellation returns source Sale.
 
 ## Compatibility and rollback
 
-No migration, backfill or historical rewrite is introduced. Existing allocation
+The document projection itself needs no migration; the store decision (0038) is additive. Existing allocation
 v1/v2 and receipt list/detail contracts remain intact. Deploy API and web from the
 same release using the watcher. Rollback restores the prior application SHA without
 data rollback. Old tabs retain their endpoints; the new UI requires the new API.

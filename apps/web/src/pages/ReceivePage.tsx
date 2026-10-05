@@ -34,6 +34,7 @@ import { PageHeader } from '../components/PageHeader';
 import { DashboardSkeleton } from '../components/Skeleton';
 import { StatCard } from '../components/StatCard';
 import { HeldAllocationsPanel } from '../features/receipts/HeldAllocationsPanel';
+import { ReceiptAllocationLink } from '../features/receipts/ReceiptAllocationLink';
 import { AdjustmentQueue } from '../features/receipts/adjustments/AdjustmentQueue';
 import { ReceiptAdjustmentsSection } from '../features/receipts/adjustments/ReceiptAdjustments';
 import { adjustmentAudience } from '../features/receipts/adjustments/adjustmentModel';
@@ -1033,6 +1034,7 @@ function CreateReceiptForm({
 
           {selectedSource ? (
             <>
+              <ReceiptAllocationLink outboundRequestId={selectedSource.id} />
               <div className="receipt-source-selection" role="status">
                 <CircleCheck aria-hidden="true" size={18} />
                 <span>
@@ -1240,6 +1242,7 @@ function ReceiptDetail({
           </div>
         </dl>
       </details>
+      <ReceiptAllocationLink outboundRequestId={receipt.outboundRequestId} />
       {receipt.reviewNote ? (
         <div className="receipt-review-note">
           <RotateCcw aria-hidden="true" size={17} />

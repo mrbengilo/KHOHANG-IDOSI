@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { after, describe, test } from 'node:test';
 import {
   allocationLines,
+  allocationResultDecisions,
   allocationRuns,
   auditLogs,
   applyWarehouseMovement,
@@ -1242,6 +1243,15 @@ async function finalizedReceipt(repository, { wholesale: wholesaleStore = false 
       reasonCode: 'API_ADJUSTMENT_TEST',
     })
     .returning();
+  // This fixture represents a shipment already dispatched before confirmation was introduced.
+  await db.insert(allocationResultDecisions).values({
+    allocationRunId: run.id,
+    orderSessionId: session.id,
+    storeId: store.id,
+    status: 'legacy',
+    origin: 'legacy_backfill',
+    grantedQuantity: 3,
+  });
   const [outbound] = await db
     .insert(outboundRequests)
     .values({

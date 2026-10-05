@@ -1,8 +1,10 @@
 import { and, count, desc, eq, inArray, isNull, type SQL } from 'drizzle-orm';
 
+import { assertShipmentMayDispatch } from './allocation-decision-gate.js';
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
 import {
+  allocationResultDecisions,
   auditLogs,
   htkdAssignments,
   outboundRequestLines,
@@ -217,13 +219,22 @@ export async function dispatchWarehouseOutboundRequest(
 /**
  * Who releases a shipment. A user dispatch is authorized against the store; a system dispatch
  * is only reachable from server-side code (the 09:00 worker and the audited backfill), never
- * from an HTTP request, so it carries no account and records why it ran instead.
+ * from an HTTP request, so it carries no account and records why it ran instead. An
+ * allocation-decision dispatch is the internal release that follows a store accepting its
+ * result: it is valid only for the shipment of that very accepted result and never gives the
+ * store a general right to dispatch.
  */
 export type WarehouseOutboundDispatcher =
   | { readonly kind: 'user'; readonly userId: string }
   | {
       readonly kind: 'system';
       readonly trigger: 'allocation-finalize' | 'stranded-outbound-backfill';
+    }
+  | {
+      readonly kind: 'allocation-decision';
+      readonly decisionId: string;
+      readonly acceptedByUserId: string;
+      readonly acceptedByRole: 'store' | 'wholesale';
     };
 
 export interface DispatchWarehouseOutboundInTransactionInput {
@@ -270,7 +281,9 @@ export async function dispatchWarehouseOutboundInTransaction(
     const dispatcherRole =
       input.dispatcher.kind === 'user'
         ? await assertDispatcherMayAccessStore(tx, input.dispatcher.userId, outbound.storeId)
-        : null;
+        : input.dispatcher.kind === 'allocation-decision'
+          ? await assertAcceptedDecisionReleasesShipment(tx, input.dispatcher, outbound)
+          : null;
     if (outbound.status !== 'reserved' || outbound.version !== input.expectedVersion) {
       throw new WarehouseOutboundConflictError(
         'Warehouse outbound is stale or is not ready for dispatch.',
@@ -329,6 +342,8 @@ export async function dispatchWarehouseOutboundInTransaction(
         'Active reservations do not conserve the outbound dispatch quantity.',
       );
     }
+    // Store confirmation gate: nothing of an unanswered or rejected result leaves the warehouse.
+    await assertShipmentMayDispatch(tx, outbound);
 
     const dispatchedAt = input.dispatchedAt ?? new Date();
     for (const line of lines) {
@@ -377,11 +392,24 @@ export async function dispatchWarehouseOutboundInTransaction(
       ...(input.dispatcher.kind === 'system'
         ? { dispatchedBy: 'system', trigger: input.dispatcher.trigger }
         : {}),
+      ...(input.dispatcher.kind === 'allocation-decision'
+        ? {
+            dispatchedBy: 'system',
+            trigger: 'allocation-decision-accepted',
+            allocationDecisionId: input.dispatcher.decisionId,
+            acceptedByUserId: input.dispatcher.acceptedByUserId,
+          }
+        : {}),
     };
     await tx.insert(auditLogs).values({
       ...(input.auditId === undefined ? {} : { id: input.auditId }),
       requestId: input.requestId ?? null,
-      actorUserId: input.dispatcher.kind === 'user' ? input.dispatcher.userId : null,
+      actorUserId:
+        input.dispatcher.kind === 'user'
+          ? input.dispatcher.userId
+          : input.dispatcher.kind === 'allocation-decision'
+            ? input.dispatcher.acceptedByUserId
+            : null,
       actorRole: dispatcherRole,
       actorStoreId: outbound.storeId,
       action: 'OUTBOUND_REQUEST_DISPATCHED',
@@ -469,6 +497,33 @@ function recordFromRows(
     createdAt: header.createdAt,
     updatedAt: header.updatedAt,
   };
+}
+
+async function assertAcceptedDecisionReleasesShipment(
+  tx: Transaction,
+  dispatcher: Extract<WarehouseOutboundDispatcher, { kind: 'allocation-decision' }>,
+  outbound: typeof outboundRequests.$inferSelect,
+): Promise<'store' | 'wholesale'> {
+  const [decision] = await tx
+    .select({
+      allocationRunId: allocationResultDecisions.allocationRunId,
+      storeId: allocationResultDecisions.storeId,
+      status: allocationResultDecisions.status,
+      respondedByUserId: allocationResultDecisions.respondedByUserId,
+    })
+    .from(allocationResultDecisions)
+    .where(eq(allocationResultDecisions.id, dispatcher.decisionId))
+    .limit(1);
+  if (
+    !decision ||
+    decision.status !== 'accepted' ||
+    decision.respondedByUserId !== dispatcher.acceptedByUserId ||
+    decision.allocationRunId !== outbound.allocationRunId ||
+    decision.storeId !== outbound.storeId
+  ) {
+    throw new WarehouseOutboundAuthorizationError();
+  }
+  return dispatcher.acceptedByRole;
 }
 
 async function assertDispatcherMayAccessStore(

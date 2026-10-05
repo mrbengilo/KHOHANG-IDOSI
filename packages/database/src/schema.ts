@@ -1408,6 +1408,92 @@ export const reservations = pgTable(
   ],
 );
 
+export const allocationDecisionStatusEnum = pgEnum('allocation_decision_status', [
+  'pending',
+  'accepted',
+  'rejected',
+  'not_required',
+  'legacy',
+]);
+
+/**
+ * A store's answer to one published allocation result: one allocation run for one store.
+ * Independent of the algorithm status (allocation_runs/lines) and of shipping progress
+ * (outbound_requests/store_receipts). Goods of a result ship only once its row is accepted,
+ * not_required or legacy; the database refuses a dispatch otherwise (migration 0038 triggers).
+ */
+export const allocationResultDecisions = pgTable(
+  'allocation_result_decisions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    allocationRunId: uuid('allocation_run_id')
+      .notNull()
+      .references(() => allocationRuns.id, { onDelete: 'restrict' }),
+    orderSessionId: uuid('order_session_id')
+      .notNull()
+      .references(() => orderSessions.id, { onDelete: 'restrict' }),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    status: allocationDecisionStatusEnum('status').notNull(),
+    /** Command version, independent of the run number. Every answer increments it. */
+    version: integer('version').notNull().default(1),
+    /** Snapshot of the goods this result granted the store when it was published. */
+    grantedQuantity: integer('granted_quantity').notNull().default(0),
+    /** allocation_run: written by the worker; legacy_backfill: classified by migration 0038. */
+    origin: text('origin').notNull().default('allocation_run'),
+    respondedAt: timestamp('responded_at', { withTimezone: true }),
+    respondedByUserId: uuid('responded_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    responseReason: text('response_reason'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('allocation_result_decisions_run_store_uidx').on(
+      table.allocationRunId,
+      table.storeId,
+    ),
+    // A newer version of a store's result can never leave two answerable results in one session.
+    uniqueIndex('allocation_result_decisions_one_pending_uidx')
+      .on(table.orderSessionId, table.storeId)
+      .where(sql`${table.status} = 'pending'`),
+    index('allocation_result_decisions_store_status_idx').on(
+      table.storeId,
+      table.status,
+      table.createdAt,
+    ),
+    index('allocation_result_decisions_status_created_idx').on(table.status, table.createdAt),
+    check('allocation_result_decisions_version_positive', sql`${table.version} > 0`),
+    check('allocation_result_decisions_granted_nonnegative', sql`${table.grantedQuantity} >= 0`),
+    check(
+      'allocation_result_decisions_origin_valid',
+      sql`${table.origin} IN ('allocation_run', 'legacy_backfill')`,
+    ),
+    check(
+      'allocation_result_decisions_legacy_origin',
+      sql`(${table.status} = 'legacy') = (${table.origin} = 'legacy_backfill')`,
+    ),
+    check(
+      'allocation_result_decisions_pending_has_goods',
+      sql`${table.status} NOT IN ('pending', 'accepted', 'rejected') OR ${table.grantedQuantity} > 0`,
+    ),
+    check(
+      'allocation_result_decisions_not_required_has_no_goods',
+      sql`${table.status} <> 'not_required' OR ${table.grantedQuantity} = 0`,
+    ),
+    check(
+      'allocation_result_decisions_answer_recorded',
+      sql`(${table.status} IN ('accepted', 'rejected')) = (${table.respondedAt} IS NOT NULL AND ${table.respondedByUserId} IS NOT NULL)`,
+    ),
+    check(
+      'allocation_result_decisions_reason_only_rejected',
+      sql`${table.responseReason} IS NULL OR (${table.status} = 'rejected' AND length(btrim(${table.responseReason})) BETWEEN 1 AND 500)`,
+    ),
+  ],
+);
+
 export const receipts = pgTable(
   'receipts',
   {

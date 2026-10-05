@@ -1,6 +1,16 @@
 import { z } from 'zod';
-import { AllocationResultSchema, ListAllocationsQuerySchema } from './allocations.js';
-import { EntityIdSchema, IsoDateTimeSchema, PaginationMetaSchema } from './common.js';
+import {
+  AllocationDecisionSchema,
+  AllocationDecisionStatusSchema,
+} from './allocation-decisions.js';
+import { AllocationPrioritySchema } from './allocation-policy.js';
+import { AllocationResultSchema, AllocationResultStatusSchema } from './allocations.js';
+import {
+  EntityIdSchema,
+  IsoDateTimeSchema,
+  PaginationMetaSchema,
+  PaginationQuerySchema,
+} from './common.js';
 
 export const SessionDocumentSourceSchema = z
   .object({
@@ -36,6 +46,11 @@ export const SessionDocumentSchema = z
         .strict(),
     ),
     sources: z.array(SessionDocumentSourceSchema),
+    /**
+     * The store's decision and shipping progress of this result. Present only when the client
+     * asked for it (includeDecision=true), so bundles that validate the older shape keep working.
+     */
+    decision: AllocationDecisionSchema.nullable().optional(),
     lines: z.array(
       z
         .object({
@@ -50,7 +65,29 @@ export const SessionDocumentSchema = z
   .strict();
 export type SessionDocument = z.infer<typeof SessionDocumentSchema>;
 export type SessionDocumentSource = z.infer<typeof SessionDocumentSourceSchema>;
-export const ListSessionDocumentsQuerySchema = ListAllocationsQuerySchema;
+export const ListSessionDocumentsQuerySchema = PaginationQuerySchema.extend({
+  sessionId: EntityIdSchema.optional(),
+  storeId: EntityIdSchema.optional(),
+  productId: EntityIdSchema.optional(),
+  status: AllocationResultStatusSchema.optional(),
+  priority: AllocationPrioritySchema.optional(),
+  decisionStatus: AllocationDecisionStatusSchema.optional(),
+  includeDecision: z
+    .enum(['true', 'false'])
+    .transform((value) => value === 'true')
+    .optional(),
+})
+  .strict()
+  .superRefine((query, context) => {
+    if (!Number.isSafeInteger((query.page - 1) * query.pageSize)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['page'],
+        message: 'Pagination offset exceeds the safe integer range',
+      });
+    }
+  });
+export type ListSessionDocumentsQuery = z.infer<typeof ListSessionDocumentsQuerySchema>;
 export const ListSessionDocumentsResponseSchema = z
   .object({
     data: z.array(SessionDocumentSchema),

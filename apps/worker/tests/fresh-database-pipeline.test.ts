@@ -1,18 +1,21 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  AllocationDecisionRequiredError,
   allocationLines,
   applyWarehouseMovement,
   auditLogs,
   createDatabase,
   createOrderSession,
   dispatchWarehouseOutboundRequest,
+  listAllocationDecisions,
   listStoreReceiptSources,
   listWarehouseOutboundRequests,
   mergedOrderItems,
   orderSessions,
   products,
   reservations,
+  respondAllocationDecision,
   stores,
   submitOrderRequest,
   transitionOrderSession,
@@ -27,7 +30,7 @@ import { PostgresAllocationJobRepository } from '../src/postgres-repository.js';
 const describePostgres = process.env.RUN_POSTGRES_TESTS === '1' ? describe : describe.skip;
 
 describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
-  it('creates a session, allocates an order and releases one shipment to the store exactly once', async () => {
+  it('creates a session, allocates an order, waits for the store to accept and releases one shipment exactly once', async () => {
     const databaseUrl = process.env.DATABASE_URL;
     if (!databaseUrl) throw new Error('DATABASE_URL is required when RUN_POSTGRES_TESTS=1.');
     const client = createDatabase({
@@ -70,6 +73,17 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
         .values({ code: `PIPE-${runKey}`, name: 'Pipeline test', groupId: referenceStore.groupId })
         .returning();
       if (!store) throw new Error('Could not create the isolated pipeline store.');
+      const [storeUser] = await client.db
+        .insert(users)
+        .values({
+          storeId: store.id,
+          email: `pipe-${runKey}@example.test`,
+          passwordHash: 'pipeline-store-password-hash-placeholder',
+          displayName: 'Pipeline store',
+          role: 'store',
+        })
+        .returning({ id: users.id });
+      if (!storeUser) throw new Error('Could not create the pipeline store account.');
       const now = new Date();
       const businessDate = hoChiMinhDate(now);
       const requestOpensAt = new Date(`${businessDate}T00:00:00+07:00`);
@@ -199,7 +213,7 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
         waitlistedQuantity: 0,
       });
 
-      // The allocation run releases its own shipment: without this the store never sees it.
+      // The published result waits for the store: the shipment is reserved, not released.
       const outbounds = await listWarehouseOutboundRequests(client.db, {
         page: 1,
         pageSize: 20,
@@ -207,8 +221,77 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
         allocationRunId: allocation.resourceId,
       });
       expect(outbounds.data).toHaveLength(1);
-      const outbound = outbounds.data[0]!;
+      const reserved = outbounds.data[0]!;
+      expect(reserved).toMatchObject({ status: 'reserved', version: 0, dispatchedAt: null });
+      expect(reserved.lines[0]).toMatchObject({
+        productId: product.id,
+        approvedQuantity: 3,
+        reservedQuantity: 3,
+        dispatchedQuantity: 0,
+      });
+      const decisions = await listAllocationDecisions(client.db, {
+        page: 1,
+        pageSize: 20,
+        storeIds: [store.id],
+      });
+      expect(decisions.data).toHaveLength(1);
+      const decision = decisions.data[0]!;
+      expect(decision).toMatchObject({
+        allocationRunId: allocation.resourceId,
+        status: 'pending',
+        version: 1,
+        grantedQuantity: 3,
+        respondedAt: null,
+        shipment: { outboundRequestId: reserved.id, status: 'reserved' },
+      });
+      expect(
+        (await listStoreReceiptSources(client.db, { page: 1, pageSize: 20, storeId: store.id }))
+          .data,
+      ).toEqual([]);
+      // Not even an administrator can release goods the store has not accepted.
+      await expect(
+        dispatchWarehouseOutboundRequest(client.db, {
+          outboundRequestId: reserved.id,
+          expectedVersion: 0,
+          dispatchedByUserId: administrator.id,
+          idempotencyKey: `integration-early-dispatch-${runKey}`,
+          requestHash: `integration-early-dispatch-hash-${runKey}`,
+        }),
+      ).rejects.toBeInstanceOf(AllocationDecisionRequiredError);
+
+      const accepted = await respondAllocationDecision(client.db, {
+        decisionId: decision.id,
+        action: 'ACCEPT',
+        expectedVersion: 1,
+        actorUserId: storeUser.id,
+        idempotencyKey: `integration-accept-${runKey}`,
+        requestHash: `integration-accept-hash-${runKey}`,
+        respondedAt: processedAt,
+      });
+      expect(accepted).toMatchObject({
+        replayed: false,
+        value: { status: 'accepted', version: 2, dispatchedOutboundRequestId: reserved.id },
+      });
+      const replayedAcceptance = await respondAllocationDecision(client.db, {
+        decisionId: decision.id,
+        action: 'ACCEPT',
+        expectedVersion: 1,
+        actorUserId: storeUser.id,
+        idempotencyKey: `integration-accept-${runKey}`,
+        requestHash: `integration-accept-hash-${runKey}`,
+      });
+      expect(replayedAcceptance.replayed).toBe(true);
+
+      const outbound = (
+        await listWarehouseOutboundRequests(client.db, {
+          page: 1,
+          pageSize: 20,
+          storeIds: [store.id],
+          allocationRunId: allocation.resourceId,
+        })
+      ).data[0]!;
       expect(outbound).toMatchObject({
+        id: reserved.id,
         status: 'dispatched',
         version: 1,
         dispatchedByUserId: null,
@@ -233,7 +316,7 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
         .from(reservations)
         .where(eq(reservations.allocationLineId, allocationLineId))
         .limit(1);
-      // Dispatch keeps the stock reserved; it only leaves on-hand when HTKD finalizes the receipt.
+      // Acceptance keeps the stock reserved; it only leaves on-hand when HTKD finalizes receipt.
       expect(linkedReservation).toEqual({
         outboundRequestLineId: outbound.lines[0]!.id,
         status: 'active',
@@ -249,8 +332,13 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
         );
       expect(dispatchAudits).toEqual([
         {
-          actorUserId: null,
-          metadata: { dispatchedBy: 'system', trigger: 'allocation-finalize' },
+          actorUserId: storeUser.id,
+          metadata: {
+            dispatchedBy: 'system',
+            trigger: 'allocation-decision-accepted',
+            allocationDecisionId: decision.id,
+            acceptedByUserId: storeUser.id,
+          },
         },
       ]);
 

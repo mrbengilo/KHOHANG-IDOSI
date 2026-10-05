@@ -1,4 +1,5 @@
 export * from './allocation-policy.js';
+export * from './allocation-decisions.js';
 export * from './allocations.js';
 export * from './admin-audit.js';
 export * from './common.js';

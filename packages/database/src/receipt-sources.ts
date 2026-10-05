@@ -11,12 +11,21 @@ import {
   min,
   ne,
   notExists,
+  or,
   sum,
   type SQL,
 } from 'drizzle-orm';
 
 import type { Database } from './client.js';
-import { outboundRequestLines, outboundRequests, reservations, storeReceipts } from './schema.js';
+import { SHIPPABLE_DECISION_STATUSES } from './allocation-decision-gate.js';
+import {
+  allocationLines,
+  allocationResultDecisions,
+  outboundRequestLines,
+  outboundRequests,
+  reservations,
+  storeReceipts,
+} from './schema.js';
 
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
@@ -209,6 +218,18 @@ function eligibleSourcePredicate(database: Database, storeId: string | undefined
         ne(outboundRequestLines.approvedQuantity, outboundRequestLines.dispatchedQuantity),
       ),
     );
+  // Dispatch is gated on the store's acceptance; this keeps a pending or rejected result out of
+  // the receivable list however the shipment reached dispatched.
+  const shippableResult = database
+    .select({ id: allocationResultDecisions.id })
+    .from(allocationResultDecisions)
+    .where(
+      and(
+        eq(allocationResultDecisions.allocationRunId, outboundRequests.allocationRunId),
+        eq(allocationResultDecisions.storeId, outboundRequests.storeId),
+        inArray(allocationResultDecisions.status, [...SHIPPABLE_DECISION_STATUSES]),
+      ),
+    );
   const conditions: SQL[] = [
     eq(outboundRequests.status, 'dispatched'),
     isNull(outboundRequests.deletedAt),
@@ -216,6 +237,7 @@ function eligibleSourcePredicate(database: Database, storeId: string | undefined
     exists(dispatchedLine),
     notExists(incompleteApprovedLine),
     notExists(existingReceipt),
+    or(isNull(outboundRequests.allocationRunId), exists(shippableResult))!,
   ];
   if (storeId !== undefined) {
     conditions.push(eq(outboundRequests.storeId, storeId));
@@ -265,7 +287,9 @@ export interface HeldAllocationRecord {
 /**
  * Active allocation reservations with no shipment line: priority goods intentionally held in
  * the central warehouse until the store's next ordinary order carries them (continuous ordering
- * rule). `storeIds` is a server-authorized scope; undefined means every store.
+ * rule). Only goods of accepted (or not-required/legacy) results count as held for delivery; a
+ * result still waiting for the store's answer is shown as such by the decision list instead.
+ * `storeIds` is a server-authorized scope; undefined means every store.
  */
 export async function listHeldAllocationStock(
   database: Database,
@@ -277,6 +301,24 @@ export async function listHeldAllocationStock(
     isNull(reservations.deletedAt),
     isNotNull(reservations.allocationLineId),
     isNull(reservations.outboundRequestLineId),
+    exists(
+      database
+        .select({ id: allocationResultDecisions.id })
+        .from(allocationResultDecisions)
+        .innerJoin(
+          allocationLines,
+          and(
+            eq(allocationLines.allocationRunId, allocationResultDecisions.allocationRunId),
+            eq(allocationLines.storeId, allocationResultDecisions.storeId),
+          ),
+        )
+        .where(
+          and(
+            eq(allocationLines.id, reservations.allocationLineId),
+            inArray(allocationResultDecisions.status, [...SHIPPABLE_DECISION_STATUSES]),
+          ),
+        ),
+    ),
   ];
   if (input.storeIds !== undefined) {
     conditions.push(inArray(reservations.storeId, [...new Set(input.storeIds)]));

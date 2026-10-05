@@ -1,7 +1,22 @@
 import type { InboundStatistics, InboundStatisticsQuery } from '@idosi/contracts';
 import { loadInboundStatistics, InboundScopeError } from '@idosi/database';
 import type { ReceiptSummary } from '@idosi/contracts';
-import { sessionDocument, type SessionDocument } from '@idosi/contracts';
+import {
+  sessionDocument,
+  type AllocationDecision,
+  type AllocationDecisionDetail,
+  type ListAllocationDecisionsQuery,
+  type ListSessionDocumentsQuery,
+  type RespondAllocationDecisionRequest,
+  type SessionDocument,
+} from '@idosi/contracts';
+import { databaseDecisionStatus } from '@idosi/database';
+import {
+  decisionDtosFor,
+  getPostgresAllocationDecision,
+  listPostgresAllocationDecisions,
+  respondPostgresAllocationDecision,
+} from './postgres-allocation-decisions.js';
 import { listSessionDocuments as listDatabaseSessionDocuments } from '@idosi/database';
 import { listStoreBagOpenings } from '@idosi/database';
 import {
@@ -1459,9 +1474,43 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     };
   }
 
+  public async listAllocationDecisions(
+    actor: AuthenticatedPrincipal,
+    query: ListAllocationDecisionsQuery,
+  ): Promise<Page<AllocationDecision>> {
+    return listPostgresAllocationDecisions(db, actor, query);
+  }
+
+  public async getAllocationDecision(
+    actor: AuthenticatedPrincipal,
+    decisionId: string,
+  ): Promise<AllocationDecisionDetail> {
+    return getPostgresAllocationDecision(db, actor, decisionId);
+  }
+
+  public async respondAllocationDecision(
+    actor: AuthenticatedPrincipal,
+    decisionId: string,
+    input: RespondAllocationDecisionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<AllocationDecisionDetail>> {
+    return respondPostgresAllocationDecision(
+      db,
+      actor,
+      decisionId,
+      input,
+      idempotencyKey,
+      requestHash,
+      context,
+      () => this.authorizeRetailStoreOperation(actor),
+    );
+  }
+
   public async listSessionDocuments(
     actor: AuthenticatedPrincipal,
-    query: ListAllocationsQuery,
+    query: ListSessionDocumentsQuery,
   ): Promise<Page<SessionDocument>> {
     if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
     const storeIds =
@@ -1487,11 +1536,34 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         : { status: databaseAllocationResultStatus(query.status) }),
       ...(query.productId === undefined ? {} : { productId: query.productId }),
       ...(query.priority === undefined ? {} : { priority: query.priority }),
+      ...(query.includeDecision ? { includeDecision: true } : {}),
+      ...(query.decisionStatus === undefined
+        ? {}
+        : { decisionStatus: databaseDecisionStatus(query.decisionStatus) }),
     });
+    const decisions = query.includeDecision
+      ? await decisionDtosFor(
+          db,
+          actor,
+          result.data.flatMap((header) =>
+            'decision' in header && header.decision ? [header.decision] : [],
+          ),
+        )
+      : [];
     return {
       pagination: result.pagination,
       data: result.data.map((header) =>
         sessionDocument({
+          ...(query.includeDecision
+            ? {
+                decision:
+                  decisions.find(
+                    (decision) =>
+                      decision.allocationRunId === header.allocationRunId &&
+                      decision.storeId === header.storeId,
+                  ) ?? null,
+              }
+            : {}),
           id: header.sessionId + ':' + header.storeId,
           orderCode: 'TH-' + header.sessionId + '-' + header.storeId,
           resultCode: 'KQ-' + header.sessionId + '-' + header.storeId,
