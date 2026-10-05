@@ -11,12 +11,19 @@ const validUpdate = {
   snapshotTime: '08:00',
   cutoffTime: '09:00',
   maxRequestsPerStore: 2,
-  policyVersion: 'ALLOC-v1.2',
+  policyVersion: 'idosi-round-robin-p0a-p3-v1',
   idosiSyncIntervalMinutes: 15,
   vatRatePercent: 8,
 } as const;
 
 describe('operational settings contracts', () => {
+  it('rejects unknown policies before they can become the default for future sessions', () => {
+    for (const policyVersion of ['idosi-round-robin-p0a-p3-v3', 'ALLOC-v1.2']) {
+      expect(
+        UpdateOperationalSettingsRequestSchema.safeParse({ ...validUpdate, policyVersion }).success,
+      ).toBe(false);
+    }
+  });
   it('accepts integer VAT 0 through 100 and rejects fractions and non-finite values', () => {
     for (const vatRatePercent of [0, 8, 10, 100])
       expect(

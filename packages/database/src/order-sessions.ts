@@ -1,3 +1,4 @@
+import { SupportedAllocationPolicyVersionSchema } from '@idosi/contracts';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import type { Database } from './client.js';
@@ -405,10 +406,8 @@ function validateCreateInput(input: CreateOrderSessionInput): void {
       'Giờ bắt đầu phân bổ phải sau giờ chốt nhận đơn để cửa hàng có thời gian xác nhận hàng ưu tiên.',
     );
   }
-  if (input.policyVersion.trim().length === 0 || input.policyVersion.trim().length > 80) {
-    throw new OrderSessionValidationError(
-      'policyVersion must contain between 1 and 80 characters.',
-    );
+  if (!SupportedAllocationPolicyVersionSchema.safeParse(input.policyVersion).success) {
+    throw new OrderSessionValidationError('Phiên bản chính sách phân bổ không được hỗ trợ.');
   }
 }
 

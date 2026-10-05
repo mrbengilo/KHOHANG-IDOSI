@@ -1,3 +1,4 @@
+import { DEFAULT_ALLOCATION_POLICY_VERSION } from '@idosi/contracts';
 import {
   ALLOCATION_POLICY_VERSION,
   confirmDailyPriorityOffer,
@@ -25,6 +26,9 @@ function ticket(id: string, storeId: string, quantity = 2) {
 }
 
 describe('domain-backed worker planning', () => {
+  it('supports the same policy accepted by API commands', () => {
+    expect(DEFAULT_ALLOCATION_POLICY_VERSION).toBe(ALLOCATION_POLICY_VERSION);
+  });
   it('offers any positive share, even partial, and records the basis for full versus partial', () => {
     const waitingThree = ticket('ticket-a', 'store-a', 3);
     const waitingOne = ticket('ticket-b', 'store-b', 1);

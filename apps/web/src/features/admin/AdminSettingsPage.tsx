@@ -1,4 +1,6 @@
 import {
+  DEFAULT_ALLOCATION_POLICY_VERSION,
+  SupportedAllocationPolicyVersionSchema,
   UpdateOperationalSettingsRequestSchema,
   type IdosiSyncIntervalMinutes,
   type OperationalSettingsOverview,
@@ -45,7 +47,7 @@ export function settingsDraftFromVersion(
     snapshotTime: settings.snapshotTime,
     cutoffTime: settings.cutoffTime,
     maxRequestsPerStore: String(settings.maxRequestsPerStore),
-    policyVersion: settings.policyVersion,
+    policyVersion: DEFAULT_ALLOCATION_POLICY_VERSION,
     idosiSyncIntervalMinutes: settings.idosiSyncIntervalMinutes,
   };
 }
@@ -61,8 +63,8 @@ export function settingsUpdateFromDraft(
   if (draft.cutoffTime <= draft.snapshotTime) {
     return { error: 'Giờ chốt phải sau giờ snapshot.', input: null };
   }
-  if (draft.policyVersion.trim().length < 3) {
-    return { error: 'Phiên bản chính sách phải có ít nhất 3 ký tự.', input: null };
+  if (!SupportedAllocationPolicyVersionSchema.safeParse(draft.policyVersion).success) {
+    return { error: 'Phiên bản chính sách phân bổ không được hỗ trợ.', input: null };
   }
 
   const parsed = UpdateOperationalSettingsRequestSchema.safeParse({
@@ -260,14 +262,7 @@ function SettingsEditor({
             </label>
             <label className="settings-field settings-field--wide">
               <span className="field-label">Phiên bản chính sách</span>
-              <input
-                disabled={saving}
-                maxLength={64}
-                minLength={3}
-                onChange={(event) => update('policyVersion', event.target.value)}
-                required
-                value={draft.policyVersion}
-              />
+              <input disabled={saving} readOnly value={draft.policyVersion} />
             </label>
           </div>
         </section>

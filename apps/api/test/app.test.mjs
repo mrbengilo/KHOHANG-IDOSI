@@ -245,7 +245,7 @@ describe('KHOHANG-IDOSI API', () => {
         snapshotTime: '09:00',
         cutoffTime: '08:00',
         maxRequestsPerStore: 2,
-        policyVersion: 'ALLOC-v1.3',
+        policyVersion: 'idosi-round-robin-p0a-p3-v1',
         idosiSyncIntervalMinutes: 15,
         vatRatePercent: 8,
       },
@@ -263,13 +263,31 @@ describe('KHOHANG-IDOSI API', () => {
         snapshotTime: '08:00',
         cutoffTime: '09:00',
         maxRequestsPerStore: 2,
-        policyVersion: 'ALLOC-v1.3',
+        policyVersion: 'idosi-round-robin-p0a-p3-v1',
         idosiSyncIntervalMinutes: 15,
         vatRatePercent: 8,
         integrationSecret: 'must-not-be-accepted',
       },
     });
     assert.equal(secretInput.statusCode, 400);
+
+    const unsupportedPolicy = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/operational-settings',
+      headers: { cookie: adminCookie },
+      payload: {
+        expectedVersion: 1,
+        timezone: 'Asia/Ho_Chi_Minh',
+        snapshotTime: '08:00',
+        cutoffTime: '09:00',
+        maxRequestsPerStore: 2,
+        policyVersion: 'idosi-round-robin-p0a-p3-v3',
+        idosiSyncIntervalMinutes: 15,
+        vatRatePercent: 8,
+      },
+    });
+    assert.equal(unsupportedPolicy.statusCode, 400);
+    assert.equal(unsupportedPolicy.json().error.code, 'VALIDATION_ERROR');
 
     const updated = await app.inject({
       method: 'PUT',
@@ -281,7 +299,7 @@ describe('KHOHANG-IDOSI API', () => {
         snapshotTime: '07:45',
         cutoffTime: '08:45',
         maxRequestsPerStore: 3,
-        policyVersion: 'ALLOC-v1.3',
+        policyVersion: 'idosi-round-robin-p0a-p3-v1',
         idosiSyncIntervalMinutes: 30,
         vatRatePercent: 10,
       },
@@ -307,7 +325,7 @@ describe('KHOHANG-IDOSI API', () => {
         snapshotTime: '08:00',
         cutoffTime: '09:00',
         maxRequestsPerStore: 2,
-        policyVersion: 'ALLOC-v1.4',
+        policyVersion: 'idosi-round-robin-p0a-p3-v1',
         idosiSyncIntervalMinutes: 15,
         vatRatePercent: 8,
       },
@@ -1221,6 +1239,15 @@ describe('KHOHANG-IDOSI API', () => {
     const created = await mutateSession(
       adminCookie,
       '/api/v1/order-sessions',
+      'unsupported-session-policy',
+      { ...createPayload, policyVersion: 'idosi-round-robin-p0a-p3-v3' },
+    );
+    assert.equal(created.statusCode, 400);
+    assert.equal(created.json().error.code, 'VALIDATION_ERROR');
+
+    const accepted = await mutateSession(
+      adminCookie,
+      '/api/v1/order-sessions',
       'create-session-20260918',
       createPayload,
     );
@@ -1230,13 +1257,13 @@ describe('KHOHANG-IDOSI API', () => {
       'create-session-20260918',
       createPayload,
     );
-    assert.equal(created.statusCode, 201);
-    assert.equal(created.json().data.status, 'SCHEDULED');
-    assert.equal(created.json().data.policyVersion, 'idosi-round-robin-p0a-p3-v1');
+    assert.equal(accepted.statusCode, 201);
+    assert.equal(accepted.json().data.status, 'SCHEDULED');
+    assert.equal(accepted.json().data.policyVersion, 'idosi-round-robin-p0a-p3-v1');
     assert.equal(replay.headers['idempotency-replayed'], 'true');
-    assert.equal(replay.json().data.id, created.json().data.id);
+    assert.equal(replay.json().data.id, accepted.json().data.id);
 
-    const sessionId = created.json().data.id;
+    const sessionId = accepted.json().data.id;
     const opened = await mutateSession(
       adminCookie,
       `/api/v1/order-sessions/${sessionId}/transition`,

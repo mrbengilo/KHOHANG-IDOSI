@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { SupportedAllocationPolicyVersionSchema } from './allocation-policy.js';
 import { EntityIdSchema, IsoDateTimeSchema } from './common.js';
 
 export const VatRatePercentSchema = z.number().int().min(0).max(100);
@@ -66,7 +67,7 @@ export const UpdateOperationalSettingsRequestSchema = z
     snapshotTime: BusinessTimeSchema,
     cutoffTime: BusinessTimeSchema,
     maxRequestsPerStore: z.number().int().min(1).max(10),
-    policyVersion: z.string().trim().min(3).max(64),
+    policyVersion: SupportedAllocationPolicyVersionSchema,
     idosiSyncIntervalMinutes: IdosiSyncIntervalMinutesSchema,
     vatRatePercent: VatRatePercentSchema,
   })

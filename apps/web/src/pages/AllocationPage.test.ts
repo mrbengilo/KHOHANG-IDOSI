@@ -15,18 +15,28 @@ import {
 
 const operationalSettings = {
   cutoffTime: '09:15',
-  policyVersion: 'allocation-policy-v2',
+  policyVersion: 'idosi-round-robin-p0a-p3-v1',
   snapshotTime: '08:15',
 } as const;
 
 describe('production allocation session helpers', () => {
+  it('does not inherit an unsupported policy and rejects a tampered draft', () => {
+    const draft = defaultOrderSessionDraft({
+      ...operationalSettings,
+      policyVersion: 'idosi-round-robin-p0a-p3-v3',
+    });
+    expect(draft.policyVersion).toBe('idosi-round-robin-p0a-p3-v1');
+    expect(
+      orderSessionInputFromDraft({ ...draft, policyVersion: 'idosi-round-robin-p0a-p3-v3' }).input,
+    ).toBeNull();
+  });
   it('uses the live operational policy and selects a usable business date', () => {
     expect(
       defaultOrderSessionDraft(operationalSettings, new Date('2026-09-16T23:00:00.000Z')),
     ).toEqual({
       allocationStartsTime: '09:15',
       businessDate: '2026-09-17',
-      policyVersion: 'allocation-policy-v2',
+      policyVersion: 'idosi-round-robin-p0a-p3-v1',
       requestClosesTime: '08:15',
       requestOpensTime: '00:00',
     });
@@ -41,7 +51,7 @@ describe('production allocation session helpers', () => {
       orderSessionInputFromDraft({
         allocationStartsTime: '09:15',
         businessDate: '2026-09-18',
-        policyVersion: 'allocation-policy-v2',
+        policyVersion: 'idosi-round-robin-p0a-p3-v1',
         requestClosesTime: '08:15',
         requestOpensTime: '00:00',
       }),
@@ -50,7 +60,7 @@ describe('production allocation session helpers', () => {
       input: {
         allocationStartsAt: '2026-09-18T02:15:00.000Z',
         businessDate: '2026-09-18',
-        policyVersion: 'allocation-policy-v2',
+        policyVersion: 'idosi-round-robin-p0a-p3-v1',
         requestClosesAt: '2026-09-18T01:15:00.000Z',
         requestOpensAt: '2026-09-17T17:00:00.000Z',
       },
@@ -62,7 +72,7 @@ describe('production allocation session helpers', () => {
       orderSessionInputFromDraft({
         allocationStartsTime: '09:00',
         businessDate: '2026-09-18',
-        policyVersion: 'allocation-policy-v2',
+        policyVersion: 'idosi-round-robin-p0a-p3-v1',
         requestClosesTime: '08:00',
         requestOpensTime: '08:00',
       }),
@@ -72,7 +82,7 @@ describe('production allocation session helpers', () => {
       orderSessionInputFromDraft({
         allocationStartsTime: '14:00',
         businessDate: '2026-09-18',
-        policyVersion: 'allocation-policy-v2',
+        policyVersion: 'idosi-round-robin-p0a-p3-v1',
         requestClosesTime: '14:00',
         requestOpensTime: '12:00',
       }).error,
@@ -81,7 +91,7 @@ describe('production allocation session helpers', () => {
       orderSessionInputFromDraft({
         allocationStartsTime: '14:30',
         businessDate: '2026-09-18',
-        policyVersion: 'allocation-policy-v2',
+        policyVersion: 'idosi-round-robin-p0a-p3-v1',
         requestClosesTime: '14:00',
         requestOpensTime: '12:00',
       }).error,

@@ -428,7 +428,7 @@ export function defaultOrderSessionDraft(
   return {
     allocationStartsTime: settings?.cutoffTime ?? '09:00',
     businessDate: businessDate(draftDate),
-    policyVersion: settings?.policyVersion ?? DEFAULT_ALLOCATION_POLICY_VERSION,
+    policyVersion: DEFAULT_ALLOCATION_POLICY_VERSION,
     requestClosesTime,
     requestOpensTime: '00:00',
   };
@@ -730,7 +730,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
       sessionsQuery.refetch(),
       orderRequestsQuery.refetch(),
       queryClient.invalidateQueries({ queryKey: ['held-allocations'] }),
-      ...(role === 'ADMIN' ? [settingsQuery.refetch()] : []),
+      ...(role === 'ADMIN' ? [settingsQuery.refetch(), workerStatusQuery.refetch()] : []),
     ]);
   };
 
@@ -1001,14 +1001,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
               </label>
               <label className="allocation-session-form__wide">
                 <span className="field-label">Phiên bản chính sách</span>
-                <input
-                  disabled={pendingAction === 'CREATE'}
-                  maxLength={80}
-                  minLength={1}
-                  onChange={(event) => updateDraft('policyVersion', event.target.value)}
-                  required
-                  value={draft.policyVersion}
-                />
+                <input disabled={pendingAction === 'CREATE'} readOnly value={draft.policyVersion} />
               </label>
             </div>
             <div className="allocation-session-form__actions">
