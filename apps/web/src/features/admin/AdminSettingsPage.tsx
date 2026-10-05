@@ -175,7 +175,8 @@ function SettingsEditor({
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState('');
   const saveLock = useRef(false);
-  const changed = !sameDraft(draft, initialDraft);
+  const changed =
+    draft.policyVersion !== overview.current.policyVersion || !sameDraft(draft, initialDraft);
 
   const update = <Key extends keyof OperationalSettingsDraft>(
     key: Key,
