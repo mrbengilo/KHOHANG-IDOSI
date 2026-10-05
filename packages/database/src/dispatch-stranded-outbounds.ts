@@ -2,7 +2,12 @@ import { closeDatabase, db } from './client.js';
 import { dispatchStrandedAllocationOutbounds } from './stranded-outbounds.js';
 
 /**
- * One-off repair for allocation shipments stuck at `reserved`.
+ * One-off repair for legacy allocation shipments stuck at `reserved`.
+ *
+ * A reserved shipment whose result is still waiting for the store's answer is not stuck: it is
+ * reported as "awaiting store decision" and is never dispatched by this tool. Only legacy
+ * results (published before store confirmation) or already accepted ones can be released, and
+ * the canonical dispatch gate re-checks every source.
  *
  *   node packages/database/dist/dispatch-stranded-outbounds.js           # dry run (default)
  *   node packages/database/dist/dispatch-stranded-outbounds.js --apply   # release them
@@ -22,6 +27,9 @@ try {
   const result = await dispatchStrandedAllocationOutbounds(db, { apply });
   console.info(apply ? 'Mode: APPLY' : 'Mode: DRY RUN (no changes written)');
   console.info(`Stranded allocation outbounds found: ${result.candidates.length}`);
+  console.info(
+    `Reserved shipments awaiting the store's decision (not stranded, left alone): ${result.awaitingStoreDecisionCount}`,
+  );
   for (const candidate of result.candidates) {
     console.info(
       [
@@ -30,6 +38,7 @@ try {
         `lines=${candidate.lineCount}`,
         `bags=${candidate.approvedQuantity}`,
         `created=${candidate.createdAt.toISOString()}`,
+        `decision=${candidate.decisionStatus ?? 'MISSING'}`,
         candidate.blockedReason === null ? 'dispatchable' : `BLOCKED: ${candidate.blockedReason}`,
       ].join(' | '),
     );

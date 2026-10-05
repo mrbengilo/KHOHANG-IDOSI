@@ -5,6 +5,9 @@ import { afterAll, describe, expect, it } from 'vitest';
 import {
   operationalSettingsVersions,
   allocationLines,
+  allocationResultDecisions,
+  AllocationDecisionRequiredError,
+  dispatchWarehouseOutboundInTransaction,
   allocationRuns,
   applyWarehouseMovement,
   auditLogs,
@@ -127,6 +130,49 @@ describePostgres('stranded allocation outbound backfill', () => {
     expect((await listStrandedAllocationOutbounds(db)).map((row) => row.id)).not.toContain(
       fixture.outboundId,
     );
+  });
+
+  it('never treats a shipment awaiting its store decision as stranded, nor one without a decision', async () => {
+    const awaiting = await createStrandedOutbound(2, { decision: 'pending' });
+    const missing = await createStrandedOutbound(2, { decision: null });
+
+    const dryRun = await dispatchStrandedAllocationOutbounds(db, { apply: false });
+    expect(dryRun.candidates.map((row) => row.id)).not.toContain(awaiting.outboundId);
+    expect(dryRun.awaitingStoreDecisionCount).toBeGreaterThanOrEqual(1);
+    expect(dryRun.candidates.find((row) => row.id === missing.outboundId)).toMatchObject({
+      decisionStatus: null,
+      blockedReason: 'no store decision record for this allocation result (integrity error)',
+    });
+    expect((await listStrandedAllocationOutbounds(db)).map((row) => row.id)).not.toContain(
+      awaiting.outboundId,
+    );
+
+    const applied = await dispatchStrandedAllocationOutbounds(db, { apply: true });
+    expect(applied.dispatchedIds).not.toContain(awaiting.outboundId);
+    expect(applied.dispatchedIds).not.toContain(missing.outboundId);
+    expect(await statusOf(awaiting.outboundId)).toBe('reserved');
+    expect(await statusOf(missing.outboundId)).toBe('reserved');
+
+    // Calling the canonical dispatch directly, as any server code could, is refused too.
+    for (const outboundId of [awaiting.outboundId, missing.outboundId]) {
+      await expect(
+        withSerializableTransaction(db, (tx) =>
+          dispatchWarehouseOutboundInTransaction(tx, {
+            outboundRequestId: outboundId,
+            expectedVersion: 0,
+            dispatcher: { kind: 'system', trigger: 'stranded-outbound-backfill' },
+          }),
+        ),
+      ).rejects.toBeInstanceOf(AllocationDecisionRequiredError);
+    }
+    // And so is a raw status update that bypasses the application entirely (0038 trigger).
+    await expect(
+      db
+        .update(outboundRequests)
+        .set({ status: 'dispatched', dispatchedAt: new Date() })
+        .where(eq(outboundRequests.id, awaiting.outboundId)),
+    ).rejects.toThrow();
+    expect(await statusOf(awaiting.outboundId)).toBe('reserved');
   });
 
   it('queues exactly the store-confirmed shortage as P0B before HTKD finalization', async () => {
@@ -568,7 +614,11 @@ describePostgres('stranded allocation outbound backfill', () => {
   /** Recreates the production state: a 09:00 shipment left at `reserved` by the old worker. */
   async function createStrandedOutbound(
     quantity: number,
-    options: { readonly shortReservation?: boolean } = {},
+    options: {
+      readonly shortReservation?: boolean;
+      /** The store decision of the run's result; 'legacy' mirrors the 0038 classification. */
+      readonly decision?: 'legacy' | 'pending' | null;
+    } = {},
   ) {
     let [admin] = await db.select().from(users).where(eq(users.role, 'admin')).limit(1);
     if (!admin) {
@@ -691,6 +741,17 @@ describePostgres('stranded allocation outbound backfill', () => {
         reasonCode: 'TEST_STRANDED',
       })
       .returning();
+    const decision = options.decision === undefined ? 'legacy' : options.decision;
+    if (decision !== null) {
+      await db.insert(allocationResultDecisions).values({
+        allocationRunId: run!.id,
+        orderSessionId: session!.id,
+        storeId: store!.id,
+        status: decision,
+        origin: decision === 'legacy' ? 'legacy_backfill' : 'allocation_run',
+        grantedQuantity: quantity,
+      });
+    }
     const [outbound] = await db
       .insert(outboundRequests)
       .values({

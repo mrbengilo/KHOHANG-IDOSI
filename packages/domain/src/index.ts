@@ -1,4 +1,5 @@
 export * from './allocation.js';
+export * from './allocation-decisions.js';
 export * from './errors.js';
 export * from './inventory-ledger.js';
 export * from './orders.js';

@@ -20,8 +20,11 @@ import {
   orderSessions,
   outboundRequestLines,
   outboundRequests,
+  publishAllocationDecisionsInTransaction,
   recordWorkerHeartbeat,
   reservations,
+  shippableResultCondition,
+  STOCK_JOBS_LOCK,
   stores,
   warehouseBalances,
   waitTickets,
@@ -60,7 +63,7 @@ import type {
   WorkerHeartbeat,
 } from './types.js';
 
-const LOCK_NAMESPACE = 'idosi-allocation-worker';
+const LOCK_NAMESPACE = STOCK_JOBS_LOCK.namespace;
 /** Row key in worker_heartbeats; replicas share it because they run the same idempotent jobs. */
 export const ALLOCATION_WORKER_HEARTBEAT = 'allocation';
 const ACTIVE_SESSION_STATUSES = ['open', 'closed', 'allocating'] as const;
@@ -69,7 +72,7 @@ const ACTIVE_SESSION_STATUSES = ['open', 'closed', 'allocating'] as const;
  * same warehouse stock and wait tickets, so a job always plans against holds and reservations
  * already committed by the other sessions' jobs instead of two snapshots claiming the same bags.
  */
-const STOCK_JOB_LOCK = 'stock-jobs';
+const STOCK_JOB_LOCK = STOCK_JOBS_LOCK.key;
 
 type SnapshotRow = typeof inventorySnapshots.$inferSelect;
 type SnapshotItemRow = typeof inventorySnapshotItems.$inferSelect;
@@ -867,6 +870,14 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
       processedAt,
     );
     await persistWaitRemainders(tx, waitRemainders, demandById, processedAt, persistedRunId);
+    // Published with the result itself: a store can only ever see committed results, and a
+    // replayed run returns before reaching here.
+    const decisions = await publishAllocationDecisionsInTransaction(tx, {
+      allocationRunId: persistedRunId,
+      orderSessionId: session.id,
+      publishedAt: processedAt,
+    });
+    affectedRows += decisions.length;
     affectedRows += await materializeOutboundRequests(tx, persistedRunId, session, processedAt);
     const mergedOrderIds = [...new Set(persistedMerged.map((item) => item.mergedOrderId))];
     if (mergedOrderIds.length > 0) {
@@ -935,7 +946,9 @@ export async function materializeOutboundRequests(
   processedAt: Date,
 ): Promise<number> {
   // An ordinary request is the shipping trigger, not the priority allocation itself.
-  // Reservations from earlier completed cycles remain held and are attached here once.
+  // Reservations from earlier completed cycles remain held and are attached here once, but only
+  // when the store accepted that earlier result (or it needed no answer / predates answers):
+  // an unanswered or rejected result never rides a shipment.
   const ordinaryOrders = await tx
     .select({ storeId: orderRequests.storeId, requestedByUserId: orderRequests.requestedByUserId })
     .from(orderRequests)
@@ -981,7 +994,10 @@ export async function materializeOutboundRequests(
         inArray(allocationLines.storeId, [...requesterByStore.keys()]),
         or(
           eq(allocationLines.allocationRunId, allocationRunId),
-          eq(allocationRuns.status, 'completed'),
+          and(
+            eq(allocationRuns.status, 'completed'),
+            shippableResultCondition(allocationLines.allocationRunId, allocationLines.storeId),
+          ),
         ),
         sql`${allocationLines.allocatedQuantity} > 0`,
         eq(reservations.status, 'active'),
@@ -1009,6 +1025,15 @@ export async function materializeOutboundRequests(
     byStore.set(line.storeId, group);
   }
   let affectedRows = 0;
+  // A store shipped only carried goods (no line of its own in this run) still gets a result
+  // record, not_required, so its shipment is never without one.
+  const decisions = await publishAllocationDecisionsInTransaction(tx, {
+    allocationRunId,
+    orderSessionId: session.id,
+    publishedAt: processedAt,
+    extraStoreIds: [...byStore.keys()],
+  });
+  const decisionByStore = new Map(decisions.map((decision) => [decision.storeId, decision]));
   for (const [storeId, storeLines] of byStore) {
     const outboundRequestId = deterministicUuid(`outbound-shipment:${allocationRunId}:${storeId}`);
     const requestNumber = ''; // Assigned by the database trigger.
@@ -1090,9 +1115,12 @@ export async function materializeOutboundRequests(
       },
       createdAt: processedAt,
     });
-    // Nothing else in the product releases an allocation shipment, so the run releases it
-    // itself: the store sees it on /receive as soon as the allocation is published. Warehouse
-    // stock is unaffected here; it leaves on-hand once, when HTKD finalizes the receipt.
+    affectedRows += 2;
+    // A shipment carrying goods this run granted waits for the store to accept the result; the
+    // acceptance releases it. One that carries only goods already accepted earlier (this run
+    // granted the store nothing) needs no answer and is released now, as before. Warehouse stock
+    // is unaffected either way; it leaves on-hand once, when HTKD finalizes the receipt.
+    if (decisionByStore.get(storeId)?.status !== 'not_required') continue;
     await dispatchWarehouseOutboundInTransaction(tx, {
       outboundRequestId,
       expectedVersion: 0,
@@ -1100,7 +1128,7 @@ export async function materializeOutboundRequests(
       dispatchedAt: processedAt,
       auditId: deterministicUuid(`audit:outbound-dispatched:${outboundRequestId}`),
     });
-    affectedRows += 3;
+    affectedRows += 1;
   }
   return affectedRows;
 }

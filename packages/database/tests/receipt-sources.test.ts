@@ -36,12 +36,23 @@ describe('store receipt source query', () => {
       );
       expect(query).toContain('not exists (select "id" from "store_receipts"');
       expect(query).toContain('"store_receipts"."deleted_at" is null');
-      expect(query).toContain('"outbound_requests"."store_id" = $4');
+      expect(query).toContain('not exists (select "id" from "allocation_result_decisions"');
+      expect(query).toContain('"allocation_result_decisions"."status" in ($4, $5)');
+      expect(query).toContain('"outbound_requests"."store_id" = $6');
     }
     expect(headerQuery.sql).toContain(
       'order by "outbound_requests"."dispatched_at" desc, "outbound_requests"."id" desc',
     );
-    expect(headerQuery.params).toEqual(['dispatched', 0, 0, IDS.store, 25, 25]);
+    expect(headerQuery.params).toEqual([
+      'dispatched',
+      0,
+      0,
+      'pending',
+      'rejected',
+      IDS.store,
+      25,
+      25,
+    ]);
   });
 
   it('assembles every header in page order and product lines deterministically', () => {

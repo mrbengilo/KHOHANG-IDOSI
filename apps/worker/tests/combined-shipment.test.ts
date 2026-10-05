@@ -10,6 +10,7 @@ import {
   dispatchWarehouseOutboundRequest,
   finalizeStoreReceipt,
   inventorySnapshots,
+  listAllocationDecisions,
   listHeldAllocationStock,
   listSessionDocuments,
   listStoreReceiptSources,
@@ -21,7 +22,9 @@ import {
   orderRequests,
   orderSessions,
   products,
+  publishAllocationDecisionsInTransaction,
   reservations,
+  respondAllocationDecision,
   resolveWarehouseShortageCheck,
   storeGroups,
   stores,
@@ -215,6 +218,39 @@ describePostgres('priority goods join the next ordinary shipment', () => {
         expect(
           held.every((row) => row.status === 'active' && row.outboundRequestLineId === null),
         ).toBe(true);
+        // The 09:00 run publishes the priority-only result; it waits for the store's answer.
+        const [priorityDecision] = await withSerializableTransaction(db, (tx) =>
+          publishAllocationDecisionsInTransaction(tx, {
+            allocationRunId: priorityCycle.run.id,
+            orderSessionId: priorityCycle.session.id,
+            publishedAt: now,
+          }),
+        );
+        expect(priorityDecision).toMatchObject({ status: 'pending', grantedQuantity: 3 });
+        // Unanswered goods are not yet "held for delivery".
+        expect(await listHeldAllocationStock(db, { storeIds: [store!.id] })).toEqual([]);
+        const priorityAccepted = await respondAllocationDecision(db, {
+          decisionId: priorityDecision!.id,
+          action: 'ACCEPT',
+          expectedVersion: 1,
+          actorUserId: storeUser!.id,
+          idempotencyKey: randomUUID(),
+          requestHash: randomUUID(),
+        });
+        // Accepted priority goods without an ordinary order are kept, never shipped alone.
+        expect(priorityAccepted).toMatchObject({
+          replayed: false,
+          value: { status: 'accepted', dispatchedOutboundRequestId: null },
+        });
+        expect(
+          (
+            await listWarehouseOutboundRequests(db, {
+              page: 1,
+              pageSize: 20,
+              storeIds: [store!.id],
+            })
+          ).data,
+        ).toHaveLength(0);
         // Held goods are not silent: the store and its HTKD see them waiting for the next order.
         expect(await listHeldAllocationStock(db, { storeIds: [store!.id] })).toEqual([
           expect.objectContaining({ storeId: store!.id, productId: product!.id, heldQuantity: 3 }),
@@ -310,7 +346,39 @@ describePostgres('priority goods join the next ordinary shipment', () => {
           storeIds: [store!.id],
         });
         expect(outbounds.data).toHaveLength(1);
-        const outbound = outbounds.data[0]!;
+        // The shipment waits for the store to accept this cycle's result.
+        expect(outbounds.data[0]).toMatchObject({ status: 'reserved', version: 0 });
+        const [nextDecision] = (
+          await listAllocationDecisions(db, {
+            page: 1,
+            pageSize: 5,
+            allocationRunId: nextCycle.run.id,
+          })
+        ).data;
+        expect(nextDecision).toMatchObject({
+          status: 'pending',
+          grantedQuantity: 3,
+          carried: [
+            expect.objectContaining({ quantity: 2, sourceDecisionStatus: 'accepted' }),
+            expect.objectContaining({ quantity: 1, sourceDecisionStatus: 'accepted' }),
+          ],
+        });
+        await respondAllocationDecision(db, {
+          decisionId: nextDecision!.id,
+          action: 'ACCEPT',
+          expectedVersion: 1,
+          actorUserId: storeUser!.id,
+          idempotencyKey: randomUUID(),
+          requestHash: randomUUID(),
+          respondedAt: now,
+        });
+        const outbound = (
+          await listWarehouseOutboundRequests(db, {
+            page: 1,
+            pageSize: 20,
+            storeIds: [store!.id],
+          })
+        ).data[0]!;
         expect(outbound.lines).toHaveLength(1);
         expect(outbound.lines[0]!.approvedQuantity).toBe(6);
         const linked = await db
@@ -340,7 +408,7 @@ describePostgres('priority goods join the next ordinary shipment', () => {
             })
           ).data,
         ).toEqual([]);
-        // The grouped shipment is released by the run itself, once, even under a concurrent retry.
+        // The grouped shipment is released once, by the store's acceptance.
         expect(outbound).toMatchObject({
           status: 'dispatched',
           version: 1,
