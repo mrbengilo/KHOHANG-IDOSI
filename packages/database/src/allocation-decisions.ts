@@ -481,76 +481,75 @@ async function assembleDecisionRecords(
     headers.map((header) => pairKey(header.decision.allocationRunId, header.decision.storeId)),
   );
 
-  const [lineRows, reservationRows, shipmentRows] = await Promise.all([
-    reader
-      .select({
-        allocationRunId: allocationLines.allocationRunId,
-        storeId: allocationLines.storeId,
-        productId: allocationLines.productId,
-        requestedQuantity: sql<number>`sum(${allocationLines.requestedQuantity})`.mapWith(Number),
-        allocatedQuantity: sql<number>`sum(${allocationLines.allocatedQuantity})`.mapWith(Number),
-        waitlistedQuantity: sql<number>`sum(${allocationLines.waitlistedQuantity})`.mapWith(Number),
-      })
-      .from(allocationLines)
-      .where(
-        and(
-          inArray(allocationLines.allocationRunId, runIds),
-          inArray(allocationLines.storeId, storeIds),
-        ),
-      )
-      .groupBy(allocationLines.allocationRunId, allocationLines.storeId, allocationLines.productId)
-      .orderBy(asc(allocationLines.productId)),
-    reader
-      .select({
-        allocationRunId: allocationLines.allocationRunId,
-        storeId: allocationLines.storeId,
-        held: sql<number>`coalesce(sum(${reservations.quantity}) filter (where ${reservations.status} = 'active' and ${reservations.outboundRequestLineId} is null), 0)`.mapWith(
+  // One transaction client: queries run one after another, never interleaved on it.
+  const lineRows = await reader
+    .select({
+      allocationRunId: allocationLines.allocationRunId,
+      storeId: allocationLines.storeId,
+      productId: allocationLines.productId,
+      requestedQuantity: sql<number>`sum(${allocationLines.requestedQuantity})`.mapWith(Number),
+      allocatedQuantity: sql<number>`sum(${allocationLines.allocatedQuantity})`.mapWith(Number),
+      waitlistedQuantity: sql<number>`sum(${allocationLines.waitlistedQuantity})`.mapWith(Number),
+    })
+    .from(allocationLines)
+    .where(
+      and(
+        inArray(allocationLines.allocationRunId, runIds),
+        inArray(allocationLines.storeId, storeIds),
+      ),
+    )
+    .groupBy(allocationLines.allocationRunId, allocationLines.storeId, allocationLines.productId)
+    .orderBy(asc(allocationLines.productId));
+  const reservationRows = await reader
+    .select({
+      allocationRunId: allocationLines.allocationRunId,
+      storeId: allocationLines.storeId,
+      held: sql<number>`coalesce(sum(${reservations.quantity}) filter (where ${reservations.status} = 'active' and ${reservations.outboundRequestLineId} is null), 0)`.mapWith(
+        Number,
+      ),
+      released:
+        sql<number>`coalesce(sum(${reservations.quantity}) filter (where ${reservations.status} = 'released' and ${reservations.releaseReason} = ${ALLOCATION_RESULT_REJECTED_RELEASE_REASON}), 0)`.mapWith(
           Number,
         ),
-        released:
-          sql<number>`coalesce(sum(${reservations.quantity}) filter (where ${reservations.status} = 'released' and ${reservations.releaseReason} = ${ALLOCATION_RESULT_REJECTED_RELEASE_REASON}), 0)`.mapWith(
-            Number,
-          ),
-      })
-      .from(reservations)
-      .innerJoin(allocationLines, eq(allocationLines.id, reservations.allocationLineId))
-      .where(
-        and(
-          inArray(allocationLines.allocationRunId, runIds),
-          inArray(allocationLines.storeId, storeIds),
-          isNull(reservations.deletedAt),
-        ),
-      )
-      .groupBy(allocationLines.allocationRunId, allocationLines.storeId),
-    reader
-      .select({
-        allocationRunId: outboundRequests.allocationRunId,
-        storeId: outboundRequests.storeId,
-        outboundRequestId: outboundRequests.id,
-        requestNumber: outboundRequests.requestNumber,
-        status: outboundRequests.status,
-        dispatchedAt: outboundRequests.dispatchedAt,
-        receiptId: storeReceipts.id,
-        receiptNumber: storeReceipts.receiptNumber,
-        receiptStatus: storeReceipts.status,
-      })
-      .from(outboundRequests)
-      .leftJoin(
-        storeReceipts,
-        and(
-          eq(storeReceipts.outboundRequestId, outboundRequests.id),
-          isNull(storeReceipts.deletedAt),
-        ),
-      )
-      .where(
-        and(
-          inArray(outboundRequests.allocationRunId, runIds),
-          inArray(outboundRequests.storeId, storeIds),
-          isNull(outboundRequests.deletedAt),
-        ),
-      )
-      .orderBy(asc(outboundRequests.createdAt), asc(outboundRequests.id)),
-  ]);
+    })
+    .from(reservations)
+    .innerJoin(allocationLines, eq(allocationLines.id, reservations.allocationLineId))
+    .where(
+      and(
+        inArray(allocationLines.allocationRunId, runIds),
+        inArray(allocationLines.storeId, storeIds),
+        isNull(reservations.deletedAt),
+      ),
+    )
+    .groupBy(allocationLines.allocationRunId, allocationLines.storeId);
+  const shipmentRows = await reader
+    .select({
+      allocationRunId: outboundRequests.allocationRunId,
+      storeId: outboundRequests.storeId,
+      outboundRequestId: outboundRequests.id,
+      requestNumber: outboundRequests.requestNumber,
+      status: outboundRequests.status,
+      dispatchedAt: outboundRequests.dispatchedAt,
+      receiptId: storeReceipts.id,
+      receiptNumber: storeReceipts.receiptNumber,
+      receiptStatus: storeReceipts.status,
+    })
+    .from(outboundRequests)
+    .leftJoin(
+      storeReceipts,
+      and(
+        eq(storeReceipts.outboundRequestId, outboundRequests.id),
+        isNull(storeReceipts.deletedAt),
+      ),
+    )
+    .where(
+      and(
+        inArray(outboundRequests.allocationRunId, runIds),
+        inArray(outboundRequests.storeId, storeIds),
+        isNull(outboundRequests.deletedAt),
+      ),
+    )
+    .orderBy(asc(outboundRequests.createdAt), asc(outboundRequests.id));
   const shipmentIds = shipmentRows
     .filter((row) => row.allocationRunId !== null)
     .filter((row) => wanted.has(pairKey(row.allocationRunId!, row.storeId)))
