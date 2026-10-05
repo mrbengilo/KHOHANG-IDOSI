@@ -56,6 +56,7 @@ Các invariant sau là bắt buộc, trừ khi task mới thay đổi rõ ràng 
 - Phần chưa được cấp phải chuyển đúng vào phiếu chờ.
 - Không cấp trùng, không trừ tồn trùng và không tăng tồn khi chưa xác nhận thực nhận.
 - Cửa hàng phải khai nhận đủ hoặc nhận thiếu theo số lượng thực tế.
+- Kết quả phân bổ có lượng cấp mới phải được tài khoản nhận hàng của cửa hàng (STORE cho cửa hàng của mình, quầy sỉ cho cửa hàng sỉ) **Chấp nhận** trước khi xuất kho; chấp nhận không phải thực nhận và không cộng tồn. **Từ chối** chỉ giải phóng reservation của chính phiếu đó, giữ nguyên hàng đã chấp nhận từ phiên trước, không tạo thiếu hàng hay phiếu chờ. Chi tiết: `docs/allocation-result-confirmation.md`.
 - Luồng nhập có thể gồm số kg từng bao, giá/kg, phí vận chuyển và phí bốc vác.
 - Mọi thay đổi nhập, xuất, giữ hàng, phân bổ, hoàn trả và điều chỉnh tồn phải nguyên tử.
 - Mọi command ghi dữ liệu phải idempotent hoặc có idempotency key phù hợp.

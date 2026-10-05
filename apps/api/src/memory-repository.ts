@@ -1,4 +1,9 @@
-import { calculateReceiptVat, DomainError } from '@idosi/domain';
+import {
+  calculateReceiptVat,
+  DomainError,
+  normalizeAllocationDecisionReason,
+  transitionAllocationDecision,
+} from '@idosi/domain';
 import type { InboundStatistics, InboundStatisticsQuery } from '@idosi/contracts';
 import {
   inboundPeriod,
@@ -7,7 +12,13 @@ import {
   type InboundAggregate,
 } from '@idosi/database';
 import type { ReceiptSummary } from '@idosi/contracts';
-import type { SessionDocument } from '@idosi/contracts';
+import type { ListSessionDocumentsQuery, SessionDocument } from '@idosi/contracts';
+import type {
+  AllocationDecision,
+  AllocationDecisionDetail,
+  ListAllocationDecisionsQuery,
+  RespondAllocationDecisionRequest,
+} from '@idosi/contracts';
 import type { ListStoreBagOpeningsQuery, StoreBagOpening } from '@idosi/contracts';
 import { randomUUID } from 'node:crypto';
 import { nextOrderingWindow, type OrderingContext } from '@idosi/contracts';
@@ -180,7 +191,13 @@ import type {
   SubmittedOrderRequest,
   WarehouseRepository,
 } from './repository.js';
-import { assertActiveRetailStore, canAccessStore, pagination, slicePage } from './repository.js';
+import {
+  assertActiveRetailStore,
+  canAccessStore,
+  mayAnswerAllocationDecision,
+  pagination,
+  slicePage,
+} from './repository.js';
 import { hashPassword, hashSessionToken } from './security.js';
 
 const HO_CHI_MINH_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
@@ -604,6 +621,12 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly waitTickets = new Map<string, WaitTicket>();
   private readonly priorityOffers = new Map<string, PriorityOffer>();
   private readonly dispatchedOutbounds = new Map<string, WarehouseOutboundRequest>();
+  /** Published allocation results and the store's answer; the memory stand-in for 0038. */
+  private readonly allocationDecisions = new Map<string, AllocationDecisionDetail>();
+  private readonly allocationDecisionMutations = new Map<
+    string,
+    { readonly requestHash: string; readonly decisionId: string }
+  >();
   private readonly idempotency = new Map<string, IdempotencyRecord>();
   private readonly sessionMutationIdempotency = new Map<string, SessionMutationIdempotencyRecord>();
   private readonly receiptIdempotency = new Map<string, ReceiptIdempotencyRecord>();
@@ -1492,9 +1515,266 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     };
   }
 
+  /**
+   * What the 09:00 worker publishes, for inject tests and local demos (memory mode has no
+   * worker). Granted goods are reserved in the memory warehouse like the real run does.
+   */
+  public publishAllocationDecision(input: {
+    readonly storeId: string;
+    readonly sessionId?: string;
+    readonly lines: readonly { readonly productId: string; readonly allocated: number }[];
+    readonly outboundRequestId?: string;
+  }): AllocationDecisionDetail {
+    const now = this.now().toISOString();
+    const granted = input.lines.reduce((total, line) => total + line.allocated, 0);
+    const session = this.orderSessions.get(input.sessionId ?? MEMORY_SEED_IDS.orderSession);
+    const outbound = input.outboundRequestId
+      ? this.dispatchedOutbounds.get(input.outboundRequestId)
+      : undefined;
+    const decision: AllocationDecisionDetail = {
+      id: randomUUID(),
+      allocationRunId: randomUUID(),
+      runVersion: 1,
+      sessionId: session?.id ?? MEMORY_SEED_IDS.orderSession,
+      sessionCode: session?.code ?? 'PDH-MEMORY',
+      businessDate: session?.businessDate ?? now.slice(0, 10),
+      storeId: input.storeId,
+      status: granted > 0 ? 'PENDING' : 'NOT_REQUIRED',
+      version: 1,
+      grantedQuantity: granted,
+      origin: 'ALLOCATION_RUN',
+      canRespond: false,
+      respondedAt: null,
+      respondedByAccountId: null,
+      respondedByName: null,
+      reason: null,
+      createdAt: now,
+      updatedAt: now,
+      lines: input.lines.map((line) => ({
+        productId: line.productId,
+        requestedQuantity: line.allocated,
+        allocatedQuantity: line.allocated,
+        waitlistedQuantity: 0,
+      })),
+      carried: [],
+      heldQuantity: outbound ? 0 : granted,
+      releasedQuantity: 0,
+      shipment: outbound
+        ? {
+            outboundRequestId: outbound.id,
+            requestNumber: outbound.requestNumber,
+            status: outbound.status,
+            dispatchedAt: outbound.dispatchedAt,
+            receiptId: null,
+            receiptNumber: null,
+            receiptStatus: null,
+          }
+        : null,
+      sources: input.lines.map((line) => ({
+        allocationLineId: randomUUID(),
+        productId: line.productId,
+        priority: 'P1',
+        requestedQuantity: line.allocated,
+        allocatedQuantity: line.allocated,
+        waitlistedQuantity: 0,
+        orderRequestId: null,
+        orderRequestCode: null,
+        waitTicketId: null,
+        priorityOfferId: null,
+      })),
+    };
+    for (const line of input.lines) this.adjustMemoryReserved(line.productId, line.allocated);
+    this.allocationDecisions.set(decision.id, decision);
+    return structuredClone(decision);
+  }
+
+  public async listAllocationDecisions(
+    actor: AuthenticatedPrincipal,
+    query: ListAllocationDecisionsQuery,
+  ): Promise<Page<AllocationDecision>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const values = [...this.allocationDecisions.values()]
+      .filter((decision) => canAccessStore(actor, decision.storeId))
+      .filter((decision) => query.storeId === undefined || decision.storeId === query.storeId)
+      .filter((decision) => query.status === undefined || decision.status === query.status)
+      .filter((decision) => query.sessionId === undefined || decision.sessionId === query.sessionId)
+      .filter(
+        (decision) =>
+          query.outboundRequestId === undefined ||
+          decision.shipment?.outboundRequestId === query.outboundRequestId,
+      )
+      .sort(
+        (left, right) =>
+          right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
+      );
+    return {
+      data: slicePage(values, query.page, query.pageSize).map(
+        ({ sources: _sources, ...decision }) => this.decisionForActor(actor, decision),
+      ),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
+  }
+
+  public async getAllocationDecision(
+    actor: AuthenticatedPrincipal,
+    decisionId: string,
+  ): Promise<AllocationDecisionDetail> {
+    const decision = this.allocationDecisions.get(decisionId);
+    if (!decision || !canAccessStore(actor, decision.storeId)) {
+      throw notFound('Không tìm thấy phiếu kết quả phân bổ');
+    }
+    return this.decisionForActor(actor, decision);
+  }
+
+  public async respondAllocationDecision(
+    actor: AuthenticatedPrincipal,
+    decisionId: string,
+    input: RespondAllocationDecisionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<AllocationDecisionDetail>> {
+    if (actor.role !== 'STORE' && actor.role !== 'WHOLESALE') throw forbidden();
+    if (actor.role === 'STORE') await this.authorizeRetailStoreOperation(actor);
+    const current = this.allocationDecisions.get(decisionId);
+    if (!current || !canAccessStore(actor, current.storeId)) {
+      throw notFound('Không tìm thấy phiếu kết quả phân bổ');
+    }
+    const store = this.stores.get(current.storeId);
+    if (
+      !store ||
+      !mayAnswerAllocationDecision(actor, {
+        id: store.id,
+        kind: store.kind,
+        active: store.status === 'ACTIVE',
+      })
+    ) {
+      throw forbidden();
+    }
+    const scopedKey = `${actor.accountId}:allocation-decision:${decisionId}:${idempotencyKey}`;
+    const previous = this.allocationDecisionMutations.get(scopedKey);
+    if (previous) {
+      if (previous.requestHash !== requestHash) {
+        throw new ApiError(
+          'IDEMPOTENCY_CONFLICT',
+          'Khóa idempotency đã được dùng cho nội dung khác',
+          409,
+        );
+      }
+      return { data: await this.getAllocationDecision(actor, previous.decisionId), replayed: true };
+    }
+    let reason: string | null;
+    try {
+      reason = normalizeAllocationDecisionReason(input.action, input.reason);
+    } catch (error) {
+      throw new ApiError('VALIDATION_ERROR', (error as Error).message, 400);
+    }
+    const transition = transitionAllocationDecision({
+      status: current.status,
+      version: current.version,
+      expectedVersion: input.expectedVersion,
+      action: input.action,
+    });
+    if (!transition.ok) {
+      throw new ApiError(
+        transition.reason === 'STALE_VERSION' ? 'VERSION_CONFLICT' : 'INVALID_STATE_TRANSITION',
+        transition.reason === 'STALE_VERSION'
+          ? 'Phiếu kết quả đã thay đổi. Vui lòng tải lại để xem trạng thái mới nhất.'
+          : 'Phiếu kết quả này không còn chờ cửa hàng xác nhận.',
+        409,
+        {
+          reason: transition.reason,
+          currentStatus: current.status,
+          currentVersion: current.version,
+        },
+      );
+    }
+    const now = this.now().toISOString();
+    const outbound = current.shipment
+      ? this.dispatchedOutbounds.get(current.shipment.outboundRequestId)
+      : undefined;
+    let shipment = current.shipment;
+    if (outbound && outbound.status === 'RESERVED') {
+      const released: WarehouseOutboundRequest =
+        transition.next === 'ACCEPTED'
+          ? {
+              ...outbound,
+              status: 'DISPATCHED',
+              lines: outbound.lines.map((line) => ({
+                ...line,
+                dispatchedUnits: line.approvedUnits,
+              })),
+              version: outbound.version + 1,
+              dispatchedAt: now,
+              updatedAt: now,
+            }
+          : { ...outbound, status: 'CANCELLED', version: outbound.version + 1, updatedAt: now };
+      this.dispatchedOutbounds.set(released.id, released);
+      shipment = shipment && {
+        ...shipment,
+        status: released.status,
+        dispatchedAt: released.dispatchedAt,
+      };
+    }
+    if (transition.next === 'REJECTED') {
+      for (const line of current.lines)
+        this.adjustMemoryReserved(line.productId, -line.allocatedQuantity);
+    }
+    const updated: AllocationDecisionDetail = {
+      ...current,
+      status: transition.next,
+      version: current.version + 1,
+      respondedAt: now,
+      respondedByAccountId: actor.accountId,
+      respondedByName: this.accounts.get(actor.accountId)?.displayName ?? null,
+      reason,
+      updatedAt: now,
+      shipment,
+      heldQuantity:
+        transition.next === 'ACCEPTED' && current.shipment === null ? current.grantedQuantity : 0,
+      releasedQuantity: transition.next === 'REJECTED' ? current.grantedQuantity : 0,
+    };
+    this.allocationDecisions.set(decisionId, updated);
+    this.allocationDecisionMutations.set(scopedKey, { requestHash, decisionId });
+    this.appendAudit(
+      actor,
+      context,
+      transition.next === 'ACCEPTED' ? 'ALLOCATION_RESULT_ACCEPTED' : 'ALLOCATION_RESULT_REJECTED',
+      'allocation_result_decision',
+      decisionId,
+      { status: current.status, version: current.version },
+      { status: updated.status, version: updated.version, reason },
+    );
+    return { data: await this.getAllocationDecision(actor, decisionId), replayed: false };
+  }
+
+  private decisionForActor<T extends AllocationDecision>(
+    actor: AuthenticatedPrincipal,
+    decision: T,
+  ): T {
+    const store = this.stores.get(decision.storeId);
+    const canRespond =
+      decision.status === 'PENDING' &&
+      store !== undefined &&
+      mayAnswerAllocationDecision(actor, {
+        id: store.id,
+        kind: store.kind,
+        active: store.status === 'ACTIVE',
+      });
+    return structuredClone({ ...decision, canRespond });
+  }
+
+  private adjustMemoryReserved(productId: string, delta: number): void {
+    const balance = this.warehouseBalances.get(productId);
+    if (!balance) return;
+    balance.reservedQuantity = Math.max(0, balance.reservedQuantity + delta);
+    balance.version += 1;
+    balance.updatedAt = this.now().toISOString();
+  }
+
   public async listSessionDocuments(
     actor: AuthenticatedPrincipal,
-    query: ListAllocationsQuery,
+    query: ListSessionDocumentsQuery,
   ): Promise<Page<SessionDocument>> {
     // Official documents require the persisted worker snapshot; memory mode has none.
     if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
@@ -2789,6 +3069,18 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (!canAccessStore(actor, current.storeId)) throw forbidden();
     if (current.status !== 'RESERVED' || current.version !== input.expectedVersion) {
       throw versionConflict();
+    }
+    const unanswered = [...this.allocationDecisions.values()].find(
+      (decision) =>
+        decision.shipment?.outboundRequestId === outboundRequestId &&
+        (decision.status === 'PENDING' || decision.status === 'REJECTED'),
+    );
+    if (unanswered) {
+      throw new ApiError(
+        'INVALID_STATE_TRANSITION',
+        'Cửa hàng chưa chấp nhận kết quả phân bổ nên chưa thể giao hoặc nhận hàng.',
+        409,
+      );
     }
     if (
       current.lines.some(

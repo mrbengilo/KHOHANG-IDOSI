@@ -75,8 +75,8 @@ export function HeldAllocationsPanel({
           </h2>
           <p>
             {audience === 'STORE'
-              ? 'Hàng này đã được phân bổ và đang giữ riêng cho cửa hàng tại kho tổng. Theo quy tắc giao chung, hàng sẽ được xuất cùng đơn đặt hàng thường kế tiếp của cửa hàng và khi đó hiện ở mục chờ nhận bên dưới.'
-              : 'Đã phân bổ và giữ tại kho tổng, chưa có phiếu xuất. Theo quy tắc giao chung, hàng tự được xuất cùng đơn đặt hàng thường kế tiếp của cửa hàng.'}
+              ? 'Hàng này thuộc kết quả phân bổ cửa hàng đã chấp nhận và đang giữ riêng tại kho tổng. Theo quy tắc giao chung, hàng sẽ được xuất cùng đơn đặt hàng thường kế tiếp của cửa hàng và khi đó hiện ở mục chờ nhận bên dưới. Kết quả chưa xác nhận không nằm ở đây mà ở thông báo cần xác nhận.'
+              : 'Thuộc kết quả phân bổ đã được cửa hàng chấp nhận, giữ tại kho tổng và chưa có phiếu xuất. Theo quy tắc giao chung, hàng tự được xuất cùng đơn đặt hàng thường kế tiếp của cửa hàng. Kết quả chưa xác nhận hoặc đã từ chối không được tính ở đây.'}
           </p>
         </div>
         <Badge tone="warning">{totalUnits} bao đang giữ</Badge>

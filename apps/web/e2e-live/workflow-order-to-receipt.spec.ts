@@ -17,6 +17,8 @@ import {
 } from '@idosi/database';
 import { and, eq } from 'drizzle-orm';
 
+import { acceptAllocationResultFromNotice } from './allocation-decision-helpers';
+
 // Named to run after the other live suites: it publishes the allocation of the shared
 // ordering session, which is what a real 09:00 run does to every store's open orders.
 const api = 'http://127.0.0.1:3100/api/v1';
@@ -119,7 +121,7 @@ test('an order approved by the 09:00 allocation reaches the store and can be rec
     await page.getByRole('button', { name: 'Gửi yêu cầu đặt hàng' }).click();
     const order = (await (await orderResponse).json()).data as { sessionId: string };
 
-    // 2. The 09:00 run approves the allocation; nobody has to release the shipment by hand.
+    // 2. The 09:00 run publishes the allocation; the store accepts it before anything ships.
     const [session] = await client.db
       .select()
       .from(orderSessions)
@@ -145,8 +147,11 @@ test('an order approved by the 09:00 allocation reaches the store and can be rec
       true,
     );
     expect(allocation.resourceId).toBeTruthy();
+    await page.goto('/receive');
+    await expect(page.locator('.receipt-create .receipt-source-count__value')).toHaveText('0');
+    await acceptAllocationResultFromNotice(page, productName);
 
-    // 3. The slip is on /receive at once, with the product and the approved bag count.
+    // 3. Once accepted, the slip is on /receive with the product and the approved bag count.
     await page.goto('/receive');
     const createPanel = page.locator('.receipt-create');
     await expect(createPanel.getByRole('heading', { name: 'Khai phiếu nhận hàng' })).toBeVisible();
@@ -386,7 +391,7 @@ test('a wholesale store orders, receives, is finalized and reports a discrepancy
     expect(order.storeId).toBe(storeA.id);
     await expect(page.locator('.quota-card')).toContainText('1 / 2 phiếu');
 
-    // 2. The same 09:00 run that serves retail stores allocates and dispatches it.
+    // 2. The same 09:00 run that serves retail stores allocates it; the desk accepts it.
     const [session] = await client.db
       .select()
       .from(orderSessions)
@@ -410,6 +415,7 @@ test('a wholesale store orders, receives, is finalized and reports a discrepancy
     expect((await worker.expireOffersAndFinalizeAllocation(scheduled, processedAt)).replayed).toBe(
       true,
     );
+    await acceptAllocationResultFromNotice(page, productName);
 
     // 3. Receiving: the store selector comes first and scopes the pending count.
     await page.goto('/receive');

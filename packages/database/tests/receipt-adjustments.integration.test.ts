@@ -8,6 +8,7 @@ import { seedReferenceData } from '../src/reference-seed.js';
 import {
   operationalSettingsVersions,
   allocationLines,
+  allocationResultDecisions,
   allocationRuns,
   applyWarehouseMovement,
   auditLogs,
@@ -2332,6 +2333,15 @@ describePostgres('post-finalization receipt discrepancy adjustments', () => {
         reasonCode: 'TEST_ADJUSTMENT',
       })
       .returning();
+    // A historical shipment: its result predates store confirmation (classified by 0038).
+    await db.insert(allocationResultDecisions).values({
+      allocationRunId: run!.id,
+      orderSessionId: session!.id,
+      storeId: base.storeId,
+      status: 'legacy',
+      origin: 'legacy_backfill',
+      grantedQuantity: quantity,
+    });
     const [outbound] = await db
       .insert(outboundRequests)
       .values({

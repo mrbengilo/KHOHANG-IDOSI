@@ -44,6 +44,7 @@ import {
   WaitTicketResponseSchema,
   type CancelWaitTicketRequest,
   type CancelStoreOrderRequest,
+  type AllocationDecisionStatus,
   type AllocationResultStatus,
   type CreateOrderSessionRequest,
   type DeclareStoreReceiptRequest,
@@ -353,7 +354,13 @@ export interface AllocationResultFilters {
   readonly storeId?: string;
 }
 
-export async function listSessionDocuments(filters: AllocationResultFilters = {}) {
+export interface SessionDocumentFilters extends AllocationResultFilters {
+  /** Ask for the store decision of every document (opt-in so older shapes stay valid). */
+  readonly includeDecision?: boolean;
+  readonly decisionStatus?: AllocationDecisionStatus;
+}
+
+export async function listSessionDocuments(filters: SessionDocumentFilters = {}) {
   const query = new URLSearchParams({
     page: String(filters.page ?? 1),
     pageSize: String(filters.pageSize ?? 20),
@@ -361,6 +368,8 @@ export async function listSessionDocuments(filters: AllocationResultFilters = {}
   if (filters.sessionId) query.set('sessionId', filters.sessionId);
   if (filters.status) query.set('status', filters.status);
   if (filters.storeId) query.set('storeId', filters.storeId);
+  if (filters.includeDecision) query.set('includeDecision', 'true');
+  if (filters.decisionStatus) query.set('decisionStatus', filters.decisionStatus);
   return ListSessionDocumentsResponseSchema.parse(await request('/session-documents?' + query));
 }
 

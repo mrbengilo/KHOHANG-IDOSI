@@ -130,6 +130,50 @@ export type {
 } from './outbound-requests.js';
 
 export {
+  AllocationDecisionRequiredError,
+  assertShipmentMayBeReceived,
+  assertShipmentMayDispatch,
+  isAllocationDecisionGuardError,
+  SHIPPABLE_DECISION_STATUSES,
+} from './allocation-decision-gate.js';
+export type {
+  AllocationDecisionDatabaseStatus,
+  AllocationDecisionGateReason,
+} from './allocation-decision-gate.js';
+export {
+  ALLOCATION_RESULT_DETACHED_REASON,
+  ALLOCATION_RESULT_REJECTED_RELEASE_REASON,
+  AllocationDecisionConflictError,
+  AllocationDecisionForbiddenError,
+  AllocationDecisionIntegrityError,
+  AllocationDecisionNotFoundError,
+  AllocationDecisionValidationError,
+  authorizeAllocationDecisionResponder,
+  databaseDecisionStatus,
+  domainDecisionStatus,
+  getAllocationDecision,
+  listAllocationDecisions,
+  loadAllocationDecisionsForResults,
+  publishAllocationDecisionsInTransaction,
+  respondAllocationDecision,
+  shippableResultCondition,
+  STOCK_JOBS_LOCK,
+} from './allocation-decisions.js';
+export type {
+  AllocationDecisionCarriedRecord,
+  AllocationDecisionDetailRecord,
+  AllocationDecisionLineRecord,
+  AllocationDecisionPage,
+  AllocationDecisionRecord,
+  AllocationDecisionShipmentRecord,
+  AllocationDecisionSourceRecord,
+  ListAllocationDecisionsInput,
+  PublishedAllocationDecision,
+  RespondAllocationDecisionInput,
+  RespondAllocationDecisionResult,
+} from './allocation-decisions.js';
+
+export {
   dispatchStrandedAllocationOutbounds,
   listStrandedAllocationOutbounds,
 } from './stranded-outbounds.js';

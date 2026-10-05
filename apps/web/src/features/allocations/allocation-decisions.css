@@ -1,0 +1,218 @@
+/* Phiếu kết quả phân bổ: trạng thái quyết định của cửa hàng tách khỏi tiến độ giao nhận. */
+.allocation-decision {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  border: 2px solid var(--warning-border);
+}
+.allocation-decision__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.allocation-decision__title {
+  min-width: 0;
+  flex: 1 1 240px;
+}
+.allocation-decision__title h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.allocation-decision__title p,
+.allocation-decision__hint {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+}
+.allocation-decision__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.allocation-decision__close {
+  display: grid;
+  min-width: 44px;
+  min-height: 44px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.allocation-decision__close:focus-visible,
+.allocation-decision-notice a:focus-visible {
+  outline: 3px solid var(--brand);
+  outline-offset: 2px;
+}
+.allocation-decision__group {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.allocation-decision__group h4 {
+  margin: 0;
+}
+.allocation-decision__carried {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.allocation-decision__carried li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-muted);
+  padding: 8px 10px;
+}
+.allocation-decision__carried small {
+  color: var(--text-secondary);
+}
+.allocation-decision__progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px;
+  border-radius: 10px;
+  background: var(--brand-soft);
+  padding: 10px 12px;
+}
+.allocation-decision__progress > div {
+  display: grid;
+  flex: 1 1 220px;
+  gap: 3px;
+  min-width: 0;
+}
+.allocation-decision__progress span {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.allocation-decision__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.allocation-decision__actions p {
+  flex: 1 1 260px;
+  margin: 0;
+  color: var(--text-secondary);
+}
+.allocation-decision__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.allocation-decision__buttons .button {
+  min-width: 136px;
+  min-height: 46px;
+}
+.button.allocation-decision__reject {
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+.button.allocation-decision__reject:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.allocation-decision-dialog {
+  width: min(100%, 560px);
+  max-height: calc(100dvh - 36px);
+  overflow-y: auto;
+}
+.allocation-decision-dialog__reason {
+  display: grid;
+  gap: 6px;
+}
+.allocation-decision-dialog__reason textarea {
+  width: 100%;
+  min-height: 72px;
+}
+.inline-notice--success {
+  display: block;
+}
+
+/* Thông báo bền vững: còn phiếu chờ xác nhận thì còn hiển thị, kể cả sau khi tải lại. */
+.allocation-decision-notice {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 1.25rem;
+  border: 3px solid var(--warning-border);
+  border-radius: 18px;
+  background: var(--warning-soft);
+  padding: 1rem 1.25rem;
+}
+.allocation-decision-notice h2 {
+  margin: 0;
+  font-size: clamp(1.1rem, 2vw, 1.5rem);
+}
+.allocation-decision-notice ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.allocation-decision-notice li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 14px;
+  border: 1px solid var(--warning-border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 10px 12px;
+}
+.allocation-decision-notice li > div {
+  display: grid;
+  flex: 1 1 220px;
+  gap: 2px;
+  min-width: 0;
+}
+.allocation-decision-notice li span {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.allocation-decision-notice .button {
+  min-height: 44px;
+}
+.allocation-decision-notice__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.session-document__decision {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 480px) {
+  .allocation-decision__buttons {
+    width: 100%;
+  }
+  .allocation-decision__buttons .button {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .allocation-decision-notice li .button {
+    width: 100%;
+  }
+}
+
+/* Số bao bị trả lại là thông tin chính của hộp xác nhận: không dùng cỡ chữ phụ 10px. */
+.allocation-decision-dialog .dialog__header p {
+  font-size: 13px;
+  line-height: 1.45;
+}

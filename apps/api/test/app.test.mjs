@@ -4086,6 +4086,93 @@ describe('KHOHANG-IDOSI API', () => {
     assert.deepEqual(body.data.failingJobs, []);
   });
 
+  test('memory adapter gates an allocation shipment on the store answer, once', async () => {
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const htkdCookie = cookieOf(await login('htkd'));
+    const productId = await firstProductId(storeCookie);
+    const published = repository.publishAllocationDecision({
+      storeId: MEMORY_SEED_IDS.nvtStore,
+      lines: [{ productId, allocated: 3 }],
+      outboundRequestId: MEMORY_SEED_IDS.reservedOutboundRequest,
+    });
+    const respond = (cookie, payload, key) =>
+      app.inject({
+        method: 'POST',
+        url: `/api/v1/allocation-decisions/${published.id}/respond`,
+        headers: { cookie, 'idempotency-key': key },
+        payload,
+      });
+
+    const early = await app.inject({
+      method: 'POST',
+      url: `/api/v1/outbound-requests/${MEMORY_SEED_IDS.reservedOutboundRequest}/dispatch`,
+      headers: { cookie: htkdCookie, 'idempotency-key': 'dispatch-before-answer' },
+      payload: { expectedVersion: 0 },
+    });
+    assert.equal(early.statusCode, 409);
+    assert.equal(early.json().error.code, 'INVALID_STATE_TRANSITION');
+
+    const notices = await app.inject({
+      method: 'GET',
+      url: '/api/v1/allocation-decisions?status=PENDING',
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(notices.statusCode, 200);
+    assert.deepEqual(
+      notices.json().data.map((row) => [row.id, row.canRespond]),
+      [[published.id, true]],
+    );
+    const htkdView = await app.inject({
+      method: 'GET',
+      url: `/api/v1/allocation-decisions/${published.id}`,
+      headers: { cookie: htkdCookie },
+    });
+    assert.equal(htkdView.statusCode, 200);
+    assert.equal(htkdView.json().data.canRespond, false);
+    assert.equal(
+      (await respond(htkdCookie, { action: 'ACCEPT', expectedVersion: 1 }, 'htkd-answer-0001'))
+        .statusCode,
+      403,
+    );
+
+    const accepted = await respond(
+      storeCookie,
+      { action: 'ACCEPT', expectedVersion: 1 },
+      'store-accept-0001',
+    );
+    assert.equal(accepted.statusCode, 200);
+    assert.equal(accepted.json().data.status, 'ACCEPTED');
+    assert.equal(accepted.json().data.shipment.status, 'DISPATCHED');
+    const replay = await respond(
+      storeCookie,
+      { action: 'ACCEPT', expectedVersion: 1 },
+      'store-accept-0001',
+    );
+    assert.equal(replay.headers['idempotency-replayed'], 'true');
+    const reused = await respond(
+      storeCookie,
+      { action: 'REJECT', expectedVersion: 1 },
+      'store-accept-0001',
+    );
+    assert.equal(reused.statusCode, 409);
+    assert.equal(reused.json().error.code, 'IDEMPOTENCY_CONFLICT');
+    const flip = await respond(
+      storeCookie,
+      { action: 'REJECT', expectedVersion: 2 },
+      'store-reject-0001',
+    );
+    assert.equal(flip.statusCode, 409);
+    assert.equal(flip.json().error.code, 'INVALID_STATE_TRANSITION');
+    const sources = await app.inject({
+      method: 'GET',
+      url: '/api/v1/store-receipt-sources?pageSize=100',
+      headers: { cookie: storeCookie },
+    });
+    assert.ok(
+      sources.json().data.some((source) => source.id === MEMORY_SEED_IDS.reservedOutboundRequest),
+    );
+  });
+
   async function login(username) {
     return app.inject({
       method: 'POST',

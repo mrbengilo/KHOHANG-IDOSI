@@ -12,9 +12,15 @@ import {
   sql,
   type SQL,
 } from 'drizzle-orm';
+import type { AllocationDecisionDatabaseStatus } from './allocation-decision-gate.js';
+import {
+  loadAllocationDecisionsForResults,
+  type AllocationDecisionRecord,
+} from './allocation-decisions.js';
 import type { Database } from './client.js';
 import {
   allocationLines,
+  allocationResultDecisions,
   allocationRuns,
   orderRequestItems,
   orderRequests,
@@ -29,8 +35,14 @@ import {
   type ListAllocationResultsInput,
 } from './allocation-results.js';
 
+export interface ListSessionDocumentsInput extends ListAllocationResultsInput {
+  /** Attach the store decision (and shipment progress) of every document header. */
+  readonly includeDecision?: boolean;
+  readonly decisionStatus?: AllocationDecisionDatabaseStatus;
+}
+
 /** Header pagination followed by complete sources in the same MVCC snapshot. No writes. */
-export async function listSessionDocuments(database: Database, input: ListAllocationResultsInput) {
+export async function listSessionDocuments(database: Database, input: ListSessionDocumentsInput) {
   if (
     !Number.isSafeInteger(input.page) ||
     input.page < 1 ||
@@ -60,6 +72,12 @@ export async function listSessionDocuments(database: Database, input: ListAlloca
       if (input.status) predicates.push(eq(allocationLines.status, input.status));
       if (input.productId) predicates.push(eq(allocationLines.productId, input.productId));
       if (input.priority) predicates.push(eq(allocationLines.priorityLevel, input.priority));
+      if (input.decisionStatus) {
+        // One decision per (run, store) header: a filter, never a join that multiplies rows.
+        predicates.push(
+          sql`exists (select 1 from ${allocationResultDecisions} where ${allocationResultDecisions.allocationRunId} = ${allocationRuns.id} and ${allocationResultDecisions.storeId} = ${allocationLines.storeId} and ${allocationResultDecisions.status} = ${input.decisionStatus})`,
+        );
+      }
       const headers = tx
         .select({
           allocationRunId: allocationRuns.id,
@@ -146,9 +164,22 @@ export async function listSessionDocuments(database: Database, input: ListAlloca
             ),
           ),
         );
+      const decisions: readonly AllocationDecisionRecord[] = input.includeDecision
+        ? await loadAllocationDecisionsForResults(tx, selected)
+        : [];
       return {
         data: selected.map((header) => ({
           ...header,
+          ...(input.includeDecision
+            ? {
+                decision:
+                  decisions.find(
+                    (decision) =>
+                      decision.allocationRunId === header.allocationRunId &&
+                      decision.storeId === header.storeId,
+                  ) ?? null,
+              }
+            : {}),
           carriedAllocations: carried
             .filter(
               (line) =>

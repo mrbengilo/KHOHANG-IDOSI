@@ -1,6 +1,12 @@
 import type { InboundStatistics, InboundStatisticsQuery } from '@idosi/contracts';
 import type { ReceiptSummary } from '@idosi/contracts';
-import type { SessionDocument } from '@idosi/contracts';
+import type { ListSessionDocumentsQuery, SessionDocument } from '@idosi/contracts';
+import type {
+  AllocationDecision,
+  AllocationDecisionDetail,
+  ListAllocationDecisionsQuery,
+  RespondAllocationDecisionRequest,
+} from '@idosi/contracts';
 import type { ListStoreBagOpeningsQuery, StoreBagOpening } from '@idosi/contracts';
 import type {
   CreateReceiptAdjustmentRequest,
@@ -390,8 +396,25 @@ export interface WarehouseRepository {
   ): Promise<OrderingContext>;
   listSessionDocuments(
     actor: AuthenticatedPrincipal,
-    query: ListAllocationsQuery,
+    query: ListSessionDocumentsQuery,
   ): Promise<Page<SessionDocument>>;
+  /** Store decisions on published results, scoped to the actor; PENDING is the notice source. */
+  listAllocationDecisions(
+    actor: AuthenticatedPrincipal,
+    query: ListAllocationDecisionsQuery,
+  ): Promise<Page<AllocationDecision>>;
+  getAllocationDecision(
+    actor: AuthenticatedPrincipal,
+    decisionId: string,
+  ): Promise<AllocationDecisionDetail>;
+  respondAllocationDecision(
+    actor: AuthenticatedPrincipal,
+    decisionId: string,
+    input: RespondAllocationDecisionRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<AllocationDecisionDetail>>;
   listAllocations(
     actor: AuthenticatedPrincipal,
     query: ListAllocationsQuery,
@@ -917,6 +940,23 @@ export interface WarehouseRepository {
     from: string,
     to: string,
   ): Promise<OrderStatistics>;
+}
+
+/**
+ * The receiving side of a store answers its allocation results: a store account for its own
+ * active retail store, the wholesale desk for an active wholesale store in its scope (the same
+ * parties that declare receipts). Admin and HTKD can read results but never answer for a store.
+ */
+export function mayAnswerAllocationDecision(
+  principal: AuthenticatedPrincipal,
+  store: { readonly id: string; readonly kind: 'RETAIL' | 'WHOLESALE'; readonly active: boolean },
+): boolean {
+  if (!store.active) return false;
+  if (principal.role === 'STORE') return principal.storeId === store.id && store.kind === 'RETAIL';
+  if (principal.role === 'WHOLESALE') {
+    return principal.assignedStoreIds.includes(store.id) && store.kind === 'WHOLESALE';
+  }
+  return false;
 }
 
 export function canAccessStore(principal: AuthenticatedPrincipal, storeId: string): boolean {

@@ -1,7 +1,9 @@
 import '../styles/document-history.css';
 import {
+  AllocationDecisionStatusSchema,
   CreateOrderSessionRequestSchema,
   DEFAULT_ALLOCATION_POLICY_VERSION,
+  type AllocationDecisionStatus,
   type AllocationResult,
   type AllocationResultStatus,
   type CreateOrderSessionRequest,
@@ -41,6 +43,15 @@ import { StoreOrderHistory } from '../features/orders/StoreOrderHistory';
 import { WaitlistPanel } from '../components/WaitlistPanel';
 import { getAdminOperationalSettings, getAllocationWorkerStatus } from '../features/admin/adminApi';
 import { HeldAllocationsPanel } from '../features/receipts/HeldAllocationsPanel';
+import { AllocationDecisionPanel } from '../features/allocations/AllocationDecisionPanel';
+import {
+  allocationDecisionKeys,
+  decisionCode,
+  decisionStatusLabel,
+  decisionStatusTone,
+  getAllocationDecision,
+} from '../features/allocations/allocationDecisionApi';
+import { useAllocationDecisionResponder } from '../features/allocations/useAllocationDecisionResponder';
 import {
   ApiClientError,
   createOrderSession,
@@ -579,6 +590,12 @@ export function readAllocationTab(
     : 'sessions';
 }
 
+/** A decision filter from the URL (the notice links to PENDING); anything else is ignored. */
+export function readDecisionStatusFilter(params: URLSearchParams): '' | AllocationDecisionStatus {
+  const parsed = AllocationDecisionStatusSchema.safeParse(params.get('decisionStatus'));
+  return parsed.success ? parsed.data : '';
+}
+
 /** Sessions of one business date in schedule order, for the create tab's overview. */
 export function sessionsOfBusinessDate(
   sessions: readonly OrderSession[],
@@ -613,6 +630,40 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
   const [allocationSessionId, setAllocationSessionId] = useState('');
   const [allocationStatus, setAllocationStatus] = useState<'' | AllocationResultStatus>('');
   const [allocationStoreId, setAllocationStoreId] = useState('');
+  const [allocationDecisionStatus, setAllocationDecisionStatus] = useState<
+    '' | AllocationDecisionStatus
+  >(() => readDecisionStatusFilter(params));
+  const openDecisionId = params.get('decision');
+  const decisionStatusParam = readDecisionStatusFilter(params);
+  const decisionHostRef = useRef<HTMLElement>(null);
+  const responder = useAllocationDecisionResponder();
+  // Links from the notice change the URL while this page may already be open.
+  useEffect(() => {
+    if (!decisionStatusParam) return;
+    setAllocationPage(1);
+    setAllocationDecisionStatus(decisionStatusParam);
+  }, [decisionStatusParam]);
+  useEffect(() => {
+    if (!openDecisionId) return;
+    const frame = window.requestAnimationFrame(() =>
+      decisionHostRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+    );
+    return () => window.cancelAnimationFrame(frame);
+  }, [openDecisionId]);
+  const openDecision = (decisionId: string | null) =>
+    setParams((current) => {
+      const next = new URLSearchParams(current);
+      if (decisionId) next.set('decision', decisionId);
+      else next.delete('decision');
+      return next;
+    });
+  const decisionQuery = useQuery({
+    enabled: openDecisionId !== null,
+    queryFn: () => getAllocationDecision(openDecisionId!),
+    queryKey: allocationDecisionKeys.detail(accountKey, openDecisionId ?? ''),
+    refetchOnWindowFocus: true,
+    retry: false,
+  });
   const catalogQuery = useQuery({ queryFn: listCatalog, queryKey: ['catalog'], retry: false });
   const storesQuery = useQuery({
     queryFn: listAccessibleStores,
@@ -670,9 +721,11 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
       listSessionDocuments({
         page: allocationPage,
         pageSize: allocationResultPageSize,
+        includeDecision: true,
         ...(allocationSessionId ? { sessionId: allocationSessionId } : {}),
         ...(allocationStatus ? { status: allocationStatus } : {}),
         ...(allocationStoreId ? { storeId: allocationStoreId } : {}),
+        ...(allocationDecisionStatus ? { decisionStatus: allocationDecisionStatus } : {}),
       }),
     queryKey: [
       'allocation-results',
@@ -680,6 +733,8 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
       allocationSessionId,
       allocationStatus,
       allocationStoreId,
+      allocationDecisionStatus,
+      accountKey,
     ],
     retry: false,
   });
@@ -740,8 +795,8 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
     setAllocationSessionId(sessionId);
     setAllocationStatus('');
     setAllocationStoreId(storeId);
+    setAllocationDecisionStatus('');
     void queryClient.invalidateQueries({
-      exact: true,
       queryKey: ['allocation-results', 1, sessionId, '', storeId],
     });
     setResultsFocusRequest((current) => current + 1);
@@ -762,6 +817,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
     setAllocationSessionId('');
     setAllocationStatus('');
     setAllocationStoreId('');
+    setAllocationDecisionStatus('');
   };
 
   // The create tab starts from the configured schedule once the settings are known.
@@ -1063,6 +1119,48 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
 
       {activeTab === 'sessions' ? (
         <TabPanel idPrefix="allocation" tab="sessions">
+          {openDecisionId ? (
+            <section
+              aria-label="Phiếu kết quả đang mở"
+              className="allocation-decision-host"
+              ref={decisionHostRef}
+            >
+              {decisionQuery.isPending ? (
+                <p aria-live="polite" className="panel allocation-session-state">
+                  Đang tải phiếu kết quả…
+                </p>
+              ) : null}
+              {decisionQuery.isError ? (
+                <div
+                  className="panel allocation-session-state allocation-session-state--error"
+                  role="alert"
+                >
+                  <span>
+                    {decisionQuery.error instanceof ApiClientError &&
+                    decisionQuery.error.status === 404
+                      ? 'Không tìm thấy phiếu kết quả hoặc phiếu không thuộc phạm vi tài khoản.'
+                      : 'Không thể tải phiếu kết quả. Vui lòng thử lại.'}
+                  </span>
+                  <Button onClick={() => void decisionQuery.refetch()} tone="secondary">
+                    <RotateCcw aria-hidden="true" size={16} /> Thử lại
+                  </Button>
+                  <Button onClick={() => openDecision(null)} tone="secondary">
+                    Đóng
+                  </Button>
+                </div>
+              ) : null}
+              {decisionQuery.data ? (
+                <AllocationDecisionPanel
+                  canReceive={role === 'STORE' || role === 'WHOLESALE'}
+                  decision={decisionQuery.data}
+                  onClose={() => openDecision(null)}
+                  productName={(productId) => productNameById.get(productId) ?? productId}
+                  responder={responder}
+                  storeName={storeNameById.get(decisionQuery.data.storeId) ?? 'Cửa hàng'}
+                />
+              ) : null}
+            </section>
+          ) : null}
           <HeldAllocationsPanel
             audience="OPERATIONS"
             productNameById={productNameById}
@@ -1372,8 +1470,33 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                   )}
                 </select>
               </label>
+              <label>
+                Xác nhận của cửa hàng
+                <select
+                  aria-label="Lọc kết quả theo xác nhận của cửa hàng"
+                  onChange={(event) => {
+                    setAllocationPage(1);
+                    setAllocationDecisionStatus(
+                      event.target.value as '' | AllocationDecisionStatus,
+                    );
+                  }}
+                  value={allocationDecisionStatus}
+                >
+                  <option value="">Tất cả</option>
+                  {AllocationDecisionStatusSchema.options.map((status) => (
+                    <option key={status} value={status}>
+                      {decisionStatusLabel[status]}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <Button
-                disabled={!allocationSessionId && !allocationStoreId && !allocationStatus}
+                disabled={
+                  !allocationSessionId &&
+                  !allocationStoreId &&
+                  !allocationStatus &&
+                  !allocationDecisionStatus
+                }
                 onClick={clearAllocationFilters}
                 tone="secondary"
               >
@@ -1442,6 +1565,23 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                       Phiên bản chính thức {document.version} · Đã phân bổ ·{' '}
                       {allocationTimestampFormatter.format(new Date(document.createdAt))}
                     </p>
+                    {document.decision ? (
+                      <div className="session-document__decision">
+                        <Badge tone={decisionStatusTone[document.decision.status]}>
+                          {decisionStatusLabel[document.decision.status]}
+                        </Badge>
+                        <span>Phiếu {decisionCode(document.decision)}</span>
+                        <Button
+                          aria-label={`${
+                            document.decision.canRespond ? 'Xác nhận' : 'Xem'
+                          } phiếu ${decisionCode(document.decision)}`}
+                          onClick={() => openDecision(document.decision!.id)}
+                          tone={document.decision.canRespond ? 'primary' : 'secondary'}
+                        >
+                          {document.decision.canRespond ? 'Xác nhận phiếu' : 'Xem phiếu'}
+                        </Button>
+                      </div>
+                    ) : null}
                     {document.hasPrioritySource ? (
                       <Badge tone="priority">Có gộp phiếu ưu tiên</Badge>
                     ) : null}

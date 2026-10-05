@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   operationalSettingsVersions,
   allocationLines,
+  allocationResultDecisions,
   allocationRuns,
   applyWarehouseMovement,
   type createDatabase,
@@ -127,6 +128,15 @@ export async function finalizedReceipt(
       reasonCode: 'LIVE_E2E_ADJUSTMENT',
     })
     .returning();
+  // Existing receipt history uses the explicit migration classification, never a missing row.
+  await db.insert(allocationResultDecisions).values({
+    allocationRunId: run!.id,
+    orderSessionId: session!.id,
+    storeId: input.storeId,
+    status: 'legacy',
+    origin: 'legacy_backfill',
+    grantedQuantity: 3,
+  });
   const [outbound] = await db
     .insert(outboundRequests)
     .values({

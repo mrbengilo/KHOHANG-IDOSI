@@ -4,6 +4,13 @@ import {
   ListSessionDocumentsQuerySchema,
   ListSessionDocumentsResponseSchema,
 } from '@idosi/contracts';
+import {
+  AllocationDecisionParamsSchema,
+  AllocationDecisionResponseSchema,
+  ListAllocationDecisionsQuerySchema,
+  ListAllocationDecisionsResponseSchema,
+  RespondAllocationDecisionRequestSchema,
+} from '@idosi/contracts';
 import { ListStoreBagOpeningsQuerySchema } from '@idosi/contracts';
 import {
   CreateWarehouseStockAdjustmentRequestSchema,
@@ -15,6 +22,8 @@ import {
 } from '@idosi/contracts';
 import { randomUUID } from 'node:crypto';
 import {
+  AllocationDecisionRequiredError,
+  isAllocationDecisionGuardError,
   isLockTimeoutError,
   isRetryableTransactionError,
   isStatementTimeoutError,
@@ -335,6 +344,21 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
       return reply
         .status(400)
         .send(errorEnvelope('VALIDATION_ERROR', 'Nội dung JSON không hợp lệ', request.id));
+    }
+    // Every dispatch and receipt path is gated on the store's acceptance, server-side and in the
+    // database; whichever layer refuses, the caller gets the same structured conflict.
+    if (error instanceof AllocationDecisionRequiredError || isAllocationDecisionGuardError(error)) {
+      return reply
+        .status(409)
+        .send(
+          errorEnvelope(
+            'INVALID_STATE_TRANSITION',
+            error instanceof AllocationDecisionRequiredError && error.reason === 'DECISION_REJECTED'
+              ? 'Cửa hàng đã từ chối nhận kết quả phân bổ này nên không thể giao hoặc nhận hàng.'
+              : 'Cửa hàng chưa chấp nhận kết quả phân bổ nên chưa thể giao hoặc nhận hàng.',
+            request.id,
+          ),
+        );
     }
     if (isRetryableTransactionError(error) || isLockTimeoutError(error)) {
       request.log.warn(
@@ -750,6 +774,43 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return ListSessionDocumentsResponseSchema.parse(
       await repository.listSessionDocuments(session.principal, query),
     );
+  });
+
+  app.get('/api/v1/allocation-decisions', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    const query = ListAllocationDecisionsQuerySchema.parse(request.query);
+    reply.header('cache-control', 'no-store');
+    return ListAllocationDecisionsResponseSchema.parse(
+      await repository.listAllocationDecisions(session.principal, query),
+    );
+  });
+
+  app.get('/api/v1/allocation-decisions/:decisionId', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    const { decisionId } = AllocationDecisionParamsSchema.parse(request.params);
+    reply.header('cache-control', 'no-store');
+    return AllocationDecisionResponseSchema.parse({
+      data: await repository.getAllocationDecision(session.principal, decisionId),
+    });
+  });
+
+  app.post('/api/v1/allocation-decisions/:decisionId/respond', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    // Only the receiving side answers; Admin and HTKD read results but never answer for a store.
+    requireRole(session.principal, ['STORE', 'WHOLESALE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { decisionId } = AllocationDecisionParamsSchema.parse(request.params);
+    const input = RespondAllocationDecisionRequestSchema.parse(request.body);
+    const result = await repository.respondAllocationDecision(
+      session.principal,
+      decisionId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ operation: 'RESPOND_ALLOCATION_DECISION', decisionId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send(AllocationDecisionResponseSchema.parse({ data: result.data }));
   });
 
   app.get('/api/v1/allocations', async (request, reply) => {
@@ -3133,6 +3194,46 @@ function openApiDocument(): Record<string, unknown> {
         get: {
           security: cookieSecurity,
           responses: { '200': { description: 'Scoped priority offers' } },
+        },
+      },
+      '/api/v1/allocation-decisions': {
+        get: {
+          security: cookieSecurity,
+          summary:
+            "Store decisions on published allocation results within the caller's scope, paged by result. PENDING results are the persistent in-app notice source.",
+          responses: { '200': { description: 'Page of allocation result decisions' } },
+        },
+      },
+      '/api/v1/allocation-decisions/{decisionId}': {
+        get: {
+          security: cookieSecurity,
+          summary:
+            'One allocation result: granted lines, sources, carried goods with provenance, decision and shipping progress.',
+          responses: {
+            '200': { description: 'Allocation result decision detail' },
+            '404': { description: 'Unknown result or outside the caller scope' },
+          },
+        },
+      },
+      '/api/v1/allocation-decisions/{decisionId}/respond': {
+        post: {
+          security: cookieSecurity,
+          summary:
+            'Accept or reject a PENDING allocation result once, for the whole result. ACCEPT releases its shipment (stock stays reserved until the actual receipt is finalized); REJECT releases its reservations and keeps goods carried from earlier accepted results held. Body: { action, expectedVersion, reason? }.',
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Answered (or replayed) allocation result decision' },
+            '400': { description: 'Invalid body' },
+            '401': { description: 'Unauthenticated' },
+            '403': { description: 'Not the receiving store account' },
+            '404': { description: 'Unknown result or outside the caller scope' },
+            '409': {
+              description:
+                'Already answered, not answerable, stale version, or idempotency key reused with another body',
+            },
+          },
         },
       },
       '/api/v1/priority-offers/{offerId}/respond': {

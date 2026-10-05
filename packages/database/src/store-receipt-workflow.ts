@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm';
 
+import { assertShipmentMayBeReceived } from './allocation-decision-gate.js';
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
 import {
@@ -244,6 +245,7 @@ export async function declareStoreReceiptInTransaction(
         requestNumber: outboundRequests.requestNumber,
         storeId: outboundRequests.storeId,
         status: outboundRequests.status,
+        allocationRunId: outboundRequests.allocationRunId,
       })
       .from(outboundRequests)
       .where(
@@ -257,6 +259,8 @@ export async function declareStoreReceiptInTransaction(
         'The outbound request is missing, stale, or not ready for receipt declaration.',
       );
     }
+    // Accepting a result and declaring what physically arrived are separate steps.
+    await assertShipmentMayBeReceived(tx, outbound);
 
     const declaringRole = await assertStoreAccountMayDeclare(
       tx,
