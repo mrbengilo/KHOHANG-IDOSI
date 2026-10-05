@@ -791,3 +791,67 @@ test('allocation policy is read-only and manual reload clears a recovered worker
   expect(log.mutations).toEqual([]);
   expect(log.unexpected).toEqual([]);
 });
+
+test('Admin can save a supported policy over legacy settings without changing other fields', async ({
+  page,
+}) => {
+  await mockApi(page, 'ADMIN');
+  // These independent integration panels may be unavailable while settings are repaired.
+  await page.route('**/api/v1/admin/idosi-*', (route) =>
+    route.fulfill({ status: 503, json: { message: 'Integration unavailable in this fixture' } }),
+  );
+  let current = {
+    id: id(60),
+    version: 1,
+    timezone: 'Asia/Ho_Chi_Minh',
+    snapshotTime: '08:00',
+    cutoffTime: '09:00',
+    maxRequestsPerStore: 2,
+    policyVersion: 'idosi-round-robin-p0a-p3-v3',
+    idosiSyncIntervalMinutes: 15,
+    vatRatePercent: 0,
+    createdByAccountId: null,
+    requestId: 'legacy-policy-fixture',
+    createdAt: time,
+  };
+  const writes: unknown[] = [];
+  await page.route('**/api/v1/admin/operational-settings**', async (route) => {
+    if (route.request().method() === 'PUT') {
+      const input = route.request().postDataJSON();
+      writes.push(input);
+      current = { ...current, id: id(61), version: 2, policyVersion: input.policyVersion };
+    }
+    await route.fulfill({
+      json: {
+        data: {
+          current,
+          history: [current],
+          integration: {
+            endpoint: 'https://example.invalid/idosi',
+            status: 'NOT_CONFIGURED',
+          },
+        },
+      },
+    });
+  });
+  await page.goto('/settings');
+  await expect(page.getByLabel('Phiên bản chính sách')).toHaveValue('idosi-round-robin-p0a-p3-v1');
+  await expect(page.getByLabel('Phiên bản chính sách')).toHaveAttribute('readonly', '');
+  const save = page.getByRole('button', { name: 'Lưu phiên bản mới' });
+  await expect(save).toBeEnabled();
+  await save.click();
+  await expect(page.getByText('Bản hiện tại v2.', { exact: false })).toBeVisible();
+  await expect(save).toBeDisabled();
+  expect(writes).toEqual([
+    {
+      expectedVersion: 1,
+      timezone: 'Asia/Ho_Chi_Minh',
+      snapshotTime: '08:00',
+      cutoffTime: '09:00',
+      maxRequestsPerStore: 2,
+      policyVersion: 'idosi-round-robin-p0a-p3-v1',
+      idosiSyncIntervalMinutes: 15,
+      vatRatePercent: 0,
+    },
+  ]);
+});
