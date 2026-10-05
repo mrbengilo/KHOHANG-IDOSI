@@ -17,6 +17,7 @@ export interface AllocationDecisionFilters {
   readonly status?: AllocationDecisionStatus;
   readonly storeId?: string;
   readonly sessionId?: string;
+  readonly outboundRequestId?: string;
 }
 
 /** Every key starts with the account so a different login never reads another scope's cache. */
@@ -38,6 +39,7 @@ export async function listAllocationDecisions(
   if (filters.status) query.set('status', filters.status);
   if (filters.storeId) query.set('storeId', filters.storeId);
   if (filters.sessionId) query.set('sessionId', filters.sessionId);
+  if (filters.outboundRequestId) query.set('outboundRequestId', filters.outboundRequestId);
   return ListAllocationDecisionsResponseSchema.parse(
     await request(`/allocation-decisions?${query.toString()}`),
   );

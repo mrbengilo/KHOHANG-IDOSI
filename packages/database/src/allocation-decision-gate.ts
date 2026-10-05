@@ -133,7 +133,5 @@ export async function assertShipmentMayBeReceived(
   outbound: { readonly allocationRunId: string | null; readonly storeId: string },
 ): Promise<void> {
   if (outbound.allocationRunId === null) return;
-  const status = await loadResultDecisionStatus(tx, outbound.allocationRunId, outbound.storeId);
-  if (status === 'pending') throw new AllocationDecisionRequiredError('DECISION_PENDING');
-  if (status === 'rejected') throw new AllocationDecisionRequiredError('DECISION_REJECTED');
+  assertShippable(await loadResultDecisionStatus(tx, outbound.allocationRunId, outbound.storeId));
 }

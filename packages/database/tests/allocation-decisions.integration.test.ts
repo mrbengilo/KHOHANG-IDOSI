@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { assertShipmentMayBeReceived } from '../src/allocation-decision-gate.js';
 
 import {
   AllocationDecisionConflictError,
@@ -598,6 +599,50 @@ describePostgres('store decisions on published allocation results', () => {
         })
       ).data,
     ).toEqual([]);
+  });
+
+  it('fails closed for a dispatched allocation shipment without a decision', async () => {
+    const { sessionId, runId } = await createRun();
+    const [shipment] = await db
+      .insert(outboundRequests)
+      .values({
+        requestNumber: '',
+        storeId: fx.storeA.id,
+        orderSessionId: sessionId,
+        allocationRunId: runId,
+        status: 'dispatched',
+        requestedByUserId: fx.adminId,
+        dispatchedAt: new Date(),
+      })
+      .returning();
+    await db.insert(outboundRequestLines).values({
+      outboundRequestId: shipment!.id,
+      productId: fx.productA,
+      requestedQuantity: 1,
+      approvedQuantity: 1,
+      reservedQuantity: 1,
+      dispatchedQuantity: 1,
+    });
+    await expect(
+      withSerializableTransaction(db, (tx) => assertShipmentMayBeReceived(tx, shipment!)),
+    ).rejects.toMatchObject({ reason: 'DECISION_MISSING' });
+    const sources = await listStoreReceiptSources(db, { storeId: fx.storeA.id, pageSize: 100 });
+    expect(sources.data.map((row) => row.id)).not.toContain(shipment!.id);
+    // Only an explicit legacy classification allows old allocation shipments through.
+    await db.insert(allocationResultDecisions).values({
+      allocationRunId: runId,
+      orderSessionId: sessionId,
+      storeId: fx.storeA.id,
+      status: 'legacy',
+      origin: 'legacy_backfill',
+      grantedQuantity: 0,
+    });
+    await withSerializableTransaction(db, (tx) => assertShipmentMayBeReceived(tx, shipment!));
+    const legacySources = await listStoreReceiptSources(db, {
+      storeId: fx.storeA.id,
+      pageSize: 100,
+    });
+    expect(legacySources.data.map((row) => row.id)).toContain(shipment!.id);
   });
 
   // ------------------------------------------------------------------------------------------

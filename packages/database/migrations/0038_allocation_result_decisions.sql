@@ -43,10 +43,15 @@ CREATE UNIQUE INDEX "allocation_result_decisions_one_pending_uidx" ON "allocatio
 CREATE INDEX "allocation_result_decisions_store_status_idx" ON "allocation_result_decisions" USING btree ("store_id","status","created_at");--> statement-breakpoint
 CREATE INDEX "allocation_result_decisions_status_created_idx" ON "allocation_result_decisions" USING btree ("status","created_at");--> statement-breakpoint
 INSERT INTO "allocation_result_decisions" ("allocation_run_id", "order_session_id", "store_id", "status", "version", "granted_quantity", "origin", "created_at", "updated_at")
-SELECT "r"."id", "r"."order_session_id", "l"."store_id", 'legacy', 1, sum("l"."allocated_quantity"), 'legacy_backfill', now(), now()
+SELECT "r"."id", "r"."order_session_id", "s"."store_id", 'legacy', 1, coalesce(sum("l"."allocated_quantity"), 0), 'legacy_backfill', now(), now()
 FROM "allocation_runs" "r"
-JOIN "allocation_lines" "l" ON "l"."allocation_run_id" = "r"."id"
-GROUP BY "r"."id", "r"."order_session_id", "l"."store_id"
+JOIN (
+  SELECT allocation_run_id, store_id FROM allocation_lines
+  UNION
+  SELECT allocation_run_id, store_id FROM outbound_requests WHERE allocation_run_id IS NOT NULL
+) "s" ON "s"."allocation_run_id" = "r"."id"
+LEFT JOIN "allocation_lines" "l" ON "l"."allocation_run_id" = "r"."id" AND "l"."store_id" = "s"."store_id"
+GROUP BY "r"."id", "r"."order_session_id", "s"."store_id"
 ON CONFLICT ("allocation_run_id", "store_id") DO NOTHING;--> statement-breakpoint
 CREATE OR REPLACE FUNCTION allocation_shipment_dispatch_guard() RETURNS trigger
 LANGUAGE plpgsql AS $$

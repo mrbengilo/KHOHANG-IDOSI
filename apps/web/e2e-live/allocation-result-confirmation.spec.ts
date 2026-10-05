@@ -186,6 +186,17 @@ test('a store accepts and rejects allocation results; state survives reload, con
       path: testInfo.outputPath('decision-accepted-1440.png'),
       fullPage: true,
     });
+    await panel.getByRole('link', { name: 'Khai nhận thực tế' }).click();
+    await page
+      .locator('.receipt-create')
+      .getByRole('button', { name: 'Nhận hàng', exact: true })
+      .click();
+    await page.locator('.receipt-source-card').first().click();
+    const resultLink = page.getByRole('link', { name: /Phiếu kết quả/ });
+    await expect(resultLink).toHaveAttribute(
+      'href',
+      `/allocations?decision=${toAccept.decisionId}`,
+    );
 
     // 4. Rejection with an explicit confirmation naming the document and the quantity.
     await page.goto(`/allocations?decision=${toReject.decisionId}`);
@@ -325,6 +336,7 @@ async function publishResult(
       kind: 'manual',
       businessDate: date,
       status: 'completed',
+      openedAt: new Date(`${date}T00:00:00+07:00`),
       inventorySnapshotDueAt: new Date(`${date}T08:00:00+07:00`),
       requestDeadlineAt: new Date(`${date}T09:00:00+07:00`),
       policyVersion: 'idosi-round-robin-p0a-p3-v1',

@@ -88,7 +88,15 @@ nguồn đó; nguồn đầy đủ vẫn nằm trên reservation và audit.
 | Hàng đang giữ     | `GET /held-allocations` chỉ tính hàng của phiếu đã được chấp nhận (hoặc không cần/legacy).                                                                                         |
 | Backfill stranded | Chuyến chờ cửa hàng xác nhận không phải “stranded”: chỉ đếm, không liệt kê, không dispatch; thiếu quyết định là lỗi integrity (blocked).                                           |
 
-Mọi từ chối của gate trả `409 INVALID_STATE_TRANSITION`.
+Mọi từ chối của gate trả `409 INVALID_STATE_TRANSITION`. Danh sách nguồn nhận, command khai nhận
+và command HTKD duyệt thực nhận đều yêu cầu quyết định `accepted/not_required/legacy` cho phiếu
+phân bổ; thiếu quyết định bị chặn, không suy ra legacy. Migration phân loại cả phiếu xuất cũ chỉ
+chở hàng mang sang và không có allocation line của chính lượt đó.
+
+Trang nhận hàng tra quyết định theo `outboundRequestId` của phiếu đang chọn, có phân trang và
+phạm vi cửa hàng phía server. Liên kết mở đúng `?decision=` và hiển thị quyết định riêng với thực nhận.
+Reservation mang sang đã `consumed` hiển thị đã xử lý theo thực nhận; chỉ `cancelled` do tách khỏi
+chuyến bị từ chối mới được mô tả là tiếp tục giữ cho cửa hàng.
 
 ## API
 

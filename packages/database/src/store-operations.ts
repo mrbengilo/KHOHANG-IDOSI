@@ -2,6 +2,7 @@ import { calculateReceiptVat, DomainError } from '@idosi/domain';
 import { and, desc, eq, gte, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 
 import type { Database } from './client.js';
+import { assertShipmentMayBeReceived } from './allocation-decision-gate.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
 import {
   operationalSettingsVersions,
@@ -269,6 +270,22 @@ export async function finalizeStoreReceiptInTransaction(
     }
 
     await assertReviewerMayAccessStore(tx, input.reviewedByUserId, receipt.storeId);
+    const [outbound] = await tx
+      .select({
+        allocationRunId: outboundRequests.allocationRunId,
+        storeId: outboundRequests.storeId,
+      })
+      .from(outboundRequests)
+      .where(
+        and(eq(outboundRequests.id, receipt.outboundRequestId), isNull(outboundRequests.deletedAt)),
+      )
+      .limit(1);
+    if (!outbound || outbound.storeId !== receipt.storeId) {
+      throw new StoreOperationConflictError(
+        'The receipt shipment is missing or outside its store.',
+      );
+    }
+    await assertShipmentMayBeReceived(tx, outbound);
     // Serialize with settings writes so the confirmed preview remains authoritative.
     const settings = await withAdvisoryLock(tx, 'operational-settings', 'current', async () => {
       const [row] = await tx

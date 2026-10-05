@@ -1598,6 +1598,11 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       .filter((decision) => query.storeId === undefined || decision.storeId === query.storeId)
       .filter((decision) => query.status === undefined || decision.status === query.status)
       .filter((decision) => query.sessionId === undefined || decision.sessionId === query.sessionId)
+      .filter(
+        (decision) =>
+          query.outboundRequestId === undefined ||
+          decision.shipment?.outboundRequestId === query.outboundRequestId,
+      )
       .sort(
         (left, right) =>
           right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),

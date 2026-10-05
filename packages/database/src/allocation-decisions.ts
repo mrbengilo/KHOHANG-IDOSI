@@ -310,6 +310,7 @@ export interface ListAllocationDecisionsInput {
   readonly status?: AllocationDecisionDatabaseStatus;
   readonly sessionId?: string;
   readonly allocationRunId?: string;
+  readonly outboundRequestId?: string;
 }
 
 export interface AllocationDecisionPage {
@@ -375,6 +376,13 @@ export async function listAllocationDecisions(
       }
       if (input.allocationRunId) {
         predicates.push(eq(allocationResultDecisions.allocationRunId, input.allocationRunId));
+      }
+      if (input.outboundRequestId) {
+        predicates.push(sql`exists (select 1 from ${outboundRequests}
+          where ${outboundRequests.id} = ${input.outboundRequestId}
+          and ${outboundRequests.allocationRunId} = ${allocationResultDecisions.allocationRunId}
+          and ${outboundRequests.storeId} = ${allocationResultDecisions.storeId}
+          and ${outboundRequests.deletedAt} is null)`);
       }
       const where = predicates.length === 0 ? undefined : and(...predicates);
       const [totalRow] = await tx

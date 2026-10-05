@@ -147,6 +147,19 @@ describePostgres('allocation result decisions through the API on PostgreSQL', ()
       // Acceptance is not receipt: stock stays on hand and reserved.
       assert.deepEqual(await balance(fx.productId), { onHand: 100, reserved: 6 });
       assert.equal(await receiptSourceCount(app, fx.tokens.storeA), 1);
+      const linked = await get(
+        fx.tokens.storeA,
+        `/api/v1/allocation-decisions?outboundRequestId=${resultA.outboundId}`,
+      );
+      assert.deepEqual(
+        linked.json().data.map((row) => row.id),
+        [resultA.decisionId],
+      );
+      const foreignLink = await get(
+        fx.tokens.storeB,
+        `/api/v1/allocation-decisions?outboundRequestId=${resultA.outboundId}`,
+      );
+      assert.deepEqual(foreignLink.json().data, []);
 
       const replay = await respond(fx.tokens.storeA, resultA.decisionId, accept(), key);
       assert.equal(replay.statusCode, 200);

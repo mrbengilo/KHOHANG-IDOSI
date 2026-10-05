@@ -26,6 +26,27 @@ function render(decision: ReturnType<typeof testDecision>) {
 }
 
 describe('allocation result panel', () => {
+  it('does not describe consumed carried goods as a cancelled shipment or an active hold', () => {
+    const decision = testDecision({ status: 'ACCEPTED', canRespond: false });
+    const html = render({
+      ...decision,
+      carried: [
+        {
+          reservationId: '20000000-0000-4000-8000-000000000003',
+          allocationLineId: '20000000-0000-4000-8000-000000000004',
+          allocationRunId: decision.allocationRunId,
+          sessionId: decision.sessionId,
+          productId: TEST_OTHER_PRODUCT_ID,
+          quantity: 2,
+          reservationStatus: 'CONSUMED',
+          waitTicketId: null,
+          sourceDecisionStatus: 'ACCEPTED',
+        },
+      ],
+    });
+    expect(html).toContain('Đã xử lý theo thực nhận');
+    expect(html).not.toContain('Đã tách khỏi chuyến bị hủy');
+  });
   it('offers exactly Chấp nhận and Từ chối on a pending result the account may answer', () => {
     const html = render(testDecision());
     expect(html).toContain('Chấp nhận');

@@ -139,7 +139,11 @@ export function AllocationDecisionPanel({
                 <small>
                   {row.reservationStatus === 'ACTIVE'
                     ? 'Đi cùng chuyến này'
-                    : 'Đã tách khỏi chuyến bị hủy, vẫn giữ cho cửa hàng'}
+                    : row.reservationStatus === 'CANCELLED'
+                      ? 'Đã tách khỏi chuyến bị hủy, vẫn giữ cho cửa hàng'
+                      : row.reservationStatus === 'CONSUMED'
+                        ? 'Đã xử lý theo thực nhận'
+                        : 'Đã giải phóng phần giữ hàng'}
                 </small>
               </li>
             ))}

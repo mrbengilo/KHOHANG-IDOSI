@@ -134,6 +134,7 @@ export const ListAllocationDecisionsQuerySchema = PaginationQuerySchema.extend({
   status: AllocationDecisionStatusSchema.optional(),
   storeId: EntityIdSchema.optional(),
   sessionId: EntityIdSchema.optional(),
+  outboundRequestId: EntityIdSchema.optional(),
 }).strict();
 export type ListAllocationDecisionsQuery = z.infer<typeof ListAllocationDecisionsQuerySchema>;
 

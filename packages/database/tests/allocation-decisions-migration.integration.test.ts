@@ -50,15 +50,19 @@ pgIt(
       await migrate(drizzle(pool), { migrationsFolder });
       const decisions = await pool.query(
         `SELECT allocation_run_id, store_id, status, origin, granted_quantity, responded_at, responded_by_user_id
-         FROM allocation_result_decisions ORDER BY granted_quantity, store_id`,
+         FROM allocation_result_decisions ORDER BY granted_quantity, store_id, allocation_run_id`,
       );
       expect(decisions.rows).toEqual(
         [
           { run: history.runA, store: history.storeB, granted: 0 },
+          { run: history.runB, store: history.storeB, granted: 0 },
           { run: history.runA, store: history.storeA, granted: 3 },
           { run: history.runB, store: history.storeA, granted: 4 },
         ]
-          .sort((a, b) => a.granted - b.granted || a.store.localeCompare(b.store))
+          .sort(
+            (a, b) =>
+              a.granted - b.granted || a.store.localeCompare(b.store) || a.run.localeCompare(b.run),
+          )
           .map((row) => ({
             allocation_run_id: row.run,
             store_id: row.store,
@@ -84,7 +88,7 @@ pgIt(
       await migrate(drizzle(pool), { migrationsFolder });
       expect(
         (await pool.query('SELECT count(*)::int AS n FROM allocation_result_decisions')).rows[0].n,
-      ).toBe(3);
+      ).toBe(4);
 
       // A legacy shipment stuck at reserved may still be released (legacy path).
       await pool.query(
@@ -244,6 +248,12 @@ async function seedHistory(pool: pg.Pool) {
   const lineA = await line(a, storeA.id, 3, 0);
   await line(a, storeB.id, 0, 2);
   const lineB = await line(b, storeA.id, 4, 0);
+  // A historical shipment may carry only earlier goods and have no lines in its own run.
+  await q(
+    `INSERT INTO outbound_requests (request_number, store_id, order_session_id, allocation_run_id, status, requested_by_user_id, dispatched_at)
+     VALUES ('', $1, $2, $3, 'dispatched', $4, now())`,
+    [storeB.id, b.sessionId, b.runId, user.id],
+  );
   // Session A: a stuck reserved shipment of 3. Session B: 4 held priority goods, no shipment.
   const [outbound] = await q(
     `INSERT INTO outbound_requests (request_number, store_id, order_session_id, allocation_run_id, status, requested_by_user_id)

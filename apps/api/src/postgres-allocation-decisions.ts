@@ -188,6 +188,9 @@ export async function listPostgresAllocationDecisions(
     ...(storeIds === undefined ? {} : { storeIds }),
     ...(query.status === undefined ? {} : { status: databaseDecisionStatus(query.status) }),
     ...(query.sessionId === undefined ? {} : { sessionId: query.sessionId }),
+    ...(query.outboundRequestId === undefined
+      ? {}
+      : { outboundRequestId: query.outboundRequestId }),
   });
   return {
     data: await decisionDtosFor(database, actor, result.data),

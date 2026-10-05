@@ -11,6 +11,7 @@ import {
   min,
   ne,
   notExists,
+  or,
   sum,
   type SQL,
 } from 'drizzle-orm';
@@ -219,14 +220,14 @@ function eligibleSourcePredicate(database: Database, storeId: string | undefined
     );
   // Dispatch is gated on the store's acceptance; this keeps a pending or rejected result out of
   // the receivable list however the shipment reached dispatched.
-  const unanswerableResult = database
+  const shippableResult = database
     .select({ id: allocationResultDecisions.id })
     .from(allocationResultDecisions)
     .where(
       and(
         eq(allocationResultDecisions.allocationRunId, outboundRequests.allocationRunId),
         eq(allocationResultDecisions.storeId, outboundRequests.storeId),
-        inArray(allocationResultDecisions.status, ['pending', 'rejected']),
+        inArray(allocationResultDecisions.status, [...SHIPPABLE_DECISION_STATUSES]),
       ),
     );
   const conditions: SQL[] = [
@@ -236,7 +237,7 @@ function eligibleSourcePredicate(database: Database, storeId: string | undefined
     exists(dispatchedLine),
     notExists(incompleteApprovedLine),
     notExists(existingReceipt),
-    notExists(unanswerableResult),
+    or(isNull(outboundRequests.allocationRunId), exists(shippableResult))!,
   ];
   if (storeId !== undefined) {
     conditions.push(eq(outboundRequests.storeId, storeId));
