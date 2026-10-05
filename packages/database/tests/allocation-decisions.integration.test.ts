@@ -826,6 +826,7 @@ describePostgres('store decisions on published allocation results', () => {
         kind: 'manual',
         businessDate: date,
         status: 'completed',
+        openedAt: new Date(`${date}T00:00:00+07:00`),
         inventorySnapshotDueAt: new Date(`${date}T08:00:00+07:00`),
         requestDeadlineAt: new Date(`${date}T09:00:00+07:00`),
         policyVersion: 'idosi-round-robin-p0a-p3-v1',

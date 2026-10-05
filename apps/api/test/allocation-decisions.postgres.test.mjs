@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { describe, test } from 'node:test';
+import { ListOrderSessionsResponseSchema } from '@idosi/contracts';
 
 import {
   allocationLines,
@@ -54,6 +55,21 @@ describePostgres('allocation result decisions through the API on PostgreSQL', ()
           headers: { cookie: `idosi_session=${token}`, 'idempotency-key': key },
           payload,
         });
+
+      // CI runs browser workflows against accumulated API fixtures. Keep every
+      // published session valid for the same list contract used by the dashboard.
+      let sessionPage = 1;
+      let sessionPages = 1;
+      do {
+        const response = await get(
+          fx.tokens.admin,
+          `/api/v1/order-sessions?pageSize=100&page=${sessionPage}`,
+        );
+        assert.equal(response.statusCode, 200);
+        const parsed = ListOrderSessionsResponseSchema.parse(response.json());
+        sessionPages = parsed.pagination.totalPages;
+        sessionPage++;
+      } while (sessionPage <= sessionPages);
 
       // The notice source: each account sees only its scope, PENDING first-class.
       const storeList = await get(fx.tokens.storeA, '/api/v1/allocation-decisions?status=PENDING');
@@ -247,6 +263,7 @@ async function publishResult(fx, storeId, quantity, { shipment }) {
       kind: 'manual',
       businessDate: '2000-01-03',
       status: 'completed',
+      openedAt: new Date('2000-01-03T00:00:00+07:00'),
       inventorySnapshotDueAt: new Date('2000-01-03T01:00:00.000Z'),
       requestDeadlineAt: new Date('2000-01-03T02:00:00.000Z'),
       policyVersion: 'idosi-round-robin-p0a-p3-v1',
