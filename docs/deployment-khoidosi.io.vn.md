@@ -304,6 +304,11 @@ không tự restore database:
   --yes
 ```
 
+Từ migration 0038 (xác nhận kết quả phân bổ), ảnh worker cũ hơn không hoàn tất được lượt phân bổ:
+database chặn lượt thiếu quyết định của cửa hàng và chặn xuất kho khi cửa hàng chưa chấp nhận. Đây là
+hành vi an toàn có chủ đích; ưu tiên forward-fix, hoặc dừng worker cho tới khi chạy lại bản mới (xem
+`docs/allocation-result-confirmation.md#rollback`).
+
 Dùng `--image-source local` khi ảnh được build ngay trên VPS như quy trình ở trên. Nếu dùng registry,
 đổi thành `--image-source registry`; script sẽ tải và kiểm tra cả ảnh đích lẫn ảnh khôi phục trước
 khi thay container. Ở chế độ local, script không truy cập registry và dừng trước khi thay container
