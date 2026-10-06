@@ -52,6 +52,7 @@ const ticketStatusLabel: Record<WaitTicket['status'], string> = {
 
 const cancellationKindLabel: Record<NonNullable<WaitTicket['cancellationKind']>, string> = {
   ADMIN_CANCELLED: 'Admin hủy phiếu',
+  HTKD_CANCELLED: 'HTKD hủy phiếu',
   FULL_OFFER_DECLINED: 'Cửa hàng không nhận đề nghị đủ hàng',
   FULL_OFFER_TIMEOUT: 'Quá hạn phản hồi đề nghị đủ hàng',
   STORE_CANCELLED: 'Cửa hàng hủy phiếu',

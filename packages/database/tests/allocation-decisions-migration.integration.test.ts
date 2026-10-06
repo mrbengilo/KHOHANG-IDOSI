@@ -38,9 +38,7 @@ pgIt(
       const journal = JSON.parse(await readFile(journalPath, 'utf8')) as {
         entries: { tag: string }[];
       };
-      journal.entries = journal.entries.filter(
-        (entry) => entry.tag !== '0038_allocation_result_decisions',
-      );
+      journal.entries = journal.entries.filter((entry) => Number(entry.tag.slice(0, 4)) < 38);
       await writeFile(journalPath, JSON.stringify(journal));
       await migrate(drizzle(pool), { migrationsFolder: previous });
 

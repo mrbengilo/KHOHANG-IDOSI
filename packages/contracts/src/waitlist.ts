@@ -5,6 +5,7 @@ import {
   AuditReasonSchema,
   EntityIdSchema,
   IsoDateTimeSchema,
+  IsoDateSchema,
   PaginationMetaSchema,
   PaginationQuerySchema,
 } from './common.js';
@@ -41,6 +42,7 @@ export type WaitTicketStatus = z.infer<typeof WaitTicketStatusSchema>;
 export const WaitTicketCancellationKindSchema = z.enum([
   'STORE_CANCELLED',
   'ADMIN_CANCELLED',
+  'HTKD_CANCELLED',
   'FULL_OFFER_DECLINED',
   'FULL_OFFER_TIMEOUT',
 ]);
@@ -58,6 +60,29 @@ export const WaitTicketSchema = z
     storeId: EntityIdSchema,
     productId: EntityIdSchema,
     priority: AllocationPrioritySchema,
+    storeName: z.string().nullable().optional(),
+    productName: z.string().nullable().optional(),
+    sku: z.string().nullable().optional(),
+    latestOffer: z
+      .object({
+        id: EntityIdSchema,
+        code: z.string(),
+        status: z.string(),
+        sessionId: EntityIdSchema.nullable(),
+        sessionCode: z.string().nullable(),
+        deadline: IsoDateTimeSchema,
+      })
+      .strict()
+      .nullable()
+      .optional(),
+    cancellationActor: z
+      .object({
+        accountId: EntityIdSchema.nullable(),
+        role: AccountRoleSchema.nullable(),
+      })
+      .strict()
+      .nullable()
+      .optional(),
     requested: PositiveInventoryAmountSchema,
     fulfilled: InventoryAmountSchema,
     remaining: InventoryAmountSchema,
@@ -135,7 +160,19 @@ export const ListWaitTicketsQuerySchema = PaginationQuerySchema.extend({
   productId: EntityIdSchema.optional(),
   priority: AllocationPrioritySchema.optional(),
   status: WaitTicketStatusSchema.optional(),
-}).strict();
+  q: z.string().trim().max(80).optional(),
+  projection: z.literal('TABLE').optional(),
+  createdFrom: IsoDateSchema.optional(),
+  createdTo: IsoDateSchema.optional(),
+})
+  .strict()
+  .refine(
+    (query) => !query.createdFrom || !query.createdTo || query.createdFrom <= query.createdTo,
+    {
+      path: ['createdTo'],
+      message: 'Ngày kết thúc phải từ ngày bắt đầu trở đi',
+    },
+  );
 export type ListWaitTicketsQuery = z.infer<typeof ListWaitTicketsQuerySchema>;
 
 export const ListWaitTicketsResponseSchema = z

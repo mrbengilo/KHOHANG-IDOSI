@@ -1,0 +1,2 @@
+ALTER TABLE "wait_tickets" DROP CONSTRAINT "wait_tickets_cancellation_kind_valid";--> statement-breakpoint
+ALTER TABLE "wait_tickets" ADD CONSTRAINT "wait_tickets_cancellation_kind_valid" CHECK ("wait_tickets"."cancellation_kind" IS NULL OR "wait_tickets"."cancellation_kind" IN ('store_cancelled', 'admin_cancelled', 'htkd_cancelled', 'full_offer_declined', 'full_offer_timeout'));

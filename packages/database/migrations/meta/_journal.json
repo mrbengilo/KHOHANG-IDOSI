@@ -274,6 +274,20 @@
       "when": 1791170448383,
       "tag": "0038_allocation_result_decisions",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1791284130291,
+      "tag": "0039_htkd_wait_ticket_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1791284649163,
+      "tag": "0040_wait_ticket_page_index",
+      "breakpoints": true
     }
   ]
 }
