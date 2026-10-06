@@ -404,7 +404,9 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(39);
+    expect(journal.entries).toHaveLength(41);
+    expect(journal.entries[39]).toMatchObject({ tag: '0039_htkd_wait_ticket_access' });
+    expect(journal.entries[40]).toMatchObject({ tag: '0040_wait_ticket_page_index' });
     expect(journal.entries[38]).toMatchObject({
       tag: '0038_allocation_result_decisions',
       breakpoints: true,

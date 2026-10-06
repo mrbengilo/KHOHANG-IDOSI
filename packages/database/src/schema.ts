@@ -30,6 +30,7 @@ export type JsonObject = { readonly [key: string]: JsonValue };
 export const WAIT_TICKET_CANCELLATION_KINDS = [
   'store_cancelled',
   'admin_cancelled',
+  'htkd_cancelled',
   'full_offer_declined',
   'full_offer_timeout',
 ] as const;
@@ -911,7 +912,7 @@ export const waitTickets = pgTable(
   (table) => [
     check(
       'wait_tickets_cancellation_kind_valid',
-      sql`${table.cancellationKind} IS NULL OR ${table.cancellationKind} IN ('store_cancelled', 'admin_cancelled', 'full_offer_declined', 'full_offer_timeout')`,
+      sql`${table.cancellationKind} IS NULL OR ${table.cancellationKind} IN ('store_cancelled', 'admin_cancelled', 'htkd_cancelled', 'full_offer_declined', 'full_offer_timeout')`,
     ),
     check(
       'wait_tickets_cancellation_kind_requires_cancelled',
@@ -928,6 +929,9 @@ export const waitTickets = pgTable(
       .on(table.productId, table.priorityLevel, table.queuedAt)
       .where(sql`${table.status} = 'active' AND ${table.deletedAt} IS NULL`),
     index('wait_tickets_store_status_idx').on(table.storeId, table.status),
+    index('wait_tickets_created_page_idx')
+      .on(table.createdAt, table.id)
+      .where(sql`${table.deletedAt} IS NULL`),
     check('wait_tickets_original_positive', sql`${table.originalQuantity} > 0`),
     check('wait_tickets_remaining_nonnegative', sql`${table.remainingQuantity} >= 0`),
     check('wait_tickets_fulfilled_nonnegative', sql`${table.fulfilledQuantity} >= 0`),

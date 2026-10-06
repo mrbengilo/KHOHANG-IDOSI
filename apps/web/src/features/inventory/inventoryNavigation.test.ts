@@ -168,3 +168,16 @@ describe('inventory URL navigation', () => {
     ]);
   });
 });
+
+it('restricts HTKD deep links to warehouse stock and scoped store stock', () => {
+  const n = readInventoryNavigation(
+    new URLSearchParams('tab=adjustments&kt=history&kt.q=SKU'),
+    'HTKD',
+  );
+  expect(n.tab).toBe('warehouse');
+  expect(n.warehouse.tab).toBe('stock');
+  expect(n.warehouse.search).toBe('SKU');
+  expect(
+    readInventoryNavigation(new URLSearchParams('tab=store&ch=ledger'), 'HTKD').store.tab,
+  ).toBe('ledger');
+});

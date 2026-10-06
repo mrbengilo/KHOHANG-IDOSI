@@ -6,6 +6,10 @@ import {
   eq,
   exists,
   gt,
+  gte,
+  lt,
+  ilike,
+  sql,
   inArray,
   isNull,
   lte,
@@ -26,6 +30,7 @@ import {
   orderRequestItems,
   orderRequests,
   stores,
+  products,
   users,
   waitTickets,
   orderSessions,
@@ -87,6 +92,9 @@ export interface PageMetadata {
 
 export interface WaitTicketListInput extends PageInput {
   readonly actorUserId: string;
+  readonly q?: string;
+  readonly createdFrom?: string;
+  readonly createdTo?: string;
   readonly storeId?: string;
   readonly productId?: string;
   readonly sessionId?: string;
@@ -116,6 +124,18 @@ export interface WaitTicketRecord {
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly hasOpenOffer: boolean;
+  readonly storeName?: string | null;
+  readonly productName?: string | null;
+  readonly sku?: string | null;
+  readonly latestOffer?: {
+    id: string;
+    code: string;
+    status: string;
+    sessionId: string | null;
+    sessionCode: string | null;
+    deadline: string;
+  } | null;
+  readonly cancellationActor?: { accountId: string | null; role: DatabaseUserRole | null } | null;
 }
 
 export interface WaitTicketPage {
@@ -384,6 +404,35 @@ export async function listWaitTickets(
     conditions.push(eq(waitTickets.priorityLevel, input.priorityLevel));
   }
 
+  if (input.createdFrom)
+    conditions.push(gte(waitTickets.createdAt, new Date(`${input.createdFrom}T00:00:00+07:00`)));
+  if (input.createdTo)
+    conditions.push(
+      lt(
+        waitTickets.createdAt,
+        new Date(new Date(`${input.createdTo}T00:00:00+07:00`).getTime() + 86_400_000),
+      ),
+    );
+  if (input.q) {
+    const search = `%${input.q.replace(/[\\%_]/g, '\\$&')}%`;
+    conditions.push(
+      or(
+        ilike(waitTickets.code, search),
+        exists(
+          database
+            .select({ id: dailyPriorityOffers.id })
+            .from(dailyPriorityOffers)
+            .where(
+              and(
+                eq(dailyPriorityOffers.waitTicketId, waitTickets.id),
+                isNull(dailyPriorityOffers.deletedAt),
+                ilike(dailyPriorityOffers.code, search),
+              ),
+            ),
+        ),
+      )!,
+    );
+  }
   const predicate = and(...conditions);
   const [totals, rows] = await Promise.all([
     database
@@ -423,7 +472,7 @@ export async function listWaitTickets(
       )
       .leftJoin(mergedOrderItems, eq(mergedOrderItems.id, mergedOrderSources.mergedOrderItemId))
       .where(predicate)
-      .orderBy(desc(waitTickets.queuedAt), desc(waitTickets.id))
+      .orderBy(desc(waitTickets.createdAt), desc(waitTickets.id))
       .limit(pagination.pageSize)
       .offset((pagination.page - 1) * pagination.pageSize),
   ]);
@@ -433,7 +482,86 @@ export async function listWaitTickets(
     rows.map((row) => row.id),
     now,
   );
-  const data = rows.map((row) => ({ ...row, hasOpenOffer: openOfferTicketIds.has(row.id) }));
+  // Enrich only the ticket page. DISTINCT ON selects one deterministic offer per ticket,
+  // preferring an unconsumed live offer, otherwise the latest recorded offer.
+  const ids = rows.map((row) => row.id);
+  const [names, offers, cancellations] = ids.length
+    ? await Promise.all([
+        database
+          .select({
+            id: waitTickets.id,
+            storeName: stores.name,
+            productName: products.name,
+            sku: products.sku,
+          })
+          .from(waitTickets)
+          .leftJoin(stores, eq(stores.id, waitTickets.storeId))
+          .leftJoin(products, eq(products.id, waitTickets.productId))
+          .where(inArray(waitTickets.id, ids)),
+        database
+          .selectDistinctOn([dailyPriorityOffers.waitTicketId], {
+            waitTicketId: dailyPriorityOffers.waitTicketId,
+            id: dailyPriorityOffers.id,
+            code: dailyPriorityOffers.code,
+            status: dailyPriorityOffers.status,
+            sessionId: dailyPriorityOffers.orderSessionId,
+            sessionCode: orderSessions.code,
+            deadline: dailyPriorityOffers.responseDeadlineAt,
+          })
+          .from(dailyPriorityOffers)
+          .leftJoin(orderSessions, eq(orderSessions.id, dailyPriorityOffers.orderSessionId))
+          .where(
+            and(
+              inArray(dailyPriorityOffers.waitTicketId, ids),
+              isNull(dailyPriorityOffers.deletedAt),
+            ),
+          )
+          .orderBy(
+            dailyPriorityOffers.waitTicketId,
+            desc(sql`case when ${livePriorityOfferCondition()} then 1 else 0 end`),
+            desc(dailyPriorityOffers.createdAt),
+            desc(dailyPriorityOffers.id),
+          ),
+        database
+          .selectDistinctOn([auditLogs.entityId], {
+            id: auditLogs.entityId,
+            accountId: auditLogs.actorUserId,
+            role: auditLogs.actorRole,
+          })
+          .from(auditLogs)
+          .where(
+            and(
+              eq(auditLogs.entityType, 'wait_ticket'),
+              inArray(auditLogs.entityId, ids),
+              sql`${auditLogs.after}->>'status' = 'cancelled'`,
+            ),
+          )
+          .orderBy(auditLogs.entityId, desc(auditLogs.createdAt), desc(auditLogs.id)),
+      ])
+    : [[], [], []];
+  const nameById = new Map(names.map((row) => [row.id, row]));
+  const offerById = new Map(offers.map((row) => [row.waitTicketId, row]));
+  const actorById = new Map(cancellations.map((row) => [row.id, row]));
+  const data = rows.map((row) => {
+    const offer = offerById.get(row.id);
+    const actor = actorById.get(row.id);
+    return {
+      ...row,
+      ...nameById.get(row.id),
+      hasOpenOffer: openOfferTicketIds.has(row.id),
+      latestOffer: offer
+        ? {
+            id: offer.id,
+            code: offer.code,
+            status: offer.status,
+            sessionId: offer.sessionId,
+            sessionCode: offer.sessionCode,
+            deadline: offer.deadline.toISOString(),
+          }
+        : null,
+      cancellationActor: actor ? { accountId: actor.accountId, role: actor.role } : null,
+    };
+  });
   const totalItems = totals[0]?.value ?? 0;
   return {
     data,
@@ -674,6 +802,15 @@ export async function cancelWaitTicket(
         resourceId: cancelled.waitTicketId,
       };
     },
+    async (tx) => {
+      const [ticket] = await tx
+        .select({ storeId: waitTickets.storeId })
+        .from(waitTickets)
+        .where(and(eq(waitTickets.id, input.waitTicketId), isNull(waitTickets.deletedAt)))
+        .limit(1);
+      if (!ticket) throw new WaitTicketNotFoundError();
+      await assertActorMayCancelWaitTicket(tx, input.actorUserId, ticket.storeId);
+    },
   );
 }
 
@@ -768,7 +905,11 @@ export async function cancelWaitTicketInTransaction(
         }
 
         const cancellationKind: WaitTicketCancellationKind =
-          actor.role === 'admin' ? 'admin_cancelled' : 'store_cancelled';
+          actor.role === 'admin'
+            ? 'admin_cancelled'
+            : actor.role === 'htkd'
+              ? 'htkd_cancelled'
+              : 'store_cancelled';
         const [updated] = await tx
           .update(waitTickets)
           .set({
@@ -790,7 +931,11 @@ export async function cancelWaitTicketInTransaction(
           actorRole: actor.role,
           actorStoreId: ticket.storeId,
           action:
-            actor.role === 'admin' ? 'WAIT_TICKET_ADMIN_CANCELLED' : 'WAIT_TICKET_STORE_CANCELLED',
+            actor.role === 'admin'
+              ? 'WAIT_TICKET_ADMIN_CANCELLED'
+              : actor.role === 'htkd'
+                ? 'WAIT_TICKET_HTKD_CANCELLED'
+                : 'WAIT_TICKET_STORE_CANCELLED',
           entityType: 'wait_ticket',
           entityId: ticket.id,
           before: waitTicketAuditSnapshot(ticket),
@@ -997,6 +1142,21 @@ export async function respondPriorityOffer(
         resourceType: 'priority_offer',
         resourceId: responded.offerId,
       };
+    },
+    async (tx) => {
+      const [offer] = await tx
+        .select({ storeId: dailyPriorityOffers.storeId })
+        .from(dailyPriorityOffers)
+        .where(
+          and(eq(dailyPriorityOffers.id, input.offerId), isNull(dailyPriorityOffers.deletedAt)),
+        )
+        .limit(1);
+      if (!offer) throw new PriorityOfferNotFoundError();
+      if (input.actorUserId !== null) {
+        const actor = await assertActorMayAccessStore(tx, input.actorUserId, offer.storeId);
+        if (input.action !== 'expire' && !['store', 'htkd', 'wholesale'].includes(actor.role))
+          throw new WaitTicketAuthorizationError();
+      } else if (input.action !== 'expire') throw new WaitTicketAuthorizationError();
     },
   );
 }
@@ -1352,7 +1512,7 @@ async function assertActorMayAccessStore(
 /**
  * Cancelling a wait is a store decision: the store (or wholesale account) for its own store and
  * an Admin for every store, including an inactive one whose stale demand must still be closable.
- * HTKD may answer offers for assigned stores but is deliberately not given cancellation rights.
+ * HTKD may cancel active waits of currently assigned, active stores with its own audit identity.
  */
 async function assertActorMayCancelWaitTicket(
   tx: Transaction,
@@ -1381,6 +1541,7 @@ async function assertActorMayCancelWaitTicket(
   if (!store.isActive) throw new WaitTicketAuthorizationError();
   if (actor.role === 'store' && actor.storeId === storeId) return actor;
   if (actor.role === 'wholesale' && store.kind === 'wholesale') return actor;
+  if (actor.role === 'htkd') return assertActorMayAccessStore(tx, actorUserId, storeId);
   throw new WaitTicketAuthorizationError();
 }
 

@@ -344,7 +344,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     actor: AuthenticatedPrincipal,
     query: WarehouseInventoryQuery,
   ): Promise<WarehouseInventoryResponse> {
-    if (actor.role !== 'ADMIN') throw forbidden('Chỉ Admin được xem tồn kho tổng.');
+    if (actor.role !== 'ADMIN' && actor.role !== 'HTKD')
+      throw forbidden('Chỉ Admin và HTKD được xem tồn kho tổng.');
     const search = query.search?.toLocaleLowerCase('vi-VN') ?? '';
     const values = [...this.products.values()]
       .filter((product) =>
@@ -5193,14 +5194,76 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   ): Promise<Page<WaitTicket>> {
     if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
     const values = [...this.waitTickets.values()]
-      .map((ticket) => this.effectiveWaitTicket(ticket))
+      .map((ticket) => {
+        if (query.projection !== 'TABLE') return this.effectiveWaitTicket(ticket);
+        const offer = [...this.priorityOffers.values()]
+          .filter((o) => o.waitTicketId === ticket.id)
+          .sort(
+            (a, b) =>
+              Number(['PENDING', 'ACCEPTED'].includes(b.status)) -
+                Number(['PENDING', 'ACCEPTED'].includes(a.status)) ||
+              b.offeredAt.localeCompare(a.offeredAt) ||
+              b.id.localeCompare(a.id),
+          )[0];
+        const audit = [...this.audit]
+          .reverse()
+          .find(
+            (event) =>
+              event.entityType === 'wait_ticket' &&
+              event.entityId === ticket.id &&
+              auditSnapshot(event.after)?.status === 'CANCELLED',
+          );
+        return {
+          ...this.effectiveWaitTicket(ticket),
+          storeName: this.stores.get(ticket.storeId)?.name ?? null,
+          productName: this.products.get(ticket.productId)?.name ?? null,
+          sku: this.products.get(ticket.productId)?.sku ?? null,
+          latestOffer: offer
+            ? {
+                id: offer.id,
+                code: offer.code ?? offer.id,
+                status: offer.status.toLowerCase(),
+                sessionId: offer.sessionId ?? null,
+                sessionCode: offer.sessionCode ?? null,
+                deadline: offer.expiresAt,
+              }
+            : null,
+          cancellationActor: audit
+            ? { accountId: audit.actorAccountId, role: audit.actorRole }
+            : null,
+        };
+      })
       .filter((ticket) => canAccessStore(actor, ticket.storeId))
       .filter((ticket) => query.storeId === undefined || ticket.storeId === query.storeId)
       .filter((ticket) => query.sessionId === undefined || ticket.sessionId === query.sessionId)
       .filter((ticket) => query.productId === undefined || ticket.productId === query.productId)
       .filter((ticket) => query.priority === undefined || ticket.priority === query.priority)
       .filter((ticket) => query.status === undefined || ticket.status === query.status)
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+      .filter(
+        (ticket) =>
+          !query.createdFrom ||
+          Date.parse(ticket.createdAt) >= Date.parse(`${query.createdFrom}T00:00:00+07:00`),
+      )
+      .filter(
+        (ticket) =>
+          !query.createdTo ||
+          Date.parse(ticket.createdAt) <
+            Date.parse(`${query.createdTo}T00:00:00+07:00`) + 86_400_000,
+      )
+      .filter(
+        (ticket) =>
+          !query.q ||
+          (ticket.code ?? '').toLowerCase().includes(query.q.toLowerCase()) ||
+          [...this.priorityOffers.values()].some(
+            (o) =>
+              o.waitTicketId === ticket.id &&
+              o.code?.toLowerCase().includes(query.q!.toLowerCase()),
+          ),
+      )
+      .sort(
+        (left, right) =>
+          right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
+      );
     return {
       data: slicePage(values, query.page, query.pageSize),
       pagination: pagination(query.page, query.pageSize, values.length),
@@ -5262,12 +5325,19 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     context: RequestContext,
   ): Promise<IdempotentResource<WaitTicket>> {
     if (actor.role === 'STORE') await this.authorizeRetailStoreOperation(actor);
-    if (actor.role !== 'STORE' && actor.role !== 'WHOLESALE' && actor.role !== 'ADMIN') {
+    if (
+      actor.role !== 'STORE' &&
+      actor.role !== 'WHOLESALE' &&
+      actor.role !== 'ADMIN' &&
+      actor.role !== 'HTKD'
+    ) {
       throw forbidden();
     }
     const current = this.waitTickets.get(waitTicketId);
     if (!current) throw notFound('Không tìm thấy phiếu chờ');
     if (!canAccessStore(actor, current.storeId)) throw forbidden();
+    if (actor.role !== 'ADMIN' && this.stores.get(current.storeId)?.status !== 'ACTIVE')
+      throw forbidden();
     const scopedKey = `${actor.accountId}:wait-ticket:cancel:${waitTicketId}:${idempotencyKey}`;
     const replay = this.replayWaitMutation(scopedKey, requestHash, 'WAIT_TICKET');
     if (replay) {
@@ -5289,7 +5359,12 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const updated: WaitTicket = {
       ...current,
       status: 'CANCELLED',
-      cancellationKind: actor.role === 'ADMIN' ? 'ADMIN_CANCELLED' : 'STORE_CANCELLED',
+      cancellationKind:
+        actor.role === 'ADMIN'
+          ? 'ADMIN_CANCELLED'
+          : actor.role === 'HTKD'
+            ? 'HTKD_CANCELLED'
+            : 'STORE_CANCELLED',
       resolutionReason: input.reason,
       resolvedAt: now,
       updatedAt: now,
@@ -5313,7 +5388,11 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     this.appendAudit(
       actor,
       context,
-      actor.role === 'ADMIN' ? 'WAIT_TICKET_ADMIN_CANCELLED' : 'WAIT_TICKET_STORE_CANCELLED',
+      actor.role === 'ADMIN'
+        ? 'WAIT_TICKET_ADMIN_CANCELLED'
+        : actor.role === 'HTKD'
+          ? 'WAIT_TICKET_HTKD_CANCELLED'
+          : 'WAIT_TICKET_STORE_CANCELLED',
       'wait_ticket',
       waitTicketId,
       current,
@@ -6340,7 +6419,11 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         entityId,
         actorAccountId: actor.accountId,
         actorRole: actor.role,
-        actorStoreId: actor.storeId,
+        actorStoreId:
+          (entityType === 'wait_ticket' || entityType === 'priority_offer') &&
+          typeof auditSnapshot(after)?.storeId === 'string'
+            ? (auditSnapshot(after)!.storeId as string)
+            : actor.storeId,
         requestId: context.requestId,
         before: structuredClone(before),
         after: structuredClone(after),

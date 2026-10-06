@@ -1,0 +1,1 @@
+CREATE INDEX "wait_tickets_created_page_idx" ON "wait_tickets" USING btree ("created_at","id") WHERE "wait_tickets"."deleted_at" IS NULL;

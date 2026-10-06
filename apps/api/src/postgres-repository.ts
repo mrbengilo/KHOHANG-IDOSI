@@ -395,7 +395,8 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     actor: AuthenticatedPrincipal,
     query: WarehouseInventoryQuery,
   ): Promise<WarehouseInventoryResponse> {
-    if (actor.role !== 'ADMIN') throw forbidden('Chỉ Admin được xem tồn kho tổng.');
+    if (actor.role !== 'ADMIN' && actor.role !== 'HTKD')
+      throw forbidden('Chỉ Admin và HTKD được xem tồn kho tổng.');
     const filter = and(
       isNull(products.deletedAt),
       query.search
@@ -4098,9 +4099,12 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         ...(query.sessionId === undefined ? {} : { sessionId: query.sessionId }),
         ...(query.priority === undefined ? {} : { priorityLevel: query.priority }),
         ...status,
+        ...(query.q === undefined ? {} : { q: query.q }),
+        ...(query.createdFrom === undefined ? {} : { createdFrom: query.createdFrom }),
+        ...(query.createdTo === undefined ? {} : { createdTo: query.createdTo }),
       });
       return {
-        data: result.data.map(waitTicketDto),
+        data: result.data.map((ticket) => waitTicketDto(ticket, query.projection === 'TABLE')),
         pagination: result.pagination,
       };
     });
@@ -4154,8 +4158,13 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
   ): Promise<IdempotentResource<WaitTicket>> {
     if (actor.role === 'STORE') await this.authorizeRetailStoreOperation(actor);
     // Store and wholesale accounts cancel their own waits; an Admin may cancel any store's wait,
-    // inactive stores included. HTKD answers offers but does not cancel waits.
-    if (actor.role !== 'STORE' && actor.role !== 'WHOLESALE' && actor.role !== 'ADMIN') {
+    // inactive stores included. HTKD cancellation requires a current assignment and active store.
+    if (
+      actor.role !== 'STORE' &&
+      actor.role !== 'WHOLESALE' &&
+      actor.role !== 'ADMIN' &&
+      actor.role !== 'HTKD'
+    ) {
       throw forbidden();
     }
     return withWaitErrors(async () => {
@@ -5755,7 +5764,7 @@ function receiptStatus(status: typeof storeReceipts.$inferSelect.status): Receip
   }
 }
 
-function waitTicketDto(ticket: WaitTicketRecord): WaitTicket {
+function waitTicketDto(ticket: WaitTicketRecord, includeSummary = false): WaitTicket {
   return {
     id: ticket.id,
     code: ticket.code,
@@ -5764,6 +5773,26 @@ function waitTicketDto(ticket: WaitTicketRecord): WaitTicket {
     storeId: ticket.storeId,
     productId: ticket.productId,
     priority: ticket.priorityLevel,
+    ...(!includeSummary || ticket.storeName === undefined ? {} : { storeName: ticket.storeName }),
+    ...(!includeSummary || ticket.productName === undefined
+      ? {}
+      : { productName: ticket.productName }),
+    ...(!includeSummary || ticket.sku === undefined ? {} : { sku: ticket.sku }),
+    ...(!includeSummary || ticket.latestOffer === undefined
+      ? {}
+      : { latestOffer: ticket.latestOffer }),
+    ...(!includeSummary || ticket.cancellationActor === undefined
+      ? {}
+      : {
+          cancellationActor: ticket.cancellationActor
+            ? {
+                accountId: ticket.cancellationActor.accountId,
+                role:
+                  (ticket.cancellationActor.role?.toUpperCase() as AuthenticatedPrincipal['role']) ??
+                  null,
+              }
+            : null,
+        }),
     requested: { kind: 'UNIT', quantity: ticket.originalQuantity },
     fulfilled: { kind: 'UNIT', quantity: ticket.fulfilledQuantity },
     remaining: { kind: 'UNIT', quantity: ticket.remainingQuantity },

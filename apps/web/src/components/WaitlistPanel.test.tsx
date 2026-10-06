@@ -1,6 +1,7 @@
 import type { PriorityOffer, Session, WaitTicket } from '@idosi/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import { sessionQueryKey } from '../lib/auth';
 import { WaitlistPanel } from './WaitlistPanel';
@@ -75,13 +76,15 @@ function renderPanel(
   client.setQueryData(['priority-offers', session.principal.accountId, scopeKey], offers);
 
   return renderToStaticMarkup(
-    <QueryClientProvider client={client}>
-      <WaitlistPanel
-        productNameById={new Map([[productId, 'Đồ nam']])}
-        role={role}
-        {...(scopeStoreId ? { scopeStoreId } : {})}
-      />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <WaitlistPanel
+          productNameById={new Map([[productId, 'Đồ nam']])}
+          role={role}
+          {...(scopeStoreId ? { scopeStoreId } : {})}
+        />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -158,8 +161,8 @@ describe('waitlist panel authorization projection', () => {
       );
       expect(html).toContain('Nhận hàng');
       expect(html).toContain('Không nhận');
-      // HTKD answers offers for assigned stores but never cancels a store's wait.
-      expect(html.includes('Hủy phiếu chờ</button>')).toBe(role === 'WHOLESALE');
+      // HTKD and wholesale may cancel their scoped active waits.
+      expect(html).toContain('Hủy phiếu chờ</button>');
     },
   );
 
@@ -182,7 +185,7 @@ describe('waitlist panel authorization projection', () => {
       [],
       storeId,
     );
-    expect(html.match(/Đã hủy/g)).toHaveLength(1);
+    expect(html.match(/Đã bị hủy/g)).toHaveLength(1);
     expect(html).toContain('Quá hạn phản hồi đề nghị đủ hàng');
     expect(html).toContain('Đang chờ');
     // Only the waiting ticket can still be cancelled.

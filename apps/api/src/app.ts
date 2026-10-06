@@ -973,7 +973,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.get('/api/v1/warehouse-inventory', async (request) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN']);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
     return repository.listWarehouseInventory(
       session.principal,
       WarehouseInventoryQuerySchema.parse(request.query),
@@ -1919,7 +1919,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.post('/api/v1/wait-tickets/:waitTicketId/cancel', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['STORE', 'WHOLESALE', 'ADMIN']);
+    requireRole(session.principal, ['STORE', 'WHOLESALE', 'ADMIN', 'HTKD']);
     const headers = IdempotencyHeadersSchema.parse(request.headers);
     const { waitTicketId } = WaitTicketParamsSchema.parse(request.params);
     const input = CancelWaitTicketRequestSchema.parse(request.body);
@@ -2706,7 +2706,8 @@ function openApiDocument(): Record<string, unknown> {
           ],
           responses: {
             '200': {
-              description: 'ADMIN paginated current warehouse bags and cumulative dispatched bags',
+              description:
+                'ADMIN/HTKD paginated current warehouse bags and cumulative dispatched bags',
             },
           },
         },
@@ -3166,7 +3167,29 @@ function openApiDocument(): Record<string, unknown> {
       '/api/v1/wait-tickets': {
         get: {
           security: cookieSecurity,
-          responses: { '200': { description: 'Scoped wait tickets' } },
+          parameters: [
+            ...['page', 'pageSize'].map((name) => ({
+              name,
+              in: 'query',
+              schema: { type: 'integer', minimum: 1 },
+            })),
+            ...[
+              'storeId',
+              'productId',
+              'sessionId',
+              'status',
+              'q',
+              'createdFrom',
+              'createdTo',
+              'projection',
+            ].map((name) => ({ name, in: 'query', schema: { type: 'string' } })),
+          ],
+          responses: {
+            '200': {
+              description:
+                'Scoped ticket pages, createdAt descending then ID; createdFrom/To are inclusive Vietnam creation dates; q searches PC and all related PUT codes. projection=TABLE includes latest live/latest historical offer and cancellation actor; omitted projection preserves the legacy ticket DTO.',
+            },
+          },
         },
       },
       '/api/v1/wait-tickets/{waitTicketId}/history': {
@@ -3179,13 +3202,16 @@ function openApiDocument(): Record<string, unknown> {
         post: {
           security: cookieSecurity,
           summary:
-            'Cancel the unallocated demand of an active wait ticket (store/wholesale: own store; Admin: any store). Allocated quantity stays held for combined shipping.',
+            'Cancel the unallocated demand of an active wait ticket (store/wholesale: own store; HTKD: assigned active stores; Admin: any store). Allocated quantity stays held for combined shipping.',
           parameters: [
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: {
             '200': { description: 'Cancelled wait ticket with cancellationKind' },
-            '403': { description: 'Actor may not cancel this store wait (HTKD never may)' },
+            '403': {
+              description:
+                'Actor may not cancel this store wait under current assignment/account/store status',
+            },
             '409': { description: 'Ticket is no longer active' },
           },
         },

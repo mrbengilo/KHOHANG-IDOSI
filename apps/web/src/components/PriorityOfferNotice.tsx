@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  ApiClientError,
   listAccessibleStores,
   listCatalog,
   listPriorityOffers,
@@ -34,7 +35,7 @@ export function PriorityOfferNotice({ role }: { readonly role: Role }) {
     refetchInterval: 15_000,
     retry: false,
   });
-  const offers = offersQuery.data ?? [];
+  const offers = offersQuery.isError || !enabled ? [] : (offersQuery.data ?? []);
   const catalogQuery = useQuery({
     enabled: offers.length > 0,
     queryFn: listCatalog,
@@ -65,8 +66,14 @@ export function PriorityOfferNotice({ role }: { readonly role: Role }) {
         queryClient.invalidateQueries({ queryKey: ['priority-offer-notices'] }),
         queryClient.invalidateQueries({ queryKey: ['priority-offers'] }),
         queryClient.invalidateQueries({ queryKey: ['wait-tickets'] }),
+        queryClient.invalidateQueries({ queryKey: ['wait-ticket-history'] }),
+        queryClient.invalidateQueries({ queryKey: ['warehouse-inventory'] }),
       ]);
     } catch (cause) {
+      if (cause instanceof ApiClientError && [401, 403, 409].includes(cause.status)) {
+        await offersQuery.refetch();
+        await queryClient.invalidateQueries({ queryKey: ['wait-tickets'] });
+      }
       setError({
         id: offerId,
         message:
@@ -112,7 +119,7 @@ export function PriorityOfferNotice({ role }: { readonly role: Role }) {
       ) : null}
       {offers.map((offer) => (
         <div key={offer.id}>
-          <strong>{storeNames.get(offer.storeId) ?? 'Cửa hàng'}</strong>
+          <strong>{storeNames.get(offer.storeId) ?? offer.storeId}</strong>
           <PriorityOffer
             busyAction={busy?.id === offer.id ? busy.action : null}
             canRespond
@@ -120,7 +127,11 @@ export function PriorityOfferNotice({ role }: { readonly role: Role }) {
             interactionDisabled={busy !== null}
             offer={offer}
             onExpired={() => void offersQuery.refetch()}
-            onOpenTicket={() => navigate(role === 'HTKD' ? '/allocations' : '/requests')}
+            onOpenTicket={() =>
+              navigate(
+                `${role === 'HTKD' ? '/allocations' : '/requests'}?waitTicket=${encodeURIComponent(offer.waitTicketId)}`,
+              )
+            }
             onRespond={(input) => void respond(offer.id, input)}
             productName={productNames.get(offer.productId) ?? offer.productId}
           />

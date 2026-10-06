@@ -222,7 +222,7 @@ describe('allocation worker notice', () => {
   it('shows order history to ADMIN and HTKD and the create tab to ADMIN only', () => {
     const ids = (role: Parameters<typeof allocationTabs>[0]) =>
       allocationTabs(role).map((tab) => tab.id);
-    expect(ids('ADMIN')).toEqual(['sessions', 'history', 'create']);
+    expect(ids('ADMIN')).toEqual(['sessions', 'history', 'wait-tickets', 'create']);
     expect(ids('HTKD')).toEqual(['sessions', 'history']);
     expect(ids('STORE')).toEqual(['sessions']);
     expect(ids('WHOLESALE')).toEqual(['sessions']);

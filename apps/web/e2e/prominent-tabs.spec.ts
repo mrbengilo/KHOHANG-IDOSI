@@ -16,7 +16,12 @@ const time = '2026-10-02T03:00:00.000Z';
 const storeIds = [id(31), id(32)];
 const emptyPage = { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 };
 
-const ALLOCATION_LABELS = ['Phiên và kết quả', 'Lịch sử đặt hàng', 'Tạo phiên mới'];
+const ALLOCATION_LABELS = [
+  'Phiên và kết quả',
+  'Lịch sử đặt hàng',
+  'Danh sách phiếu chờ',
+  'Tạo phiên mới',
+];
 const INVENTORY_LABELS = ['Kho tổng', 'Kho cửa hàng', 'Phiếu sai lệch'];
 const WAREHOUSE_LABELS = ['Tồn hiện tại', 'Kiểm hàng thiếu', 'Lịch sử xuất', 'Lịch sử điều chỉnh'];
 const STORE_LABELS = ['Tồn cửa hàng', 'Sổ phát sinh'];
@@ -322,7 +327,7 @@ test('Admin allocation tabs are prominent, URL-driven and never submit', async (
   const log = await mockApi(page, 'ADMIN');
   await page.goto('/allocations');
   const tablist = allocationBar(page);
-  await expect(tablist.getByRole('tab')).toHaveCount(3);
+  await expect(tablist.getByRole('tab')).toHaveCount(4);
   await expectSelected(page, tablist, 'Phiên và kết quả');
   // The closed history tab is lazy: no order-history request until it is opened.
   expect(log.requests.filter((entry) => entry.endsWith('/order-history'))).toEqual([]);
@@ -489,7 +494,7 @@ test('Admin inventory draft guard still asks before a primary tab discards input
 
 test('roles outside the scope keep the default tab bar', async ({ page }, testInfo) => {
   const measured: Record<string, BarMetrics> = {};
-  for (const role of ['HTKD', 'STORE'] as const) {
+  for (const role of ['STORE'] as const) {
     await page.unrouteAll({ behavior: 'wait' });
     await mockApi(page, role);
     await page.goto('/inventory');
@@ -854,4 +859,127 @@ test('Admin can save a supported policy over legacy settings without changing ot
       vatRatePercent: 0,
     },
   ]);
+});
+
+test('HTKD warehouse is read only even with privileged deep links', async ({ page }, testInfo) => {
+  const log = await mockApi(page, 'HTKD');
+  await page.goto('/inventory?tab=adjustments&kt=history');
+  await expect(page.getByRole('region', { name: 'Tồn kho tổng theo mặt hàng' })).toBeVisible();
+  await expect(inventoryBar(page).getByRole('tab')).toHaveCount(2);
+  await expect(warehouseBar(page).getByRole('tab')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: /Điều chỉnh tồn/ })).toHaveCount(0);
+  expect(
+    log.requests.some((path) =>
+      /warehouse-adjustments|warehouse-shortage-checks|outbound-requests/.test(path),
+    ),
+  ).toBe(false);
+  for (const width of [360, 390, 412, 768, 1366, 1440, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expectDocumentContained(page);
+  }
+  await page.screenshot({ path: testInfo.outputPath('htkd-warehouse.png'), fullPage: true });
+});
+
+test('Admin wait list has nine columns, server pages, cancellation history and URL state', async ({
+  page,
+}, testInfo) => {
+  await mockApi(page, 'ADMIN');
+  const ticket = {
+    id: id(800),
+    code: 'PC-0000800',
+    sessionId: id(801),
+    mergedOrderId: null,
+    storeId: storeIds[0],
+    storeName: stores[0]!.name,
+    productId: id(10),
+    productName: 'Mặt hàng phiếu chờ',
+    sku: 'WAIT-UI',
+    priority: 'P0B',
+    requested: { kind: 'UNIT', quantity: 5 },
+    fulfilled: { kind: 'UNIT', quantity: 2 },
+    remaining: { kind: 'UNIT', quantity: 3 },
+    status: 'WAITING',
+    createdAt: '2026-10-05T17:00:00.000Z',
+    updatedAt: time,
+    resolutionReason: null as string | null,
+    resolvedAt: null as string | null,
+    cancellationKind: null as string | null,
+    latestOffer: null,
+  };
+  const queries: URLSearchParams[] = [];
+  await page.route('**/api/v1/wait-tickets?*', (route) => {
+    const q = new URL(route.request().url()).searchParams;
+    queries.push(q);
+    return route.fulfill({
+      json: {
+        data: [ticket],
+        pagination: {
+          page: Number(q.get('page') ?? 1),
+          pageSize: 20,
+          totalItems: 21,
+          totalPages: 2,
+        },
+      },
+    });
+  });
+  await page.route('**/api/v1/wait-tickets/*/cancel', async (route) => {
+    ticket.status = 'CANCELLED';
+    ticket.resolutionReason = route.request().postDataJSON().reason;
+    ticket.resolvedAt = time;
+    ticket.cancellationKind = 'ADMIN_CANCELLED';
+    return route.fulfill({ json: { data: ticket } });
+  });
+  await page.goto('/allocations?tab=history');
+  expect(queries).toHaveLength(0);
+  await allocationBar(page).getByRole('tab', { name: 'Danh sách phiếu chờ', exact: true }).click();
+  const table = page.locator('.wait-ticket-table');
+  await expect(table.locator('th')).toHaveCount(9);
+  await expect(table).toContainText('Chưa phát sinh phiếu ưu tiên');
+  await expect(table).toContainText('06/10/2026 00:00:00');
+  await page.getByRole('button', { name: 'Sau', exact: true }).click();
+  await expect(table.locator('tbody td').first()).toHaveText('21');
+  expect(queries.at(-1)?.get('page')).toBe('2');
+  await page.reload();
+  await expect(table.locator('tbody td').first()).toHaveText('21');
+  expect(queries.at(-1)?.get('projection')).toBe('TABLE');
+  await page.getByRole('searchbox', { name: 'Mã phiếu chờ / ưu tiên' }).fill('PC-0000800');
+  await page.getByRole('button', { name: 'Lọc phiếu', exact: true }).click();
+  await expect(page).toHaveURL(/wt.q=PC-0000800/);
+  await expect(table.locator('tbody td').first()).toHaveText('1');
+  await page.goBack();
+  await expect(table.locator('tbody td').first()).toHaveText('21');
+  await page.goForward();
+  await expect(page).toHaveURL(/wt.q=PC-0000800/);
+  await expect(table.locator('tbody td').first()).toHaveText('1');
+  await table.getByRole('button', { name: 'Hủy phiếu chờ', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toContainText('PC-0000800');
+  await dialog.getByLabel('Lý do hủy').fill('Không còn nhu cầu sau đối soát');
+  await dialog.getByRole('button', { name: 'Hủy phiếu chờ', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(table).toContainText('Đã bị hủy');
+  await expect(table).toContainText('Không còn nhu cầu sau đối soát');
+  await expect(table.getByRole('button', { name: 'Hủy phiếu chờ', exact: true })).toHaveCount(0);
+  for (const width of [360, 390, 412, 768, 1366, 1440, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expectDocumentContained(page);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expect(table.locator('th').first()).toBeVisible();
+    expect(await table.evaluate((el) => getComputedStyle(el).display)).toBe('table');
+    const reachable = await table.evaluate((el) => {
+      const region = el.parentElement!;
+      region.scrollLeft = region.scrollWidth;
+      const last = el.querySelector('th:last-child')!.getBoundingClientRect();
+      const bounds = region.getBoundingClientRect();
+      const fits = last.right <= bounds.right + 1 && last.left >= bounds.left - 1;
+      region.scrollLeft = 0;
+      return fits;
+    });
+    expect(reachable).toBe(true);
+    await page.screenshot({
+      path: testInfo.outputPath(`wait-list-${width}.png`),
+      fullPage: true,
+      animations: 'disabled',
+    });
+  }
 });

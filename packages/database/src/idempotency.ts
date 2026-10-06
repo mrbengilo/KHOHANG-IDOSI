@@ -57,11 +57,14 @@ export async function withIdempotency<T>(
   database: Database,
   input: IdempotencyInput,
   operation: (tx: Transaction) => Promise<IdempotentOperationResult<T>>,
+  authorize?: (tx: Transaction) => Promise<void>,
 ): Promise<IdempotencyResult<T>> {
   validateInput(input);
 
   return withSerializableTransaction(database, (tx) =>
     withAdvisoryLock(tx, 'idempotency', `${input.scope}:${input.key}`, async () => {
+      // Authorization runs inside the same transaction, including exact replays.
+      await authorize?.(tx);
       const now = new Date();
       const lockMs = input.lockMs ?? DEFAULT_LOCK_MS;
       const ttlMs = input.ttlMs ?? DEFAULT_TTL_MS;

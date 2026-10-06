@@ -231,3 +231,32 @@ describe('wait-list API contracts', () => {
     ).toBe(true);
   });
 });
+
+describe('HTKD cancellation and admin ticket query contract', () => {
+  it('allows explicit HTKD audit metadata only on cancelled conserved quantities', () => {
+    const parsed = WaitTicketSchema.parse(
+      waitTicket({
+        status: 'CANCELLED',
+        cancellationKind: 'HTKD_CANCELLED',
+        resolutionReason: 'Đã đối soát',
+        cancellationActor: { accountId: IDS.account, role: 'HTKD' },
+      }),
+    );
+    expect(parsed.remaining).toEqual({ kind: 'UNIT', quantity: 2 });
+    expect(
+      WaitTicketSchema.safeParse(waitTicket({ cancellationKind: 'HTKD_CANCELLED' })).success,
+    ).toBe(false);
+  });
+  it('validates dates and trims PC/PUT queries without selecting a default status', () => {
+    expect(ListWaitTicketsQuerySchema.parse({ q: ' PUT-000001 ' })).toMatchObject({
+      q: 'PUT-000001',
+      page: 1,
+    });
+    expect(ListWaitTicketsQuerySchema.parse({})).not.toHaveProperty('status');
+    expect(ListWaitTicketsQuerySchema.safeParse({ createdFrom: '2026-02-30' }).success).toBe(false);
+    expect(
+      ListWaitTicketsQuerySchema.safeParse({ createdFrom: '2026-10-07', createdTo: '2026-10-06' })
+        .success,
+    ).toBe(false);
+  });
+});
