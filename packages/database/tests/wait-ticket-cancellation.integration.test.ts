@@ -444,7 +444,10 @@ describePostgres('wait ticket cancellation rights and holds', () => {
     const offerId = await holdOffer(f, 2, 3);
     await db
       .update(dailyPriorityOffers)
-      .set({ responseDeadlineAt: new Date(Date.now() - 1000) })
+      .set({
+        createdAt: new Date(Date.now() - 60_000),
+        responseDeadlineAt: new Date(Date.now() - 1000),
+      })
       .where(eq(dailyPriorityOffers.id, offerId));
     let start!: () => void;
     const barrier = new Promise<void>((resolve) => {
