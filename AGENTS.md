@@ -41,7 +41,7 @@ Các invariant sau là bắt buộc, trừ khi task mới thay đổi rõ ràng 
 
 - Hệ thống có ba phạm vi vai trò chính: Admin, HTKD và Tài khoản cửa hàng.
 - Admin xem và quản lý toàn hệ thống.
-- HTKD chỉ xem/thao tác các cửa hàng được phân công; một HTKD có thể quản lý nhiều cửa hàng.
+- HTKD xem/thao tác các cửa hàng được phân công; một HTKD có thể quản lý nhiều cửa hàng. HTKD được đọc tồn kho tổng (không điều chỉnh), phản hồi ưu tiên và hủy phần còn chờ của cửa hàng đang hoạt động được phân công; audit giữ actor HTKD thật. Không mở rộng quyền ở nghiệp vụ khác.
 - Tài khoản cửa hàng chỉ xem/thao tác dữ liệu của chính cửa hàng đó.
 - Phân quyền phải kiểm tra server-side theo vai trò, `store_id` và trạng thái tài khoản.
 - Khóa tài khoản hoặc gỡ quyền phải có hiệu lực ngay và thu hồi session liên quan.

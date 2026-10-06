@@ -40,6 +40,7 @@ import { PriorityOffer } from '../components/PriorityOffer';
 import { StatCard } from '../components/StatCard';
 import { TabPanel, Tabs, type TabItem } from '../components/Tabs';
 import { StoreOrderHistory } from '../features/orders/StoreOrderHistory';
+import { WaitTicketList } from '../features/allocations/WaitTicketList';
 import { WaitlistPanel } from '../components/WaitlistPanel';
 import { getAdminOperationalSettings, getAllocationWorkerStatus } from '../features/admin/adminApi';
 import { HeldAllocationsPanel } from '../features/receipts/HeldAllocationsPanel';
@@ -567,7 +568,7 @@ function sessionErrorMessage(error: unknown): string {
   return 'Không thể hoàn tất thao tác vì phản hồi máy chủ không hợp lệ.';
 }
 
-export type AllocationTab = 'sessions' | 'history' | 'create';
+export type AllocationTab = 'sessions' | 'history' | 'create' | 'wait-tickets';
 
 /** Order history is for ADMIN and HTKD; only ADMIN schedules extra sessions. */
 export function allocationTabs(role: AppOutletContext['role']): readonly TabItem<AllocationTab>[] {
@@ -576,7 +577,12 @@ export function allocationTabs(role: AppOutletContext['role']): readonly TabItem
     ...(role === 'ADMIN' || role === 'HTKD'
       ? [{ id: 'history' as const, label: 'Lịch sử đặt hàng' }]
       : []),
-    ...(role === 'ADMIN' ? [{ id: 'create' as const, label: 'Tạo phiên mới' }] : []),
+    ...(role === 'ADMIN'
+      ? [
+          { id: 'wait-tickets' as const, label: 'Danh sách phiếu chờ' },
+          { id: 'create' as const, label: 'Tạo phiên mới' },
+        ]
+      : []),
   ];
 }
 
@@ -982,6 +988,11 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
         onChange={selectTab}
       />
 
+      {activeTab === 'wait-tickets' && role === 'ADMIN' ? (
+        <TabPanel idPrefix="allocation" tab="wait-tickets">
+          <WaitTicketList stores={storesQuery.data ?? []} products={catalogQuery.data ?? []} />
+        </TabPanel>
+      ) : null}
       {activeTab === 'history' ? (
         <TabPanel idPrefix="allocation" tab="history">
           <StoreOrderHistory

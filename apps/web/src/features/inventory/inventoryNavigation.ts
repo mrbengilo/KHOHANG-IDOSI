@@ -128,16 +128,27 @@ export interface InventoryNavigation {
   readonly adjustments: AdjustmentFilters & { readonly openId: string };
 }
 
-export function readInventoryNavigation(params: URLSearchParams): InventoryNavigation {
+export function readInventoryNavigation(
+  params: URLSearchParams,
+  role: 'ADMIN' | 'HTKD' = 'ADMIN',
+): InventoryNavigation {
   const from = validDate(params.get(KEYS.adjustmentFrom));
   const to = validDate(params.get(KEYS.adjustmentTo));
   const stockFrom = validDate(params.get(KEYS.warehouseAdjustmentFrom));
   const stockTo = validDate(params.get(KEYS.warehouseAdjustmentTo));
   const stockRangeReversed = stockFrom !== '' && stockTo !== '' && stockFrom > stockTo;
   return {
-    tab: oneOf(params.get(KEYS.tab), INVENTORY_TABS, 'warehouse'),
+    tab: oneOf(
+      params.get(KEYS.tab),
+      role === 'HTKD' ? ['warehouse', 'store'] : INVENTORY_TABS,
+      'warehouse',
+    ),
     warehouse: {
-      tab: oneOf(params.get(KEYS.warehouseTab), WAREHOUSE_TABS, 'stock'),
+      tab: oneOf(
+        params.get(KEYS.warehouseTab),
+        role === 'HTKD' ? ['stock'] : WAREHOUSE_TABS,
+        'stock',
+      ),
       search: text(params.get(KEYS.warehouseSearch), 120),
       page: positivePage(params.get(KEYS.warehousePage)),
       historyPage: positivePage(params.get(KEYS.warehouseHistoryPage)),

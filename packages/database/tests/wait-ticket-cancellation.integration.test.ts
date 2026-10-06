@@ -10,6 +10,8 @@ import {
   dailyPriorityOffers,
   db,
   htkdAssignments,
+  listWaitTickets,
+  getWaitTicketHistory,
   orderRequestItems,
   orderRequests,
   orderSessions,
@@ -188,9 +190,9 @@ describePostgres('wait ticket cancellation rights and holds', () => {
       requestHash: `${reason}`,
     });
 
-  it('lets only the owning store or an active admin cancel, never HTKD or another store', async () => {
+  it('lets only the owning store or an active admin cancel, never another store or a locked account', async () => {
     const f = await fixture();
-    for (const actor of [f.stranger, f.htkd, f.lockedAdmin]) {
+    for (const actor of [f.stranger, f.lockedAdmin]) {
       await expect(cancel(f.ticket.id, actor.id)).rejects.toMatchObject({
         code: 'WAIT_TICKET_FORBIDDEN',
       });
@@ -215,6 +217,307 @@ describePostgres('wait ticket cancellation rights and holds', () => {
       cancellationKind: 'store_cancelled',
       cancelledQuantity: 3,
     });
+  });
+
+  it('records HTKD cancellation and rejects an exact replay after assignment revocation', async () => {
+    const f = await fixture();
+    const offerId = await holdOffer(f, 2, 3);
+    const key = randomUUID();
+    await cancel(f.ticket.id, f.htkd.id, key);
+    expect((await cancel(f.ticket.id, f.htkd.id, key)).replayed).toBe(true);
+    const history = await getWaitTicketHistory(db, {
+      actorUserId: f.htkd.id,
+      waitTicketId: f.ticket.id,
+    });
+    expect(history.ticket.cancellationKind).toBe('htkd_cancelled');
+    expect(history.audit.filter((e) => e.action === 'WAIT_TICKET_HTKD_CANCELLED')).toHaveLength(1);
+    expect(history.audit.find((e) => e.action === 'WAIT_TICKET_HTKD_CANCELLED')).toMatchObject({
+      actorUserId: f.htkd.id,
+      actorRole: 'htkd',
+      actorStoreId: f.store.id,
+    });
+    expect(await reserved(f.product.id)).toBe(0);
+    expect(history.offers.find((o) => o.id === offerId)?.status).toBe('cancelled');
+    await db
+      .update(htkdAssignments)
+      .set({ revokedAt: new Date() })
+      .where(eq(htkdAssignments.userId, f.htkd.id));
+    await expect(cancel(f.ticket.id, f.htkd.id, key)).rejects.toMatchObject({
+      code: 'WAIT_TICKET_FORBIDDEN',
+    });
+    await expect(
+      getWaitTicketHistory(db, { actorUserId: f.htkd.id, waitTicketId: f.ticket.id }),
+    ).rejects.toMatchObject({ code: 'WAIT_TICKET_NOT_FOUND' });
+  });
+
+  it('rejects HTKD cancellation for an inactive store and replay after account locking', async () => {
+    const inactive = await fixture({ inactiveStore: true });
+    await expect(cancel(inactive.ticket.id, inactive.htkd.id)).rejects.toMatchObject({
+      code: 'WAIT_TICKET_FORBIDDEN',
+    });
+    const f = await fixture();
+    const key = randomUUID();
+    await cancel(f.ticket.id, f.htkd.id, key);
+    await db.update(users).set({ status: 'locked' }).where(eq(users.id, f.htkd.id));
+    await expect(cancel(f.ticket.id, f.htkd.id, key)).rejects.toMatchObject({
+      code: 'WAIT_TICKET_FORBIDDEN',
+    });
+  });
+
+  it.each(['accept', 'decline'] as const)(
+    'serializes STORE accept versus HTKD %s with one offer decision',
+    async (action) => {
+      const f = await fixture();
+      const offerId = await holdOffer(f, 2, 3);
+      let start!: () => void;
+      const barrier = new Promise<void>((resolve) => {
+        start = resolve;
+      });
+      const respond = async (actorUserId: string, choice: 'accept' | 'decline') => {
+        await barrier;
+        return respondPriorityOffer(db, {
+          offerId,
+          actorUserId,
+          ...(choice === 'accept'
+            ? { action: 'accept' as const, acceptedQuantity: 2 }
+            : { action: 'decline' as const }),
+          idempotencyKey: randomUUID(),
+          requestHash: choice,
+        });
+      };
+      const pending = [respond(f.owner.id, 'accept'), respond(f.htkd.id, action)];
+      start();
+      const outcomes = await Promise.allSettled(pending);
+      expect(outcomes.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      const history = await getWaitTicketHistory(db, {
+        actorUserId: f.admin.id,
+        waitTicketId: f.ticket.id,
+      });
+      expect(
+        history.audit.filter((e) =>
+          ['PRIORITY_OFFER_ACCEPTED', 'PRIORITY_OFFER_DECLINED'].includes(e.action),
+        ),
+      ).toHaveLength(1);
+      expect(history.ticket.status).toBe('active');
+      expect(await reserved(f.product.id)).toBe(history.offers[0]!.status === 'accepted' ? 2 : 0);
+    },
+  );
+
+  it('serializes HTKD cancel against STORE accept without double release', async () => {
+    const f = await fixture();
+    const offerId = await holdOffer(f, 2, 3);
+    let start!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      start = resolve;
+    });
+    const pending = [
+      barrier.then(() => cancel(f.ticket.id, f.htkd.id)),
+      barrier.then(() =>
+        respondPriorityOffer(db, {
+          offerId,
+          actorUserId: f.owner.id,
+          action: 'accept',
+          acceptedQuantity: 2,
+          idempotencyKey: randomUUID(),
+          requestHash: 'accept',
+        }),
+      ),
+    ];
+    start();
+    await Promise.allSettled(pending);
+    const history = await getWaitTicketHistory(db, {
+      actorUserId: f.admin.id,
+      waitTicketId: f.ticket.id,
+    });
+    expect(history.ticket.status).toBe('cancelled');
+    expect(history.ticket.fulfilledQuantity).toBe(0);
+    expect(history.ticket.remainingQuantity).toBe(3);
+    expect(await reserved(f.product.id)).toBe(0);
+    expect(history.audit.filter((e) => e.action === 'WAIT_TICKET_HTKD_CANCELLED')).toHaveLength(1);
+  });
+
+  it('pages tickets including no-offer and cancelled records, filters historical PUT and Vietnam dates', async () => {
+    const f = await fixture();
+    const day = '2026-10-06';
+    await db
+      .update(waitTickets)
+      .set({ createdAt: new Date('2026-10-05T17:00:00Z') })
+      .where(eq(waitTickets.id, f.ticket.id));
+    let page = await listWaitTickets(db, {
+      actorUserId: f.admin.id,
+      storeId: f.store.id,
+      pageSize: 1,
+      createdFrom: day,
+      createdTo: day,
+    });
+    expect(page.pagination.totalItems).toBe(1);
+    expect(page.data[0]?.latestOffer).toBeNull();
+    const offerId = await holdOffer(f, 2, 3);
+    await cancel(f.ticket.id, f.htkd.id);
+    const [offer] = await db
+      .select()
+      .from(dailyPriorityOffers)
+      .where(eq(dailyPriorityOffers.id, offerId));
+    page = await listWaitTickets(db, {
+      actorUserId: f.admin.id,
+      storeId: f.store.id,
+      q: offer!.code,
+      pageSize: 1,
+    });
+    expect(page.pagination.totalItems).toBe(1);
+    expect(page.data[0]).toMatchObject({
+      status: 'cancelled',
+      remainingQuantity: 3,
+      latestOffer: { id: offerId },
+      cancellationActor: { accountId: f.htkd.id, role: 'htkd' },
+    });
+    expect(
+      (
+        await listWaitTickets(db, {
+          actorUserId: f.admin.id,
+          storeId: f.store.id,
+          createdTo: '2026-10-05',
+        })
+      ).pagination.totalItems,
+    ).toBe(0);
+    expect(
+      (
+        await listWaitTickets(db, {
+          actorUserId: f.admin.id,
+          storeId: f.store.id,
+          page: 2,
+          pageSize: 1,
+        })
+      ).data,
+    ).toHaveLength(0);
+  });
+
+  it('two HTKD cancels and assignment revocation serialize against the same ticket', async () => {
+    const f = await fixture();
+    const [second] = await db
+      .insert(users)
+      .values({
+        email: `htkd.race.${randomUUID()}`,
+        displayName: 'Second HTKD',
+        passwordHash: 'integration-test-placeholder-hash',
+        role: 'htkd',
+      })
+      .returning();
+    await db.insert(htkdAssignments).values({ userId: second!.id, storeId: f.store.id });
+    let start!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      start = resolve;
+    });
+    const commands = [
+      barrier.then(() => cancel(f.ticket.id, f.htkd.id)),
+      barrier.then(() => cancel(f.ticket.id, second!.id)),
+    ];
+    start();
+    const outcomes = await Promise.allSettled(commands);
+    expect(outcomes.filter((o) => o.status === 'fulfilled')).toHaveLength(1);
+    const f2 = await fixture();
+    let start2!: () => void;
+    const barrier2 = new Promise<void>((resolve) => {
+      start2 = resolve;
+    });
+    const pending = [
+      barrier2.then(() => cancel(f2.ticket.id, f2.htkd.id)),
+      barrier2.then(() =>
+        db
+          .update(htkdAssignments)
+          .set({ revokedAt: new Date() })
+          .where(eq(htkdAssignments.userId, f2.htkd.id)),
+      ),
+    ];
+    start2();
+    const result = await Promise.allSettled(pending);
+    expect(result[1]!.status).toBe('fulfilled');
+    const [ticket] = await db.select().from(waitTickets).where(eq(waitTickets.id, f2.ticket.id));
+    expect(ticket!.status).toBe(result[0]!.status === 'fulfilled' ? 'cancelled' : 'active');
+    await expect(cancel(f2.ticket.id, f2.htkd.id)).rejects.toMatchObject({
+      code: 'WAIT_TICKET_FORBIDDEN',
+    });
+  });
+
+  it('HTKD cancel racing expiration releases a partial offer exactly once', async () => {
+    const f = await fixture();
+    const offerId = await holdOffer(f, 2, 3);
+    await db
+      .update(dailyPriorityOffers)
+      .set({ responseDeadlineAt: new Date(Date.now() - 1000) })
+      .where(eq(dailyPriorityOffers.id, offerId));
+    let start!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      start = resolve;
+    });
+    const operations = [
+      barrier.then(() => cancel(f.ticket.id, f.htkd.id)),
+      barrier.then(() =>
+        respondPriorityOffer(db, {
+          offerId,
+          actorUserId: null,
+          action: 'expire',
+          idempotencyKey: randomUUID(),
+          requestHash: 'expire',
+        }),
+      ),
+    ];
+    start();
+    await Promise.allSettled(operations);
+    const [ticket] = await db.select().from(waitTickets).where(eq(waitTickets.id, f.ticket.id));
+    expect(ticket!.status).toBe('cancelled');
+    expect(await reserved(f.product.id)).toBe(0);
+    expect(ticket!.remainingQuantity + ticket!.fulfilledQuantity).toBe(ticket!.originalQuantity);
+  });
+
+  it('keeps page counts stable with equal timestamps and several historical offers per ticket', async () => {
+    const f = await fixture();
+    const offerId = await holdOffer(f, 2, 3);
+    await cancel(f.ticket.id, f.htkd.id);
+    const [old] = await db
+      .insert(dailyPriorityOffers)
+      .values({
+        businessDate: f.session.businessDate,
+        orderSessionId: f.session.id,
+        storeId: f.store.id,
+        productId: f.product.id,
+        waitTicketId: f.ticket.id,
+        priorityLevel: 'P0B',
+        roundNumber: 2,
+        offeredQuantity: 1,
+        status: 'expired',
+        responseDeadlineAt: new Date('2026-01-01T02:00:00Z'),
+        createdAt: new Date('2026-01-01T01:00:00Z'),
+      })
+      .returning();
+    await db.insert(waitTickets).values(
+      Array.from({ length: 41 }, () => ({
+        storeId: f.store.id,
+        productId: f.product.id,
+        sourceOrderRequestItemId: f.ticket.sourceOrderRequestItemId,
+        status: 'cancelled' as const,
+        originalQuantity: 3,
+        remainingQuantity: 3,
+        createdAt: f.ticket.createdAt,
+      })),
+    );
+    const first = await listWaitTickets(db, {
+      actorUserId: f.admin.id,
+      storeId: f.store.id,
+      pageSize: 20,
+    });
+    const second = await listWaitTickets(db, {
+      actorUserId: f.admin.id,
+      storeId: f.store.id,
+      pageSize: 20,
+      page: 2,
+    });
+    expect(first.pagination.totalItems).toBe(42);
+    expect(second.pagination.totalItems).toBe(42);
+    expect(new Set([...first.data, ...second.data].map((t) => t.id)).size).toBe(40);
+    const found = await listWaitTickets(db, { actorUserId: f.admin.id, q: old!.code });
+    expect(found.pagination.totalItems).toBe(1);
+    expect(found.data[0]?.latestOffer?.id).toBe(offerId);
   });
 
   it('lets an admin cancel the wait of an inactive store and release an accepted, unallocated hold', async () => {

@@ -2927,16 +2927,6 @@ describe('KHOHANG-IDOSI API', () => {
     const url = `/api/v1/wait-tickets/${MEMORY_SEED_IDS.cancellableWaitTicket}/cancel`;
     const payload = { reason: 'Cửa hàng không còn nhu cầu nhận mặt hàng này' };
 
-    // HTKD answers offers for assigned stores but never cancels a store's wait.
-    const denied = await mutateWait(
-      cookieOf(await login('htkd')),
-      url,
-      'wait-ticket-cancel-htkd',
-      payload,
-    );
-    assert.equal(denied.statusCode, 403);
-    assert.equal(denied.json().error.code, 'FORBIDDEN');
-
     const cancelled = await mutateWait(storeCookie, url, 'wait-ticket-cancel-0001', payload);
     assert.equal(cancelled.statusCode, 200);
     assert.equal(cancelled.headers['idempotency-replayed'], 'false');
@@ -3909,10 +3899,10 @@ describe('KHOHANG-IDOSI API', () => {
     );
   });
 
-  test('warehouse inventory is admin-only and reconciles on-hand, reserved and dispatched bags', async () => {
+  test('warehouse inventory allows HTKD read access and reconciles on-hand, reserved and dispatched bags', async () => {
     const url = '/api/v1/warehouse-inventory?pageSize=100';
     assert.equal((await app.inject({ method: 'GET', url })).statusCode, 401);
-    for (const username of ['htkd', 'ds_nvt']) {
+    for (const username of ['ds_nvt']) {
       const denied = await app.inject({
         method: 'GET',
         url,
@@ -3923,6 +3913,13 @@ describe('KHOHANG-IDOSI API', () => {
     const headers = { cookie: cookieOf(await login('admin')) };
     const result = await app.inject({ method: 'GET', url, headers });
     assert.equal(result.statusCode, 200);
+    const htkdRead = await app.inject({
+      method: 'GET',
+      url,
+      headers: { cookie: cookieOf(await login('htkd')) },
+    });
+    assert.equal(htkdRead.statusCode, 200);
+    assert.deepEqual(htkdRead.json().data, result.json().data);
     const balances = (
       await app.inject({ method: 'GET', url: '/api/v1/warehouse-balances', headers })
     ).json().data;

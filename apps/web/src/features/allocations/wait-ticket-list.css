@@ -1,0 +1,91 @@
+.wait-ticket-list {
+  min-width: 0;
+}
+.wait-ticket-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 16px;
+}
+.wait-ticket-filters label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 160px;
+}
+.wait-ticket-filters input,
+.wait-ticket-filters select {
+  width: 100%;
+  min-height: 44px;
+  min-width: 0;
+}
+.wait-ticket-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.wait-ticket-table {
+  min-width: 1200px;
+  width: 100%;
+}
+.wait-ticket-table td,
+.wait-ticket-table th {
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+}
+.wait-ticket-table td {
+  max-width: 300px;
+  overflow-wrap: anywhere;
+}
+.wait-ticket-table td small {
+  display: block;
+  margin-top: 6px;
+}
+.wait-ticket-actions {
+  display: grid;
+  gap: 8px;
+  min-width: 150px;
+}
+
+/* Preserve all nine columns at every viewport; this table uses local scrolling, not mobile cards. */
+.app-main .wait-ticket-table-scroll {
+  width: 100%;
+  min-width: 0;
+}
+.app-main table.wait-ticket-table {
+  display: table;
+  min-width: 1200px;
+  width: 100%;
+  max-width: none;
+}
+.wait-ticket-table thead {
+  display: table-header-group;
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip: auto;
+}
+.wait-ticket-table tbody {
+  display: table-row-group;
+}
+.wait-ticket-table tr,
+.wait-ticket-table tbody tr {
+  display: table-row;
+  border: 0;
+  padding: 0;
+}
+.wait-ticket-table th,
+.wait-ticket-table td {
+  display: table-cell;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.wait-ticket-table td::before {
+  content: none;
+}
+
+.wait-ticket-table th:first-child {
+  white-space: nowrap;
+}

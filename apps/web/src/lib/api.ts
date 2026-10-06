@@ -29,6 +29,8 @@ import {
   ListStoreOrderRequestsResponseSchema,
   ListStoresResponseSchema,
   ListWaitTicketsResponseSchema,
+  ListWaitTicketsQuerySchema,
+  type ListWaitTicketsQuery,
   LoginResponseSchema,
   LogoutResponseSchema,
   MonthlyOperationalReportResponseSchema,
@@ -543,6 +545,16 @@ export async function cancelStoreOrderRequest(
   return StoreOrderRequestResponseSchema.parse(payload).data;
 }
 
+export async function listWaitTicketsPage(filters: ListWaitTicketsQuery, signal?: AbortSignal) {
+  const validated = ListWaitTicketsQuerySchema.parse(filters);
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(validated))
+    if (value !== undefined) query.set(key, String(value));
+  return ListWaitTicketsResponseSchema.parse(
+    await request(`/wait-tickets?${query}`, { signal: signal ?? null }),
+  );
+}
+
 interface WaitTicketFilters {
   readonly priority?: WaitTicket['priority'];
   readonly productId?: string;
@@ -584,12 +596,16 @@ export async function listPriorityOffers(
 export async function getWaitTicketHistory(
   waitTicketId: string,
   limit = 100,
+  includeAllOffers = false,
 ): Promise<WaitTicketHistory> {
   const query = new URLSearchParams({ limit: String(limit) });
   const payload = await request(
     `/wait-tickets/${encodeURIComponent(waitTicketId)}/history?${query.toString()}`,
   );
-  return WaitTicketHistoryResponseSchema.parse(payload).data;
+  const history = WaitTicketHistoryResponseSchema.parse(payload).data;
+  return includeAllOffers
+    ? { ...history, offers: await listPriorityOffers({ waitTicketId }) }
+    : history;
 }
 
 export async function cancelWaitTicket(

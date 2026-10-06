@@ -262,8 +262,9 @@ const STORE_TAB_ITEMS: readonly TabItem<StoreTab>[] = [
 ];
 
 export function ProductionInventoryPage({ role }: AppOutletContext) {
-  if (role !== 'ADMIN') return <StoreInventoryPage role={role} storeKind={null} />;
-  return <AdminInventoryWorkspace />;
+  if (role !== 'ADMIN' && role !== 'HTKD')
+    return <StoreInventoryPage role={role} storeKind={null} />;
+  return <AdminInventoryWorkspace role={role} />;
 }
 
 /**
@@ -272,10 +273,10 @@ export function ProductionInventoryPage({ role }: AppOutletContext) {
  * and opened document live in the URL, so reload, Back/Forward and shared links land on the
  * same content. Leaving a tab that holds an unsent draft asks first instead of dropping it.
  */
-function AdminInventoryWorkspace() {
+function AdminInventoryWorkspace({ role }: { readonly role: 'ADMIN' | 'HTKD' }) {
   const queryClient = useQueryClient();
   const [params, setParams] = useSearchParams();
-  const navigation = readInventoryNavigation(params);
+  const navigation = readInventoryNavigation(params, role);
   const refreshKeys = refreshQueryKeys(navigation);
   const refreshing = useIsFetching({
     predicate: (query) => matchesQueryPrefix(query.queryKey, refreshKeys),
@@ -312,7 +313,11 @@ function AdminInventoryWorkspace() {
         active={navigation.tab}
         emphasis="prominent"
         idPrefix="inventory"
-        items={INVENTORY_TAB_ITEMS}
+        items={
+          role === 'ADMIN'
+            ? INVENTORY_TAB_ITEMS
+            : INVENTORY_TAB_ITEMS.filter((item) => item.id !== 'adjustments')
+        }
         label="Phạm vi tồn kho"
         onChange={(tab) => (hasDraft ? setPendingTab(tab) : goTo(tab))}
       />
@@ -336,9 +341,9 @@ function AdminInventoryWorkspace() {
         <DraftScope onDirtyChange={setHasDraft}>
           <Suspense fallback={<DashboardSkeleton />}>
             {navigation.tab === 'warehouse' ? (
-              <WarehouseInventory />
+              <WarehouseInventory readOnly={role === 'HTKD'} />
             ) : navigation.tab === 'store' ? (
-              <StoreInventoryPage embedded role="ADMIN" storeKind={null} />
+              <StoreInventoryPage embedded role={role} storeKind={null} />
             ) : (
               <AdminAdjustmentWorkspace />
             )}

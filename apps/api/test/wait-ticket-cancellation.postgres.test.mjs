@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { describe, test } from 'node:test';
+import { after, before, describe, test } from 'node:test';
 
 import {
   db,
@@ -24,9 +24,74 @@ import { hashSessionToken } from '../dist/security.js';
 const describePostgres = process.env.RUN_POSTGRES_TESTS === '1' ? describe : describe.skip;
 
 describePostgres('wait ticket cancellation through the API on PostgreSQL', () => {
-  test('ADMIN cancels any store wait (inactive too), HTKD is refused, STORE only its own', async () => {
-    const repository = new PostgresWarehouseRepository();
-    const app = await createApi({ repository });
+  let app;
+  before(async () => {
+    app = await createApi({ repository: new PostgresWarehouseRepository() });
+  });
+  after(async () => {
+    await app?.close();
+  });
+  test('HTKD cancels with its real audit identity and loses replay access after revocation', async () => {
+    try {
+      const f = await createFixture();
+      const headers = {
+        cookie: `idosi_session=${f.tokens.htkd}`,
+        'idempotency-key': 'htkd-scope-cancel',
+      };
+      const url = `/api/v1/wait-tickets/${f.ticketA}/cancel`;
+      const response = await app.inject({
+        method: 'POST',
+        url,
+        headers,
+        payload: { reason: 'HTKD xác nhận không còn nhu cầu' },
+      });
+      assert.equal(response.statusCode, 200, response.body);
+      assert.equal(response.json().data.cancellationKind, 'HTKD_CANCELLED');
+      const history = await app.inject({
+        method: 'GET',
+        url: `/api/v1/wait-tickets/${f.ticketA}/history`,
+        headers,
+      });
+      assert.ok(
+        history
+          .json()
+          .data.audit.some(
+            (event) => event.action === 'WAIT_TICKET_HTKD_CANCELLED' && event.actorRole === 'HTKD',
+          ),
+      );
+      const legacyPage = await app.inject({
+        method: 'GET',
+        url: `/api/v1/wait-tickets?storeId=${f.storeA}`,
+        headers,
+      });
+      assert.equal(legacyPage.statusCode, 200, legacyPage.body);
+      assert.equal(Object.hasOwn(legacyPage.json().data[0], 'latestOffer'), false);
+      const tablePage = await app.inject({
+        method: 'GET',
+        url: `/api/v1/wait-tickets?storeId=${f.storeA}&projection=TABLE`,
+        headers,
+      });
+      assert.equal(tablePage.statusCode, 200, tablePage.body);
+      assert.equal(tablePage.json().data[0].cancellationActor.role, 'HTKD');
+      assert.ok(tablePage.json().data[0].storeName);
+      await db
+        .update(htkdAssignments)
+        .set({ revokedAt: new Date() })
+        .where(eq(htkdAssignments.storeId, f.storeA));
+      const replay = await app.inject({
+        method: 'POST',
+        url,
+        headers,
+        payload: { reason: 'HTKD xác nhận không còn nhu cầu' },
+      });
+      assert.equal(replay.statusCode, 401, replay.body);
+      assert.equal(replay.json().error.code, 'SESSION_REVOKED');
+    } finally {
+      /* Shared pool closes once after this suite. */
+    }
+  });
+
+  test('ADMIN cancels any store wait (inactive too), HTKD cancels assigned stores, STORE only its own', async () => {
     try {
       const fixture = await createFixture();
       const cancel = (token, ticketId, key, reason = 'Không còn nhu cầu nhận hàng') =>
@@ -37,8 +102,6 @@ describePostgres('wait ticket cancellation through the API on PostgreSQL', () =>
           payload: { reason },
         });
 
-      const htkd = await cancel(fixture.tokens.htkd, fixture.ticketA, 'htkd-cancel-0001');
-      assert.equal(htkd.statusCode, 403);
       const foreign = await cancel(fixture.tokens.store, fixture.ticketB, 'store-foreign-0001');
       assert.equal(foreign.statusCode, 403);
 
@@ -71,7 +134,7 @@ describePostgres('wait ticket cancellation through the API on PostgreSQL', () =>
           ),
       );
     } finally {
-      await app.close();
+      /* Shared pool closes once after this suite. */
     }
   });
 });

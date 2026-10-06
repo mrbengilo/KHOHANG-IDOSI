@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Button } from '../../components/Button';
 import { TabPanel, Tabs, type TabItem } from '../../components/Tabs';
 import { listAccessibleStores, listCatalog } from '../../lib/api';
+import { useSession } from '../../lib/auth';
 import { formatInteger } from '../../lib/format';
 import { loadWarehouseInventory, loadWarehouseOutboundHistory } from './inventoryApi';
 import {
@@ -47,16 +48,18 @@ function useNames() {
  * Warehouse stock with three sub-tabs. Each sub-tab mounts only its own queries, so opening the
  * stock table never downloads the dispatch history or the shortage checks.
  */
-export function WarehouseInventory() {
+export function WarehouseInventory({ readOnly = false }: { readonly readOnly?: boolean }) {
   const [params, setParams] = useSearchParams();
-  const { warehouse } = readInventoryNavigation(params);
+  const { warehouse } = readInventoryNavigation(params, readOnly ? 'HTKD' : 'ADMIN');
   return (
     <>
       <Tabs
         active={warehouse.tab}
         emphasis="prominent"
         idPrefix="warehouse-inventory"
-        items={WAREHOUSE_TAB_ITEMS}
+        items={
+          readOnly ? WAREHOUSE_TAB_ITEMS.filter((item) => item.id === 'stock') : WAREHOUSE_TAB_ITEMS
+        }
         label="Nội dung kho tổng"
         onChange={(tab) =>
           setParams((current) => withParams(current, { [KEYS.warehouseTab]: tab }))
@@ -65,7 +68,7 @@ export function WarehouseInventory() {
       />
       <TabPanel idPrefix="warehouse-inventory" tab={warehouse.tab}>
         {warehouse.tab === 'stock' ? (
-          <WarehouseStock page={warehouse.page} search={warehouse.search} />
+          <WarehouseStock page={warehouse.page} search={warehouse.search} readOnly={readOnly} />
         ) : warehouse.tab === 'adjustments' ? (
           <WarehouseAdjustmentHistory filters={warehouse.adjustments} />
         ) : warehouse.tab === 'shortage' ? (
@@ -83,14 +86,23 @@ function WarehouseShortages() {
   return <ShortageChecksPanel productNames={productNames} storeNames={storeNames} />;
 }
 
-function WarehouseStock({ page, search }: { readonly page: number; readonly search: string }) {
+function WarehouseStock({
+  page,
+  search,
+  readOnly,
+}: {
+  readonly page: number;
+  readonly search: string;
+  readonly readOnly: boolean;
+}) {
+  const principal = useSession().data?.principal;
   const [, setParams] = useSearchParams();
   const [draftSearch, setDraftSearch] = useState(search);
   useEffect(() => setDraftSearch(search), [search]);
   const setPage = (next: number) =>
     setParams((current) => withParams(current, { [KEYS.warehousePage]: next }));
   const inventory = useQuery({
-    queryKey: ['warehouse-inventory', page, search],
+    queryKey: ['warehouse-inventory', principal?.accountId, principal?.role, page, search],
     queryFn: ({ signal }) => loadWarehouseInventory(page, search, signal),
     retry: false,
   });
@@ -150,7 +162,7 @@ function WarehouseStock({ page, search }: { readonly page: number; readonly sear
                   <th>Đang giữ / chờ xuất</th>
                   <th>Có thể xuất</th>
                   <th>Đã xuất lũy kế</th>
-                  <th>Thao tác</th>
+                  {!readOnly ? <th>Thao tác</th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -164,26 +176,28 @@ function WarehouseStock({ page, search }: { readonly page: number; readonly sear
                     <td data-label="Đang giữ / chờ xuất">{formatInteger(row.reservedBags)} bao</td>
                     <td data-label="Có thể xuất">{formatInteger(row.availableBags)} bao</td>
                     <td data-label="Đã xuất lũy kế">{formatInteger(row.dispatchedBags)} bao</td>
-                    <td data-label="Thao tác">
-                      <Button
-                        aria-label={`Điều chỉnh tồn ${row.productName}`}
-                        className="warehouse-adjust-button"
-                        onClick={() => {
-                          setNotice('');
-                          setAdjustingProductId(row.productId);
-                        }}
-                        tone="secondary"
-                      >
-                        Điều chỉnh tồn
-                      </Button>
-                    </td>
+                    {!readOnly ? (
+                      <td data-label="Thao tác">
+                        <Button
+                          aria-label={`Điều chỉnh tồn ${row.productName}`}
+                          className="warehouse-adjust-button"
+                          onClick={() => {
+                            setNotice('');
+                            setAdjustingProductId(row.productId);
+                          }}
+                          tone="secondary"
+                        >
+                          Điều chỉnh tồn
+                        </Button>
+                      </td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           {!inventory.data.data.length ? <p>Không có mặt hàng phù hợp.</p> : null}
-          {adjustingRow ? (
+          {!readOnly && adjustingRow ? (
             <WarehouseAdjustmentDialog
               onClose={() => setAdjustingProductId(null)}
               onDone={(adjustment) => {

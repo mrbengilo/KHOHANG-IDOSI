@@ -70,12 +70,12 @@ Cùng một luồng, giờ lấy từ chính phiên (`Asia/Ho_Chi_Minh`, không 
 
 `POST /api/v1/wait-tickets/:waitTicketId/cancel` (idempotency key bắt buộc, lý do ≥ 3 ký tự).
 
-| Vai trò   | Quyền                                                                                |
-| --------- | ------------------------------------------------------------------------------------ |
-| STORE     | Phiếu `active` của chính cửa hàng (đang hoạt động), mọi thời điểm còn nhu cầu.       |
-| WHOLESALE | Giữ nguyên quyền hiện có với cửa hàng sỉ.                                            |
-| ADMIN     | Mọi phiếu `active` của mọi cửa hàng, kể cả cửa hàng inactive. Admin phải còn active. |
-| HTKD      | **Không** được hủy (vẫn phản hồi đề nghị cho cửa hàng được phân công như trước).     |
+| Vai trò   | Quyền                                                                                                |
+| --------- | ---------------------------------------------------------------------------------------------------- |
+| STORE     | Phiếu `active` của chính cửa hàng (đang hoạt động), mọi thời điểm còn nhu cầu.                       |
+| WHOLESALE | Giữ nguyên quyền hiện có với cửa hàng sỉ.                                                            |
+| ADMIN     | Mọi phiếu `active` của mọi cửa hàng, kể cả cửa hàng inactive. Admin phải còn active.                 |
+| HTKD      | Được hủy phiếu active của cửa hàng đang hoạt động và đang được phân công; kiểm tra lại trước replay. |
 
 Khi hủy:
 
@@ -102,6 +102,7 @@ Guard cũ chặn hủy khi phiếu nhận thiếu còn chờ HTKD đã được 
 | Hành động (`audit_logs.action`)             | Entity         | Khi nào                                     |
 | ------------------------------------------- | -------------- | ------------------------------------------- |
 | `WAIT_TICKET_STORE_CANCELLED`               | wait_ticket    | Cửa hàng/sỉ hủy                             |
+| `WAIT_TICKET_HTKD_CANCELLED`                | wait_ticket    | HTKD hủy phiếu cửa hàng được phân công      |
 | `WAIT_TICKET_ADMIN_CANCELLED`               | wait_ticket    | Admin hủy                                   |
 | `PRIORITY_OFFER_DECLINED`                   | priority_offer | Từ chối lượt (một phần hoặc toàn bộ)        |
 | `PRIORITY_OFFER_EXPIRED`                    | priority_offer | Lượt hết hạn (API trả lời muộn hoặc worker) |
