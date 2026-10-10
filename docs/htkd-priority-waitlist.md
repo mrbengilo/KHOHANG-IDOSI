@@ -4,11 +4,13 @@
 
 | Chức năng                                                              | ADMIN                               | HTKD                                            | STORE / WHOLESALE |
 | ---------------------------------------------------------------------- | ----------------------------------- | ----------------------------------------------- | ----------------- |
-| Đọc tồn kho tổng                                                       | Có                                  | Có, số tổng trung tâm                           | Không             |
+| Đọc tồn kho tổng                                                       | Có                                  | Có, số tổng trung tâm                           | Có, chỉ xem¹      |
 | Điều chỉnh kho tổng, lịch sử xuất/điều chỉnh, kiểm thiếu toàn hệ thống | Quyền hiện có                       | Không mở thêm                                   | Không mở thêm     |
 | Đọc/phản hồi ưu tiên                                                   | Đọc, không nhận thay                | Cửa hàng đang hoạt động được phân công hiện tại | Phạm vi hiện có   |
 | Hủy phần còn chờ                                                       | Mọi cửa hàng, kể cả ngừng hoạt động | Cửa hàng đang hoạt động được phân công hiện tại | Phạm vi hiện có   |
 | Tab chính Danh sách phiếu chờ                                          | Có                                  | Không                                           | Không             |
+
+¹ Mở rộng sau bản này: xem `warehouse-stock-read-access.md`.
 
 Trước thay đổi, notice và phản hồi HTKD đã có nhưng kho tổng và hủy phiếu bị chặn có chủ đích. Bản này dùng lại notice 15 giây, transaction/state machine và dialog chung. HTKD không có phiếu riêng, không giả actor STORE. Nhận ưu tiên không phải thực nhận, không cộng tồn cửa hàng.
 
@@ -48,7 +50,7 @@ Các suite mới/mở rộng:
 - Database cancellation (13 ca): scope/khóa/ngừng cửa hàng, hai HTKD, accept/accept, accept/decline, hủy/accept, hủy/expire, thu hồi phân công, replay/conflict, FULL/PARTIAL/legacy, quantity/hold, nhiều lượt không trùng dòng và ngày biên Việt Nam.
 - Contracts/component/navigation: enum, thời gian, 9 cột, legacy, URL và HTKD deep link.
 - `e2e/prominent-tabs.spec.ts`: truy cập trực tiếp, lazy query, server paging, hủy/tra cứu lại, reload/URL, viewport 360/390/412/768/1366/1440/1920 và local scroll.
-- `e2e-live/htkd-priority-waitlist.spec.ts`: ba browser context với API/PG thật, HTKD hai cửa hàng + cửa hàng ngoài scope, notice mới trong 20 giây, STORE phản hồi/HTKD cập nhật, HTKD hủy, audit, tồn đối chiếu DB, thu hồi quyền, HTKD không phân công và STORE bị chặn kho tổng.
+- `e2e-live/htkd-priority-waitlist.spec.ts`: ba browser context với API/PG thật, HTKD hai cửa hàng + cửa hàng ngoài scope, notice mới trong 20 giây, STORE phản hồi/HTKD cập nhật, HTKD hủy, audit, tồn đối chiếu DB, thu hồi quyền, HTKD không phân công và STORE đọc kho tổng (chỉ xem, không điều chỉnh).
 
 Lệnh chính: `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`, `npm run e2e`, `npm run e2e:production -w @idosi/web`, `npm run e2e:live`, cùng migration/infra/container gates trong CI.
 
