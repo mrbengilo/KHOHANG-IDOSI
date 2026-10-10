@@ -232,6 +232,25 @@ test(
       assert.equal(row.onHandBags, 10);
       assert.equal(row.reservedBags, 4);
       assert.equal(row.balanceVersion, 2);
+      // HTKD, the store account and the wholesale desk read the same central row read-only.
+      const [wholesaleUser] = await db
+        .insert(users)
+        .values({
+          email: `oh.wholesale.${randomUUID().slice(0, 8)}`,
+          passwordHash: 'not-used-by-session-fixture',
+          displayName: 'Order history wholesale',
+          role: 'wholesale',
+        })
+        .returning();
+      for (const user of [f.htkd, f.storeUser, wholesaleUser]) {
+        const read = await app.inject({
+          method: 'GET',
+          url: `/api/v1/warehouse-inventory?search=${encodeURIComponent(f.product.sku)}`,
+          headers: await login(user),
+        });
+        assert.equal(read.statusCode, 200, `${user.role}: ${read.body}`);
+        assert.deepEqual(WarehouseInventoryResponseSchema.parse(read.json()).data, [row]);
+      }
 
       const payload = {
         productId: f.product.id,
@@ -241,7 +260,7 @@ test(
         reason: 'Kiểm kê dư 3 bao',
         expectedVersion: row.balanceVersion,
       };
-      for (const user of [f.htkd, f.storeUser]) {
+      for (const user of [f.htkd, f.storeUser, wholesaleUser]) {
         const refused = await app.inject({
           method: 'POST',
           url: '/api/v1/warehouse-adjustments',

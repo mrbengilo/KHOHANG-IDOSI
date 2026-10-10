@@ -197,6 +197,7 @@ import {
   mayAnswerAllocationDecision,
   pagination,
   slicePage,
+  WAREHOUSE_INVENTORY_READ_ROLES,
 } from './repository.js';
 import { hashPassword, hashSessionToken } from './security.js';
 
@@ -344,8 +345,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     actor: AuthenticatedPrincipal,
     query: WarehouseInventoryQuery,
   ): Promise<WarehouseInventoryResponse> {
-    if (actor.role !== 'ADMIN' && actor.role !== 'HTKD')
-      throw forbidden('Chỉ Admin và HTKD được xem tồn kho tổng.');
+    if (!WAREHOUSE_INVENTORY_READ_ROLES.includes(actor.role))
+      throw forbidden('Tài khoản này không được xem tồn kho tổng.');
     const search = query.search?.toLocaleLowerCase('vi-VN') ?? '';
     const values = [...this.products.values()]
       .filter((product) =>
