@@ -6,9 +6,10 @@ export interface RouteAccessPolicy {
 }
 
 /**
- * WHOLESALE is the "Cửa hàng sỉ" desk. It orders and receives for the wholesale stores and
- * follows its slips and allocation results, so it gets those four routes and nothing else:
- * opening bags, retail sales, sorting and store transfers are retail-floor work.
+ * WHOLESALE is the "Cửa hàng sỉ" desk. It orders and receives for the wholesale stores,
+ * follows its slips and allocation results and reads the central warehouse stock, so it gets
+ * those routes and nothing else: opening bags, retail sales, sorting and store transfers are
+ * retail-floor work.
  */
 export const routeAccessPolicies = {
   '/': { roles: ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE'] },
@@ -26,9 +27,11 @@ export const routeAccessPolicies = {
     roles: ['STORE', 'HTKD'],
     storeKinds: ['RETAIL'],
   },
+  // Every principal reads the central warehouse stock here (only Admin manages it); store
+  // stock is a retail-floor tab, see `inventoryTabsFor`.
   '/inventory': {
-    roles: ['ADMIN', 'HTKD', 'STORE'],
-    storeKinds: ['RETAIL'],
+    roles: ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE'],
+    storeKinds: ['RETAIL', 'WHOLESALE'],
   },
   '/open-bag': {
     roles: ['ADMIN', 'HTKD', 'STORE'],

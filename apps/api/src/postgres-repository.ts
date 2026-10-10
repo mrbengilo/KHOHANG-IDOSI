@@ -377,7 +377,13 @@ import type {
   SubmittedOrderRequest,
   WarehouseRepository,
 } from './repository.js';
-import { assertActiveRetailStore, canAccessStore, pagination, slicePage } from './repository.js';
+import {
+  assertActiveRetailStore,
+  canAccessStore,
+  pagination,
+  slicePage,
+  WAREHOUSE_INVENTORY_READ_ROLES,
+} from './repository.js';
 import { hashPassword, hashSessionToken } from './security.js';
 import {
   asiaHoChiMinhDateRange,
@@ -395,8 +401,8 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     actor: AuthenticatedPrincipal,
     query: WarehouseInventoryQuery,
   ): Promise<WarehouseInventoryResponse> {
-    if (actor.role !== 'ADMIN' && actor.role !== 'HTKD')
-      throw forbidden('Chỉ Admin và HTKD được xem tồn kho tổng.');
+    if (!WAREHOUSE_INVENTORY_READ_ROLES.includes(actor.role))
+      throw forbidden('Tài khoản này không được xem tồn kho tổng.');
     const filter = and(
       isNull(products.deletedAt),
       query.search

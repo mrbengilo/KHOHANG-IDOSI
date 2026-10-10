@@ -3899,27 +3899,71 @@ describe('KHOHANG-IDOSI API', () => {
     );
   });
 
-  test('warehouse inventory allows HTKD read access and reconciles on-hand, reserved and dispatched bags', async () => {
+  test('warehouse inventory is readable by HTKD, store and wholesale accounts and reconciles on-hand, reserved and dispatched bags', async () => {
     const url = '/api/v1/warehouse-inventory?pageSize=100';
     assert.equal((await app.inject({ method: 'GET', url })).statusCode, 401);
-    for (const username of ['ds_nvt']) {
-      const denied = await app.inject({
-        method: 'GET',
-        url,
-        headers: { cookie: cookieOf(await login(username)) },
-      });
-      assert.equal(denied.statusCode, 403);
-    }
     const headers = { cookie: cookieOf(await login('admin')) };
     const result = await app.inject({ method: 'GET', url, headers });
     assert.equal(result.statusCode, 200);
-    const htkdRead = await app.inject({
+    const wholesale = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/accounts',
+      headers,
+      payload: {
+        username: 'wholesale.stock',
+        displayName: 'Quầy sỉ xem kho tổng',
+        password: PASSWORD,
+        role: 'WHOLESALE',
+      },
+    });
+    assert.equal(wholesale.statusCode, 201, wholesale.body);
+    const readers = {
+      htkd: cookieOf(await login('htkd')),
+      ds_nvt: cookieOf(await login('ds_nvt')),
+      'wholesale.stock': cookieOf(await login('wholesale.stock')),
+    };
+    for (const [username, cookie] of Object.entries(readers)) {
+      const read = await app.inject({ method: 'GET', url, headers: { cookie } });
+      assert.equal(read.statusCode, 200, `${username}: ${read.body}`);
+      // Every reader sees the same central aggregate as Admin, not a store-scoped subset.
+      assert.deepEqual(read.json().data, result.json().data, username);
+      // Read access does not open the Admin-only warehouse operations around the table.
+      for (const adminOnly of [
+        '/api/v1/warehouse-adjustments',
+        '/api/v1/warehouse-shortage-checks',
+      ]) {
+        const denied = await app.inject({ method: 'GET', url: adminOnly, headers: { cookie } });
+        assert.equal(denied.statusCode, 403, `${username} ${adminOnly}`);
+      }
+      const adjust = await app.inject({
+        method: 'POST',
+        url: '/api/v1/warehouse-adjustments',
+        headers: { cookie, 'idempotency-key': `warehouse-read-only-${username.replace('.', '-')}` },
+        payload: {
+          productId: result.json().data[0].productId,
+          direction: 'INCREASE',
+          quantity: 1,
+          reasonCode: 'COUNT_CORRECTION',
+          reason: 'Tài khoản chỉ đọc không được điều chỉnh kho tổng',
+          expectedVersion: result.json().data[0].balanceVersion,
+        },
+      });
+      assert.equal(adjust.statusCode, 403, `${username} adjust: ${adjust.body}`);
+    }
+    // Locking the wholesale desk ends its existing session for this read at once.
+    const locked = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/admin/accounts/${wholesale.json().data.id}`,
+      headers,
+      payload: { status: 'LOCKED', expectedSessionVersion: 0 },
+    });
+    assert.equal(locked.statusCode, 200, locked.body);
+    const afterLock = await app.inject({
       method: 'GET',
       url,
-      headers: { cookie: cookieOf(await login('htkd')) },
+      headers: { cookie: readers['wholesale.stock'] },
     });
-    assert.equal(htkdRead.statusCode, 200);
-    assert.deepEqual(htkdRead.json().data, result.json().data);
+    assert.ok([401, 403].includes(afterLock.statusCode), afterLock.body);
     const balances = (
       await app.inject({ method: 'GET', url: '/api/v1/warehouse-balances', headers })
     ).json().data;

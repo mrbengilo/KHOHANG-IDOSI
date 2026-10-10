@@ -176,6 +176,7 @@ import type {
   RequestContext,
   WarehouseRepository,
 } from './repository.js';
+import { WAREHOUSE_INVENTORY_READ_ROLES } from './repository.js';
 import {
   hashCanonicalRequest,
   hashPassword,
@@ -971,9 +972,11 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return repository.listWarehouseBalances(session.principal);
   });
 
+  // Central stock is read-only outside Admin: adjustments, dispatch history and shortage checks
+  // stay Admin-only.
   app.get('/api/v1/warehouse-inventory', async (request) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    requireRole(session.principal, WAREHOUSE_INVENTORY_READ_ROLES);
     return repository.listWarehouseInventory(
       session.principal,
       WarehouseInventoryQuerySchema.parse(request.query),
@@ -2707,7 +2710,7 @@ function openApiDocument(): Record<string, unknown> {
           responses: {
             '200': {
               description:
-                'ADMIN/HTKD paginated current warehouse bags and cumulative dispatched bags',
+                'ADMIN (manage) and HTKD/STORE/WHOLESALE (read-only) paginated current warehouse bags and cumulative dispatched bags',
             },
           },
         },

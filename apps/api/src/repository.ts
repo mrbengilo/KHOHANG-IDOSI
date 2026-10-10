@@ -213,6 +213,17 @@ export interface OrderStatistics {
   readonly generatedAt: string;
 }
 
+/**
+ * Roles that read the central warehouse stock table. Only ADMIN manages it; the others see the
+ * same per-product aggregate (no per-store reservations, no costs) read-only.
+ */
+export const WAREHOUSE_INVENTORY_READ_ROLES: readonly AuthenticatedPrincipal['role'][] = [
+  'ADMIN',
+  'HTKD',
+  'STORE',
+  'WHOLESALE',
+];
+
 export const RETAIL_STORE_OPERATION_FORBIDDEN_MESSAGE =
   'Nghiệp vụ này chỉ dành cho cửa hàng bán lẻ đang hoạt động';
 
@@ -442,6 +453,7 @@ export interface WarehouseRepository {
   ): Promise<Page<OrderHistoryEntry>>;
 
   listWarehouseBalances(actor: AuthenticatedPrincipal): Promise<WarehouseBalancesResponse>;
+  /** Read-only for every role in WAREHOUSE_INVENTORY_READ_ROLES. */
   listWarehouseInventory(
     actor: AuthenticatedPrincipal,
     query: WarehouseInventoryQuery,

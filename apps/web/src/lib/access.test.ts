@@ -33,12 +33,12 @@ describe('route access policy', () => {
     expect(canAccessRoute('/receive', 'STORE', 'RETAIL')).toBe(true);
   });
 
-  it('gives the wholesale desk ordering and receiving but no retail-floor screens', () => {
-    for (const route of ['/', '/allocations', '/requests', '/receive']) {
+  it('gives the wholesale desk ordering, receiving and warehouse stock but no retail-floor screens', () => {
+    for (const route of ['/', '/allocations', '/requests', '/receive', '/inventory']) {
       expect(canAccessRoute(route, 'WHOLESALE', null)).toBe(true);
       expect(canShowNavigation(route, 'WHOLESALE', null)).toBe(true);
     }
-    for (const route of ['/inventory', '/open-bag', '/sales', '/sorting', '/transfers']) {
+    for (const route of ['/open-bag', '/sales', '/sorting', '/transfers']) {
       expect(canAccessRoute(route, 'WHOLESALE', null)).toBe(false);
     }
     expect(canAccessRoute('/users', 'WHOLESALE', null)).toBe(false);
@@ -68,7 +68,7 @@ describe('route access policy', () => {
       '/warehouse-inbound': [1, 1, 0, 0, 0],
       '/receive': [1, 1, 1, 0, 1],
       '/partner-inbound': [0, 1, 1, 0, 0],
-      '/inventory': [1, 1, 1, 0, 0],
+      '/inventory': [1, 1, 1, 1, 1],
       '/open-bag': [1, 1, 1, 0, 0],
       '/sales': [1, 1, 1, 0, 0],
       '/sorting': [1, 1, 1, 0, 0],
