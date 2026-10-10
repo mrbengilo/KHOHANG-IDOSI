@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 
+import type { AppOutletContext } from '../../components/AppShell';
 import { nextTabIndex } from '../../components/Tabs';
 import { sessionQueryKey } from '../../lib/auth';
 import { nextDraftIds } from '../../lib/draft-guard';
@@ -25,15 +26,29 @@ const adminSession: Session = {
   },
 };
 
-function render(url: string) {
+function sessionFor(context: AppOutletContext): Session {
+  if (context.role === 'ADMIN') return adminSession;
+  return {
+    ...adminSession,
+    principal: {
+      ...adminSession.principal,
+      accountId: '50000000-0000-4000-8000-000000000009',
+      role: context.role,
+      storeId: context.role === 'STORE' ? '20000000-0000-4000-8000-00000000000a' : null,
+      username: context.role.toLowerCase(),
+    },
+  };
+}
+
+function render(url: string, context: AppOutletContext = { role: 'ADMIN', storeKind: null }) {
   const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
-  client.setQueryData(sessionQueryKey, adminSession);
+  client.setQueryData(sessionQueryKey, sessionFor(context));
   client.setQueryData(['stores', 'accessible'], []);
   client.setQueryData(['catalog'], []);
   const html = renderToStaticMarkup(
     <MemoryRouter initialEntries={[url]}>
       <QueryClientProvider client={client}>
-        <ProductionInventoryPage role="ADMIN" storeKind={null} />
+        <ProductionInventoryPage role={context.role} storeKind={context.storeKind} />
       </QueryClientProvider>
     </MemoryRouter>,
   );
@@ -75,6 +90,44 @@ describe('admin inventory tabs', () => {
     const { keys } = render('/inventory');
     expect(keys).not.toContain('store-inventory-bags');
     expect(keys.some((key) => key.startsWith('receipt-adjustment'))).toBe(false);
+  });
+});
+
+describe('read-only warehouse tab for store accounts and the wholesale desk', () => {
+  const tabLabels = (html: string) =>
+    [...html.matchAll(/id="inventory-tab-[a-z]+"[^>]*>([^<]+)<\/button>/gu)].map(
+      (match) => match[1],
+    );
+
+  it('gives a retail store its own stock by default plus the warehouse, never discrepancy slips', () => {
+    const { html, keys } = render('/inventory', { role: 'STORE', storeKind: 'RETAIL' });
+    expect(tabLabels(html)).toEqual(['Kho tổng', 'Kho cửa hàng']);
+    expect(html).toMatch(/aria-selected="true"[^>]*id="inventory-tab-store"/u);
+    expect(keys).toContain('store-inventory-bags');
+    expect(keys).not.toContain('warehouse-inventory');
+    expect(html).toContain('<h1>Tồn kho &amp; lịch sử</h1>');
+  });
+
+  it('opens the warehouse tab for a store from the URL without mounting store queries', () => {
+    const { html, keys } = render('/inventory?tab=warehouse', {
+      role: 'STORE',
+      storeKind: 'RETAIL',
+    });
+    expect(html).toMatch(/aria-selected="true"[^>]*id="inventory-tab-warehouse"/u);
+    expect(keys).not.toContain('store-inventory-bags');
+  });
+
+  it('shows the wholesale desk only the warehouse, even for a store-stock deep link', () => {
+    for (const context of [
+      { role: 'WHOLESALE', storeKind: null },
+      { role: 'STORE', storeKind: 'WHOLESALE' },
+    ] as const) {
+      const { html, keys } = render('/inventory?tab=store&ch=ledger', context);
+      expect(tabLabels(html)).toEqual(['Kho tổng']);
+      expect(html).toMatch(/aria-selected="true"[^>]*id="inventory-tab-warehouse"/u);
+      expect(keys).not.toContain('store-inventory-bags');
+      expect(keys.some((key) => key.startsWith('receipt-adjustment'))).toBe(false);
+    }
   });
 });
 

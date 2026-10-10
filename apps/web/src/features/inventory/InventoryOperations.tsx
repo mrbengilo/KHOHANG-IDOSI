@@ -64,9 +64,12 @@ import {
 import './inventory-operations.css';
 import {
   KEYS,
+  defaultInventoryTab,
+  inventoryTabsFor,
   matchesQueryPrefix,
   readInventoryNavigation,
   refreshQueryKeys,
+  withInventoryTab,
   withParams,
   withStoreScope,
   type InventoryTab,
@@ -261,22 +264,32 @@ const STORE_TAB_ITEMS: readonly TabItem<StoreTab>[] = [
   { id: 'ledger', label: 'Sổ phát sinh' },
 ];
 
-export function ProductionInventoryPage({ role }: AppOutletContext) {
-  if (role !== 'ADMIN' && role !== 'HTKD')
-    return <StoreInventoryPage role={role} storeKind={null} />;
-  return <AdminInventoryWorkspace role={role} />;
+const INVENTORY_DESCRIPTIONS: Record<AppOutletContext['role'], string> = {
+  ADMIN:
+    'Kho tổng, kho cửa hàng và phiếu sai lệch sau chốt; số dư đối soát được với sổ phát sinh bất biến.',
+  HTKD: 'Tồn kho tổng (chỉ xem) và kho các cửa hàng được phân công; số dư đối soát được với sổ phát sinh bất biến.',
+  STORE:
+    'Tồn kho của cửa hàng và tồn kho tổng (chỉ xem); số dư đối soát được với sổ phát sinh bất biến.',
+  WHOLESALE: 'Tồn kho tổng theo mặt hàng (chỉ xem) để tham khảo trước khi đặt hàng.',
+};
+
+export function ProductionInventoryPage({ role, storeKind }: AppOutletContext) {
+  return <InventoryWorkspace role={role} storeKind={storeKind} />;
 }
 
 /**
- * Admin "Tồn kho & lịch sử": a stable header and tab bar; only the open tab is mounted (and its
+ * "Tồn kho & lịch sử": a stable header and tab bar; only the open tab is mounted (and its
  * module lazily loaded), so a closed tab neither renders nor fetches. The tab, sub-tab, filters
  * and opened document live in the URL, so reload, Back/Forward and shared links land on the
  * same content. Leaving a tab that holds an unsent draft asks first instead of dropping it.
+ * Which tabs a principal sees comes from `inventoryTabsFor`; the server enforces the same scope.
  */
-function AdminInventoryWorkspace({ role }: { readonly role: 'ADMIN' | 'HTKD' }) {
+function InventoryWorkspace({ role, storeKind }: AppOutletContext) {
   const queryClient = useQueryClient();
   const [params, setParams] = useSearchParams();
-  const navigation = readInventoryNavigation(params, role);
+  const navigation = readInventoryNavigation(params, role, storeKind);
+  const allowedTabs = inventoryTabsFor(role, storeKind);
+  const defaultTab = defaultInventoryTab(role, storeKind);
   const refreshKeys = refreshQueryKeys(navigation);
   const refreshing = useIsFetching({
     predicate: (query) => matchesQueryPrefix(query.queryKey, refreshKeys),
@@ -286,7 +299,7 @@ function AdminInventoryWorkspace({ role }: { readonly role: 'ADMIN' | 'HTKD' }) 
   useBeforeUnloadWhile(hasDraft);
   const goTo = (tab: InventoryTab) => {
     setPendingTab(null);
-    setParams(withParams(params, { [KEYS.tab]: tab }));
+    setParams(withInventoryTab(params, tab, defaultTab));
   };
   return (
     <>
@@ -306,18 +319,14 @@ function AdminInventoryWorkspace({ role }: { readonly role: 'ADMIN' | 'HTKD' }) 
             <RefreshCw aria-hidden="true" size={16} /> Làm mới
           </Button>
         }
-        description="Kho tổng, kho cửa hàng và phiếu sai lệch sau chốt; số dư đối soát được với sổ phát sinh bất biến."
+        description={INVENTORY_DESCRIPTIONS[role]}
         title="Tồn kho & lịch sử"
       />
       <Tabs
         active={navigation.tab}
         emphasis="prominent"
         idPrefix="inventory"
-        items={
-          role === 'ADMIN'
-            ? INVENTORY_TAB_ITEMS
-            : INVENTORY_TAB_ITEMS.filter((item) => item.id !== 'adjustments')
-        }
+        items={INVENTORY_TAB_ITEMS.filter((item) => allowedTabs.includes(item.id))}
         label="Phạm vi tồn kho"
         onChange={(tab) => (hasDraft ? setPendingTab(tab) : goTo(tab))}
       />
@@ -341,9 +350,9 @@ function AdminInventoryWorkspace({ role }: { readonly role: 'ADMIN' | 'HTKD' }) 
         <DraftScope onDirtyChange={setHasDraft}>
           <Suspense fallback={<DashboardSkeleton />}>
             {navigation.tab === 'warehouse' ? (
-              <WarehouseInventory readOnly={role === 'HTKD'} />
+              <WarehouseInventory readOnly={role !== 'ADMIN'} />
             ) : navigation.tab === 'store' ? (
-              <StoreInventoryPage embedded role={role} storeKind={null} />
+              <StoreInventoryPage role={role} storeKind={storeKind} />
             ) : (
               <AdminAdjustmentWorkspace />
             )}
@@ -410,10 +419,7 @@ function BagLedger({ bagId }: { readonly bagId: string }) {
  * Store stock by bag, with two sub-tabs: the bag list with its totals, and the ledger of one
  * bag. Filters and the chosen bag are in the URL; changing store drops a bag of another store.
  */
-function StoreInventoryPage({
-  embedded = false,
-  role,
-}: AppOutletContext & { readonly embedded?: boolean }) {
+function StoreInventoryPage({ role }: AppOutletContext) {
   const { catalogQuery, defaultStoreId, sessionQuery, stores, storesQuery } =
     useInventorySources(role);
   const queryClient = useQueryClient();
@@ -508,26 +514,9 @@ function StoreInventoryPage({
 
   return (
     <>
-      {embedded ? null : (
-        <PageHeader
-          actions={
-            <div className="inventory-actions">
-              {exportButton}
-              <Button busy={fetching} onClick={() => void retry()} tone="secondary">
-                <RefreshCw aria-hidden="true" size={16} /> Làm mới
-              </Button>
-            </div>
-          }
-          description="Số dư lấy trực tiếp từ sổ phát sinh bất biến; mọi thay đổi đều có phiên bản và người thao tác"
-          title="Tồn kho & lịch sử"
-        />
-      )}
-
       <Tabs
         active={tab}
-        // Embedded only inside the Admin workspace, where it matches the Kho tổng sub-tabs; the
-        // standalone HTKD/store page keeps the default bar.
-        emphasis={embedded ? 'prominent' : 'default'}
+        emphasis="prominent"
         idPrefix="store-inventory"
         items={STORE_TAB_ITEMS}
         label="Nội dung kho cửa hàng"
@@ -588,7 +577,7 @@ function StoreInventoryPage({
                 value={query}
               />
             </label>
-            {embedded && tab === 'stock' ? (
+            {tab === 'stock' ? (
               <div className="inventory-toolbar__action">{exportButton}</div>
             ) : null}
           </div>

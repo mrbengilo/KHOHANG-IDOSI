@@ -255,7 +255,20 @@ test('HTKD sees all assigned priority offers, reads central stock and cancels th
     await login(htkdPage!, noScope);
     const empty = await tabApi(htkdPage!).get(`${api}/priority-offers?status=PENDING`);
     expect((await empty.json()).data).toEqual([]);
-    expect((await tabApi(storePage!).get(`${api}/warehouse-inventory`)).status()).toBe(403);
+    // Store accounts read the same central stock read-only; managing it stays Admin-only.
+    const storeStock = await tabApi(storePage!).get(
+      `${api}/warehouse-inventory?search=${product!.sku}`,
+    );
+    expect(storeStock.status()).toBe(200);
+    expect((await storeStock.json()).data[0].reservedBags).toBe(
+      (
+        await db
+          .select()
+          .from(warehouseBalances)
+          .where(eq(warehouseBalances.productId, product!.id))
+      )[0]!.reservedQuantity,
+    );
+    expect((await tabApi(storePage!).get(`${api}/warehouse-adjustments`)).status()).toBe(403);
   } finally {
     if (sessionId)
       await db

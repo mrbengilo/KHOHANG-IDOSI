@@ -3,12 +3,12 @@ import { withBrowserZoom } from './browser-zoom';
 import { layoutAdminSession, mockLayoutData } from './layout-fixtures';
 
 /*
- * Thanh tab nổi bật: Phân bổ hàng hóa (Admin/HTKD) và Tồn kho của Admin dùng nhãn to hơn, in đậm
- * cả tab chưa chọn. Đo bằng computed style và DOMRect trên production bundle với API fixture;
- * HTKD/cửa hàng ở trang tồn kho và cửa hàng ở trang phân bổ phải giữ thanh tab cũ.
+ * Thanh tab nổi bật: Phân bổ hàng hóa (Admin/HTKD) và Tồn kho (mọi vai trò) dùng nhãn to hơn, in
+ * đậm cả tab chưa chọn. Đo bằng computed style và DOMRect trên production bundle với API fixture;
+ * cửa hàng ở trang phân bổ phải giữ thanh tab cũ.
  */
 
-type Role = 'ADMIN' | 'HTKD' | 'STORE';
+type Role = 'ADMIN' | 'HTKD' | 'STORE' | 'WHOLESALE';
 type Level = 'primary' | 'secondary';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -89,6 +89,8 @@ const LIST_PATHS = [
   '/warehouse-adjustments',
   '/receipt-adjustments',
   '/store-inventory-bags',
+  // Store and wholesale shells poll results awaiting their acceptance.
+  '/allocation-decisions',
 ];
 
 interface ApiLog {
@@ -492,24 +494,83 @@ test('Admin inventory draft guard still asks before a primary tab discards input
   expect(log.unexpected).toEqual([]);
 });
 
-test('roles outside the scope keep the default tab bar', async ({ page }, testInfo) => {
+test('store accounts keep their stock by default and read the warehouse without Admin tools', async ({
+  page,
+}, testInfo) => {
   const measured: Record<string, BarMetrics> = {};
-  for (const role of ['STORE'] as const) {
-    await page.unrouteAll({ behavior: 'wait' });
-    await mockApi(page, role);
-    await page.goto('/inventory');
-    await expect(storeBar(page).getByRole('tab')).toHaveCount(2);
-    await expect(inventoryBar(page)).toHaveCount(0);
-    measured[`${role}:inventory`] = await measureBar(storeBar(page));
-    expectDefault(measured[`${role}:inventory`]!, 'secondary');
-    if (role === 'STORE') {
-      await page.goto('/allocations');
-      await expect(allocationBar(page).getByRole('tab')).toHaveCount(1);
-      measured['STORE:allocations'] = await measureBar(allocationBar(page));
-      expectDefault(measured['STORE:allocations'], 'primary');
-    }
+  const log = await mockApi(page, 'STORE');
+  await page.goto('/inventory');
+  const width = viewportWidth(page);
+  await expectSelected(page, inventoryBar(page), 'Kho cửa hàng');
+  measured.primary = await measureBar(inventoryBar(page));
+  expectProminent(measured.primary, 'primary', ['Kho tổng', 'Kho cửa hàng'], width);
+  measured.store = await measureBar(storeBar(page));
+  expectProminent(measured.store, 'secondary', STORE_LABELS, width);
+  expect(log.requests.some((entry) => entry.includes('/warehouse-inventory'))).toBe(false);
+
+  await inventoryBar(page).getByRole('tab', { name: 'Kho tổng', exact: true }).click();
+  await expectSelected(page, inventoryBar(page), 'Kho tổng');
+  expect(new URL(page.url()).searchParams.get('tab')).toBe('warehouse');
+  await expect(page.locator('.warehouse-stock-table tbody tr')).toHaveCount(24);
+  await expect(warehouseBar(page).getByRole('tab')).toHaveCount(1);
+  await expect(page.getByRole('columnheader', { name: 'Thao tác' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Điều chỉnh tồn/ })).toHaveCount(0);
+  await page.reload();
+  await expectSelected(page, inventoryBar(page), 'Kho tổng');
+  await page.goBack();
+  await expectSelected(page, inventoryBar(page), 'Kho cửa hàng');
+
+  // Admin-only scopes fall back instead of opening by a deep link.
+  await page.goto('/inventory?tab=adjustments&kt=history');
+  await expectSelected(page, inventoryBar(page), 'Kho cửa hàng');
+  await page.goto('/inventory?tab=warehouse&kt=adjustments');
+  await expectSelected(page, warehouseBar(page), 'Tồn hiện tại');
+  expect(
+    log.requests.some((path) =>
+      /warehouse-adjustments|warehouse-shortage-checks|outbound-requests|receipt-adjustments/.test(
+        path,
+      ),
+    ),
+  ).toBe(false);
+
+  await page.goto('/allocations');
+  await expect(allocationBar(page).getByRole('tab')).toHaveCount(1);
+  measured['STORE:allocations'] = await measureBar(allocationBar(page));
+  expectDefault(measured['STORE:allocations'], 'primary');
+  expect(log.mutations).toEqual([]);
+  expect(log.unexpected).toEqual([]);
+  await attach(testInfo, 'store-inventory-tabs', measured);
+});
+
+test('wholesale desk reads only the warehouse stock, responsive and without Admin tools', async ({
+  page,
+}, testInfo) => {
+  const log = await mockApi(page, 'WHOLESALE');
+  await page.goto('/inventory?tab=store&ch=ledger');
+  await expect(page.getByRole('region', { name: 'Tồn kho tổng theo mặt hàng' })).toBeVisible();
+  await expect(page.locator('.warehouse-stock-table tbody tr')).toHaveCount(24);
+  await expect(inventoryBar(page).getByRole('tab')).toHaveCount(1);
+  await expectSelected(page, inventoryBar(page), 'Kho tổng');
+  await expect(warehouseBar(page).getByRole('tab')).toHaveCount(1);
+  await expect(storeBar(page)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Điều chỉnh tồn/ })).toHaveCount(0);
+  expect(
+    log.requests.some((path) =>
+      /store-inventory-bags|warehouse-adjustments|warehouse-shortage-checks|outbound-requests/.test(
+        path,
+      ),
+    ),
+  ).toBe(false);
+  for (const width of [360, 390, 412, 768, 1366, 1440, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expectDocumentContained(page);
+    await page.screenshot({
+      path: testInfo.outputPath(`wholesale-warehouse-${width}.png`),
+      fullPage: true,
+    });
   }
-  await attach(testInfo, 'default-tab-bars', measured);
+  expect(log.mutations).toEqual([]);
+  expect(log.unexpected).toEqual([]);
 });
 
 test('loading, empty, error and retry keep the tab bars and their size', async ({ page }) => {

@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  defaultInventoryTab,
+  inventoryTabsFor,
   KEYS,
   matchesQueryPrefix,
   readInventoryNavigation,
   refreshQueryKeys,
   withAdjustmentFilters,
+  withInventoryTab,
   withParams,
   withStoreScope,
 } from './inventoryNavigation';
@@ -180,4 +183,50 @@ it('restricts HTKD deep links to warehouse stock and scoped store stock', () => 
   expect(
     readInventoryNavigation(new URLSearchParams('tab=store&ch=ledger'), 'HTKD').store.tab,
   ).toBe('ledger');
+});
+
+describe('read-only warehouse scope for store accounts and the wholesale desk', () => {
+  it('lists the tabs each principal may open, Admin-only scopes excluded', () => {
+    expect(inventoryTabsFor('ADMIN')).toEqual(['warehouse', 'store', 'adjustments']);
+    expect(inventoryTabsFor('HTKD')).toEqual(['warehouse', 'store']);
+    expect(inventoryTabsFor('STORE', 'RETAIL')).toEqual(['warehouse', 'store']);
+    expect(inventoryTabsFor('STORE', 'WHOLESALE')).toEqual(['warehouse']);
+    expect(inventoryTabsFor('STORE', null)).toEqual(['warehouse']);
+    expect(inventoryTabsFor('WHOLESALE')).toEqual(['warehouse']);
+  });
+
+  it('keeps a retail store landing on its own stock and lets it open the warehouse', () => {
+    expect(defaultInventoryTab('STORE', 'RETAIL')).toBe('store');
+    expect(defaultInventoryTab('WHOLESALE')).toBe('warehouse');
+    expect(readInventoryNavigation(new URLSearchParams(''), 'STORE', 'RETAIL').tab).toBe('store');
+    const warehouse = withInventoryTab(new URLSearchParams('ch=ledger'), 'warehouse', 'store');
+    expect(warehouse.get('tab')).toBe('warehouse');
+    expect(readInventoryNavigation(warehouse, 'STORE', 'RETAIL').tab).toBe('warehouse');
+    const back = withInventoryTab(warehouse, 'store', 'store');
+    expect(back.has('tab')).toBe(false);
+    expect(back.get('ch')).toBe('ledger');
+    expect(withInventoryTab(new URLSearchParams(''), 'warehouse', 'warehouse').has('tab')).toBe(
+      false,
+    );
+  });
+
+  it('pulls privileged deep links back to read-only warehouse stock', () => {
+    for (const [role, storeKind] of [
+      ['STORE', 'RETAIL'],
+      ['STORE', 'WHOLESALE'],
+      ['WHOLESALE', null],
+    ] as const) {
+      const n = readInventoryNavigation(
+        new URLSearchParams('tab=adjustments&kt=adjustments&kt.q=SKU'),
+        role,
+        storeKind,
+      );
+      expect(n.tab).toBe(role === 'STORE' && storeKind === 'RETAIL' ? 'store' : 'warehouse');
+      expect(n.warehouse.tab).toBe('stock');
+      expect(n.warehouse.search).toBe('SKU');
+    }
+    expect(readInventoryNavigation(new URLSearchParams('tab=store'), 'WHOLESALE', null).tab).toBe(
+      'warehouse',
+    );
+  });
 });

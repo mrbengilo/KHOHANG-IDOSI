@@ -1,4 +1,5 @@
 import type { ReceiptAdjustmentDateField, ReceiptAdjustmentStatus } from '@idosi/contracts';
+import type { Role, StoreKind } from '../../lib/types';
 
 /**
  * URL state of "Tồn kho & lịch sử". Every key is namespaced so the tabs never read each other's
@@ -93,6 +94,27 @@ function text(value: string | null, max: number): string {
   return (value ?? '').trim().slice(0, max);
 }
 
+/**
+ * Inventory scopes each principal may open. Only Admin manages the warehouse and the
+ * discrepancy slips; HTKD and retail store accounts read the warehouse beside their store
+ * stock, and the wholesale desk (or a wholesale store account) holds no floor stock, so it only
+ * reads the warehouse.
+ */
+export function inventoryTabsFor(
+  role: Role,
+  storeKind: StoreKind | null = null,
+): readonly InventoryTab[] {
+  if (role === 'ADMIN') return INVENTORY_TABS;
+  if (role === 'HTKD' || (role === 'STORE' && storeKind === 'RETAIL'))
+    return ['warehouse', 'store'];
+  return ['warehouse'];
+}
+
+/** A store account keeps landing on its own stock; everyone else starts on the warehouse. */
+export function defaultInventoryTab(role: Role, storeKind: StoreKind | null = null): InventoryTab {
+  return role === 'STORE' && storeKind === 'RETAIL' ? 'store' : 'warehouse';
+}
+
 export interface AdjustmentFilters {
   readonly status: AdjustmentStatusFilter;
   readonly storeId: string;
@@ -130,7 +152,8 @@ export interface InventoryNavigation {
 
 export function readInventoryNavigation(
   params: URLSearchParams,
-  role: 'ADMIN' | 'HTKD' = 'ADMIN',
+  role: Role = 'ADMIN',
+  storeKind: StoreKind | null = null,
 ): InventoryNavigation {
   const from = validDate(params.get(KEYS.adjustmentFrom));
   const to = validDate(params.get(KEYS.adjustmentTo));
@@ -140,13 +163,15 @@ export function readInventoryNavigation(
   return {
     tab: oneOf(
       params.get(KEYS.tab),
-      role === 'HTKD' ? ['warehouse', 'store'] : INVENTORY_TABS,
-      'warehouse',
+      inventoryTabsFor(role, storeKind),
+      defaultInventoryTab(role, storeKind),
     ),
     warehouse: {
+      // Outside Admin the warehouse is read-only stock: history, shortage checks and
+      // adjustments are not reachable even by a deep link.
       tab: oneOf(
         params.get(KEYS.warehouseTab),
-        role === 'HTKD' ? ['stock'] : WAREHOUSE_TABS,
+        role === 'ADMIN' ? WAREHOUSE_TABS : ['stock'],
         'stock',
       ),
       search: text(params.get(KEYS.warehouseSearch), 120),
@@ -202,6 +227,21 @@ const DEFAULTS: Partial<Record<string, string>> = {
   [KEYS.adjustmentDateField]: 'REPORTED',
   [KEYS.adjustmentPage]: '1',
 };
+
+/**
+ * Opens a primary tab. The URL keeps the tab unless it is this principal's default, so a
+ * store account's "Kho tổng" survives reload even though "warehouse" is the shared default.
+ */
+export function withInventoryTab(
+  params: URLSearchParams,
+  tab: InventoryTab,
+  defaultTab: InventoryTab,
+): URLSearchParams {
+  const next = new URLSearchParams(params);
+  if (tab === defaultTab) next.delete(KEYS.tab);
+  else next.set(KEYS.tab, tab);
+  return next;
+}
 
 /** Returns new params with `changes` applied; empty or default values are removed. */
 export function withParams(
