@@ -764,10 +764,15 @@ describePostgres('Reshare supplier reconciliation (PostgreSQL)', () => {
         status: 'locked',
       })
       .returning({ id: users.id });
-    await rejected(
-      observe(fx, [{ productId: product, observedQuantity: 2 }], { actorUserId: locked!.id }),
-      'FORBIDDEN',
-    );
+    // Removed afterwards: other suites pick "any admin" as their actor and must not get this one.
+    try {
+      await rejected(
+        observe(fx, [{ productId: product, observedQuantity: 2 }], { actorUserId: locked!.id }),
+        'FORBIDDEN',
+      );
+    } finally {
+      await db.delete(users).where(eq(users.id, locked!.id));
+    }
     expect(SupplierReconciliationError).toBeDefined();
   });
   it("T31: an exact replay re-checks today's scope before returning the stored order", async () => {
