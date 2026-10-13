@@ -7,7 +7,7 @@ import {
   type SupplierPosition,
   type SupplierProductStatus,
 } from '@idosi/domain';
-import { and, asc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
 
 import {
   dailyPriorityOffers,
@@ -105,12 +105,29 @@ export interface SupplierProductFacts {
   readonly position: SupplierPosition;
 }
 
-/** Net B-ordered quantity per commitment key (allocation line, or the reservation for legacy). */
+/**
+ * Net B-ordered quantity per commitment key (allocation line, or the reservation for legacy
+ * holds without one). Reads only the links of the given holds through their indexes, so the
+ * cost follows the live holds, not the growing order history.
+ */
 export async function loadOrderedByCommitment(
   tx: Transaction,
-  productIds: readonly string[],
+  holds: readonly { readonly id: string; readonly allocationLineId: string | null }[],
 ): Promise<Map<string, { ordered: number; cancelled: number }>> {
-  if (productIds.length === 0) return new Map();
+  const lineIds = [
+    ...new Set(holds.flatMap((hold) => (hold.allocationLineId ? [hold.allocationLineId] : []))),
+  ];
+  const legacyIds = holds.filter((hold) => !hold.allocationLineId).map((hold) => hold.id);
+  if (lineIds.length === 0 && legacyIds.length === 0) return new Map();
+  const keyCondition = or(
+    lineIds.length > 0 ? inArray(supplierOrderSourceLinks.allocationLineId, lineIds) : undefined,
+    legacyIds.length > 0
+      ? and(
+          isNull(supplierOrderSourceLinks.allocationLineId),
+          inArray(supplierOrderSourceLinks.reservationId, legacyIds),
+        )
+      : undefined,
+  );
   const rows = await tx
     .select({
       key: sql<string>`coalesce(${supplierOrderSourceLinks.allocationLineId}, ${supplierOrderSourceLinks.reservationId})`,
@@ -128,7 +145,7 @@ export async function loadOrderedByCommitment(
       supplierExternalEvents,
       eq(supplierExternalEvents.id, supplierOrderSourceLinks.eventId),
     )
-    .where(inArray(supplierOrderSourceLinks.productId, [...productIds]))
+    .where(keyCondition)
     .groupBy(
       sql`coalesce(${supplierOrderSourceLinks.allocationLineId}, ${supplierOrderSourceLinks.reservationId})`,
     );
@@ -165,7 +182,7 @@ export async function loadSupplierProductFacts(
     mapping.baselineObservationLineId ? [mapping.baselineObservationLineId] : [],
   );
 
-  const [baselines, events, offerHolds, activeReservations, ordered, balances] = await Promise.all([
+  const [baselines, events, offerHolds, activeReservations, balances] = await Promise.all([
     baselineIds.length === 0
       ? Promise.resolve([])
       : tx
@@ -225,10 +242,10 @@ export async function loadSupplierProductFacts(
         ),
       )
       .orderBy(asc(reservations.createdAt), asc(reservations.id)),
-    loadOrderedByCommitment(tx, ids),
     tx.select().from(warehouseBalances).where(inArray(warehouseBalances.productId, ids)),
   ]);
 
+  const ordered = await loadOrderedByCommitment(tx, activeReservations);
   const baselineByLine = new Map(baselines.map((row) => [row.lineId, row]));
   const eventsByProduct = groupBy(
     events.map((row): UncoveredSupplierEvent => ({

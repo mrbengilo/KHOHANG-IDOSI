@@ -233,7 +233,7 @@ export async function recordSupplierOrder(
           }
         }
 
-        const ordered = await loadOrderedByCommitment(tx, productIds);
+        const ordered = await loadOrderedByCommitment(tx, locked);
         for (const line of input.lines) {
           const row = byId.get(line.reservationId)!;
           const key = row.allocationLineId ?? row.id;
@@ -1056,6 +1056,13 @@ export async function listSupplierCommitments(
         coalesce(sum(l.quantity) filter (where e.kind = 'order_cancel'), 0) as cancelled
       from ${supplierOrderSourceLinks} l
       join ${supplierExternalEvents} e on e.id = l.event_id
+      where l.allocation_line_id in (
+          select r.allocation_line_id from ${reservations} r
+          where r.status = 'active' and r.deleted_at is null and r.allocation_line_id is not null
+        )
+        or (l.allocation_line_id is null and l.reservation_id in (
+          select r.id from ${reservations} r where r.status = 'active' and r.deleted_at is null
+        ))
       group by 1
     ), commitments as (
       select 'RESERVATION'::text as kind, r.id, coalesce(r.allocation_line_id, r.id) as commitment_key,
