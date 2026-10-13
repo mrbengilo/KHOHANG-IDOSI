@@ -24,16 +24,16 @@ có đường nào khác được làm tăng khả dụng. SKU chưa bật giữ
 
 Theo từng SKU đã bật (một SKU thuộc tối đa một nguồn vì `warehouse_balances` theo SKU):
 
-| Ký hiệu | Ý nghĩa                                                                                                                                    |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| S       | Tổng tồn có thể đặt C thấy ở B lúc `observedAt`; bất biến sau xác nhận.                                                                    |
-| ΔB      | Sự kiện B chưa nằm trong S: đơn đặt (−q), hoàn nguồn có bằng chứng (+q). Hủy đơn không tự cộng B.                                          |
-| B_eff   | S + ΔB. Sự kiện **AMBIGUOUS** (ghi muộn, xảy ra trước S) được tính bảo thủ: đơn bị trừ, hoàn nguồn không cộng.                             |
-| U       | Cam kết A chưa được B ghi nhận = giữ ưu tiên (`stock_held_quantity`) + phần reservation đang hiệu lực chưa liên kết đơn B (net đặt − hủy). |
-| F       | max(0, B_eff − U) — phần còn phân bổ được.                                                                                                 |
-| D       | max(0, U − B_eff) — thiếu nguồn, hiển thị riêng, không xóa cam kết.                                                                        |
-| R       | Reserved trong sổ A (giữ ưu tiên + reservation + kiểm thiếu). R ≠ U.                                                                       |
-| H       | On-hand trong sổ A = R + F sau mỗi lệnh đối chiếu/sự kiện B (bút toán `adjustment` có nguồn, không phải phiếu nhận giả).                   |
+| Ký hiệu | Ý nghĩa                                                                                                                                                                                                                                       |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S       | Tổng tồn có thể đặt C thấy ở B lúc `observedAt`; bất biến sau xác nhận.                                                                                                                                                                       |
+| ΔB      | Sự kiện B chưa nằm trong S: đơn đặt (−q), hoàn nguồn có bằng chứng (+q). Hủy đơn không tự cộng B.                                                                                                                                             |
+| B_eff   | S + ΔB. Sự kiện **AMBIGUOUS** (ghi muộn, xảy ra trước S) được tính bảo thủ: đơn bị trừ, hoàn nguồn không cộng.                                                                                                                                |
+| U       | Cam kết A chưa được B ghi nhận = giữ ưu tiên (`stock_held_quantity`) + phần reservation đang hiệu lực chưa liên kết đơn B (net đặt − hủy) + dòng đơn RE chưa được lần cập nhật tồn nào xác nhận đã trừ (0042, `docs/reshare-auto-orders.md`). |
+| F       | max(0, B_eff − U) — phần còn phân bổ được.                                                                                                                                                                                                    |
+| D       | max(0, U − B_eff) — thiếu nguồn, hiển thị riêng, không xóa cam kết.                                                                                                                                                                           |
+| R       | Reserved trong sổ A (giữ ưu tiên + reservation + kiểm thiếu). R ≠ U.                                                                                                                                                                          |
+| H       | On-hand trong sổ A = R + F sau mỗi lệnh đối chiếu/sự kiện B (bút toán `adjustment` có nguồn, không phải phiếu nhận giả).                                                                                                                      |
 
 Hàm thuần: `packages/domain/src/supplier-reconciliation.ts` (`computeSupplierPosition`,
 `planObservationCoverage`, `distributeSupplierCancellation`, `supplierOrderState`).
@@ -60,7 +60,9 @@ Hàm thuần: `packages/domain/src/supplier-reconciliation.ts` (`computeSupplier
    xảy ra trước thời điểm xem: "đã gồm trong số vừa nhập" hay "chưa gồm" (không đoán theo
    `createdAt`) → **Lưu đối chiếu**. Server tính lại toàn bộ, so `expectedRevision`, ghi coverage,
    bút toán `H := R + F`, dòng observation bất biến, audit.
-3. **Đặt Reshare** (HTKD cửa hàng được giao đang hoạt động, hoặc Admin; tab "Chờ đặt Reshare"): chỉ
+3. **Đặt Reshare** — từ 0042 thay bằng đơn RE tự động khi chấp nhận kết quả (`docs/reshare-auto-orders.md`);
+   luồng ghi nhận thủ công dưới đây chỉ còn cho hàng giữ trước khi có RE (mục "Đơn ghi nhận thủ công").
+   (HTKD cửa hàng được giao đang hoạt động, hoặc Admin): chỉ
    các reservation có kết quả phân bổ `accepted`/`not_required`/`legacy`. Đặt ở B trước, rồi ghi đúng
    số bao B đã nhận (từng phần, nhiều đơn cho một phân bổ, nhiều dòng một đơn). U và B_eff cùng giảm
    q ⇒ F không đổi; R không giải phóng.

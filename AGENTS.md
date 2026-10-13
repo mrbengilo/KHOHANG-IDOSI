@@ -41,7 +41,7 @@ Các invariant sau là bắt buộc, trừ khi task mới thay đổi rõ ràng 
 
 - Hệ thống có ba phạm vi vai trò chính: Admin, HTKD và Tài khoản cửa hàng.
 - Admin xem và quản lý toàn hệ thống.
-- HTKD xem/thao tác các cửa hàng được phân công; một HTKD có thể quản lý nhiều cửa hàng. HTKD được đọc tồn kho tổng (không điều chỉnh), phản hồi ưu tiên và hủy phần còn chờ của cửa hàng đang hoạt động được phân công; audit giữ actor HTKD thật. Không mở rộng quyền ở nghiệp vụ khác.
+- HTKD xem/thao tác các cửa hàng được phân công; một HTKD có thể quản lý nhiều cửa hàng. HTKD được đọc tồn kho tổng (không điều chỉnh), phản hồi ưu tiên, hủy phần còn chờ và **Chấp nhận** (không Từ chối) kết quả phân bổ thay cửa hàng đang hoạt động được phân công; audit giữ actor HTKD thật. Không mở rộng quyền ở nghiệp vụ khác.
 - Tài khoản cửa hàng chỉ xem/thao tác dữ liệu của chính cửa hàng đó. Ngoại lệ duy nhất: Tài khoản cửa hàng và quầy sỉ được đọc tồn kho tổng theo mặt hàng (chỉ xem, cùng số tổng như Admin); điều chỉnh, lịch sử xuất/điều chỉnh và kiểm thiếu kho tổng vẫn chỉ Admin. Chi tiết: `docs/warehouse-stock-read-access.md`.
 - Phân quyền phải kiểm tra server-side theo vai trò, `store_id` và trạng thái tài khoản.
 - Khóa tài khoản hoặc gỡ quyền phải có hiệu lực ngay và thu hồi session liên quan.
@@ -56,7 +56,8 @@ Các invariant sau là bắt buộc, trừ khi task mới thay đổi rõ ràng 
 - Phần chưa được cấp phải chuyển đúng vào phiếu chờ.
 - Không cấp trùng, không trừ tồn trùng và không tăng tồn khi chưa xác nhận thực nhận.
 - Cửa hàng phải khai nhận đủ hoặc nhận thiếu theo số lượng thực tế.
-- Kết quả phân bổ có lượng cấp mới phải được tài khoản nhận hàng của cửa hàng (STORE cho cửa hàng của mình, quầy sỉ cho cửa hàng sỉ) **Chấp nhận** trước khi xuất kho; chấp nhận không phải thực nhận và không cộng tồn. **Từ chối** chỉ giải phóng reservation của chính phiếu đó, giữ nguyên hàng đã chấp nhận từ phiên trước, không tạo thiếu hàng hay phiếu chờ. Chi tiết: `docs/allocation-result-confirmation.md`.
+- Kết quả phân bổ có lượng cấp mới phải được tài khoản nhận hàng của cửa hàng (STORE cho cửa hàng của mình, quầy sỉ cho cửa hàng sỉ) hoặc HTKD được phân công **Chấp nhận** trước khi xuất kho; chấp nhận không phải thực nhận và không cộng tồn cửa hàng. **Từ chối** chỉ giải phóng reservation của chính phiếu đó, giữ nguyên hàng đã chấp nhận từ phiên trước, không tạo thiếu hàng hay phiếu chờ. Chi tiết: `docs/allocation-result-confirmation.md`.
+- Chấp nhận kết quả có cấp mới, trong cùng transaction, tự lập đúng một phiếu đặt Reshare nội bộ `RE-xxxxxx` (6 chữ số, DB cấp, không tái sử dụng) theo đúng mặt hàng/số bao được cấp và ghi sổ xuất kho tổng (`H −q`, `R −q`, reservation `issued`); finalize phiếu nhận không trừ lại phần đã xuất, chỉ trừ nguồn legacy chưa xuất. Phiếu RE là chứng từ nội bộ, không phải sự kiện Reshare; đơn RE chưa được lần cập nhật tồn nào xác nhận đã trừ vẫn nằm trong U. Chi tiết: `docs/reshare-auto-orders.md`.
 - Luồng nhập có thể gồm số kg từng bao, giá/kg, phí vận chuyển và phí bốc vác.
 - Mọi thay đổi nhập, xuất, giữ hàng, phân bổ, hoàn trả và điều chỉnh tồn phải nguyên tử.
 - Mọi command ghi dữ liệu phải idempotent hoặc có idempotency key phù hợp.

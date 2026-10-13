@@ -4,6 +4,11 @@ Khi phiên phân bổ hoàn tất, mỗi cửa hàng được cấp hàng nhận
 trong ứng dụng. Cửa hàng phản hồi **một lần cho toàn phiếu** bằng đúng hai nút **Chấp nhận** hoặc
 **Từ chối**. Chỉ sau khi chấp nhận, hàng mới được xuất kho; chấp nhận không phải là khai nhận thực tế.
 
+> Từ 0042 (`docs/reshare-auto-orders.md`): chấp nhận còn tự lập phiếu đặt Reshare `RE-xxxxxx` và
+> **ghi sổ xuất kho tổng ngay** (`H −q`, `R −q`); finalize phiếu nhận không trừ lại phần đã xuất.
+> HTKD được phân công được **Chấp nhận** thay cửa hàng (không được Từ chối). Các mục “Chấp nhận”
+> và “Ma trận quyền” dưới đây đã cập nhật theo bản này.
+
 ## Invariant thay đổi
 
 | Trước (≤ 0037)                                                               | Sau (0038)                                                                                                                                             |
@@ -51,10 +56,12 @@ Dữ liệu trước 0038 ──────────────────
 ### Chấp nhận
 
 Trong một transaction: kiểm tra quyền → khóa → kiểm tra `PENDING` và `expectedVersion` → ghi
-`accepted` + audit `ALLOCATION_RESULT_ACCEPTED`. Nếu phiếu có chuyến `reserved`, chuyến được
-dispatch qua đường dispatch chuẩn với tác nhân nội bộ `allocation-decision` (chỉ hợp lệ cho đúng
-chuyến của đúng phiếu đã chấp nhận; không mở quyền dispatch cho STORE). Tồn thực không đổi, đặt giữ
-không tăng, tồn cửa hàng không tăng; số thực nhận vẫn do cửa hàng khai và HTKD duyệt như cũ.
+`accepted` → lập phiếu RE và ghi sổ xuất (`reshare_order`: `H −q`, `R −q` theo từng mặt hàng,
+reservation của chính phiếu chuyển `issued`) → audit `RESHARE_ORDER_CREATED` và
+`ALLOCATION_RESULT_ACCEPTED`. Nếu phiếu có chuyến `reserved`, chuyến được dispatch qua đường
+dispatch chuẩn với tác nhân nội bộ `allocation-decision` (chỉ hợp lệ cho đúng chuyến của đúng phiếu
+đã chấp nhận; không mở quyền dispatch cho STORE/HTKD). Tồn cửa hàng không tăng; số thực nhận vẫn do
+cửa hàng khai và HTKD duyệt như cũ, finalize chỉ quyết toán phần đã xuất.
 
 ### Từ chối
 
@@ -114,12 +121,12 @@ Mã trả về của `respond`: 200 (thành công hoặc replay, header `idempot
 
 ## Ma trận quyền
 
-| Vai trò   | Xem                       | Chấp nhận / Từ chối                                   |
-| --------- | ------------------------- | ----------------------------------------------------- |
-| ADMIN     | Toàn hệ thống             | Không                                                 |
-| HTKD      | Cửa hàng được phân công   | Không                                                 |
-| STORE     | Cửa hàng của mình         | Có, cho cửa hàng bán lẻ đang hoạt động của mình       |
-| WHOLESALE | Cửa hàng sỉ trong phạm vi | Có, cho cửa hàng sỉ đang hoạt động (bên nhận hàng sỉ) |
+| Vai trò   | Xem                       | Chấp nhận / Từ chối                                                                |
+| --------- | ------------------------- | ---------------------------------------------------------------------------------- |
+| ADMIN     | Toàn hệ thống             | Không                                                                              |
+| HTKD      | Cửa hàng được phân công   | Chỉ **Chấp nhận** (từ 0042), cửa hàng đang hoạt động được phân công; không Từ chối |
+| STORE     | Cửa hàng của mình         | Có, cho cửa hàng bán lẻ đang hoạt động của mình                                    |
+| WHOLESALE | Cửa hàng sỉ trong phạm vi | Có, cho cửa hàng sỉ đang hoạt động (bên nhận hàng sỉ)                              |
 
 Quầy sỉ là bên khai nhận của cửa hàng sỉ (cùng ma trận với khai nhận), nên cũng là bên xác nhận
 kết quả; nếu không, phiếu của cửa hàng sỉ sẽ không ai trả lời được. Quyền được kiểm tra ở route,
