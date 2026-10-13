@@ -201,6 +201,8 @@ const AUDIT_PURGE_ENTITIES = new Set([
   ...RESET_PURGE_TABLES.map((t) => t.replace(/s$/, '')),
   'priority_offer',
   'supplier_inbound_receipt',
+  // `supplier_event_batches` does not singularise by dropping the final "s".
+  'supplier_event_batch',
   'inventory_snapshot',
   'allocation_run',
 ]);

@@ -39,6 +39,14 @@ describe('reset plan safety', () => {
       classifyResetAudit({ ...row, entity_type: 'user', after: { receiptId: 'old-test-id' } }),
     ).toBe('REVIEW');
     expect(classifyResetAudit({ ...row, entity_type: 'unknown' })).toBe('REVIEW');
+    for (const entity_type of [
+      'supplier_source',
+      'supplier_stock_observation',
+      'supplier_event_batch',
+    ])
+      expect(classifyResetAudit({ ...row, action: 'SUPPLIER_ORDER_RECORDED', entity_type })).toBe(
+        'PURGE',
+      );
     for (const [entity_type, action] of [
       ['store', 'STORE_CREATED'],
       ['store_group', 'STORE_GROUP_UPDATED'],
