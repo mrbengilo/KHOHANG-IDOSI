@@ -404,7 +404,7 @@ export async function recordPostgresSupplierOrder(
   }
   const result = await recordSupplierOrder(db, {
     actorUserId: actor.accountId,
-    sourceId: input.sourceId,
+    sourceId: input.sourceId ?? null,
     externalRef: input.externalRef,
     occurredAt: new Date(input.occurredAt),
     note: input.note ?? null,

@@ -92,7 +92,8 @@ interface CommandMeta {
 }
 
 export interface RecordSupplierOrderInput extends CommandMeta {
-  readonly sourceId: string;
+  /** Optional: when omitted the source is the one the SKUs are mapped to (all must share it). */
+  readonly sourceId?: string | null;
   /** B's order number. */
   readonly externalRef: string;
   /** When B accepted the order (its orderable stock dropped then). */
@@ -181,8 +182,15 @@ export async function recordSupplierOrder(
           .from(supplierSourceProducts)
           .where(inArray(supplierSourceProducts.productId, productIds));
         const mappingByProduct = new Map(mappings.map((row) => [row.productId, row]));
+        const sourceId = input.sourceId ?? mappings[0]?.sourceId;
+        if (sourceId === undefined) {
+          throw new SupplierReconciliationError(
+            'SOURCE_NOT_RECONCILED',
+            'Mặt hàng chưa thuộc nguồn Reshare nào.',
+          );
+        }
         for (const productId of productIds) {
-          if (mappingByProduct.get(productId)?.sourceId !== input.sourceId) {
+          if (mappingByProduct.get(productId)?.sourceId !== sourceId) {
             throw new SupplierReconciliationError(
               'SOURCE_NOT_RECONCILED',
               'Mặt hàng chưa thuộc nguồn Reshare đang ghi nhận.',
@@ -256,14 +264,14 @@ export async function recordSupplierOrder(
           group.lines.push(line);
           groups.set(ref, group);
         }
-        await assertNewIdentities(tx, input.sourceId, 'order', externalRef, [...groups.keys()]);
+        await assertNewIdentities(tx, sourceId, 'order', externalRef, [...groups.keys()]);
 
         await lockWarehouseBalances(tx, productIds);
         await lockSupplierProducts(tx, productIds);
         const batchId = randomUUID();
         await tx.insert(supplierEventBatches).values({
           id: batchId,
-          sourceId: input.sourceId,
+          sourceId,
           kind: 'order',
           externalRef,
           storeId,
@@ -283,7 +291,7 @@ export async function recordSupplierOrder(
           await tx.insert(supplierExternalEvents).values({
             id: eventId,
             batchId,
-            sourceId: input.sourceId,
+            sourceId,
             productId: group.productId,
             kind: 'order',
             quantity: group.lines.reduce((total, line) => total + line.quantity, 0),

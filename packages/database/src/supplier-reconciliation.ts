@@ -456,7 +456,7 @@ async function planObservation(
     if (fact.baseline && input.observedAt.getTime() <= fact.baseline.observedAt.getTime()) {
       throw new SupplierReconciliationError(
         'OBSERVATION_OUT_OF_ORDER',
-        `Đã có số Reshare quan sát lúc ${fact.baseline.observedAt.toISOString()} cho ${product.sku}; lần đối chiếu mới phải sau thời điểm đó.`,
+        `Đã có số Reshare quan sát lúc ${formatBusinessTime(fact.baseline.observedAt)} cho ${product.sku}; lần đối chiếu mới phải sau thời điểm đó.`,
         { productId: line.productId, baselineObservedAt: fact.baseline.observedAt.toISOString() },
       );
     }
@@ -1045,6 +1045,20 @@ export async function listSupplierObservationHistory(
     })),
     totalItems: totals[0]?.value ?? 0,
   };
+}
+
+/** Business time (Asia/Ho_Chi_Minh) for messages people read. */
+function formatBusinessTime(value: Date): string {
+  return new Intl.DateTimeFormat('vi-VN', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hourCycle: 'h23',
+  }).format(value);
 }
 
 export function escapeLike(value: string): string {

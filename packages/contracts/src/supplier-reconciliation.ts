@@ -436,7 +436,8 @@ export type SupplierCommitmentsResponse = z.infer<typeof SupplierCommitmentsResp
 
 export const RecordSupplierOrderRequestSchema = z
   .object({
-    sourceId: EntityIdSchema,
+    /** Optional: the server uses the source the SKUs are mapped to. */
+    sourceId: EntityIdSchema.optional(),
     externalRef: SupplierRefSchema,
     occurredAt: IsoDateTimeSchema,
     note: SupplierNoteSchema.optional(),
