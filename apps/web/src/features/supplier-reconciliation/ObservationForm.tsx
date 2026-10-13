@@ -1,6 +1,6 @@
 import type { SupplierObservationPreview, SupplierObservationRequest } from '@idosi/contracts';
 import { useQueryClient } from '@tanstack/react-query';
-import { useRef, useState, type FormEvent } from 'react';
+import { useId, useRef, useState, type FormEvent } from 'react';
 
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
@@ -77,6 +77,7 @@ export function ObservationForm({
   const [busy, setBusy] = useState<'preview' | 'confirm' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const attempt = useRef<RetryAttempt | null>(null);
+  const saveHelpId = useId();
 
   const changed = () => {
     setPreviewStale(true);
@@ -96,10 +97,14 @@ export function ObservationForm({
     }
     const reshareCoverage = [];
     for (const [reshareOrderLineId, value] of Object.entries(reflected)) {
-      if (value.trim() === '') continue;
       const quantity = parseBags(value);
-      if (quantity === null) return 'Số bao đơn RE đã trừ phải là số nguyên không âm.';
-      if (quantity > 0) reshareCoverage.push({ reshareOrderLineId, quantity });
+      const order = preview?.lines
+        .flatMap((line) => line.issuedOrders ?? [])
+        .find((line) => line.lineId === reshareOrderLineId);
+      if (quantity === null || quantity < 1 || (order && quantity > order.unreflectedQuantity)) {
+        return `${order?.code ?? 'Đơn RE'}: nhập số bao đã trừ là số nguyên từ 1${order ? ` đến ${formatInteger(order.unreflectedQuantity)}` : ''}, hoặc bỏ chọn nếu chưa trừ.`;
+      }
+      reshareCoverage.push({ reshareOrderLineId, quantity });
     }
     return {
       sourceId,
@@ -170,8 +175,22 @@ export function ObservationForm({
   const undecided =
     preview?.lines.reduce((total, line) => total + line.undecidedEventCount, 0) ?? 0;
   const needsAttestation = preview?.lines.some((line) => line.unlinkedLegacyQuantity > 0) ?? false;
+  const draft = buildRequest();
+  const saveHelp =
+    typeof draft === 'string'
+      ? draft
+      : previewStale
+        ? 'Bạn đã sửa thông tin sau lần xem trước. Bấm “Xem trước lại” bên dưới, kiểm tra kết quả rồi lưu.'
+        : undecided > 0
+          ? 'Chọn “đã gồm / chưa gồm” cho các biến động rồi bấm “Xem trước lại”.'
+          : needsAttestation && !attest
+            ? 'Xác nhận các lượng giữ cũ chưa đặt Reshare rồi bấm “Xem trước lại”.'
+            : preview?.blockingIssues.includes('VERSION_CONFLICT')
+              ? 'Số liệu vừa thay đổi. Bấm “Xem trước lại” để lấy kết quả mới.'
+              : null;
   const canConfirm =
     preview !== null &&
+    typeof draft !== 'string' &&
     !previewStale &&
     undecided === 0 &&
     (!needsAttestation || attest) &&
@@ -271,9 +290,11 @@ export function ObservationForm({
         </table>
       </div>
       <div className="button-row supplier-actions">
-        <Button busy={busy === 'preview'} disabled={busy === 'confirm'} type="submit">
-          {preview ? 'Xem trước lại' : 'Xem trước'}
-        </Button>
+        {!preview ? (
+          <Button busy={busy === 'preview'} disabled={busy === 'confirm'} type="submit">
+            Xem trước
+          </Button>
+        ) : null}
         <Button disabled={busy !== null} onClick={onCancel} tone="secondary">
           Đóng
         </Button>
@@ -285,11 +306,6 @@ export function ObservationForm({
       ) : null}
       {preview ? (
         <section aria-label="Xem trước đối chiếu" className="supplier-preview">
-          {previewStale ? (
-            <p className="inline-notice" role="status">
-              Bạn đã sửa thông tin sau lần xem trước. Bấm “Xem trước lại” trước khi lưu.
-            </p>
-          ) : null}
           {preview.lines.map((line) => (
             <article className="supplier-preview__line" key={line.productId}>
               <header>
@@ -351,7 +367,8 @@ export function ObservationForm({
                   <ul>
                     {(line.issuedOrders ?? []).map((order) => {
                       const value = reflected[order.lineId] ?? '';
-                      const checked = value !== '' && Number(value) > 0;
+                      // Keep selection independent of the draft number while the user clears it.
+                      const checked = Object.hasOwn(reflected, order.lineId);
                       return (
                         <li key={order.lineId}>
                           <span>
@@ -370,12 +387,14 @@ export function ObservationForm({
                                 <input
                                   checked={checked}
                                   onChange={(event) => {
-                                    setReflected((current) => ({
-                                      ...current,
-                                      [order.lineId]: event.target.checked
-                                        ? String(order.unreflectedQuantity)
-                                        : '',
-                                    }));
+                                    const selected = event.target.checked;
+                                    setReflected((current) => {
+                                      const next = { ...current };
+                                      if (selected)
+                                        next[order.lineId] = String(order.unreflectedQuantity);
+                                      else delete next[order.lineId];
+                                      return next;
+                                    });
                                     changed();
                                   }}
                                   type="checkbox"
@@ -383,7 +402,7 @@ export function ObservationForm({
                                 Đã trừ trong số vừa nhập
                               </label>
                               {checked ? (
-                                <label>
+                                <label className="supplier-coverage__quantity">
                                   Số bao đã trừ
                                   <input
                                     aria-label={`Số bao của ${order.code} đã trừ trong số tồn`}
@@ -483,12 +502,24 @@ export function ObservationForm({
               Còn {undecided} biến động chưa trả lời “đã gồm / chưa gồm”.
             </p>
           ) : null}
+          <p className="supplier-save-help" id={saveHelpId} role="status">
+            {saveHelp ?? 'Kết quả xem trước đã cập nhật. Bạn có thể lưu cập nhật tồn.'}
+          </p>
           <div className="button-row supplier-actions">
             <Button
+              busy={busy === 'preview'}
+              disabled={busy === 'confirm'}
+              tone={canConfirm ? 'secondary' : 'primary'}
+              type="submit"
+            >
+              Xem trước lại
+            </Button>
+            <Button
+              aria-describedby={saveHelpId}
               busy={busy === 'confirm'}
               disabled={!canConfirm || busy === 'preview'}
               onClick={() => void confirm()}
-              tone="success"
+              tone="primary"
             >
               Lưu cập nhật tồn
             </Button>
