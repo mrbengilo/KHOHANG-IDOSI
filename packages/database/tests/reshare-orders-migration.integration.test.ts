@@ -16,6 +16,8 @@ import {
   planReshareCutover,
   products,
   respondAllocationDecision,
+  updateReshareOrderStatus,
+  listReshareOrderHistory,
   stores,
   storeGroups,
   users,
@@ -103,7 +105,11 @@ pgIt(
       const grant = (quantity: number) =>
         publishPendingResult(
           fx,
-          { storeId: store!.id, grants: [{ productId: product!.id, quantity }] },
+          {
+            storeId: store!.id,
+            grants: [{ productId: product!.id, quantity }],
+            preReshareStatusSchema: true,
+          },
           database,
         );
       const pending = await grant(2);
@@ -154,6 +160,37 @@ pgIt(
       ).toContain('issued');
       // Rerunning the migrator applies nothing twice.
       await migrate(drizzle(pool), { migrationsFolder });
+
+      // 0043 starts with no manual assertions and supports already-received legacy rows.
+      const legacyStatus = await listReshareOrderHistory(database, {
+        page: 1,
+        pageSize: 20,
+        decisionId: acceptedReceived.decisionId,
+      });
+      expect(legacyStatus.data[0]).toMatchObject({
+        status: 'not_ordered',
+        statusControl: { version: 0, updatedAt: null },
+      });
+      await updateReshareOrderStatus(database, {
+        decisionId: acceptedReceived.decisionId,
+        actorUserId: adminId,
+        status: 'ORDERED',
+        expectedStatus: 'NOT_ORDERED',
+        expectedVersion: 0,
+        idempotencyKey: randomUUID(),
+        requestHash: 'upgrade-status',
+      });
+      expect(
+        (
+          await listReshareOrderHistory(database, {
+            page: 1,
+            pageSize: 20,
+            decisionId: acceptedReceived.decisionId,
+            status: 'ordered',
+          })
+        ).data[0],
+      ).toMatchObject({ status: 'ordered', order: null, statusControl: { version: 1 } });
+      expect(await stock()).toEqual(before);
 
       // The new acceptance path: one RE order, issued once.
       const answer = await respondAllocationDecision(database, {

@@ -134,7 +134,7 @@ describe('allocation result panel', () => {
         shipment: { ...testDecision().shipment!, status: 'DISPATCHED' },
       }),
     );
-    expect(html).toContain('Đã đặt Reshare · RE-000007');
+    expect(html).toContain('Đã lập đơn Reshare · RE-000007');
     expect(html).toContain('/supplier-reconciliation?tab=orders&amp;code=RE-000007');
     expect(html).toContain('Đã xuất 3 bao khỏi kho tổng theo đơn RE-000007');
     expect(html).not.toContain('Đã nhận hàng');

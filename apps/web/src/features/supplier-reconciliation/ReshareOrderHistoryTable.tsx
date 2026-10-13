@@ -2,6 +2,7 @@ import type { ReshareOrderHistoryRow, ReshareOrderHistoryStatus } from '@idosi/c
 import { Link } from 'react-router-dom';
 
 import { Badge } from '../../components/Badge';
+import { Button } from '../../components/Button';
 import { formatDocumentTime } from '../../lib/business-time';
 import { formatInteger } from '../../lib/format';
 import type { StatusTone } from '../../lib/types';
@@ -31,11 +32,13 @@ export function reshareStatusNote(row: ReshareOrderHistoryRow): string {
     return row.order?.cancelReason ? `Lý do hủy: ${row.order.cancelReason}` : 'Đơn đã hủy.';
   }
   if (row.status === 'NOT_ORDERED') {
+    if (row.statusControl?.updatedAt) return adminStatusNote(row);
     return row.decisionStatus === 'PENDING'
       ? 'Chờ cửa hàng/HTKD xác nhận kết quả phân bổ.'
       : 'Kết quả đã chấp nhận trước khi có đơn RE: chưa đủ căn cứ lập đơn.';
   }
   const parts: string[] = [];
+  if (row.statusControl?.updatedAt) parts.push(adminStatusNote(row));
   if (row.order) {
     parts.push(
       `Lập lúc ${formatDocumentTime(row.order.orderedAt)}${
@@ -62,6 +65,10 @@ export function reshareStatusNote(row: ReshareOrderHistoryRow): string {
     }
   }
   return parts.join(' · ');
+}
+
+function adminStatusNote(row: ReshareOrderHistoryRow): string {
+  return `Admin ${row.statusControl?.updatedByName ?? ''} cập nhật lúc ${formatDocumentTime(row.statusControl?.updatedAt ?? null)}.${row.order ? '' : ' Chưa có chứng từ RE.'}${row.decisionStatus === 'PENDING' ? ' Cửa hàng/HTKD chưa xác nhận kết quả phân bổ.' : ''}`;
 }
 
 function SessionCell({ row }: { readonly row: ReshareOrderHistoryRow }) {
@@ -106,9 +113,15 @@ function StatusCell({ row }: { readonly row: ReshareOrderHistoryRow }) {
 export function ReshareOrderHistoryTable({
   rows,
   caption,
+  onChangeStatus,
+  busyDecisionId,
+  disabled = false,
 }: {
   readonly rows: readonly ReshareOrderHistoryRow[];
   readonly caption: string;
+  readonly onChangeStatus?: (row: ReshareOrderHistoryRow) => void;
+  readonly busyDecisionId?: string | null;
+  readonly disabled?: boolean;
 }) {
   return (
     <div className="responsive-table reshare-history">
@@ -155,6 +168,20 @@ export function ReshareOrderHistoryTable({
                 </td>
                 <td rowSpan={span} className="reshare-history__status" data-label="Trạng thái">
                   <StatusCell row={row} />
+                  {onChangeStatus &&
+                  row.status !== 'CANCELLED' &&
+                  row.statusControl &&
+                  row.totalQuantity > 0 ? (
+                    <Button
+                      className="reshare-history__status-button"
+                      tone={row.status === 'ORDERED' ? 'secondary' : 'primary'}
+                      busy={busyDecisionId === row.decisionId}
+                      disabled={disabled || Boolean(busyDecisionId)}
+                      onClick={() => onChangeStatus(row)}
+                    >
+                      {row.status === 'ORDERED' ? 'Đánh dấu chưa đặt' : 'Đánh dấu đã đặt'}
+                    </Button>
+                  ) : null}
                 </td>
               </tr>
               {rest.map((line) => (

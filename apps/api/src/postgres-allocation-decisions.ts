@@ -446,7 +446,17 @@ export async function listPostgresReshareOrders(
     ...(query.decisionId ? { decisionId: query.decisionId } : {}),
   });
   return {
-    data: result.data.map(reshareHistoryDto),
+    data: result.data.map((row) => ({
+      ...reshareHistoryDto(row),
+      ...(query.includeStatusControl
+        ? {
+            statusControl: {
+              ...row.statusControl,
+              updatedAt: row.statusControl.updatedAt?.toISOString() ?? null,
+            },
+          }
+        : {}),
+    })),
     pagination: pagination(query.page, query.pageSize, result.pagination.totalItems),
     scoped: actor.role !== 'ADMIN',
   };

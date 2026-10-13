@@ -80,11 +80,11 @@ export function AllocationDecisionPanel({
           </Badge>
           {reshareOrder ? (
             <Link
-              aria-label={`Đã đặt Reshare, mở đơn ${reshareOrder.code}`}
+              aria-label={`Đã lập đơn Reshare, mở đơn ${reshareOrder.code}`}
               className="allocation-decision__reshare-tag"
               to={reshareOrderLink(reshareOrder.code)}
             >
-              <Badge tone="success">Đã đặt Reshare · {reshareOrder.code}</Badge>
+              <Badge tone="success">Đã lập đơn Reshare · {reshareOrder.code}</Badge>
             </Link>
           ) : null}
           {onClose ? (

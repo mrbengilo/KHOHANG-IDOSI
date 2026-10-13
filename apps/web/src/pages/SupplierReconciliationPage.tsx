@@ -68,6 +68,7 @@ export function SupplierReconciliationPage() {
         {tab === 'orders' ? (
           <>
             <ReshareOrdersPanel
+              canEdit={role === 'ADMIN'}
               accountId={accountId}
               initialCode={params.get('code')?.slice(0, 20) ?? ''}
             />

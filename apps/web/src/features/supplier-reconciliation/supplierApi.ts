@@ -5,6 +5,9 @@ import {
   CreateSupplierSourceRequestSchema,
   CreateSupplierSourceResponseSchema,
   ListReshareOrdersResponseSchema,
+  UpdateReshareOrderStatusRequestSchema,
+  UpdateReshareOrderStatusResponseSchema,
+  type UpdateReshareOrderStatusRequest,
   ListSupplierOrdersResponseSchema,
   ListSupplierSourcesResponseSchema,
   RecordSupplierOrderRequestSchema,
@@ -111,10 +114,27 @@ export interface ReshareOrderFilters {
 /** "Lịch sử đặt hàng theo phân bổ": filtered, sorted and paged on the server. */
 export async function loadReshareOrders(filters: ReshareOrderFilters, signal?: AbortSignal) {
   return ListReshareOrdersResponseSchema.parse(
-    await request(`/reshare-orders?${query({ pageSize: 20, ...filters })}`, {
-      signal: signal ?? null,
-    }),
+    await request(
+      `/reshare-orders?${query({ pageSize: 20, includeStatusControl: 'true', ...filters })}`,
+      {
+        signal: signal ?? null,
+      },
+    ),
   );
+}
+
+export async function updateReshareOrderStatus(
+  decisionId: string,
+  input: UpdateReshareOrderStatusRequest,
+  key: string,
+) {
+  return UpdateReshareOrderStatusResponseSchema.parse(
+    await request(`/reshare-orders/${encodeURIComponent(decisionId)}/status`, {
+      method: 'PUT',
+      headers: { 'Idempotency-Key': key },
+      body: JSON.stringify(UpdateReshareOrderStatusRequestSchema.parse(input)),
+    }),
+  ).data;
 }
 
 export async function loadSupplierCommitments(

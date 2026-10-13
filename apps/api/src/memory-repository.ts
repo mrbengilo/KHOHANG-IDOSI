@@ -1,4 +1,6 @@
 import type {
+  UpdateReshareOrderStatusRequest,
+  ReshareOrderStatusUpdate,
   CancelSupplierOrderRequest,
   CreateSupplierSourceRequest,
   ListSupplierOrdersQuery,
@@ -778,6 +780,14 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   >();
   /** RE orders by decision id: the memory stand-in for reshare_orders (0042). */
   private readonly reshareOrders = new Map<string, MemoryReshareOrder>();
+  private readonly reshareStatuses = new Map<
+    string,
+    ReshareOrderStatusUpdate & { updatedAt: string; updatedByName: string | null }
+  >();
+  private readonly reshareStatusMutations = new Map<
+    string,
+    { requestHash: string; data: ReshareOrderStatusUpdate }
+  >();
   private reshareOrderSequence = 0;
   private readonly idempotency = new Map<string, IdempotencyRecord>();
   private readonly sessionMutationIdempotency = new Map<string, SessionMutationIdempotencyRecord>();
@@ -1780,6 +1790,60 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     return this.decisionForActor(actor, decision, view);
   }
 
+  public async updateReshareOrderStatus(
+    actor: AuthenticatedPrincipal,
+    decisionId: string,
+    input: UpdateReshareOrderStatusRequest,
+    key: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ReshareOrderStatusUpdate>> {
+    const account = this.accounts.get(actor.accountId);
+    if (actor.role !== 'ADMIN' || account?.role !== 'ADMIN' || account.status !== 'ACTIVE')
+      throw forbidden();
+    const scope = `${actor.accountId}:${decisionId}:${key}`;
+    const replay = this.reshareStatusMutations.get(scope);
+    if (replay) {
+      if (replay.requestHash !== requestHash)
+        throw new ApiError(
+          'IDEMPOTENCY_CONFLICT',
+          'Khóa thao tác đã được dùng cho nội dung khác.',
+          409,
+        );
+      return { data: replay.data, replayed: true };
+    }
+    const decision = this.allocationDecisions.get(decisionId);
+    if (!decision) throw notFound('Không tìm thấy kết quả phân bổ.');
+    if (!['PENDING', 'ACCEPTED'].includes(decision.status) || decision.grantedQuantity <= 0)
+      throw conflict('Kết quả không còn hiệu lực.');
+    const previous = this.reshareStatuses.get(decisionId);
+    const before =
+      previous?.status ?? (this.reshareOrders.has(decisionId) ? 'ORDERED' : 'NOT_ORDERED');
+    if ((previous?.version ?? 0) !== input.expectedVersion || before !== input.expectedStatus)
+      throw new ApiError('VERSION_CONFLICT', 'Trạng thái đã thay đổi. Hãy tải lại danh sách.', 409);
+    const data: ReshareOrderStatusUpdate = {
+      decisionId,
+      status: input.status,
+      version: input.expectedVersion + 1,
+    };
+    this.reshareStatuses.set(decisionId, {
+      ...data,
+      updatedAt: new Date().toISOString(),
+      updatedByName: account.displayName,
+    });
+    this.reshareStatusMutations.set(scope, { requestHash, data });
+    this.appendAudit(
+      actor,
+      context,
+      'RESHARE_ORDER_STATUS_UPDATED',
+      'allocation_result_decision',
+      decisionId,
+      { status: before, version: input.expectedVersion },
+      data,
+    );
+    return { data, replayed: false };
+  }
+
   public async listReshareOrders(
     actor: AuthenticatedPrincipal,
     query: ListReshareOrdersQuery,
@@ -1799,17 +1863,11 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
               .filter((line) => line.allocatedQuantity > 0)
               .map((line) => ({ productId: line.productId, quantity: line.allocatedQuantity }));
         const time = order?.orderedAt ?? decision.createdAt;
-        return { decision, order, lines, time };
+        const manual = this.reshareStatuses.get(decision.id);
+        const status = manual?.status ?? (order ? 'ORDERED' : 'NOT_ORDERED');
+        return { decision, order, lines, time, manual, status };
       })
-      .filter(({ order }) =>
-        query.status === undefined
-          ? true
-          : query.status === 'ORDERED'
-            ? order !== null
-            : query.status === 'NOT_ORDERED'
-              ? order === null
-              : false,
-      )
+      .filter(({ status }) => query.status === undefined || status === query.status)
       .filter(({ lines }) =>
         query.productId === undefined
           ? true
@@ -1823,53 +1881,64 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
           right.time.localeCompare(left.time) || right.decision.id.localeCompare(left.decision.id),
       );
     return {
-      data: slicePage(rows, query.page, query.pageSize).map(({ decision, order, lines }) => {
-        const product = (id: string) => this.products.get(id);
-        return {
-          decisionId: decision.id,
-          decisionStatus: decision.status === 'PENDING' ? 'PENDING' : 'ACCEPTED',
-          sessionId: decision.sessionId,
-          sessionCode: decision.sessionCode,
-          businessDate: decision.businessDate,
-          runVersion: decision.runVersion,
-          sessionOpenedAt: null,
-          allocationCompletedAt: decision.createdAt,
-          publishedAt: decision.createdAt,
-          acceptedAt: decision.respondedAt,
-          acceptedByName: decision.respondedByName,
-          storeId: decision.storeId,
-          storeName: this.stores.get(decision.storeId)?.name ?? decision.storeId,
-          status: order ? 'ORDERED' : 'NOT_ORDERED',
-          order: order
-            ? {
-                id: order.id,
-                code: order.code,
-                orderedAt: order.orderedAt,
-                origin: 'ACCEPTANCE',
-                actorName: this.accounts.get(order.actorAccountId)?.displayName ?? null,
-                actorRole: order.actorRole,
-                cancelledAt: null,
-                cancelReason: null,
-              }
-            : null,
-          lines: lines.map((line) => ({
-            productId: line.productId,
-            productName: product(line.productId)?.name ?? line.productId,
-            productSku: product(line.productId)?.sku ?? '',
-            quantity: line.quantity,
-          })),
-          totalQuantity: lines.reduce((total, line) => total + line.quantity, 0),
-          delivery: order
-            ? {
-                issuedQuantity: order.totalQuantity,
-                receivedQuantity: 0,
-                shortageQuantity: 0,
-                awaitingReceiptQuantity: order.totalQuantity,
-                onShipmentQuantity: decision.shipment ? order.totalQuantity : 0,
-              }
-            : null,
-        };
-      }),
+      data: slicePage(rows, query.page, query.pageSize).map(
+        ({ decision, order, lines, manual, status }) => {
+          const product = (id: string) => this.products.get(id);
+          return {
+            decisionId: decision.id,
+            decisionStatus: decision.status === 'PENDING' ? 'PENDING' : 'ACCEPTED',
+            sessionId: decision.sessionId,
+            sessionCode: decision.sessionCode,
+            businessDate: decision.businessDate,
+            runVersion: decision.runVersion,
+            sessionOpenedAt: null,
+            allocationCompletedAt: decision.createdAt,
+            publishedAt: decision.createdAt,
+            acceptedAt: decision.respondedAt,
+            acceptedByName: decision.respondedByName,
+            storeId: decision.storeId,
+            storeName: this.stores.get(decision.storeId)?.name ?? decision.storeId,
+            status,
+            ...(query.includeStatusControl
+              ? {
+                  statusControl: {
+                    version: manual?.version ?? 0,
+                    updatedAt: manual?.updatedAt ?? null,
+                    updatedByName: manual?.updatedByName ?? null,
+                  },
+                }
+              : {}),
+            order: order
+              ? {
+                  id: order.id,
+                  code: order.code,
+                  orderedAt: order.orderedAt,
+                  origin: 'ACCEPTANCE',
+                  actorName: this.accounts.get(order.actorAccountId)?.displayName ?? null,
+                  actorRole: order.actorRole,
+                  cancelledAt: null,
+                  cancelReason: null,
+                }
+              : null,
+            lines: lines.map((line) => ({
+              productId: line.productId,
+              productName: product(line.productId)?.name ?? line.productId,
+              productSku: product(line.productId)?.sku ?? '',
+              quantity: line.quantity,
+            })),
+            totalQuantity: lines.reduce((total, line) => total + line.quantity, 0),
+            delivery: order
+              ? {
+                  issuedQuantity: order.totalQuantity,
+                  receivedQuantity: 0,
+                  shortageQuantity: 0,
+                  awaitingReceiptQuantity: order.totalQuantity,
+                  onShipmentQuantity: decision.shipment ? order.totalQuantity : 0,
+                }
+              : null,
+          };
+        },
+      ),
       pagination: pagination(query.page, query.pageSize, rows.length),
       scoped: actor.role !== 'ADMIN',
     };

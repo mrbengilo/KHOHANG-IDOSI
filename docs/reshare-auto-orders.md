@@ -3,6 +3,9 @@
 Trạng thái: triển khai trong migration `0042_reshare_orders_and_issue`. Bằng chứng kiểm thử:
 `docs/reshare-auto-orders-release-evidence.md`.
 
+Migration `0043` bổ sung quyền Admin lưu xác nhận đã đặt/chưa đặt, độc lập chứng từ RE và xuất kho.
+Quy tắc ưu tiên trạng thái và API cập nhật: [Admin cập nhật trạng thái](admin-reshare-order-status.md).
+
 ## 1. Bối cảnh và quyết định
 
 - Khi cửa hàng (STORE), quầy sỉ (cửa hàng sỉ) hoặc HTKD được phân công **chấp nhận** một kết quả
@@ -11,8 +14,9 @@ Trạng thái: triển khai trong migration `0042_reshare_orders_and_issue`. B�
   ghi sổ xuất số hàng này khỏi kho tổng IDOSI.
 - Phiếu RE là chứng từ nội bộ: người dùng tự dùng mã và số bao để đặt hàng trên hệ thống Reshare.
   IDOSI không gọi API, bot, webhook hay đồng bộ gì với Reshare và không cần tài khoản Reshare.
-- Nhãn **“Đã đặt Reshare”** nghĩa là IDOSI đã lập phiếu RE và ghi sổ xuất kho theo quy trình nội
-  bộ; không có nghĩa IDOSI đã gửi đơn sang hệ thống khác.
+- Nhãn **“Đã lập đơn Reshare”** trên phiếu kết quả nghĩa là đã lập RE và ghi sổ xuất kho nội bộ.
+  Trạng thái **“Đã đặt/Chưa đặt Reshare”** trên lịch sử ưu tiên xác nhận Admin (0043), mặc định
+  vẫn suy ra từ RE khi chưa sửa. Cả hai không có nghĩa IDOSI đã tự gửi đơn sang hệ thống khác.
 
 ## 2. Invariant thay đổi
 
@@ -104,7 +108,7 @@ trước/sau) → dispatch chuyến (nếu có) → audit `ALLOCATION_RESULT_ACC
   (Đã đặt Reshare / Chưa đặt Reshare / Hủy) kèm ghi chú xuất kho/chờ giao/nhận/thiếu tách riêng.
   Lọc phía server (phiên, khoảng ngày, cửa hàng trong phạm vi, mặt hàng, trạng thái, mã RE), sắp xếp
   theo thời gian + id, phân trang theo đơn. Mobile ≤ 620 px: mỗi đơn một thẻ.
-- Phiếu kết quả: tag “Đã đặt Reshare · RE-xxxxxx” (liên kết tới đơn), dòng “Đã xuất … bao khỏi kho
+- Phiếu kết quả: tag “Đã lập đơn Reshare · RE-xxxxxx” (liên kết tới đơn), dòng “Đã xuất … bao khỏi kho
   tổng theo đơn …” tách khỏi tiến độ giao/nhận.
 - Tương thích bundle cũ: các trường mới (`allowedActions`, `reshareOrder`, `issuedUnreflectedQuantity`,
   `issuedOrders`) chỉ trả khi client mới yêu cầu (`includeReshare=true`, `includeIssued=true`, gửi
