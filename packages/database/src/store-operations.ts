@@ -27,7 +27,12 @@ import {
 } from './schema.js';
 import { livePriorityOfferCondition } from './priority-offer-state.js';
 import { withAdvisoryLock, type Transaction } from './transaction.js';
-import { applyWarehouseMovement, WarehouseBalanceViolationError } from './warehouse.js';
+import { loadSupplierMappedProductIds } from './supplier-commitments.js';
+import {
+  applyWarehouseMovement,
+  flagSupplierProductForReconciliation,
+  WarehouseBalanceViolationError,
+} from './warehouse.js';
 
 const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
 const KILOGRAMS_PATTERN = /^(0|[1-9]\d{0,10})(?:\.(\d{1,3}))?$/;
@@ -1337,19 +1342,40 @@ async function bookReceiptExcess(
   },
 ): Promise<bigint> {
   const quantity = input.excess.bagWeightsKg.length;
-  try {
-    await applyWarehouseMovement(tx, {
-      productId: input.line.productId,
-      eventType: 'outbound',
-      onHandDelta: -quantity,
-      reservedDelta: 0,
-      sourceType: 'store_receipt_excess',
-      sourceId: input.receipt.id,
-      reason: 'Store received excess goods; booked out of unreserved warehouse stock',
-      metadata: { storeId: input.receipt.storeId, storeReceiptLineId: input.line.id, quantity },
+  const supplierReconciled = (await loadSupplierMappedProductIds(tx, [input.line.productId])).has(
+    input.line.productId,
+  );
+  if (supplierReconciled) {
+    // The extra bags came from Reshare's stock, not A's: A must not deduct them here and again
+    // when C observes B. Store stock is booked as usual; new allocations of the SKU wait for C.
+    await flagSupplierProductForReconciliation(
+      tx,
+      input.line.productId,
+      `Cửa hàng nhận dư ${quantity} bao ngoài phân bổ (phiếu ${input.receipt.id}); cần đối chiếu lại tồn Reshare.`,
+    );
+    await tx.insert(auditLogs).values({
       actorUserId: input.actorUserId,
-      occurredAt: input.now,
+      actorStoreId: input.receipt.storeId,
+      action: 'SUPPLIER_RECEIPT_EXCESS_NEEDS_RECONCILIATION',
+      entityType: 'store_receipt',
+      entityId: input.receipt.id,
+      after: { productId: input.line.productId, quantity, storeReceiptLineId: input.line.id },
     });
+  }
+  try {
+    if (!supplierReconciled)
+      await applyWarehouseMovement(tx, {
+        productId: input.line.productId,
+        eventType: 'outbound',
+        onHandDelta: -quantity,
+        reservedDelta: 0,
+        sourceType: 'store_receipt_excess',
+        sourceId: input.receipt.id,
+        reason: 'Store received excess goods; booked out of unreserved warehouse stock',
+        metadata: { storeId: input.receipt.storeId, storeReceiptLineId: input.line.id, quantity },
+        actorUserId: input.actorUserId,
+        occurredAt: input.now,
+      });
   } catch (error) {
     if (error instanceof WarehouseBalanceViolationError) {
       throw new StoreOperationValidationError(

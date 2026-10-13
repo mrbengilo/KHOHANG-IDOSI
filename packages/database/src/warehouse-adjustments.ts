@@ -11,6 +11,7 @@ import {
   warehouseStockAdjustments,
 } from './schema.js';
 import { withAdvisoryLock, withSerializableTransaction, type Transaction } from './transaction.js';
+import { assertNotSupplierReconciled } from './supplier-commitments.js';
 import { applyWarehouseMovement } from './warehouse.js';
 
 export type WarehouseAdjustmentDirection = typeof warehouseStockAdjustments.$inferSelect.direction;
@@ -146,6 +147,8 @@ export async function createWarehouseStockAdjustment(
       'warehouse-adjustment-key',
       `${input.actorUserId}:${input.idempotencyKey}`,
       async () => {
+        // Authorization runs before the replay: a locked or demoted Admin gets no stored result.
+        await assertActiveAdministrator(tx, input.actorUserId);
         const [previous] = await tx
           .select({
             id: warehouseStockAdjustments.id,
@@ -166,7 +169,6 @@ export async function createWarehouseStockAdjustment(
           return { adjustment: await loadAdjustment(tx, previous.id), replayed: true };
         }
 
-        await assertActiveAdministrator(tx, input.actorUserId);
         const [product] = await tx
           .select({ id: products.id, isActive: products.isActive })
           .from(products)
@@ -179,6 +181,7 @@ export async function createWarehouseStockAdjustment(
             'Mặt hàng đã ngừng kinh doanh; chỉ được giảm tồn, không được tăng tồn.',
           );
         }
+        await assertNotSupplierReconciled(tx, [input.productId], 'điều chỉnh tồn kho thủ công');
         if (input.compensatesAdjustmentId) {
           const [target] = await tx
             .select({

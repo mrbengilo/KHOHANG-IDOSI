@@ -11,6 +11,7 @@ import {
   ensureDailyOrderingSession,
   inventorySnapshotItems,
   inventorySnapshots,
+  loadSupplierAllocationCaps,
   loadWarehouseBalancesAt,
   mergedOrderItems,
   mergedOrders,
@@ -302,6 +303,12 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
         balance.onHandQuantity - balance.reservedQuantity,
       ]),
     );
+    // Reshare-reconciled SKUs never offer more than the supplier free stock F (0 while the
+    // SKU waits for a baseline or a new observation), whatever the ledger shows.
+    const supplierCaps = await loadSupplierAllocationCaps(tx);
+    for (const [productId, cap] of supplierCaps) {
+      currentAvailable.set(productId, Math.min(currentAvailable.get(productId) ?? 0, cap));
+    }
     const domainTickets = await toDomainWaitTickets(tx, ticketRows);
     const domainOffers = offerRows.map((row) => toDomainOffer(row, allocatedOfferIds.has(row.id)));
     // Offers are answered until the session's allocation start. A late (catch-up) snapshot at or
@@ -1466,6 +1473,12 @@ async function loadAllocationCapacity(
   for (const balance of balances) {
     capacity.set(balance.productId, Math.max(0, balance.onHandQuantity - balance.reservedQuantity));
   }
+  const supplierCaps = await loadSupplierAllocationCaps(tx);
+  for (const [productId, cap] of supplierCaps) {
+    capacity.set(productId, Math.min(capacity.get(productId) ?? 0, cap));
+  }
+  // Accepted offers' held bags are already committed (part of U): converting them into this
+  // run's reservations is not a new grant, so they stay allocatable even on a blocked SKU.
   for (const offer of acceptedOffers) {
     if (offer.stockHeldQuantity <= 0) continue;
     capacity.set(offer.productId, (capacity.get(offer.productId) ?? 0) + offer.stockHeldQuantity);

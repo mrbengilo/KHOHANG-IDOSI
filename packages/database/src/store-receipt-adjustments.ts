@@ -72,7 +72,12 @@ import {
   withStoreProductWaitLocks,
 } from './store-operations.js';
 import { withAdvisoryLock, type Transaction } from './transaction.js';
-import { applyWarehouseMovement, WarehouseBalanceViolationError } from './warehouse.js';
+import { loadSupplierMappedProductIds } from './supplier-commitments.js';
+import {
+  applyWarehouseMovement,
+  flagSupplierProductForReconciliation,
+  WarehouseBalanceViolationError,
+} from './warehouse.js';
 
 type DatabaseStatus = typeof storeReceiptAdjustments.$inferSelect.status;
 type ReturnStatus = typeof storeReceiptReturns.$inferSelect.status;
@@ -1536,7 +1541,18 @@ async function correctWarehouseMispick(
       reason: `Kho giao nhầm theo ${adjustment.code}: giữ chờ kiểm kệ, chưa được phân bổ`,
     },
   ].sort((left, right) => left.productId.localeCompare(right.productId));
+  // The mispicked unit of a Reshare-reconciled SKU left Reshare's stock, not A's: A does not
+  // write it off (that would be deducted again at the next observation); C re-observes first.
+  const reconciled = await loadSupplierMappedProductIds(tx, [line.actualProductId]);
   for (const movement of movements) {
+    if (movement.sourceType === LINE_SOURCE && reconciled.has(movement.productId)) {
+      await flagSupplierProductForReconciliation(
+        tx,
+        movement.productId,
+        `Kho giao nhầm theo ${adjustment.code}; cần đối chiếu lại tồn Reshare.`,
+      );
+      continue;
+    }
     try {
       await applyWarehouseMovement(tx, {
         ...movement,
@@ -1933,6 +1949,19 @@ async function bookReturnIntoWarehouse(
   actorUserId: string,
   now: Date,
 ): Promise<void> {
+  if ((await loadSupplierMappedProductIds(tx, [row.productId])).has(row.productId)) {
+    // Returned goods of a Reshare-reconciled SKU are not orderable at B until B confirms it;
+    // they come back to A's free stock only through a source return or the next observation.
+    await tx.insert(auditLogs).values({
+      actorUserId,
+      actorStoreId: row.storeId,
+      action: 'SUPPLIER_RETURN_AWAITS_SOURCE_CONFIRMATION',
+      entityType: 'store_receipt_return',
+      entityId: row.id,
+      after: { productId: row.productId, quantity: row.quantity, code: row.code },
+    });
+    return;
+  }
   await applyWarehouseMovement(tx, {
     productId: row.productId,
     eventType: 'return',

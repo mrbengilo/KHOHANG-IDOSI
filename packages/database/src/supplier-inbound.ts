@@ -20,6 +20,7 @@ import {
   kilogramsToGramsExact,
 } from './store-operations.js';
 import { withAdvisoryLock, type Transaction } from './transaction.js';
+import { assertNotSupplierReconciled } from './supplier-commitments.js';
 import { applyWarehouseMovement, WarehouseBalanceViolationError } from './warehouse.js';
 
 const MAX_CONTRACT_VND = BigInt(Number.MAX_SAFE_INTEGER);
@@ -257,6 +258,8 @@ export async function receiveSupplierInboundInTransaction(
         `Supplier receipt references an unknown or inactive product: ${unavailableProductId}.`,
       );
     }
+
+    await assertNotSupplierReconciled(tx, productIds, 'nhập cộng dồn bằng phiếu nhập');
 
     const now = new Date();
     const [created] = await tx
@@ -654,6 +657,11 @@ export async function cancelSupplierInboundInTransaction(
       .from(receiptItems)
       .where(eq(receiptItems.receiptId, receipt.id))
       .orderBy(receiptItems.productId);
+    await assertNotSupplierReconciled(
+      tx,
+      itemRows.map((item) => item.productId),
+      'hủy phiếu nhập cũ (sẽ trừ tồn ngoài đối chiếu)',
+    );
     const [pickedBag] = await tx
       .select({ id: outboundBagPicks.id })
       .from(outboundBagPicks)
