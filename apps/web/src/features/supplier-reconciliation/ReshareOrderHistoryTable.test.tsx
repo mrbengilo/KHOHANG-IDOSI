@@ -61,7 +61,7 @@ function render(rows: readonly ReshareOrderHistoryRow[]) {
 describe('RE order history table', () => {
   it('shows one order with one line per product and its total once', () => {
     const html = render([row()]);
-    const table = html.slice(0, html.indexOf('reshare-history__cards'));
+    const table = html;
     expect(table.match(/RE-000001/gu)).toHaveLength(1);
     expect(table).toContain('rowSpan="2"');
     expect(table).toContain('Quần dài nữ');

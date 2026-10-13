@@ -100,7 +100,8 @@ function StatusCell({ row }: { readonly row: ReshareOrderHistoryRow }) {
 
 /**
  * "Lịch sử đặt hàng theo phân bổ": one group per result (one RE order), one line per product,
- * the order total once. Desktop: a grouped table; narrow screens: one card per order.
+ * the order total once. Narrow screens render the same table as one card per order (CSS only),
+ * so every viewport shows the same records.
  */
 export function ReshareOrderHistoryTable({
   rows,
@@ -110,103 +111,66 @@ export function ReshareOrderHistoryTable({
   readonly caption: string;
 }) {
   return (
-    <>
-      <div className="responsive-table reshare-history reshare-history__table">
-        <table className="supplier-table">
-          <caption className="sr-only">{caption}</caption>
-          <thead>
-            <tr>
-              <th scope="col">Mã phiên phân bổ</th>
-              <th scope="col">Mã đặt hàng Reshare</th>
-              <th scope="col">Tên cửa hàng</th>
-              <th scope="col">Mặt hàng</th>
-              <th scope="col">Số lượng (bao)</th>
-              <th scope="col">Tổng số lượng (bao)</th>
-              <th scope="col">Trạng thái</th>
-            </tr>
-          </thead>
-          {rows.map((row) => {
-            const span = Math.max(1, row.lines.length);
-            const [first, ...rest] = row.lines;
-            return (
-              <tbody key={row.decisionId} className="reshare-history__group">
-                <tr>
-                  <td rowSpan={span}>
-                    <SessionCell row={row} />
-                  </td>
-                  <td rowSpan={span}>
-                    <CodeCell row={row} />
-                  </td>
-                  <td rowSpan={span}>{row.storeName}</td>
-                  <td className="reshare-history__product">{first ? first.productName : '—'}</td>
-                  <td className="reshare-history__number">
-                    {first ? formatInteger(first.quantity) : '—'}
-                  </td>
-                  <td rowSpan={span} className="reshare-history__number">
-                    <strong>{formatInteger(row.totalQuantity)}</strong>
-                  </td>
-                  <td rowSpan={span}>
-                    <StatusCell row={row} />
-                  </td>
-                </tr>
-                {rest.map((line) => (
-                  <tr key={line.productId}>
-                    <td className="reshare-history__product">{line.productName}</td>
-                    <td className="reshare-history__number">{formatInteger(line.quantity)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            );
-          })}
-        </table>
-      </div>
-      <ul className="reshare-history__cards" aria-label={caption}>
-        {rows.map((row) => (
-          <li key={row.decisionId} className="reshare-history__card">
-            <div className="reshare-history__card-head">
-              <span className="reshare-history__card-code">{row.order?.code ?? '—'}</span>
-              <Badge tone={RESHARE_STATUS_TONE[row.status]}>
-                {RESHARE_STATUS_LABEL[row.status]}
-              </Badge>
-            </div>
-            <p className="reshare-history__card-store">{row.storeName}</p>
-            <dl className="reshare-history__card-meta">
-              <div>
-                <dt>Mã phiên phân bổ</dt>
-                <dd>
+    <div className="responsive-table reshare-history">
+      <table className="supplier-table">
+        <caption className="sr-only">{caption}</caption>
+        <thead>
+          <tr>
+            <th scope="col">Mã phiên phân bổ</th>
+            <th scope="col">Mã đặt hàng Reshare</th>
+            <th scope="col">Tên cửa hàng</th>
+            <th scope="col">Mặt hàng</th>
+            <th scope="col">Số lượng (bao)</th>
+            <th scope="col">Tổng số lượng (bao)</th>
+            <th scope="col">Trạng thái</th>
+          </tr>
+        </thead>
+        {rows.map((row) => {
+          const span = Math.max(1, row.lines.length);
+          const [first, ...rest] = row.lines;
+          return (
+            <tbody key={row.decisionId} className="reshare-history__group">
+              <tr>
+                <td rowSpan={span} className="reshare-history__session" data-label="Mã phiên">
                   <SessionCell row={row} />
-                </dd>
-              </div>
-            </dl>
-            <table className="reshare-history__card-lines">
-              <thead>
-                <tr>
-                  <th scope="col">Mặt hàng</th>
-                  <th scope="col">Số lượng (bao)</th>
+                </td>
+                <td rowSpan={span} className="reshare-history__order" data-label="Mã đặt hàng">
+                  <CodeCell row={row} />
+                </td>
+                <td rowSpan={span} className="reshare-history__store" data-label="Cửa hàng">
+                  {row.storeName}
+                </td>
+                <td className="reshare-history__product" data-label="Mặt hàng">
+                  {first ? first.productName : '—'}
+                </td>
+                <td className="reshare-history__number reshare-history__line" data-label="Số bao">
+                  {first ? formatInteger(first.quantity) : '—'}
+                </td>
+                <td
+                  rowSpan={span}
+                  className="reshare-history__number reshare-history__total"
+                  data-label="Tổng số bao"
+                >
+                  <strong>{formatInteger(row.totalQuantity)}</strong>
+                </td>
+                <td rowSpan={span} className="reshare-history__status" data-label="Trạng thái">
+                  <StatusCell row={row} />
+                </td>
+              </tr>
+              {rest.map((line) => (
+                <tr key={line.productId}>
+                  <td className="reshare-history__product" data-label="Mặt hàng">
+                    {line.productName}
+                  </td>
+                  <td className="reshare-history__number reshare-history__line" data-label="Số bao">
+                    {formatInteger(line.quantity)}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {row.lines.map((line) => (
-                  <tr key={line.productId}>
-                    <td>{line.productName}</td>
-                    <td>{formatInteger(line.quantity)}</td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr>
-                  <th scope="row">Tổng số lượng (bao)</th>
-                  <td>{formatInteger(row.totalQuantity)}</td>
-                </tr>
-              </tfoot>
-            </table>
-            <p className="reshare-history__card-note">{reshareStatusNote(row)}</p>
-            <Link to={`/allocations?decision=${encodeURIComponent(row.decisionId)}`}>
-              Xem phiếu kết quả
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </>
+              ))}
+            </tbody>
+          );
+        })}
+      </table>
+    </div>
   );
 }

@@ -426,108 +426,50 @@
 .reshare-history td small {
   max-width: 34ch;
 }
-.reshare-history__cards {
-  display: none;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-/* Màn hình hẹp: mỗi đơn là một thẻ, các dòng mặt hàng nằm trong thẻ, tổng hiển thị một lần. */
+/*
+ * Màn hình hẹp: cùng bảng hiển thị mỗi đơn (tbody) là một thẻ. Dòng con không tạo thẻ riêng
+ * (display: contents) nên các dòng mặt hàng nằm liền nhau trong thẻ, tổng hiển thị một lần.
+ */
 @media (max-width: 620px) {
-  .app-main .reshare-history__table {
-    display: none;
-  }
-  .reshare-history__cards {
+  .reshare-history table {
     display: grid;
     gap: 12px;
   }
-  .reshare-history__card {
-    display: grid;
+  .reshare-history .reshare-history__group {
     gap: 8px;
-    min-width: 0;
     border: 1px solid var(--border);
-    border-radius: 12px;
-    background: var(--surface, #fff);
-    padding: 12px;
+    border-radius: 11px;
+    background: white;
+    padding: 11px;
   }
-  .reshare-history__card-head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
+  .reshare-history__group + .reshare-history__group {
+    border-top: 1px solid var(--border);
   }
-  .reshare-history__card-code {
-    font-size: 16px;
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
+  .reshare-history .reshare-history__group tr {
+    display: contents;
   }
-  .reshare-history__card-store {
-    margin: 0;
-    font-weight: 700;
+  .reshare-history__order {
+    order: 1;
+  }
+  .reshare-history__store {
+    order: 2;
+  }
+  .reshare-history__session {
+    order: 3;
+  }
+  .reshare-history__product,
+  .reshare-history__line {
+    order: 4;
+  }
+  .reshare-history__total {
+    order: 5;
+  }
+  .reshare-history__status {
+    order: 6;
+  }
+  .reshare-history__product {
+    min-width: 0;
     overflow-wrap: anywhere;
-  }
-  .reshare-history__card-meta {
-    margin: 0;
-  }
-  .reshare-history__card-meta dt {
-    color: var(--text-secondary);
-    font-size: 12px;
-    font-weight: 700;
-  }
-  .reshare-history__card-meta dd {
-    display: grid;
-    gap: 2px;
-    margin: 0;
-  }
-  .reshare-history__card-meta dd small {
-    color: var(--muted);
-    font-size: 12px;
-  }
-  .reshare-history__card-note {
-    margin: 0;
-    color: var(--text-secondary);
-    font-size: 13px;
-    overflow-wrap: anywhere;
-  }
-  /* Bảng dòng hàng trong thẻ giữ dạng bảng hai cột, không chuyển thành thẻ con. */
-  .reshare-history__card-lines {
-    display: table;
-    width: 100%;
-  }
-  .reshare-history__card-lines thead {
-    display: table-header-group;
-    position: static;
-    width: auto;
-    height: auto;
-    overflow: visible;
-    clip: auto;
-  }
-  .reshare-history__card-lines tbody {
-    display: table-row-group;
-  }
-  .reshare-history__card-lines tfoot {
-    display: table-footer-group;
-  }
-  .reshare-history__card-lines tr {
-    display: table-row;
-    border: 0;
-    border-bottom: 1px solid var(--border);
-    border-radius: 0;
-    padding: 0;
-  }
-  .reshare-history__card-lines :is(th, td) {
-    display: table-cell;
-    padding: 6px 4px;
-    overflow-wrap: anywhere;
-  }
-  .reshare-history__card-lines td::before {
-    content: none;
-  }
-  .reshare-history__card-lines td:last-child,
-  .reshare-history__card-lines th:last-child {
-    text-align: right;
-    white-space: nowrap;
   }
 }
 

@@ -392,15 +392,12 @@ test('every role opens on its RE orders: one group per order, total once, server
     'true',
   );
   await expect(page.getByRole('heading', { name: 'Lịch sử đặt hàng theo phân bổ' })).toBeVisible();
-  // Desktop shows the grouped table, narrow screens one card per order: check the visible one.
-  const narrow = (page.viewportSize()?.width ?? 1440) <= 620;
-  const table = page.locator(narrow ? '.reshare-history__cards' : '.reshare-history__table');
+  // One table at every width (cards on narrow screens): one group per order, total once.
+  const table = page.locator('.reshare-history');
   await expect(table.getByText('RE-000001')).toHaveCount(1);
   await expect(table.getByText('Quần dài nữ').first()).toBeVisible();
   await expect(table.getByText('Áo', { exact: true })).toBeVisible();
-  const totals = narrow
-    ? table.locator('.reshare-history__card').first().locator('tfoot td')
-    : table.locator('tbody').first().locator('td strong').filter({ hasText: /^5$/u });
+  const totals = table.locator('tbody').first().locator('.reshare-history__total');
   await expect(totals).toHaveCount(1);
   await expect(totals).toHaveText('5');
   await expect(table.getByText('Chưa đặt Reshare')).toBeVisible();
@@ -420,12 +417,7 @@ test('a deep link from the result tag opens the order by its RE code', async ({ 
   const log = await mockApi(page, 'STORE');
   await page.goto('/supplier-reconciliation?tab=orders&code=RE-000001');
   await expect(page.getByRole('tablist')).toHaveCount(0);
-  const narrow = (page.viewportSize()?.width ?? 1440) <= 620;
-  await expect(
-    page
-      .locator(narrow ? '.reshare-history__cards' : '.reshare-history__table')
-      .getByText('RE-000001'),
-  ).toBeVisible();
+  await expect(page.locator('.reshare-history').getByText('RE-000001')).toBeVisible();
   expect(log.orderQueries[0]?.get('code')).toBe('RE-000001');
   // The old "status" tab link still lands on the order history.
   await page.goto('/supplier-reconciliation?tab=status');
@@ -574,22 +566,18 @@ for (const role of ['ADMIN', 'HTKD', 'STORE'] as const) {
     for (const width of [360, 390, 412, 683, 768, 1366, 1440, 1920, 2560]) {
       await page.setViewportSize({ width, height: 900 });
       await expectNoPageOverflow(page);
-      // Narrow screens show one card per order (lines inside, total once); wide ones the table.
-      const cards = page.locator('.reshare-history__cards');
-      const table = page.locator('.reshare-history__table');
-      if (width <= 620) {
-        await expect(cards).toBeVisible();
-        await expect(table).toBeHidden();
-        const card = cards.locator('.reshare-history__card').first();
-        await expect(card).toContainText('RE-000001');
-        await expect(card).toContainText('Tổng số lượng (bao)');
-        const box = await card.boundingBox();
-        expect(box!.x).toBeGreaterThanOrEqual(0);
-        expect(box!.x + box!.width).toBeLessThanOrEqual(width + 1);
-      } else {
-        await expect(table).toBeVisible();
-        await expect(cards).toBeHidden();
-      }
+      // The same table everywhere: narrow screens lay each order out as one card (lines inside,
+      // total once), wide ones as grouped rows.
+      const table = page.locator('.reshare-history table');
+      await expect(table).toBeVisible();
+      const display = await table.evaluate((element) => getComputedStyle(element).display);
+      expect(display === 'table').toBe(width > 620);
+      const group = table.locator('tbody').first();
+      await expect(group).toContainText('RE-000001');
+      await expect(group.locator('.reshare-history__total')).toHaveText('5');
+      const box = await group.boundingBox();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(width + 1);
       for (const button of await page.getByRole('button').all()) {
         if (!(await button.isVisible())) continue;
         const fits = await button.evaluate(

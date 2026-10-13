@@ -165,7 +165,7 @@ test('accepting creates one RE order, issues stock at once and shows it in the s
       .getByRole('link', { name: /Đã đặt Reshare/u })
       .click();
     await expect(page).toHaveURL(new RegExp(`code=${orderA!.code}`, 'u'));
-    const history = page.locator('.reshare-history__table');
+    const history = page.locator('.reshare-history');
     const group = history.locator('tbody').filter({ hasText: orderA!.code });
     await expect(group).toHaveCount(1);
     await expect(group).toContainText(pantsName);
@@ -196,7 +196,7 @@ test('accepting creates one RE order, issues stock at once and shows it in the s
     // 4. HTKD history: only its stores, both orders, filtered on the server by product.
     await page.goto('/supplier-reconciliation');
     await page.getByLabel('Mặt hàng').selectOption(shirt!.id);
-    const htkdHistory = page.locator('.reshare-history__table');
+    const htkdHistory = page.locator('.reshare-history');
     await expect(htkdHistory.locator('tbody').filter({ hasText: orderA!.code })).toHaveCount(1);
     await expect(htkdHistory.locator('tbody').filter({ hasText: orderB!.code })).toHaveCount(0);
     // Filtering by a product never shrinks the order total.
