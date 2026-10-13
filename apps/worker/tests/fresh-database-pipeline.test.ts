@@ -316,10 +316,11 @@ describePostgres('fresh PostgreSQL order-to-receipt-source pipeline', () => {
         .from(reservations)
         .where(eq(reservations.allocationLineId, allocationLineId))
         .limit(1);
-      // Acceptance keeps the stock reserved; it only leaves on-hand when HTKD finalizes receipt.
+      // Acceptance creates the RE order and issues the goods out of the central warehouse; the
+      // hold stays linked to the shipment until the store's receipt settles it.
       expect(linkedReservation).toEqual({
         outboundRequestLineId: outbound.lines[0]!.id,
-        status: 'active',
+        status: 'issued',
       });
       const dispatchAudits = await client.db
         .select({ actorUserId: auditLogs.actorUserId, metadata: auditLogs.metadata })

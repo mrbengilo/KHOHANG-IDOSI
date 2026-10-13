@@ -18,6 +18,8 @@ import {
   stores,
   supplierExternalEvents,
   supplierObservationEventCoverage,
+  supplierObservationReshareCoverage,
+  reshareOrderLines,
   supplierSourceProducts,
   supplierSources,
   supplierStockObservationLines,
@@ -323,6 +325,14 @@ export interface SupplierObservationInput {
   readonly eventCoverage: readonly { readonly eventId: string; readonly included: boolean }[];
   /** Pre-baseline holds with no recorded B order are declared not ordered at B. */
   readonly attestUnlinkedAsNotOrdered: boolean;
+  /**
+   * "Số tồn này đã trừ các đơn…": RE line quantities the observed total already deducted. Only
+   * what the person states; never inferred from dates or from the difference in totals.
+   */
+  readonly reshareCoverage?: readonly {
+    readonly reshareOrderLineId: string;
+    readonly quantity: number;
+  }[];
   readonly note?: string | null;
   readonly evidenceRef?: string | null;
 }
@@ -341,6 +351,21 @@ export interface SupplierObservationEventView {
   readonly decision: 'COVERED' | 'OPEN' | 'UNDECIDED' | 'AFTER_OBSERVATION';
 }
 
+export interface SupplierObservationIssuedOrderView {
+  readonly lineId: string;
+  readonly orderId: string;
+  readonly code: string;
+  readonly storeId: string;
+  readonly storeName: string;
+  readonly orderedAt: Date;
+  readonly quantity: number;
+  readonly unreflectedQuantity: number;
+  /** Quantity this observation declares already deducted in the observed total. */
+  readonly declaredReflectedQuantity: number;
+  /** Created after the observation time: the observed total cannot include it. */
+  readonly afterObservation: boolean;
+}
+
 export interface SupplierObservationPlanLine {
   readonly productId: string;
   readonly sku: string;
@@ -356,6 +381,8 @@ export interface SupplierObservationPlanLine {
   readonly coveredEventCount: number;
   /** Pre-baseline reserved bags without a recorded B order (state UNKNOWN until attested). */
   readonly unlinkedLegacyQuantity: number;
+  readonly issuedOrders: readonly SupplierObservationIssuedOrderView[];
+  readonly reflectedReshareQuantity: number;
   readonly onHandDelta: number;
 }
 
@@ -401,6 +428,18 @@ function validateObservationInput(input: SupplierObservationInput, now: Date): v
   if (new Set(eventIds).size !== eventIds.length) {
     throw new SupplierReconciliationError('VALIDATION', 'Mỗi biến động chỉ được khai một lần.');
   }
+  const coverageLineIds = (input.reshareCoverage ?? []).map((item) => item.reshareOrderLineId);
+  if (new Set(coverageLineIds).size !== coverageLineIds.length) {
+    throw new SupplierReconciliationError('VALIDATION', 'Mỗi dòng đơn RE chỉ được khai một lần.');
+  }
+  for (const item of input.reshareCoverage ?? []) {
+    if (!Number.isSafeInteger(item.quantity) || item.quantity <= 0) {
+      throw new SupplierReconciliationError(
+        'VALIDATION',
+        'Số bao đơn RE đã trừ trong số tồn phải là số nguyên dương.',
+      );
+    }
+  }
   if ((input.note?.length ?? 0) > 500 || (input.evidenceRef?.length ?? 0) > 200) {
     throw new SupplierReconciliationError('VALIDATION', 'Ghi chú tối đa 500, chứng từ 200 ký tự.');
   }
@@ -439,6 +478,22 @@ async function planObservation(
   const eventProduct = new Map<string, string>();
   for (const fact of facts.values()) {
     for (const event of fact.events) eventProduct.set(event.id, fact.mapping.productId);
+  }
+  const reshareDeclarations = new Map(
+    (input.reshareCoverage ?? []).map((item) => [item.reshareOrderLineId, item.quantity]),
+  );
+  const issuedLineProduct = new Map<string, string>();
+  for (const fact of facts.values()) {
+    for (const order of fact.issuedOrders)
+      issuedLineProduct.set(order.lineId, fact.mapping.productId);
+  }
+  const unknownReshare = [...reshareDeclarations.keys()].filter((id) => !issuedLineProduct.has(id));
+  if (unknownReshare.length > 0) {
+    throw new SupplierReconciliationError(
+      'VALIDATION',
+      'Có dòng đơn RE không thuộc các mặt hàng đang cập nhật hoặc đã được trừ đủ trước đó.',
+      { reshareOrderLineIds: unknownReshare },
+    );
   }
   const unknownDeclarations = [...declarations.keys()].filter((id) => !eventProduct.has(id));
   if (unknownDeclarations.length > 0) {
@@ -495,6 +550,40 @@ async function planObservation(
       fact.mapping.status === 'pending_baseline'
         ? fact.reservations.reduce((total, row) => total + row.quantity - row.orderedQuantity, 0)
         : 0;
+    const issuedOrders = fact.issuedOrders.map((order): SupplierObservationIssuedOrderView => {
+      const declared = reshareDeclarations.get(order.lineId) ?? 0;
+      const afterObservation = order.orderedAt.getTime() > input.observedAt.getTime();
+      if (declared > 0 && afterObservation) {
+        throw new SupplierReconciliationError(
+          'VALIDATION',
+          `Đơn ${order.code} lập sau thời điểm xem tồn nên số tồn đó chưa thể trừ đơn này.`,
+          { reshareOrderLineId: order.lineId },
+        );
+      }
+      if (declared > order.unreflectedQuantity) {
+        throw new SupplierReconciliationError(
+          'QUANTITY_EXCEEDED',
+          `Đơn ${order.code} chỉ còn ${order.unreflectedQuantity} bao chưa được trừ trong số tồn.`,
+          { reshareOrderLineId: order.lineId, available: order.unreflectedQuantity },
+        );
+      }
+      return {
+        lineId: order.lineId,
+        orderId: order.orderId,
+        code: order.code,
+        storeId: order.storeId,
+        storeName: order.storeName,
+        orderedAt: order.orderedAt,
+        quantity: order.quantity,
+        unreflectedQuantity: order.unreflectedQuantity,
+        declaredReflectedQuantity: declared,
+        afterObservation,
+      };
+    });
+    const reflectedReshareQuantity = issuedOrders.reduce(
+      (total, order) => total + order.declaredReflectedQuantity,
+      0,
+    );
     if (undecided.size > 0) blockingIssues.add('EXTERNAL_EVENT_COVERAGE_AMBIGUOUS');
     if (unlinkedLegacyQuantity > 0 && !input.attestUnlinkedAsNotOrdered) {
       blockingIssues.add('LEGACY_ATTESTATION_REQUIRED');
@@ -510,6 +599,11 @@ async function planObservation(
       reservations: fact.reservations.map((row) => ({
         quantity: row.quantity,
         orderedQuantity: row.orderedQuantity,
+      })),
+      issuedOrders: issuedOrders.map((order) => ({
+        quantity: order.quantity,
+        reflectedQuantity:
+          order.quantity - order.unreflectedQuantity + order.declaredReflectedQuantity,
       })),
       ledgerOnHand: fact.balance.onHand,
       ledgerReserved: fact.balance.reserved,
@@ -530,6 +624,8 @@ async function planObservation(
       undecidedEventCount: undecided.size,
       coveredEventCount: covered.size,
       unlinkedLegacyQuantity,
+      issuedOrders,
+      reflectedReshareQuantity,
       onHandDelta: (after.targetOnHand ?? fact.balance.onHand) - fact.balance.onHand,
     };
   });
@@ -677,6 +773,43 @@ export async function confirmSupplierStockObservation(
             })),
           );
         }
+        const reshareCoverage = plan.lines.flatMap((line) =>
+          line.issuedOrders
+            .filter((order) => order.declaredReflectedQuantity > 0)
+            .map((order) => ({ line, order })),
+        );
+        if (reshareCoverage.length > 0) {
+          await tx.insert(supplierObservationReshareCoverage).values(
+            reshareCoverage.map(({ line, order }) => ({
+              observationId,
+              reshareOrderLineId: order.lineId,
+              productId: line.productId,
+              quantity: order.declaredReflectedQuantity,
+              createdAt: now,
+            })),
+          );
+          for (const { order } of reshareCoverage) {
+            const [reflected] = await tx
+              .update(reshareOrderLines)
+              .set({
+                supplierReflectedQuantity: sql`${reshareOrderLines.supplierReflectedQuantity} + ${order.declaredReflectedQuantity}`,
+                updatedAt: now,
+              })
+              .where(
+                and(
+                  eq(reshareOrderLines.id, order.lineId),
+                  sql`${reshareOrderLines.supplierReflectedQuantity} + ${order.declaredReflectedQuantity} <= ${reshareOrderLines.quantity}`,
+                ),
+              )
+              .returning({ id: reshareOrderLines.id });
+            if (!reflected) {
+              throw new SupplierReconciliationError(
+                'VERSION_CONFLICT',
+                'Đơn RE đã được trừ trong lần cập nhật khác. Xem trước lại rồi xác nhận.',
+              );
+            }
+          }
+        }
         const coveredIds = plan.lines.flatMap((line) =>
           line.events.filter((event) => event.decision === 'COVERED').map((event) => event.id),
         );
@@ -737,6 +870,8 @@ export async function confirmSupplierStockObservation(
             unorderedReservedQuantity: line.after.unorderedReservedQuantity,
             orderedReservedQuantity: line.after.orderedReservedQuantity,
             attestedUnlinkedQuantity: line.unlinkedLegacyQuantity,
+            issuedUnreflectedQuantity: line.after.issuedUnreflectedQuantity,
+            reflectedReshareQuantity: line.reflectedReshareQuantity,
             unorderedCommitmentQuantity: line.after.unorderedCommitmentQuantity,
             freeQuantity: line.after.freeQuantity,
             shortfallQuantity: line.after.shortfallQuantity,
@@ -785,6 +920,13 @@ export async function confirmSupplierStockObservation(
               unorderedCommitment: line.after.unorderedCommitmentQuantity,
               onHandDelta: line.onHandDelta,
               coveredEvents: line.coveredEventCount,
+              reflectedReshare: line.issuedOrders
+                .filter((order) => order.declaredReflectedQuantity > 0)
+                .map((order) => ({
+                  reshareOrderLineId: order.lineId,
+                  code: order.code,
+                  quantity: order.declaredReflectedQuantity,
+                })),
               attestedUnlinked: line.unlinkedLegacyQuantity,
             })),
           },

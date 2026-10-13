@@ -1,4 +1,4 @@
-import { calculateReceiptVat, DomainError } from '@idosi/domain';
+import { calculateReceiptVat, DomainError, settleReceiptLine } from '@idosi/domain';
 import { and, desc, eq, gte, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 
 import type { Database } from './client.js';
@@ -13,6 +13,7 @@ import {
   outboundRequestLines,
   outboundRequests,
   reservations,
+  reshareOrderSources,
   storeInventoryBags,
   storeInventoryLedgerEntries,
   storeOutbounds,
@@ -397,56 +398,72 @@ export async function finalizeStoreReceiptInTransaction(
           );
         }
 
-        const activeReservations = await tx
+        // Every hold the line carries: on-hand holds from before RE orders (active) and goods
+        // already issued with an RE order. Each kind is settled by its own rule below.
+        const lineSources = await tx
           .select({
             id: reservations.id,
             allocationLineId: reservations.allocationLineId,
             quantity: reservations.quantity,
+            status: reservations.status,
           })
           .from(reservations)
           .where(
             and(
               eq(reservations.outboundRequestLineId, outboundRequestLineId),
-              eq(reservations.status, 'active'),
+              inArray(reservations.status, ['active', 'issued']),
               isNull(reservations.deletedAt),
             ),
           )
           .orderBy(reservations.createdAt, reservations.id)
           .for('update');
 
-        const reservedQuantity = activeReservations.reduce(
-          (total, reservation) => total + reservation.quantity,
-          0,
-        );
+        const reservedQuantity = lineSources.reduce((total, source) => total + source.quantity, 0);
         if (reservedQuantity !== persistedLine.approvedQuantity) {
           throw new StoreOperationValidationError(
             'Active reservations do not conserve the dispatched receipt quantity.',
           );
         }
 
+        const settlement = settleReceiptLine(
+          lineSources.map((source) => ({
+            id: source.id,
+            quantity: source.quantity,
+            issued: source.status === 'issued',
+          })),
+          persistedLine.receivedQuantity,
+        );
         const shortage = persistedLine.approvedQuantity - persistedLine.receivedQuantity;
         hasShortage ||= shortage > 0;
-        await applyWarehouseMovement(tx, {
-          productId: persistedLine.productId,
-          eventType: persistedLine.receivedQuantity === 0 ? 'reservation_release' : 'outbound',
-          onHandDelta: -persistedLine.receivedQuantity,
-          reservedDelta: -reservedQuantity,
-          sourceType: 'store_receipt',
-          sourceId: receipt.id,
-          reason:
-            shortage > 0
-              ? 'Store receipt finalized with shortage; unused reservation released'
-              : 'Store receipt finalized in full',
-          metadata: {
-            storeId: receipt.storeId,
-            outboundRequestLineId,
-            approvedQuantity: persistedLine.approvedQuantity,
-            receivedQuantity: persistedLine.receivedQuantity,
-          },
-          actorUserId: input.reviewedByUserId,
-          occurredAt: now,
-        });
-        if (shortage > 0) {
+        const legacyShortage = settlement.legacyQuantity - settlement.legacyReceived;
+        const issuedShortage = settlement.issuedQuantity - settlement.issuedReceived;
+        if (settlement.legacyQuantity > 0) {
+          // Holds from before RE orders leave on-hand now, by what the store actually received.
+          await applyWarehouseMovement(tx, {
+            productId: persistedLine.productId,
+            eventType: settlement.legacyReceived === 0 ? 'reservation_release' : 'outbound',
+            onHandDelta: -settlement.legacyReceived,
+            reservedDelta: -settlement.legacyQuantity,
+            sourceType: 'store_receipt',
+            sourceId: receipt.id,
+            reason:
+              legacyShortage > 0
+                ? 'Store receipt finalized with shortage; unused reservation released'
+                : 'Store receipt finalized in full',
+            metadata: {
+              storeId: receipt.storeId,
+              outboundRequestLineId,
+              approvedQuantity: persistedLine.approvedQuantity,
+              receivedQuantity: persistedLine.receivedQuantity,
+              legacyQuantity: settlement.legacyQuantity,
+              legacyReceivedQuantity: settlement.legacyReceived,
+            },
+            actorUserId: input.reviewedByUserId,
+            occurredAt: now,
+          });
+        }
+        // Issued goods already left on-hand with their RE order: no central movement here.
+        if (legacyShortage > 0) {
           // The missing units may still be in the warehouse or may be lost in transit. They stay
           // reserved, out of allocation, until someone checks the shelf and resolves the check.
           await openWarehouseShortageCheck(tx, {
@@ -454,12 +471,53 @@ export async function finalizeStoreReceiptInTransaction(
             storeReceiptId: receipt.id,
             storeId: receipt.storeId,
             productId: persistedLine.productId,
-            quantity: shortage,
+            quantity: legacyShortage,
             shortageReason: receipt.discrepancyNote,
             actorUserId: input.reviewedByUserId,
             occurredAt: now,
           });
         }
+        const issuedShortageCheckId =
+          issuedShortage > 0
+            ? // Issued units are no longer on-hand: the check records them without holding stock.
+              await openWarehouseShortageCheck(tx, {
+                storeReceiptLineId: persistedLine.id,
+                storeReceiptId: receipt.id,
+                storeId: receipt.storeId,
+                productId: persistedLine.productId,
+                quantity: issuedShortage,
+                shortageReason: receipt.discrepancyNote,
+                actorUserId: input.reviewedByUserId,
+                occurredAt: now,
+                stockMode: 'issued',
+              })
+            : null;
+        for (const source of settlement.sources.filter((row) => row.issued)) {
+          const [settled] = await tx
+            .update(reshareOrderSources)
+            .set({
+              settledStoreReceiptId: receipt.id,
+              settledOutboundRequestLineId: outboundRequestLineId,
+              receivedQuantity: source.received,
+              shortageQuantity: source.shortage,
+              shortageCheckId: source.shortage > 0 ? issuedShortageCheckId : null,
+              settledAt: now,
+              updatedAt: now,
+            })
+            .where(
+              and(
+                eq(reshareOrderSources.reservationId, source.id),
+                isNull(reshareOrderSources.settledAt),
+              ),
+            )
+            .returning({ id: reshareOrderSources.id });
+          if (!settled) {
+            throw new StoreOperationValidationError(
+              'An issued hold has no unsettled RE order source.',
+            );
+          }
+        }
+        const activeReservations = lineSources;
 
         // Legacy pending receipts have no queued shortage; new receipts were queued
         // when the store submitted them. Reconcile once, before settling reservations.
@@ -823,7 +881,12 @@ async function settleReservations(
           consumedQuantity < reservation.quantity ? 'Store receipt declared a shortage' : null,
         updatedAt: now,
       })
-      .where(and(eq(reservations.id, reservation.id), eq(reservations.status, 'active')));
+      .where(
+        and(
+          eq(reservations.id, reservation.id),
+          inArray(reservations.status, ['active', 'issued']),
+        ),
+      );
   }
 
   if (remainingReceived !== 0) {
@@ -854,7 +917,7 @@ export async function reconcileReceiptShortageWait(
     .where(
       and(
         eq(reservations.outboundRequestLineId, input.outboundRequestLineId),
-        eq(reservations.status, 'active'),
+        inArray(reservations.status, ['active', 'issued']),
         isNull(reservations.deletedAt),
       ),
     )
@@ -1433,11 +1496,15 @@ export async function openWarehouseShortageCheck(
     readonly shortageReason: string | null;
     readonly actorUserId: string;
     readonly occurredAt: Date;
+    /** issued: the units already left on-hand with an RE order, so nothing is reserved. */
+    readonly stockMode?: 'held' | 'issued';
   },
 ): Promise<string> {
+  const stockMode = input.stockMode ?? 'held';
   const [check] = await tx
     .insert(warehouseShortageChecks)
     .values({
+      stockMode,
       storeReceiptLineId: input.storeReceiptLineId,
       storeReceiptId: input.storeReceiptId,
       storeId: input.storeId,
@@ -1449,19 +1516,20 @@ export async function openWarehouseShortageCheck(
     })
     .returning({ id: warehouseShortageChecks.id });
   if (!check) throw new Error('Warehouse shortage check insert returned no row.');
-  await applyWarehouseMovement(tx, {
-    productId: input.productId,
-    eventType: 'reservation',
-    onHandDelta: 0,
-    reservedDelta: input.quantity,
-    sourceType: 'warehouse_shortage_check',
-    sourceId: check.id,
-    eventSequence: 1,
-    reason: 'Reported store shortage held until the warehouse confirms it',
-    metadata: { storeId: input.storeId, storeReceiptLineId: input.storeReceiptLineId },
-    actorUserId: input.actorUserId,
-    occurredAt: input.occurredAt,
-  });
+  if (stockMode === 'held')
+    await applyWarehouseMovement(tx, {
+      productId: input.productId,
+      eventType: 'reservation',
+      onHandDelta: 0,
+      reservedDelta: input.quantity,
+      sourceType: 'warehouse_shortage_check',
+      sourceId: check.id,
+      eventSequence: 1,
+      reason: 'Reported store shortage held until the warehouse confirms it',
+      metadata: { storeId: input.storeId, storeReceiptLineId: input.storeReceiptLineId },
+      actorUserId: input.actorUserId,
+      occurredAt: input.occurredAt,
+    });
   await tx.insert(auditLogs).values({
     actorUserId: input.actorUserId,
     actorStoreId: input.storeId,
@@ -1473,6 +1541,7 @@ export async function openWarehouseShortageCheck(
       productId: input.productId,
       quantity: input.quantity,
       storeReceiptId: input.storeReceiptId,
+      stockMode,
     },
   });
   return check.id;

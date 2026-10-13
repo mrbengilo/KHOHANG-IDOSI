@@ -142,6 +142,7 @@ export type {
 } from './allocation-decision-gate.js';
 export {
   ALLOCATION_RESULT_DETACHED_REASON,
+  OWED_RESERVATION_STATUSES,
   ALLOCATION_RESULT_REJECTED_RELEASE_REASON,
   AllocationDecisionConflictError,
   AllocationDecisionForbiddenError,
@@ -171,6 +172,7 @@ export type {
   PublishedAllocationDecision,
   RespondAllocationDecisionInput,
   RespondAllocationDecisionResult,
+  ResponderRole,
 } from './allocation-decisions.js';
 
 export {
@@ -558,3 +560,5 @@ export type {
 export * from './supplier-commitments.js';
 export * from './supplier-reconciliation.js';
 export * from './supplier-orders.js';
+export * from './reshare-orders.js';
+export * from './reshare-cutover.js';

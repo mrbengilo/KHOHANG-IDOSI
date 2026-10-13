@@ -12,6 +12,9 @@ import { and, asc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
 import {
   dailyPriorityOffers,
   reservations,
+  reshareOrderLines,
+  reshareOrderSources,
+  reshareOrders,
   supplierExternalEvents,
   supplierOrderSourceLinks,
   supplierSourceProducts,
@@ -84,6 +87,23 @@ export interface SupplierReservationCommitment {
   readonly cancelledQuantity: number;
 }
 
+/** An issued RE line that no confirmed observation has fully reflected yet (part of U). */
+export interface SupplierIssuedOrderCommitment {
+  readonly lineId: string;
+  readonly orderId: string;
+  readonly code: string;
+  readonly storeId: string;
+  readonly storeName: string;
+  readonly orderedAt: Date;
+  readonly quantity: number;
+  /** Declared reflected by observations so far. */
+  readonly reflectedQuantity: number;
+  /** Recorded as a B order through a pre-RE manual order link (never double counted). */
+  readonly orderedQuantity: number;
+  /** quantity - reflected - ordered: still owed to B's count. */
+  readonly unreflectedQuantity: number;
+}
+
 export interface SupplierProductFacts {
   readonly mapping: SupplierProductRow;
   readonly baseline: {
@@ -95,6 +115,7 @@ export interface SupplierProductFacts {
   readonly events: readonly UncoveredSupplierEvent[];
   readonly offerHoldQuantity: number;
   readonly reservations: readonly SupplierReservationCommitment[];
+  readonly issuedOrders: readonly SupplierIssuedOrderCommitment[];
   readonly balance: {
     readonly onHand: number;
     readonly reserved: number;
@@ -245,7 +266,46 @@ export async function loadSupplierProductFacts(
     tx.select().from(warehouseBalances).where(inArray(warehouseBalances.productId, ids)),
   ]);
 
-  const ordered = await loadOrderedByCommitment(tx, activeReservations);
+  // RE lines issued out of A that no observation reflected yet stay commitments B may not show.
+  const issuedLines = await tx
+    .select({
+      lineId: reshareOrderLines.id,
+      orderId: reshareOrders.id,
+      code: reshareOrders.code,
+      storeId: reshareOrders.storeId,
+      storeName: reshareOrders.storeNameSnapshot,
+      orderedAt: reshareOrders.orderedAt,
+      productId: reshareOrderLines.productId,
+      quantity: reshareOrderLines.quantity,
+      reflectedQuantity: reshareOrderLines.supplierReflectedQuantity,
+    })
+    .from(reshareOrderLines)
+    .innerJoin(reshareOrders, eq(reshareOrders.id, reshareOrderLines.reshareOrderId))
+    .where(
+      and(
+        inArray(reshareOrderLines.productId, ids),
+        sql`${reshareOrderLines.supplierReflectedQuantity} < ${reshareOrderLines.quantity}`,
+      ),
+    )
+    .orderBy(asc(reshareOrders.orderedAt), asc(reshareOrderLines.id));
+  const issuedSources =
+    issuedLines.length === 0
+      ? []
+      : await tx
+          .select({
+            lineId: reshareOrderSources.reshareOrderLineId,
+            id: reshareOrderSources.reservationId,
+            allocationLineId: reshareOrderSources.allocationLineId,
+            quantity: reshareOrderSources.quantity,
+          })
+          .from(reshareOrderSources)
+          .where(
+            inArray(
+              reshareOrderSources.reshareOrderLineId,
+              issuedLines.map((line) => line.lineId),
+            ),
+          );
+  const ordered = await loadOrderedByCommitment(tx, [...activeReservations, ...issuedSources]);
   const baselineByLine = new Map(baselines.map((row) => [row.lineId, row]));
   const eventsByProduct = groupBy(
     events.map((row): UncoveredSupplierEvent => ({
@@ -265,6 +325,8 @@ export async function loadSupplierProductFacts(
   const holdByProduct = new Map(offerHolds.map((row) => [row.productId, row.quantity]));
   const balanceByProduct = new Map(balances.map((row) => [row.productId, row]));
   const reservationsByProduct = groupBy(activeReservations, (row) => row.productId);
+  const issuedByProduct = groupBy(issuedLines, (row) => row.productId);
+  const sourcesByLine = groupBy(issuedSources, (row) => row.lineId);
 
   const result = new Map<string, SupplierProductFacts>();
   for (const mapping of mappings) {
@@ -284,6 +346,27 @@ export async function loadSupplierProductFacts(
           quantity: row.quantity,
           orderedQuantity: Math.min(row.quantity, Math.max(0, linked.ordered)),
           cancelledQuantity: linked.cancelled,
+        };
+      },
+    );
+    const issuedOrders = (issuedByProduct.get(mapping.productId) ?? []).map(
+      (row): SupplierIssuedOrderCommitment => {
+        const linkedOrdered = (sourcesByLine.get(row.lineId) ?? []).reduce((total, source) => {
+          const linked = ordered.get(source.allocationLineId)?.ordered ?? 0;
+          return total + Math.min(source.quantity, Math.max(0, linked));
+        }, 0);
+        const orderedQuantity = Math.min(row.quantity - row.reflectedQuantity, linkedOrdered);
+        return {
+          lineId: row.lineId,
+          orderId: row.orderId,
+          code: row.code,
+          storeId: row.storeId,
+          storeName: row.storeName,
+          orderedAt: row.orderedAt,
+          quantity: row.quantity,
+          reflectedQuantity: row.reflectedQuantity,
+          orderedQuantity,
+          unreflectedQuantity: row.quantity - row.reflectedQuantity - orderedQuantity,
         };
       },
     );
@@ -317,6 +400,10 @@ export async function loadSupplierProductFacts(
         quantity: commitment.quantity,
         orderedQuantity: commitment.orderedQuantity,
       })),
+      issuedOrders: issuedOrders.map((order) => ({
+        quantity: order.quantity,
+        reflectedQuantity: order.quantity - order.unreflectedQuantity,
+      })),
       ledgerOnHand: balance.onHand,
       ledgerReserved: balance.reserved,
     });
@@ -326,6 +413,7 @@ export async function loadSupplierProductFacts(
       events: productEvents,
       offerHoldQuantity: holdByProduct.get(mapping.productId) ?? 0,
       reservations: commitments,
+      issuedOrders,
       balance,
       integrityIssues,
       position,

@@ -404,7 +404,11 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(42);
+    expect(journal.entries).toHaveLength(43);
+    expect(journal.entries[42]).toMatchObject({
+      tag: '0042_reshare_orders_and_issue',
+      breakpoints: true,
+    });
     expect(journal.entries[39]).toMatchObject({ tag: '0039_htkd_wait_ticket_access' });
     expect(journal.entries[40]).toMatchObject({ tag: '0040_wait_ticket_page_index' });
     expect(journal.entries[41]).toMatchObject({
