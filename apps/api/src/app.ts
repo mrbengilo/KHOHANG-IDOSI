@@ -27,7 +27,24 @@ import {
   isLockTimeoutError,
   isRetryableTransactionError,
   isStatementTimeoutError,
+  SupplierReconciliationError,
 } from '@idosi/database';
+import {
+  AddSupplierSourceProductsRequestSchema,
+  CancelSupplierOrderRequestSchema,
+  ConfirmSupplierObservationRequestSchema,
+  CreateSupplierSourceRequestSchema,
+  ListSupplierOrdersQuerySchema,
+  RecordSupplierOrderRequestSchema,
+  RecordSupplierSourceReturnRequestSchema,
+  SupplierCommitmentsQuerySchema,
+  SupplierObservationHistoryQuerySchema,
+  SupplierObservationRequestSchema,
+  SupplierOrderEventParamsSchema,
+  SupplierReconciliationQuerySchema,
+  SupplierReconciliationResponseSchema,
+  SupplierSourceParamsSchema,
+} from '@idosi/contracts';
 
 import {
   CreateReceiptAdjustmentRequestSchema,
@@ -345,6 +362,27 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
       return reply
         .status(400)
         .send(errorEnvelope('VALIDATION_ERROR', 'Nội dung JSON không hợp lệ', request.id));
+    }
+    if (error instanceof SupplierReconciliationError) {
+      return reply.status(supplierErrorStatus(error.code)).send({
+        error: {
+          code: error.code === 'VALIDATION' ? 'VALIDATION_ERROR' : error.code,
+          message: error.message,
+          requestId: request.id,
+          ...(Object.keys(error.details).length > 0 ? { details: error.details } : {}),
+        },
+      });
+    }
+    if (isSupplierIdentityViolation(error)) {
+      return reply
+        .status(409)
+        .send(
+          errorEnvelope(
+            'DUPLICATE_EXTERNAL_EVENT',
+            'Chứng từ Reshare này vừa được ghi nhận bởi thao tác khác.',
+            request.id,
+          ),
+        );
     }
     // Every dispatch and receipt path is gated on the store's acceptance, server-side and in the
     // database; whichever layer refuses, the caller gets the same structured conflict.
@@ -1044,6 +1082,165 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     );
     reply.header('idempotency-replayed', String(result.replayed));
     return reply.send({ data: result.data });
+  });
+
+  // Reshare supplier reconciliation (docs/supplier-stock-reconciliation.md). Roles are checked
+  // here and again inside each database command, which re-reads the account and its stores.
+  app.get('/api/v1/supplier-sources', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    reply.header('cache-control', 'no-store');
+    return { data: await repository.listSupplierSources(session.principal) };
+  });
+
+  app.post('/api/v1/supplier-sources', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = CreateSupplierSourceRequestSchema.parse(request.body);
+    const result = await repository.createSupplierSource(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CREATE_SUPPLIER_SOURCE', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(201).send({ data: result.data });
+  });
+
+  app.post('/api/v1/supplier-sources/:sourceId/products', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { sourceId } = SupplierSourceParamsSchema.parse(request.params);
+    const input = AddSupplierSourceProductsRequestSchema.parse(request.body);
+    const result = await repository.addSupplierSourceProducts(
+      session.principal,
+      sourceId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'ADD_SUPPLIER_SOURCE_PRODUCTS', sourceId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.get('/api/v1/supplier-reconciliation', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    reply.header('cache-control', 'no-store');
+    return SupplierReconciliationResponseSchema.parse(
+      await repository.getSupplierReconciliation(
+        session.principal,
+        SupplierReconciliationQuerySchema.parse(request.query),
+      ),
+    );
+  });
+
+  app.get('/api/v1/supplier-reconciliation/history', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    reply.header('cache-control', 'no-store');
+    return repository.listSupplierObservationHistory(
+      session.principal,
+      SupplierObservationHistoryQuerySchema.parse(request.query),
+    );
+  });
+
+  app.post('/api/v1/supplier-stock-observations/preview', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const input = SupplierObservationRequestSchema.parse(request.body);
+    reply.header('cache-control', 'no-store');
+    return { data: await repository.previewSupplierObservation(session.principal, input) };
+  });
+
+  app.post('/api/v1/supplier-stock-observations', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = ConfirmSupplierObservationRequestSchema.parse(request.body);
+    const result = await repository.confirmSupplierObservation(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CONFIRM_SUPPLIER_OBSERVATION', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(result.replayed ? 200 : 201).send({ data: result.data });
+  });
+
+  app.get('/api/v1/supplier-commitments', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE']);
+    reply.header('cache-control', 'no-store');
+    return repository.listSupplierCommitments(
+      session.principal,
+      SupplierCommitmentsQuerySchema.parse(request.query),
+    );
+  });
+
+  app.get('/api/v1/supplier-orders', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE']);
+    reply.header('cache-control', 'no-store');
+    return repository.listSupplierOrders(
+      session.principal,
+      ListSupplierOrdersQuerySchema.parse(request.query),
+    );
+  });
+
+  app.post('/api/v1/supplier-orders', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = RecordSupplierOrderRequestSchema.parse(request.body);
+    const result = await repository.recordSupplierOrder(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'RECORD_SUPPLIER_ORDER', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(result.replayed ? 200 : 201).send({ data: result.data });
+  });
+
+  app.post('/api/v1/supplier-orders/:eventId/cancellations', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { eventId } = SupplierOrderEventParamsSchema.parse(request.params);
+    const input = CancelSupplierOrderRequestSchema.parse(request.body);
+    const result = await repository.cancelSupplierOrder(
+      session.principal,
+      eventId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CANCEL_SUPPLIER_ORDER', eventId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(result.replayed ? 200 : 201).send({ data: result.data });
+  });
+
+  app.post('/api/v1/supplier-source-returns', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = RecordSupplierSourceReturnRequestSchema.parse(request.body);
+    const result = await repository.recordSupplierSourceReturn(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'RECORD_SUPPLIER_SOURCE_RETURN', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.status(result.replayed ? 200 : 201).send({ data: result.data });
   });
 
   app.get('/api/v1/inbound-receipts', async (request) => {
@@ -1984,6 +2181,28 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
   });
 
   return app;
+}
+
+function supplierErrorStatus(code: SupplierReconciliationError['code']): number {
+  if (code === 'FORBIDDEN') return 403;
+  if (code === 'NOT_FOUND') return 404;
+  if (code === 'VALIDATION') return 400;
+  return 409;
+}
+
+/** A race between two writers of one B document line ends at the unique identity index. */
+function isSupplierIdentityViolation(error: unknown): boolean {
+  let current = error;
+  for (let depth = 0; depth < 8 && typeof current === 'object' && current !== null; depth += 1) {
+    if (
+      Reflect.get(current, 'code') === '23505' &&
+      Reflect.get(current, 'constraint') === 'supplier_external_events_identity_uidx'
+    ) {
+      return true;
+    }
+    current = Reflect.get(current, 'cause');
+  }
+  return false;
 }
 
 async function authenticate(
@@ -3096,6 +3315,123 @@ function openApiDocument(): Record<string, unknown> {
           security: cookieSecurity,
           responses: {
             '200': { description: 'Store-reported shortages awaiting warehouse check' },
+          },
+        },
+      },
+      '/api/v1/supplier-sources': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'ADMIN Reshare supplier sources' } },
+        },
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '201': { description: 'ADMIN created a supplier source' } },
+        },
+      },
+      '/api/v1/supplier-sources/{sourceId}/products': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': {
+              description:
+                'ADMIN puts SKUs under Reshare reconciliation (legacy inbound/adjustment refused)',
+            },
+          },
+        },
+      },
+      '/api/v1/supplier-reconciliation': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': {
+              description:
+                'ADMIN per-SKU S, B_eff, U, F, D and ledger position with a stale-check revision',
+            },
+          },
+        },
+      },
+      '/api/v1/supplier-reconciliation/history': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'ADMIN immutable observation history' } },
+        },
+      },
+      '/api/v1/supplier-stock-observations/preview': {
+        post: {
+          security: cookieSecurity,
+          responses: {
+            '200': { description: 'ADMIN read-only preview of an observation (coverage, F, D)' },
+          },
+        },
+      },
+      '/api/v1/supplier-stock-observations': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '201': { description: 'ADMIN confirmed observation; on-hand projected to R + F' },
+            '409': {
+              description:
+                'VERSION_CONFLICT, EXTERNAL_EVENT_COVERAGE_AMBIGUOUS, OBSERVATION_OUT_OF_ORDER, LEGACY_ATTESTATION_REQUIRED or IDEMPOTENCY_CONFLICT',
+            },
+          },
+        },
+      },
+      '/api/v1/supplier-commitments': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': {
+              description:
+                'Live holds of reconciled SKUs with their Reshare order state (scoped to the reader stores)',
+            },
+          },
+        },
+      },
+      '/api/v1/supplier-orders': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'Recorded Reshare orders (scoped)' } },
+        },
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '201': { description: 'HTKD/ADMIN recorded what Reshare accepted' },
+            '409': {
+              description:
+                'ORDER_SOURCE_NOT_ELIGIBLE, QUANTITY_EXCEEDED, DUPLICATE_EXTERNAL_EVENT or IDEMPOTENCY_CONFLICT',
+            },
+          },
+        },
+      },
+      '/api/v1/supplier-orders/{eventId}/cancellations': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '201': { description: 'Recorded a Reshare cancellation (never deletes)' } },
+        },
+      },
+      '/api/v1/supplier-source-returns': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '201': { description: 'ADMIN recorded bags Reshare made orderable again' },
           },
         },
       },

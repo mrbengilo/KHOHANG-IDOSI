@@ -13,6 +13,7 @@ export default defineConfig({
     // Needs the real API client (no mock fallback): runs in playwright.production.config.ts.
     '**/desktop-login-shell.spec.ts',
     '**/prominent-tabs.spec.ts',
+    '**/supplier-reconciliation.spec.ts',
   ],
   fullyParallel: false,
   retries: process.env.CI ? 2 : 0,

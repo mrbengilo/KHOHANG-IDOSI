@@ -103,6 +103,16 @@ export const ApiErrorCodeSchema = z.enum([
   'INTEGRATION_RESPONSE_INVALID',
   'SERVICE_BUSY',
   'INTERNAL_ERROR',
+  // Reshare supplier reconciliation (docs/supplier-stock-reconciliation.md).
+  'SOURCE_NOT_RECONCILED',
+  'SOURCE_RECONCILED',
+  'EXTERNAL_EVENT_COVERAGE_AMBIGUOUS',
+  'SOURCE_SHORTFALL',
+  'ORDER_SOURCE_NOT_ELIGIBLE',
+  'QUANTITY_EXCEEDED',
+  'DUPLICATE_EXTERNAL_EVENT',
+  'OBSERVATION_OUT_OF_ORDER',
+  'LEGACY_ATTESTATION_REQUIRED',
 ]);
 export type ApiErrorCode = z.infer<typeof ApiErrorCodeSchema>;
 

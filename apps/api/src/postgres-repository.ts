@@ -1,3 +1,23 @@
+import type {
+  AddSupplierSourceProductsRequest,
+  CancelSupplierOrderRequest,
+  ConfirmSupplierObservationRequest,
+  CreateSupplierSourceRequest,
+  ListSupplierOrdersQuery,
+  RecordSupplierOrderRequest,
+  RecordSupplierSourceReturnRequest,
+  SupplierBatch,
+  SupplierCommitmentsQuery,
+  SupplierCommitmentsResponse,
+  SupplierObservation,
+  SupplierObservationHistoryQuery,
+  SupplierObservationHistoryRow,
+  SupplierObservationPreview,
+  SupplierObservationRequest,
+  SupplierReconciliationQuery,
+  SupplierReconciliationResponse,
+  SupplierSource,
+} from '@idosi/contracts';
 import type { InboundStatistics, InboundStatisticsQuery } from '@idosi/contracts';
 import { loadInboundStatistics, InboundScopeError } from '@idosi/database';
 import type { ReceiptSummary } from '@idosi/contracts';
@@ -17,6 +37,20 @@ import {
   listPostgresAllocationDecisions,
   respondPostgresAllocationDecision,
 } from './postgres-allocation-decisions.js';
+import {
+  addPostgresSupplierSourceProducts,
+  cancelPostgresSupplierOrder,
+  confirmPostgresSupplierObservation,
+  createPostgresSupplierSource,
+  getPostgresSupplierReconciliation,
+  listPostgresSupplierCommitments,
+  listPostgresSupplierObservationHistory,
+  listPostgresSupplierOrders,
+  listPostgresSupplierSources,
+  previewPostgresSupplierObservation,
+  recordPostgresSupplierOrder,
+  recordPostgresSupplierSourceReturn,
+} from './postgres-supplier-reconciliation.js';
 import { listSessionDocuments as listDatabaseSessionDocuments } from '@idosi/database';
 import { listStoreBagOpenings } from '@idosi/database';
 import {
@@ -1479,6 +1513,139 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       data: rows.map(orderSessionDto),
       pagination: pagination(query.page, query.pageSize, totalRow?.value ?? 0),
     };
+  }
+
+  // Reshare supplier reconciliation ---------------------------------------------------------
+
+  public async listSupplierSources(actor: AuthenticatedPrincipal): Promise<SupplierSource[]> {
+    return listPostgresSupplierSources(db, actor);
+  }
+
+  public async createSupplierSource(
+    actor: AuthenticatedPrincipal,
+    input: CreateSupplierSourceRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<{ id: string }>> {
+    return createPostgresSupplierSource(db, actor, input, idempotencyKey, requestHash, context);
+  }
+
+  public async addSupplierSourceProducts(
+    actor: AuthenticatedPrincipal,
+    sourceId: string,
+    input: AddSupplierSourceProductsRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<{ added: string[] }>> {
+    return addPostgresSupplierSourceProducts(
+      db,
+      actor,
+      sourceId,
+      input,
+      idempotencyKey,
+      requestHash,
+      context,
+    );
+  }
+
+  public async getSupplierReconciliation(
+    actor: AuthenticatedPrincipal,
+    query: SupplierReconciliationQuery,
+  ): Promise<SupplierReconciliationResponse> {
+    return getPostgresSupplierReconciliation(db, actor, query);
+  }
+
+  public async previewSupplierObservation(
+    actor: AuthenticatedPrincipal,
+    input: SupplierObservationRequest,
+  ): Promise<SupplierObservationPreview> {
+    return previewPostgresSupplierObservation(db, actor, input);
+  }
+
+  public async confirmSupplierObservation(
+    actor: AuthenticatedPrincipal,
+    input: ConfirmSupplierObservationRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<SupplierObservation>> {
+    return confirmPostgresSupplierObservation(
+      db,
+      actor,
+      input,
+      idempotencyKey,
+      requestHash,
+      context,
+    );
+  }
+
+  public async listSupplierObservationHistory(
+    actor: AuthenticatedPrincipal,
+    query: SupplierObservationHistoryQuery,
+  ): Promise<Page<SupplierObservationHistoryRow>> {
+    return listPostgresSupplierObservationHistory(db, actor, query);
+  }
+
+  public async listSupplierCommitments(
+    actor: AuthenticatedPrincipal,
+    query: SupplierCommitmentsQuery,
+  ): Promise<SupplierCommitmentsResponse> {
+    return listPostgresSupplierCommitments(db, actor, query);
+  }
+
+  public async listSupplierOrders(
+    actor: AuthenticatedPrincipal,
+    query: ListSupplierOrdersQuery,
+  ): Promise<Page<SupplierBatch>> {
+    return listPostgresSupplierOrders(db, actor, query);
+  }
+
+  public async recordSupplierOrder(
+    actor: AuthenticatedPrincipal,
+    input: RecordSupplierOrderRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<SupplierBatch>> {
+    return recordPostgresSupplierOrder(db, actor, input, idempotencyKey, requestHash, context);
+  }
+
+  public async cancelSupplierOrder(
+    actor: AuthenticatedPrincipal,
+    eventId: string,
+    input: CancelSupplierOrderRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<SupplierBatch>> {
+    return cancelPostgresSupplierOrder(
+      db,
+      actor,
+      eventId,
+      input,
+      idempotencyKey,
+      requestHash,
+      context,
+    );
+  }
+
+  public async recordSupplierSourceReturn(
+    actor: AuthenticatedPrincipal,
+    input: RecordSupplierSourceReturnRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<SupplierBatch>> {
+    return recordPostgresSupplierSourceReturn(
+      db,
+      actor,
+      input,
+      idempotencyKey,
+      requestHash,
+      context,
+    );
   }
 
   public async listAllocationDecisions(

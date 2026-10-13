@@ -11,6 +11,7 @@ import {
 } from './schema.js';
 import { StoreOperationConflictError, StoreOperationValidationError } from './store-operations.js';
 import { withAdvisoryLock } from './transaction.js';
+import { loadSupplierMappedProductIds } from './supplier-commitments.js';
 import { applyWarehouseMovement } from './warehouse.js';
 
 export type WarehouseShortageCheckStatus = typeof warehouseShortageChecks.$inferSelect.status;
@@ -144,10 +145,18 @@ export async function resolveWarehouseShortageCheck(
         }
 
         const now = new Date();
+        // A Reshare-reconciled SKU has no shelf in A: B already deducted these units when it
+        // accepted the order, so "found" must not create free stock. Both answers release the
+        // hold and leave on-hand; bags B makes orderable again come back only through a
+        // recorded source return or the next observation.
+        const supplierReconciled = (await loadSupplierMappedProductIds(tx, [check.productId])).has(
+          check.productId,
+        );
+        const leavesOnHand = input.decision === 'lost' || supplierReconciled;
         await applyWarehouseMovement(tx, {
           productId: check.productId,
-          eventType: input.decision === 'lost' ? 'adjustment' : 'reservation_release',
-          onHandDelta: input.decision === 'lost' ? -check.quantity : 0,
+          eventType: leavesOnHand ? 'adjustment' : 'reservation_release',
+          onHandDelta: leavesOnHand ? -check.quantity : 0,
           reservedDelta: -check.quantity,
           sourceType: 'warehouse_shortage_check',
           sourceId: check.id,
@@ -155,8 +164,14 @@ export async function resolveWarehouseShortageCheck(
           reason:
             input.decision === 'lost'
               ? `Hàng thiếu xác nhận thất lạc: ${reason}`
-              : `Hàng thiếu xác nhận còn ở kho: ${reason}`,
-          metadata: { storeId: check.storeId, storeReceiptId: check.storeReceiptId },
+              : supplierReconciled
+                ? `Hàng thiếu nguồn Reshare xác nhận đã xử lý (không tự cộng khả dụng): ${reason}`
+                : `Hàng thiếu xác nhận còn ở kho: ${reason}`,
+          metadata: {
+            storeId: check.storeId,
+            storeReceiptId: check.storeReceiptId,
+            supplierReconciled,
+          },
           actorUserId: actor.id,
           occurredAt: now,
         });

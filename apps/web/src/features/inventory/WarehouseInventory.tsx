@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Button } from '../../components/Button';
 import { TabPanel, Tabs, type TabItem } from '../../components/Tabs';
 import { listAccessibleStores, listCatalog } from '../../lib/api';
@@ -117,6 +117,13 @@ function WarehouseStock({
         Đang có tại kho = có thể xuất + đang giữ/chờ xuất. Đã xuất là số bao lũy kế trên phiếu xuất,
         không phải tồn hiện tại.
       </p>
+      {!readOnly ? (
+        <p className="supplier-inventory-note">
+          Mặt hàng nguồn Reshare: “Có thể xuất” là phần còn phân bổ được theo{' '}
+          <Link to="/supplier-reconciliation">đối chiếu tồn Reshare</Link> (đã trừ hàng đã cấp nhưng
+          chưa đặt Reshare); không điều chỉnh tồn thủ công các mặt hàng này.
+        </p>
+      ) : null}
       {notice ? (
         <div className="operation-notice operation-notice--success" role="status">
           {notice}

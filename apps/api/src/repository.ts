@@ -2,6 +2,24 @@ import type { InboundStatistics, InboundStatisticsQuery } from '@idosi/contracts
 import type { ReceiptSummary } from '@idosi/contracts';
 import type { ListSessionDocumentsQuery, SessionDocument } from '@idosi/contracts';
 import type {
+  AddSupplierSourceProductsRequest,
+  CancelSupplierOrderRequest,
+  ConfirmSupplierObservationRequest,
+  CreateSupplierSourceRequest,
+  ListSupplierOrdersQuery,
+  RecordSupplierOrderRequest,
+  RecordSupplierSourceReturnRequest,
+  SupplierBatch,
+  SupplierCommitmentsQuery,
+  SupplierCommitmentsResponse,
+  SupplierObservation,
+  SupplierObservationHistoryQuery,
+  SupplierObservationHistoryRow,
+  SupplierObservationPreview,
+  SupplierObservationRequest,
+  SupplierReconciliationQuery,
+  SupplierReconciliationResponse,
+  SupplierSource,
   AllocationDecision,
   AllocationDecisionDetail,
   ListAllocationDecisionsQuery,
@@ -279,7 +297,80 @@ export interface SessionActivity {
   readonly lastSeenAt: Date;
 }
 
-export interface WarehouseRepository {
+/**
+ * Reshare supplier reconciliation (docs/supplier-stock-reconciliation.md). Observation and
+ * source configuration are Admin-only; B orders are HTKD (assigned, active stores) or Admin;
+ * commitment and order reads are scoped to the reader's stores.
+ */
+export interface SupplierReconciliationRepository {
+  listSupplierSources(actor: AuthenticatedPrincipal): Promise<SupplierSource[]>;
+  createSupplierSource(
+    actor: AuthenticatedPrincipal,
+    input: CreateSupplierSourceRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<{ id: string }>>;
+  addSupplierSourceProducts(
+    actor: AuthenticatedPrincipal,
+    sourceId: string,
+    input: AddSupplierSourceProductsRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<{ added: string[] }>>;
+  getSupplierReconciliation(
+    actor: AuthenticatedPrincipal,
+    query: SupplierReconciliationQuery,
+  ): Promise<SupplierReconciliationResponse>;
+  previewSupplierObservation(
+    actor: AuthenticatedPrincipal,
+    input: SupplierObservationRequest,
+  ): Promise<SupplierObservationPreview>;
+  confirmSupplierObservation(
+    actor: AuthenticatedPrincipal,
+    input: ConfirmSupplierObservationRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<SupplierObservation>>;
+  listSupplierObservationHistory(
+    actor: AuthenticatedPrincipal,
+    query: SupplierObservationHistoryQuery,
+  ): Promise<Page<SupplierObservationHistoryRow>>;
+  listSupplierCommitments(
+    actor: AuthenticatedPrincipal,
+    query: SupplierCommitmentsQuery,
+  ): Promise<SupplierCommitmentsResponse>;
+  listSupplierOrders(
+    actor: AuthenticatedPrincipal,
+    query: ListSupplierOrdersQuery,
+  ): Promise<Page<SupplierBatch>>;
+  recordSupplierOrder(
+    actor: AuthenticatedPrincipal,
+    input: RecordSupplierOrderRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<SupplierBatch>>;
+  cancelSupplierOrder(
+    actor: AuthenticatedPrincipal,
+    eventId: string,
+    input: CancelSupplierOrderRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<SupplierBatch>>;
+  recordSupplierSourceReturn(
+    actor: AuthenticatedPrincipal,
+    input: RecordSupplierSourceReturnRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<SupplierBatch>>;
+}
+
+export interface WarehouseRepository extends SupplierReconciliationRepository {
   ready(): Promise<boolean>;
   close(): Promise<void>;
 

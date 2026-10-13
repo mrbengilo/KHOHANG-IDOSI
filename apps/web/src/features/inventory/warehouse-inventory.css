@@ -198,3 +198,8 @@
 .warehouse-adjustment-dialog .dialog__actions .button {
   min-height: 44px;
 }
+.supplier-inventory-note {
+  margin: 0 0 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}

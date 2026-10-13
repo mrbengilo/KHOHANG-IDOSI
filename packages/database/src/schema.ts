@@ -3271,6 +3271,394 @@ export const testDataResetBaselines = pgTable(
   ],
 );
 
+// ---------------------------------------------------------------------------------------------
+// Supplier (Reshare) stock reconciliation — docs/supplier-stock-reconciliation.md
+// ---------------------------------------------------------------------------------------------
+
+export const supplierSourceProductStatusEnum = pgEnum('supplier_source_product_status', [
+  'pending_baseline',
+  'active',
+  'needs_reconciliation',
+]);
+export const supplierEventKindEnum = pgEnum('supplier_event_kind', [
+  'order',
+  'order_cancel',
+  'source_return',
+]);
+export const supplierEventCoverageEnum = pgEnum('supplier_event_coverage', [
+  'open',
+  'covered',
+  'ambiguous',
+  'not_applicable',
+]);
+
+/** One external warehouse (B) whose orderable stock C observes; configured, never hard-coded. */
+export const supplierSources = pgTable(
+  'supplier_sources',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    isActive: boolean('is_active').notNull().default(true),
+    createdByUserId: uuid('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('supplier_sources_code_uidx').on(table.code),
+    check('supplier_sources_code_valid', sql`${table.code} ~ '^[A-Z0-9][A-Z0-9_-]{1,39}$'`),
+    check('supplier_sources_name_length', sql`length(btrim(${table.name})) BETWEEN 1 AND 200`),
+  ],
+);
+
+/**
+ * A SKU whose central-warehouse availability is projected from one supplier source. Balances
+ * are per SKU, so a SKU belongs to at most one reconciled source; its legacy inbound and
+ * manual increases are refused while mapped. `revision` moves with every supplier command so a
+ * stale preview is detected even when the warehouse balance itself did not move.
+ */
+export const supplierSourceProducts = pgTable(
+  'supplier_source_products',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    sourceId: uuid('source_id')
+      .notNull()
+      .references(() => supplierSources.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    status: supplierSourceProductStatusEnum('status').notNull().default('pending_baseline'),
+    revision: integer('revision').notNull().default(1),
+    baselineObservationLineId: uuid('baseline_observation_line_id').references(
+      (): AnyPgColumn => supplierStockObservationLines.id,
+      { onDelete: 'restrict' },
+    ),
+    blockReason: text('block_reason'),
+    blockedAt: timestamp('blocked_at', { withTimezone: true }),
+    createdByUserId: uuid('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('supplier_source_products_product_uidx').on(table.productId),
+    index('supplier_source_products_source_idx').on(table.sourceId, table.status),
+    check('supplier_source_products_revision_positive', sql`${table.revision} > 0`),
+    check(
+      'supplier_source_products_baseline_state',
+      sql`(${table.status} = 'pending_baseline') = (${table.baselineObservationLineId} IS NULL)`,
+    ),
+    check(
+      'supplier_source_products_block_state',
+      sql`(${table.status} = 'needs_reconciliation') = (${table.blockReason} IS NOT NULL AND ${table.blockedAt} IS NOT NULL)`,
+    ),
+    check(
+      'supplier_source_products_block_reason_length',
+      sql`${table.blockReason} IS NULL OR length(btrim(${table.blockReason})) BETWEEN 3 AND 500`,
+    ),
+  ],
+);
+
+/** What C saw at B at observedAt. Immutable once confirmed; corrected by a later observation. */
+export const supplierStockObservations = pgTable(
+  'supplier_stock_observations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    sourceId: uuid('source_id')
+      .notNull()
+      .references(() => supplierSources.id, { onDelete: 'restrict' }),
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
+    note: text('note'),
+    evidenceRef: text('evidence_ref'),
+    createdByUserId: uuid('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    idempotencyKey: text('idempotency_key').notNull(),
+    requestHash: text('request_hash').notNull(),
+    requestId: text('request_id'),
+  },
+  (table) => [
+    uniqueIndex('supplier_stock_observations_actor_key_uidx').on(
+      table.createdByUserId,
+      table.idempotencyKey,
+    ),
+    index('supplier_stock_observations_source_observed_idx').on(
+      table.sourceId,
+      table.observedAt.desc(),
+      table.id.desc(),
+    ),
+    check(
+      'supplier_stock_observations_note_length',
+      sql`${table.note} IS NULL OR length(${table.note}) <= 500`,
+    ),
+    check(
+      'supplier_stock_observations_evidence_length',
+      sql`${table.evidenceRef} IS NULL OR length(${table.evidenceRef}) <= 200`,
+    ),
+    check(
+      'supplier_stock_observations_not_future',
+      sql`${table.observedAt} <= ${table.recordedAt} + interval '5 minutes'`,
+    ),
+  ],
+);
+
+/**
+ * One SKU of an observation with the full before/after of its reconciliation: S, B_eff, the
+ * commitment split, F, D and the ledger entry (if any) that moved on-hand to R + F.
+ */
+export const supplierStockObservationLines = pgTable(
+  'supplier_stock_observation_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    observationId: uuid('observation_id')
+      .notNull()
+      .references(() => supplierStockObservations.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    observedQuantity: integer('observed_quantity').notNull(),
+    previousBaselineLineId: uuid('previous_baseline_line_id').references(
+      (): AnyPgColumn => supplierStockObservationLines.id,
+      { onDelete: 'restrict' },
+    ),
+    coveredEventCount: integer('covered_event_count').notNull().default(0),
+    pendingDelta: integer('pending_delta').notNull().default(0),
+    effectiveSupplierQuantity: integer('effective_supplier_quantity').notNull(),
+    offerHoldQuantity: integer('offer_hold_quantity').notNull(),
+    unorderedReservedQuantity: integer('unordered_reserved_quantity').notNull(),
+    orderedReservedQuantity: integer('ordered_reserved_quantity').notNull(),
+    attestedUnlinkedQuantity: integer('attested_unlinked_quantity').notNull().default(0),
+    unorderedCommitmentQuantity: integer('unordered_commitment_quantity').notNull(),
+    freeQuantity: integer('free_quantity').notNull(),
+    shortfallQuantity: integer('shortfall_quantity').notNull(),
+    onHandBefore: integer('on_hand_before').notNull(),
+    reservedBefore: integer('reserved_before').notNull(),
+    onHandAfter: integer('on_hand_after').notNull(),
+    balanceVersionBefore: integer('balance_version_before').notNull(),
+    ledgerEntryId: uuid('ledger_entry_id').references(() => warehouseLedgerEntries.id, {
+      onDelete: 'restrict',
+    }),
+    statusBefore: supplierSourceProductStatusEnum('status_before').notNull(),
+    statusAfter: supplierSourceProductStatusEnum('status_after').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('supplier_stock_observation_lines_observation_product_uidx').on(
+      table.observationId,
+      table.productId,
+    ),
+    index('supplier_stock_observation_lines_product_idx').on(
+      table.productId,
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
+    check(
+      'supplier_stock_observation_lines_quantities_valid',
+      sql`${table.observedQuantity} >= 0 AND ${table.coveredEventCount} >= 0 AND ${table.offerHoldQuantity} >= 0 AND ${table.unorderedReservedQuantity} >= 0 AND ${table.orderedReservedQuantity} >= 0 AND ${table.attestedUnlinkedQuantity} >= 0 AND ${table.freeQuantity} >= 0 AND ${table.shortfallQuantity} >= 0 AND ${table.onHandBefore} >= 0 AND ${table.reservedBefore} >= 0 AND ${table.balanceVersionBefore} >= 0`,
+    ),
+    check(
+      'supplier_stock_observation_lines_formula',
+      sql`${table.unorderedCommitmentQuantity} = ${table.offerHoldQuantity} + ${table.unorderedReservedQuantity} AND ${table.effectiveSupplierQuantity} = ${table.observedQuantity} + ${table.pendingDelta} AND ${table.freeQuantity} - ${table.shortfallQuantity} = ${table.effectiveSupplierQuantity} - ${table.unorderedCommitmentQuantity} AND (${table.freeQuantity} = 0 OR ${table.shortfallQuantity} = 0)`,
+    ),
+    check(
+      'supplier_stock_observation_lines_projection',
+      sql`${table.onHandAfter} = ${table.reservedBefore} + ${table.freeQuantity}`,
+    ),
+  ],
+);
+
+/** One recorded supplier command: a B order, a B cancellation or a confirmed source return. */
+export const supplierEventBatches = pgTable(
+  'supplier_event_batches',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    sourceId: uuid('source_id')
+      .notNull()
+      .references(() => supplierSources.id, { onDelete: 'restrict' }),
+    kind: supplierEventKindEnum('kind').notNull(),
+    externalRef: text('external_ref').notNull(),
+    storeId: uuid('store_id').references(() => stores.id, { onDelete: 'restrict' }),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
+    note: text('note'),
+    createdByUserId: uuid('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    idempotencyKey: text('idempotency_key').notNull(),
+    requestHash: text('request_hash').notNull(),
+    requestId: text('request_id'),
+  },
+  (table) => [
+    uniqueIndex('supplier_event_batches_actor_key_uidx').on(
+      table.createdByUserId,
+      table.idempotencyKey,
+    ),
+    index('supplier_event_batches_source_recorded_idx').on(
+      table.sourceId,
+      table.recordedAt.desc(),
+      table.id.desc(),
+    ),
+    index('supplier_event_batches_store_recorded_idx').on(
+      table.storeId,
+      table.recordedAt.desc(),
+      table.id.desc(),
+    ),
+    check(
+      'supplier_event_batches_external_ref_length',
+      sql`length(btrim(${table.externalRef})) BETWEEN 1 AND 100`,
+    ),
+    check(
+      'supplier_event_batches_note_length',
+      sql`${table.note} IS NULL OR length(${table.note}) <= 500`,
+    ),
+    check(
+      'supplier_event_batches_not_future',
+      sql`${table.occurredAt} <= ${table.recordedAt} + interval '5 minutes'`,
+    ),
+  ],
+);
+
+/**
+ * One B-side fact for one SKU. Its business identity (source, kind, B document, B line) is
+ * unique, so the same B order line can never be recorded twice. Never deleted: a cancellation
+ * is a new event that names the order it reverses.
+ */
+export const supplierExternalEvents = pgTable(
+  'supplier_external_events',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    batchId: uuid('batch_id')
+      .notNull()
+      .references(() => supplierEventBatches.id, { onDelete: 'restrict' }),
+    sourceId: uuid('source_id')
+      .notNull()
+      .references(() => supplierSources.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    kind: supplierEventKindEnum('kind').notNull(),
+    quantity: integer('quantity').notNull(),
+    externalRef: text('external_ref').notNull(),
+    externalLineRef: text('external_line_ref').notNull(),
+    storeId: uuid('store_id').references(() => stores.id, { onDelete: 'restrict' }),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
+    coverage: supplierEventCoverageEnum('coverage').notNull(),
+    coveredByObservationId: uuid('covered_by_observation_id').references(
+      () => supplierStockObservations.id,
+      { onDelete: 'restrict' },
+    ),
+    reversesEventId: uuid('reverses_event_id').references(
+      (): AnyPgColumn => supplierExternalEvents.id,
+      { onDelete: 'restrict' },
+    ),
+    createdByUserId: uuid('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+  },
+  (table) => [
+    uniqueIndex('supplier_external_events_identity_uidx').on(
+      table.sourceId,
+      table.kind,
+      table.externalRef,
+      table.externalLineRef,
+    ),
+    index('supplier_external_events_uncovered_idx')
+      .on(table.productId, table.occurredAt)
+      .where(sql`${table.coverage} IN ('open', 'ambiguous')`),
+    index('supplier_external_events_product_recorded_idx').on(
+      table.productId,
+      table.recordedAt.desc(),
+      table.id.desc(),
+    ),
+    index('supplier_external_events_batch_idx').on(table.batchId),
+    index('supplier_external_events_reverses_idx').on(table.reversesEventId),
+    check('supplier_external_events_quantity_positive', sql`${table.quantity} > 0`),
+    check(
+      'supplier_external_events_line_ref_length',
+      sql`length(btrim(${table.externalLineRef})) BETWEEN 1 AND 100`,
+    ),
+    check(
+      'supplier_external_events_coverage_kind',
+      sql`(${table.kind} = 'order_cancel') = (${table.coverage} = 'not_applicable')`,
+    ),
+    check(
+      'supplier_external_events_covered_has_observation',
+      sql`(${table.coverage} = 'covered') = (${table.coveredByObservationId} IS NOT NULL)`,
+    ),
+    check(
+      'supplier_external_events_cancel_reverses_order',
+      sql`(${table.kind} = 'order_cancel') = (${table.reversesEventId} IS NOT NULL) OR (${table.kind} = 'source_return')`,
+    ),
+    check(
+      'supplier_external_events_order_has_store',
+      sql`${table.kind} = 'source_return' OR ${table.storeId} IS NOT NULL`,
+    ),
+  ],
+);
+
+/**
+ * Which A commitment a B order (or cancellation) line covers. The commitment identity is the
+ * allocation line, which survives a hold being detached and re-created; reservation_id keeps
+ * the row the link was made against.
+ */
+export const supplierOrderSourceLinks = pgTable(
+  'supplier_order_source_links',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    eventId: uuid('event_id')
+      .notNull()
+      .references(() => supplierExternalEvents.id, { onDelete: 'restrict' }),
+    allocationLineId: uuid('allocation_line_id').references(() => allocationLines.id, {
+      onDelete: 'restrict',
+    }),
+    reservationId: uuid('reservation_id')
+      .notNull()
+      .references(() => reservations.id, { onDelete: 'restrict' }),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    quantity: integer('quantity').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('supplier_order_source_links_event_reservation_uidx').on(
+      table.eventId,
+      table.reservationId,
+    ),
+    index('supplier_order_source_links_allocation_line_idx').on(table.allocationLineId),
+    index('supplier_order_source_links_reservation_idx').on(table.reservationId),
+    index('supplier_order_source_links_store_idx').on(table.storeId, table.productId),
+    check('supplier_order_source_links_quantity_positive', sql`${table.quantity} > 0`),
+  ],
+);
+
+/** The explicit per-event answer an observation gave: reflected in its S or not. */
+export const supplierObservationEventCoverage = pgTable(
+  'supplier_observation_event_coverage',
+  {
+    observationId: uuid('observation_id')
+      .notNull()
+      .references(() => supplierStockObservations.id, { onDelete: 'restrict' }),
+    eventId: uuid('event_id')
+      .notNull()
+      .references(() => supplierExternalEvents.id, { onDelete: 'restrict' }),
+    included: boolean('included').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.observationId, table.eventId] }),
+    index('supplier_observation_event_coverage_event_idx').on(table.eventId),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Store = typeof stores.$inferSelect;

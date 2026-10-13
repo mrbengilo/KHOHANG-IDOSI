@@ -14,6 +14,7 @@ import {
   PackageCheck,
   PackageOpen,
   PackagePlus,
+  Scale,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
@@ -50,6 +51,7 @@ const navGroupLabel: Record<NavGroup, string> = {
 const navEntries: NavEntry[] = [
   { to: '/', label: 'Tổng quan', icon: LayoutDashboard },
   { to: '/warehouse-inbound', label: 'Nhập kho tổng', icon: PackageCheck },
+  { to: '/supplier-reconciliation', label: 'Đối chiếu Reshare', icon: Scale },
   {
     to: '/allocations',
     label: 'Phân bổ hàng hóa',
