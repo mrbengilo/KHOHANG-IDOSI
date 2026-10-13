@@ -257,7 +257,7 @@ interface Log {
   failNextConfirm: boolean;
 }
 
-async function mockApi(page: Page, role: Role): Promise<Log> {
+async function mockApi(page: Page, role: Role, unlinkedLegacyQuantity = 0): Promise<Log> {
   const log: Log = { mutations: [], orderQueries: [], failNextConfirm: false };
   let previews = 0;
   await page.route('**/api/v1/**', async (route) => {
@@ -327,7 +327,9 @@ async function mockApi(page: Page, role: Role): Promise<Log> {
     if (path === '/supplier-stock-observations/preview') {
       previews += 1;
       const body = request.postDataJSON() as { eventCoverage: { eventId: string }[] };
-      return json({ data: preview(body.eventCoverage.length > 0 || previews > 2) });
+      const data = preview(body.eventCoverage.length > 0 || previews > 2);
+      data.lines[0]!.unlinkedLegacyQuantity = unlinkedLegacyQuantity;
+      return json({ data });
     }
     if (path === '/supplier-stock-observations') {
       if (log.failNextConfirm) {
@@ -488,6 +490,139 @@ test('Admin updates Reshare stock: re-observing frees nothing, RE coverage is ex
   await expectNoPageOverflow(page);
 });
 
+test('RE deducted bags stay editable while clearing and saving partial coverage', async ({
+  page,
+}) => {
+  const log = await mockApi(page, 'ADMIN');
+  await page.goto('/supplier-reconciliation?tab=reconcile');
+  await page
+    .getByRole('row')
+    .filter({ hasText: 'NAM-01' })
+    .first()
+    .getByRole('button', { name: 'Đối chiếu' })
+    .click();
+  await page.getByLabel('Tổng số bao Reshare đang cho đặt của NAM-01').fill('26');
+  await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
+  await page.getByLabel('Đã gồm trong số vừa nhập').check();
+  const selected = page.getByLabel('Đã trừ trong số vừa nhập');
+  const quantity = page.getByLabel('Số bao của RE-000001 đã trừ trong số tồn');
+  const save = page.getByRole('button', { name: 'Lưu cập nhật tồn' });
+  await selected.check();
+  await expect(quantity).toHaveValue('2');
+  await quantity.fill('');
+  await expect(quantity).toBeVisible();
+  await expect(selected).toBeChecked();
+  await expect(save).toBeDisabled();
+  await page.getByRole('button', { name: 'Xem trước lại' }).click();
+  await expect(page.getByRole('alert').first()).toContainText('RE-000001');
+  expect(log.mutations.filter((r) => r.url().endsWith('/preview'))).toHaveLength(1);
+  for (const invalid of ['0', '3', '1.5']) {
+    await quantity.fill(invalid);
+    await page.getByRole('button', { name: 'Xem trước lại' }).click();
+    await expect(save).toBeDisabled();
+    expect(log.mutations.filter((r) => r.url().endsWith('/preview'))).toHaveLength(1);
+  }
+  await selected.uncheck();
+  await expect(quantity).toHaveCount(0);
+  await selected.check();
+  await quantity.fill('1');
+  await expect(save).toBeDisabled();
+  await page.getByRole('button', { name: 'Xem trước lại' }).click();
+  await expect(save).toBeEnabled();
+  await save.click();
+  const saved = log.mutations.find((r) => r.url().endsWith('/supplier-stock-observations'))!;
+  expect(saved.postDataJSON()).toMatchObject({
+    lines: [{ productId, observedQuantity: 26 }],
+    reshareCoverage: [{ reshareOrderLineId: reshareLineId, quantity: 1 }],
+  });
+});
+
+test('legacy attestation and changed totals require a fresh preview before saving', async ({
+  page,
+}) => {
+  const log = await mockApi(page, 'ADMIN', 2);
+  await page.goto('/supplier-reconciliation?tab=reconcile');
+  await page
+    .getByRole('row')
+    .filter({ hasText: 'NAM-01' })
+    .first()
+    .getByRole('button', { name: 'Đối chiếu' })
+    .click();
+  const total = page.getByLabel('Tổng số bao Reshare đang cho đặt của NAM-01');
+  await total.fill('7');
+  await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
+  await page.getByLabel('Đã gồm trong số vừa nhập').check();
+  await page.getByRole('button', { name: 'Xem trước lại' }).click();
+  const save = page.getByRole('button', { name: 'Lưu cập nhật tồn' });
+  await expect(save).toBeDisabled();
+  await expect(page.locator('.supplier-save-help')).toContainText('Xác nhận các lượng giữ cũ');
+  await total.fill('26');
+  await page.getByLabel('Tôi xác nhận các lượng giữ trước').check();
+  await expect(save).toBeDisabled();
+  await page.getByRole('button', { name: 'Xem trước lại' }).click();
+  await expect(save).toBeEnabled();
+  // Editing again must never save an obsolete preview, including clearing a RE checkbox.
+  await page.getByLabel('Đã trừ trong số vừa nhập').check();
+  await expect(save).toBeDisabled();
+  await page.getByLabel('Đã trừ trong số vừa nhập').uncheck();
+  await page.getByRole('button', { name: 'Xem trước lại' }).click();
+  await expect(save).toBeEnabled();
+  await save.click();
+  const saved = log.mutations.find((r) => r.url().endsWith('/supplier-stock-observations'))!;
+  expect(saved.postDataJSON()).toMatchObject({
+    lines: [{ productId, observedQuantity: 26 }],
+    attestUnlinkedAsNotOrdered: true,
+    reshareCoverage: [],
+  });
+});
+
+test('RE quantity has usable dimensions and preview is next to save at responsive widths', async ({
+  page,
+}, testInfo) => {
+  await mockApi(page, 'ADMIN');
+  await page.goto('/supplier-reconciliation?tab=reconcile');
+  await page
+    .getByRole('row')
+    .filter({ hasText: 'NAM-01' })
+    .first()
+    .getByRole('button', { name: 'Đối chiếu' })
+    .click();
+  await page.getByLabel('Tổng số bao Reshare đang cho đặt của NAM-01').fill('26');
+  await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
+  await page.getByLabel('Đã trừ trong số vừa nhập').check();
+  const quantity = page.getByLabel('Số bao của RE-000001 đã trừ trong số tồn');
+  for (const width of [360, 390, 412, 768, 1366, 1440, 2560]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const box = await quantity.boundingBox();
+    expect(box!.width).toBeGreaterThanOrEqual(100);
+    expect(box!.height).toBeGreaterThanOrEqual(44);
+    await expectNoPageOverflow(page);
+    await expect(
+      page
+        .locator('.supplier-preview .supplier-actions')
+        .getByRole('button', { name: 'Xem trước lại' }),
+    ).toBeVisible();
+    if (width === 390 || width === 1440) {
+      await page.screenshot({
+        path: testInfo.outputPath(`reshare-input-${width}.png`),
+        fullPage: true,
+        animations: 'disabled',
+      });
+    }
+  }
+  await page.getByLabel('Đã gồm trong số vừa nhập').check();
+  await page.getByRole('button', { name: 'Xem trước lại' }).click();
+  await expect(page.getByRole('button', { name: 'Lưu cập nhật tồn' })).toBeEnabled();
+  for (const width of [390, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.screenshot({
+      path: testInfo.outputPath(`reshare-save-enabled-${width}.png`),
+      fullPage: true,
+      animations: 'disabled',
+    });
+  }
+});
+
 test('HTKD sees its orders; manual Reshare records are only kept as old data', async ({ page }) => {
   const log = await mockApi(page, 'HTKD');
   await page.goto('/supplier-reconciliation?tab=settings');
@@ -578,12 +713,17 @@ for (const role of ['ADMIN', 'HTKD', 'STORE'] as const) {
       const box = await group.boundingBox();
       expect(box!.x).toBeGreaterThanOrEqual(0);
       expect(box!.x + box!.width).toBeLessThanOrEqual(width + 1);
-      for (const button of await page.getByRole('button').all()) {
-        if (!(await button.isVisible())) continue;
-        const fits = await button.evaluate(
-          (element) => element.scrollWidth <= element.clientWidth + 1 && element.clientHeight >= 32,
-        );
-        expect(fits, await button.innerText()).toBe(true);
+      // Read labels and dimensions together: responsive navigation can replace buttons on resize.
+      const buttons = await page.getByRole('button').evaluateAll((elements) =>
+        elements
+          .filter((element) => element.getClientRects().length > 0)
+          .map((element) => ({
+            label: element.textContent,
+            fits: element.scrollWidth <= element.clientWidth + 1 && element.clientHeight >= 32,
+          })),
+      );
+      for (const button of buttons) {
+        expect(button.fits, button.label ?? '').toBe(true);
       }
       if (role === 'ADMIN' && (width === 390 || width === 1440)) {
         await page.screenshot({

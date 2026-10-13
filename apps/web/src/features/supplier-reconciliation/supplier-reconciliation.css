@@ -289,13 +289,34 @@
   min-height: 44px;
   font-size: 14px;
 }
-.supplier-coverage__choice input,
+.supplier-coverage__choice input:is([type='checkbox'], [type='radio']),
 .supplier-attest input,
 .supplier-settings__products input {
   width: 20px;
   height: 20px;
   margin: 0;
   accent-color: var(--brand);
+}
+.supplier-coverage__choice .supplier-coverage__quantity {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.supplier-coverage__quantity .supplier-quantity-input {
+  width: 9rem;
+  min-height: 44px;
+}
+.supplier-save-help {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+.supplier-preview > .supplier-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 .supplier-batch {
   display: grid;
