@@ -6,6 +6,9 @@ import {
 } from '@idosi/contracts';
 import {
   AllocationDecisionParamsSchema,
+  AllocationDecisionViewQuerySchema,
+  ListReshareOrdersQuerySchema,
+  ListReshareOrdersResponseSchema,
   AllocationDecisionResponseSchema,
   ListAllocationDecisionsQuerySchema,
   ListAllocationDecisionsResponseSchema,
@@ -827,18 +830,23 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
   app.get('/api/v1/allocation-decisions/:decisionId', async (request, reply) => {
     const session = await authenticate(request, repository);
     const { decisionId } = AllocationDecisionParamsSchema.parse(request.params);
+    const view = AllocationDecisionViewQuerySchema.parse(request.query);
     reply.header('cache-control', 'no-store');
     return AllocationDecisionResponseSchema.parse({
-      data: await repository.getAllocationDecision(session.principal, decisionId),
+      data: await repository.getAllocationDecision(session.principal, decisionId, {
+        includeReshare: view.includeReshare === true,
+      }),
     });
   });
 
   app.post('/api/v1/allocation-decisions/:decisionId/respond', async (request, reply) => {
     const session = await authenticate(request, repository);
-    // Only the receiving side answers; Admin and HTKD read results but never answer for a store.
-    requireRole(session.principal, ['STORE', 'WHOLESALE']);
+    // The receiving side answers; an HTKD assigned to the store may accept (never reject) on
+    // its behalf. Admin reads results but never answers for a store.
+    requireRole(session.principal, ['STORE', 'WHOLESALE', 'HTKD']);
     const headers = IdempotencyHeadersSchema.parse(request.headers);
     const { decisionId } = AllocationDecisionParamsSchema.parse(request.params);
+    const view = AllocationDecisionViewQuerySchema.parse(request.query);
     const input = RespondAllocationDecisionRequestSchema.parse(request.body);
     const result = await repository.respondAllocationDecision(
       session.principal,
@@ -847,9 +855,20 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
       headers['idempotency-key'],
       hashCanonicalRequest({ operation: 'RESPOND_ALLOCATION_DECISION', decisionId, ...input }),
       requestContext(request),
+      { includeReshare: view.includeReshare === true },
     );
     reply.header('idempotency-replayed', String(result.replayed));
     return reply.send(AllocationDecisionResponseSchema.parse({ data: result.data }));
+  });
+
+  // Internal Reshare orders (docs/reshare-auto-orders.md): read-only history, server-scoped.
+  app.get('/api/v1/reshare-orders', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    const query = ListReshareOrdersQuerySchema.parse(request.query);
+    reply.header('cache-control', 'no-store');
+    return ListReshareOrdersResponseSchema.parse(
+      await repository.listReshareOrders(session.principal, query),
+    );
   });
 
   app.get('/api/v1/allocations', async (request, reply) => {
@@ -3561,6 +3580,17 @@ function openApiDocument(): Record<string, unknown> {
           responses: { '200': { description: 'Scoped priority offers' } },
         },
       },
+      '/api/v1/reshare-orders': {
+        get: {
+          security: cookieSecurity,
+          summary:
+            'History of internal Reshare orders by allocation result: ordered (RE committed and issued), not ordered (waiting for acceptance) or cancelled. Paged by result (lines of one order never split), filtered server-side by session, time range, store in scope, product, status and RE code.',
+          responses: {
+            '200': { description: 'Page of RE order history rows' },
+            '403': { description: 'Store outside the caller scope' },
+          },
+        },
+      },
       '/api/v1/allocation-decisions': {
         get: {
           security: cookieSecurity,
@@ -3584,7 +3614,7 @@ function openApiDocument(): Record<string, unknown> {
         post: {
           security: cookieSecurity,
           summary:
-            'Accept or reject a PENDING allocation result once, for the whole result. ACCEPT releases its shipment (stock stays reserved until the actual receipt is finalized); REJECT releases its reservations and keeps goods carried from earlier accepted results held. Body: { action, expectedVersion, reason? }.',
+            'Accept or reject a PENDING allocation result once, for the whole result. ACCEPT creates its internal Reshare order (RE-000001…), issues the granted goods out of the central warehouse (on-hand and reserved drop together; the store stock grows only at the finalized receipt) and releases its shipment, atomically. REJECT releases its reservations and keeps goods carried from earlier accepted results held. An assigned HTKD may ACCEPT, never REJECT. Body: { action, expectedVersion, reason? }; query includeReshare=true adds allowedActions and reshareOrder.',
           parameters: [
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
@@ -3592,7 +3622,7 @@ function openApiDocument(): Record<string, unknown> {
             '200': { description: 'Answered (or replayed) allocation result decision' },
             '400': { description: 'Invalid body' },
             '401': { description: 'Unauthenticated' },
-            '403': { description: 'Not the receiving store account' },
+            '403': { description: 'Not the receiving side or an assigned HTKD (accept only)' },
             '404': { description: 'Unknown result or outside the caller scope' },
             '409': {
               description:

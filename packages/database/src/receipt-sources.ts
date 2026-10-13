@@ -297,7 +297,8 @@ export async function listHeldAllocationStock(
 ): Promise<readonly HeldAllocationRecord[]> {
   if (input.storeIds?.length === 0) return [];
   const conditions: SQL[] = [
-    eq(reservations.status, 'active'),
+    // Issued (RE) goods waiting for the next ordinary shipment are held for delivery too.
+    inArray(reservations.status, ['active', 'issued']),
     isNull(reservations.deletedAt),
     isNotNull(reservations.allocationLineId),
     isNull(reservations.outboundRequestLineId),

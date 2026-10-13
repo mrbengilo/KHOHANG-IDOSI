@@ -219,8 +219,8 @@ test('AC01: Reshare shows 3, A granted 3, C re-observes 3 → nothing more is al
     );
 
     const reconcile = async (quantity: string, expectedNotice: string) => {
-      await page.goto('/supplier-reconciliation');
-      const summary = page.getByRole('region', { name: 'Đối chiếu tồn Reshare theo mặt hàng' });
+      await page.goto('/supplier-reconciliation?tab=reconcile');
+      const summary = page.getByRole('region', { name: 'Cập nhật tồn Reshare theo mặt hàng' });
       await summary.getByLabel('Tìm mặt hàng').fill(product!.sku);
       await summary.getByRole('button', { name: 'Tìm', exact: true }).click();
       const row = summary.getByRole('row').filter({ hasText: product!.sku }).first();
@@ -233,10 +233,10 @@ test('AC01: Reshare shows 3, A granted 3, C re-observes 3 → nothing more is al
       if (await page.getByRole('button', { name: 'Xem trước lại' }).isEnabled()) {
         await page.getByRole('button', { name: 'Xem trước lại' }).click();
       }
-      await page.getByRole('button', { name: 'Lưu đối chiếu' }).click();
-      await expect(page.getByRole('status').filter({ hasText: 'Đã lưu đối chiếu' })).toContainText(
-        expectedNotice,
-      );
+      await page.getByRole('button', { name: 'Lưu cập nhật tồn' }).click();
+      await expect(
+        page.getByRole('status').filter({ hasText: 'Đã lưu cập nhật tồn' }),
+      ).toContainText(expectedNotice);
     };
 
     // Day 1: C sees 3 at Reshare; all 3 are free.
@@ -252,7 +252,7 @@ test('AC01: Reshare shows 3, A granted 3, C re-observes 3 → nothing more is al
     expect(balance).toMatchObject({ onHandQuantity: 3, reservedQuantity: 3 });
 
     // The drill-down names the store, session and the bags still to order at Reshare.
-    const summary = page.getByRole('region', { name: 'Đối chiếu tồn Reshare theo mặt hàng' });
+    const summary = page.getByRole('region', { name: 'Cập nhật tồn Reshare theo mặt hàng' });
     const row = summary.getByRole('row').filter({ hasText: product!.sku }).first();
     await row.getByRole('button', { name: 'Xem giữ hàng' }).click();
     await expect(row.getByRole('button', { name: 'Thu gọn' })).toHaveAttribute(
@@ -271,9 +271,9 @@ test('AC01: Reshare shows 3, A granted 3, C re-observes 3 → nothing more is al
     }
     await page.setViewportSize({ width: 1440, height: 900 });
 
-    // Admin records what Reshare accepted (HTKD does the same for its stores).
-    await page.goto('/supplier-reconciliation?tab=orders');
-    const queue = page.getByRole('region', { name: 'Hàng chờ đặt Reshare' });
+    // A hold accepted before RE orders existed keeps the old manual record (old data section).
+    await page.goto('/supplier-reconciliation?tab=legacy');
+    const queue = page.getByRole('region', { name: 'Hàng giữ trước khi có đơn RE' });
     await queue.getByLabel('Mặt hàng').selectOption(product!.id);
     await queue.getByRole('checkbox', { name: `Chọn ${product!.sku} của ${store!.code}` }).check();
     await queue

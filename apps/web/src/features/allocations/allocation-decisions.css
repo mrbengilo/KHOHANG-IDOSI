@@ -27,8 +27,23 @@
 }
 .allocation-decision__status {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  min-width: 0;
+}
+/* The RE tag is a link to the order in the history; keep it a comfortable tap target. */
+.allocation-decision__reshare-tag {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  border-radius: 999px;
+  text-decoration: none;
+}
+.allocation-decision__reshare-tag:focus-visible {
+  outline: 3px solid var(--focus-ring, var(--brand));
+  outline-offset: 2px;
 }
 .allocation-decision__close {
   display: grid;

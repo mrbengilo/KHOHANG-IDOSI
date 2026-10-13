@@ -68,12 +68,33 @@ const commitment = (overrides: Partial<SupplierCommitment>): SupplierCommitment 
 
 describe('supplier reconciliation UI model', () => {
   it('gives each role only its tabs and falls back safely on deep links', () => {
-    expect(supplierTabsFor('ADMIN')).toEqual(['reconcile', 'orders', 'history', 'settings']);
+    // Every role starts on its RE orders; only Admin updates stock and configures sources.
+    expect(supplierTabsFor('ADMIN')).toEqual(['orders', 'reconcile', 'history', 'settings']);
     expect(supplierTabsFor('HTKD')).toEqual(['orders']);
-    expect(supplierTabsFor('STORE')).toEqual(['status']);
+    expect(supplierTabsFor('STORE')).toEqual(['orders']);
     expect(readSupplierTab('settings', 'HTKD')).toBe('orders');
     expect(readSupplierTab('history', 'ADMIN')).toBe('history');
-    expect(readSupplierTab(null, 'WHOLESALE')).toBe('status');
+    expect(readSupplierTab(null, 'WHOLESALE')).toBe('orders');
+    // The old "status" deep link opens the order history; manual records stay reachable.
+    expect(readSupplierTab('status', 'STORE')).toBe('orders');
+    expect(readSupplierTab('legacy', 'HTKD')).toBe('legacy');
+    expect(readSupplierTab('legacy', 'STORE')).toBe('orders');
+  });
+
+  it('counts RE orders not yet deducted by Reshare in the explanation', () => {
+    expect(
+      positionSentence(
+        position({
+          unorderedReservedQuantity: 0,
+          issuedUnreflectedQuantity: 4,
+          unorderedCommitmentQuantity: 4,
+          effectiveSupplierQuantity: 10,
+          freeQuantity: 6,
+        }),
+      ),
+    ).toBe(
+      'Reshare còn đặt được 10 bao, IDOSI đã giữ/cấp hoặc đã lập đơn RE nhưng số tồn chưa trừ 4 bao (gồm 4 bao đơn RE) → còn phân bổ được 6 bao.',
+    );
   });
 
   it('explains the AC01 situation without calling F the stock at Reshare', () => {

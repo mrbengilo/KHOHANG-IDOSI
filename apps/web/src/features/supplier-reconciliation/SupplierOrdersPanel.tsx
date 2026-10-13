@@ -129,9 +129,15 @@ export function SupplierOrdersPanel({
       ) : null}
       <section
         className="panel supplier-orders"
-        aria-label={readOnly ? 'Trạng thái đặt Reshare' : 'Hàng chờ đặt Reshare'}
+        aria-label={
+          readOnly ? 'Trạng thái đặt Reshare (dữ liệu cũ)' : 'Hàng giữ trước khi có đơn RE'
+        }
       >
-        <h2>{readOnly ? 'Hàng đang giữ cho cửa hàng' : 'Chờ đặt Reshare'}</h2>
+        <h2>
+          {readOnly
+            ? 'Hàng đang giữ cho cửa hàng'
+            : 'Hàng giữ trước khi có đơn RE (ghi nhận thủ công)'}
+        </h2>
         <p className="supplier-hint">
           {readOnly
             ? 'Trạng thái đặt Reshare của hàng đã phân bổ cho cửa hàng. Cửa hàng chỉ xem; xác nhận nhận hàng vẫn theo phiếu nhận hàng.'

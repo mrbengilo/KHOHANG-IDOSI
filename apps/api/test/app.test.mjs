@@ -4163,18 +4163,30 @@ describe('KHOHANG-IDOSI API', () => {
       notices.json().data.map((row) => [row.id, row.canRespond]),
       [[published.id, true]],
     );
+    // The assigned HTKD may accept for the store but never reject; without the opt-in the
+    // response keeps the older shape (no allowedActions / reshareOrder keys).
     const htkdView = await app.inject({
       method: 'GET',
       url: `/api/v1/allocation-decisions/${published.id}`,
       headers: { cookie: htkdCookie },
     });
     assert.equal(htkdView.statusCode, 200);
-    assert.equal(htkdView.json().data.canRespond, false);
-    assert.equal(
-      (await respond(htkdCookie, { action: 'ACCEPT', expectedVersion: 1 }, 'htkd-answer-0001'))
-        .statusCode,
-      403,
+    assert.equal(htkdView.json().data.canRespond, true);
+    assert.equal('allowedActions' in htkdView.json().data, false);
+    assert.equal('reshareOrder' in htkdView.json().data, false);
+    const htkdViewV2 = await app.inject({
+      method: 'GET',
+      url: `/api/v1/allocation-decisions/${published.id}?includeReshare=true`,
+      headers: { cookie: htkdCookie },
+    });
+    assert.deepEqual(htkdViewV2.json().data.allowedActions, ['ACCEPT']);
+    assert.equal(htkdViewV2.json().data.reshareOrder, null);
+    const htkdReject = await respond(
+      htkdCookie,
+      { action: 'REJECT', expectedVersion: 1 },
+      'htkd-answer-0001',
     );
+    assert.equal(htkdReject.statusCode, 403);
 
     const accepted = await respond(
       storeCookie,
@@ -4184,6 +4196,15 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(accepted.statusCode, 200);
     assert.equal(accepted.json().data.status, 'ACCEPTED');
     assert.equal(accepted.json().data.shipment.status, 'DISPATCHED');
+    const orders = await app.inject({
+      method: 'GET',
+      url: `/api/v1/reshare-orders?decisionId=${published.id}`,
+      headers: { cookie: storeCookie },
+    });
+    assert.equal(orders.statusCode, 200);
+    assert.equal(orders.json().data[0].status, 'ORDERED');
+    assert.match(orders.json().data[0].order.code, /^RE-\d{6}$/u);
+    assert.equal(orders.json().data[0].totalQuantity, 3);
     const replay = await respond(
       storeCookie,
       { action: 'ACCEPT', expectedVersion: 1 },

@@ -123,6 +123,11 @@ export const SupplierPositionSchema = z
     offerHoldQuantity: UnitQuantitySchema,
     unorderedReservedQuantity: UnitQuantitySchema,
     orderedReservedQuantity: UnitQuantitySchema,
+    /**
+     * RE orders issued out of A that no observation reflected yet (part of U). Only present when
+     * requested (includeIssued / reshareCoverage), so older bundles keep parsing.
+     */
+    issuedUnreflectedQuantity: UnitQuantitySchema.optional(),
     /** U. */
     unorderedCommitmentQuantity: UnitQuantitySchema,
     /** F. */
@@ -152,6 +157,10 @@ export const SupplierReconciliationQuerySchema = PaginationQuerySchema.extend({
   sourceId: EntityIdSchema.optional(),
   search: z.string().trim().max(120).optional(),
   filter: SupplierReconciliationFilterSchema.default('ALL'),
+  includeIssued: z
+    .enum(['true', 'false'])
+    .transform((value) => value === 'true')
+    .optional(),
 }).strict();
 export type SupplierReconciliationQuery = z.infer<typeof SupplierReconciliationQuerySchema>;
 
@@ -213,6 +222,18 @@ export const SupplierObservationRequestSchema = z
       .default([]),
     /** Cutover: holds that predate the baseline and have no recorded B order were not ordered. */
     attestUnlinkedAsNotOrdered: z.boolean().default(false),
+    /**
+     * "Số tồn này đã trừ các đơn…": RE line quantities already deducted in the total entered.
+     * Sending the field (even empty) also asks for the RE details in the preview response.
+     */
+    reshareCoverage: z
+      .array(
+        z
+          .object({ reshareOrderLineId: EntityIdSchema, quantity: PositiveUnitQuantitySchema })
+          .strict(),
+      )
+      .max(2_000)
+      .optional(),
     note: SupplierNoteSchema.optional(),
     evidenceRef: z.string().trim().max(200).optional(),
   })
@@ -268,6 +289,26 @@ export const SupplierObservationPreviewSchema = z
           undecidedEventCount: UnitQuantitySchema,
           coveredEventCount: UnitQuantitySchema,
           unlinkedLegacyQuantity: UnitQuantitySchema,
+          /** Issued RE lines still counted in U; only when reshareCoverage was sent. */
+          issuedOrders: z
+            .array(
+              z
+                .object({
+                  lineId: EntityIdSchema,
+                  orderId: EntityIdSchema,
+                  code: z.string(),
+                  storeId: EntityIdSchema,
+                  storeName: z.string(),
+                  orderedAt: IsoDateTimeSchema,
+                  quantity: PositiveUnitQuantitySchema,
+                  unreflectedQuantity: UnitQuantitySchema,
+                  declaredReflectedQuantity: UnitQuantitySchema,
+                  afterObservation: z.boolean(),
+                })
+                .strict(),
+            )
+            .optional(),
+          reflectedReshareQuantity: UnitQuantitySchema.optional(),
           /** Change of A on-hand this confirmation writes (R unchanged). */
           onHandDelta: SignedQuantitySchema,
         })

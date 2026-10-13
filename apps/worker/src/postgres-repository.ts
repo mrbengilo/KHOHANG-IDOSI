@@ -1007,7 +1007,9 @@ export async function materializeOutboundRequests(
           ),
         ),
         sql`${allocationLines.allocatedQuantity} > 0`,
-        eq(reservations.status, 'active'),
+        // Issued (RE) goods of an accepted result already left on-hand but are still owed to
+        // the store: the next ordinary shipment carries them exactly once, like held goods.
+        inArray(reservations.status, ['active', 'issued']),
         isNull(reservations.deletedAt),
         isNull(reservations.outboundRequestLineId),
         eq(reservations.storeId, allocationLines.storeId),
@@ -1092,7 +1094,7 @@ export async function materializeOutboundRequests(
               reservations.id,
               sources.map((line) => line.reservationId),
             ),
-            eq(reservations.status, 'active'),
+            inArray(reservations.status, ['active', 'issued']),
             isNull(reservations.outboundRequestLineId),
           ),
         )
@@ -1236,7 +1238,8 @@ async function toDomainWaitTickets(
           allocationLines.waitTicketId,
           rows.map((row) => row.id),
         ),
-        eq(reservations.status, 'active'),
+        // Owed to the store until received, whether still on-hand or issued with an RE order.
+        inArray(reservations.status, ['active', 'issued']),
         isNull(reservations.deletedAt),
       ),
     );

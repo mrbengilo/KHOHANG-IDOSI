@@ -116,16 +116,16 @@ describePostgres('09:00 shipments and store decisions (worker + PostgreSQL)', ()
         expect(earlierReservations.map((row) => row.status)).toEqual(['released']);
         expect(await balance(productId)).toEqual({ onHand: 30, reserved: 5 });
       } else {
-        // Whichever committed first: the accepted goods ride this shipment or wait held,
-        // never both and never lost.
-        const active = earlierReservations.filter((row) => row.status === 'active');
-        expect(active).toHaveLength(1);
+        // Whichever committed first: the accepted goods (issued with their RE order) ride this
+        // shipment or wait for the next one, never both and never lost.
+        const issued = earlierReservations.filter((row) => row.status === 'issued');
+        expect(issued).toHaveLength(1);
         if (sourceRuns.includes(earlier.runId)) {
-          expect(active[0]!.outboundRequestLineId).toBe(shipment!.lines[0]!.id);
+          expect(issued[0]!.outboundRequestLineId).toBe(shipment!.lines[0]!.id);
         } else {
-          expect(active[0]!.outboundRequestLineId).toBeNull();
+          expect(issued[0]!.outboundRequestLineId).toBeNull();
         }
-        expect(await balance(productId)).toEqual({ onHand: 30, reserved: 9 });
+        expect(await balance(productId)).toEqual({ onHand: 26, reserved: 5 });
       }
       await expectReservedMatchesActive(productId);
     }
@@ -366,7 +366,8 @@ describePostgres('09:00 shipments and store decisions (worker + PostgreSQL)', ()
       .where(
         and(
           eq(reservations.outboundRequestLineId, outboundLineId),
-          eq(reservations.status, 'active'),
+          // Owed goods on the line: on-hand holds and holds issued with an RE order.
+          inArray(reservations.status, ['active', 'issued']),
         ),
       );
     return [...new Set(rows.map((row) => row.runId))].sort();

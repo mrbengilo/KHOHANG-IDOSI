@@ -190,6 +190,19 @@ describePostgres('priority goods join the next ordinary shipment', () => {
             createdAt: new Date(now.getTime() - 2000 + index),
           });
         }
+        // The priority holds are covered by stock on the books (on-hand 10, 3 reserved).
+        await db.transaction((tx) =>
+          applyWarehouseMovement(tx, {
+            productId: product!.id,
+            eventType: 'opening_balance',
+            onHandDelta: 10,
+            reservedDelta: 3,
+            sourceType: 'shipment_test',
+            sourceId: randomUUID(),
+            reason: 'Isolated grouped shipment fixture',
+            occurredAt: now,
+          }),
+        );
         const scheduled = (cycle: typeof nextCycle) => ({
           id: cycle.session.id,
           businessDate: cycle.session.businessDate,
@@ -320,14 +333,16 @@ describePostgres('priority goods join the next ordinary shipment', () => {
           quantity: 3,
           createdAt: now,
         });
+        // Accepting the priority result issued its 3 bags with an RE order (on-hand 7, none
+        // reserved); the ordinary line's hold is reserved by the 09:00 run.
         await db.transaction((tx) =>
           applyWarehouseMovement(tx, {
             productId: product!.id,
-            eventType: 'opening_balance',
-            onHandDelta: 10,
-            reservedDelta: 6,
-            sourceType: 'shipment_test',
-            sourceId: randomUUID(),
+            eventType: 'reservation',
+            onHandDelta: 0,
+            reservedDelta: 3,
+            sourceType: 'allocation_run',
+            sourceId: nextCycle.run.id,
             reason: 'Isolated grouped shipment fixture',
             occurredAt: now,
           }),
@@ -436,8 +451,8 @@ describePostgres('priority goods join the next ordinary shipment', () => {
           .select()
           .from(warehouseBalances)
           .where(eq(warehouseBalances.productId, product!.id));
-        // Releasing the shipment does not move stock; only the finalized receipt does.
-        expect(heldBalance).toMatchObject({ onHandQuantity: 10, reservedQuantity: 6 });
+        // Both RE orders issued their bags at acceptance: 10 - 3 - 3 on-hand, nothing reserved.
+        expect(heldBalance).toMatchObject({ onHandQuantity: 4, reservedQuantity: 0 });
         const receiptLines = [
           { productId: product!.id, approvedQuantity: 6, receivedQuantity: received },
         ];
@@ -488,16 +503,15 @@ describePostgres('priority goods join the next ordinary shipment', () => {
           .select()
           .from(warehouseBalances)
           .where(eq(warehouseBalances.productId, product!.id));
-        // A reported shortage stays held until the warehouse confirms where the bags are.
-        expect(balance).toMatchObject({
-          onHandQuantity: 10 - received,
-          reservedQuantity: 6 - received,
-        });
+        // Issued goods are not deducted again; a shortage is recorded without holding stock.
+        expect(balance).toMatchObject({ onHandQuantity: 4, reservedQuantity: 0 });
         const checks = await db
           .select()
           .from(warehouseShortageChecks)
           .where(eq(warehouseShortageChecks.storeReceiptId, declared.value.receiptId));
-        expect(checks.map((check) => check.quantity)).toEqual(received < 6 ? [6 - received] : []);
+        expect(checks.map((check) => [check.quantity, check.stockMode])).toEqual(
+          received < 6 ? [[6 - received, 'issued']] : [],
+        );
         if (checks[0]) {
           await resolveWarehouseShortageCheck(db, {
             checkId: checks[0].id,
@@ -512,6 +526,7 @@ describePostgres('priority goods join the next ordinary shipment', () => {
             .select()
             .from(warehouseBalances)
             .where(eq(warehouseBalances.productId, product!.id));
+          // Found on the shelf: the missing issued bags come back once.
           expect(released).toMatchObject({ onHandQuantity: 10 - received, reservedQuantity: 0 });
         }
         const waits = await db

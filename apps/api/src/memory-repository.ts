@@ -18,6 +18,7 @@ import type {
 import {
   calculateReceiptVat,
   DomainError,
+  formatReshareOrderCode,
   normalizeAllocationDecisionReason,
   transitionAllocationDecision,
 } from '@idosi/domain';
@@ -34,6 +35,8 @@ import type {
   AllocationDecision,
   AllocationDecisionDetail,
   ListAllocationDecisionsQuery,
+  ListReshareOrdersQuery,
+  ListReshareOrdersResponse,
   RespondAllocationDecisionRequest,
 } from '@idosi/contracts';
 import type { ListStoreBagOpeningsQuery, StoreBagOpening } from '@idosi/contracts';
@@ -197,6 +200,7 @@ import { monthlyOperationalReportDto } from './monthly-report.js';
 import { asiaHoChiMinhDateRange, conversionRetirementDate } from './time.js';
 import type {
   AccountCredentials,
+  AllocationDecisionView,
   HtkdAssignmentsState,
   IdosiStatisticsTarget,
   IdosiStoreCodeRecord,
@@ -210,8 +214,8 @@ import type {
 } from './repository.js';
 import {
   assertActiveRetailStore,
+  allocationDecisionActionsFor,
   canAccessStore,
-  mayAnswerAllocationDecision,
   pagination,
   slicePage,
   WAREHOUSE_INVENTORY_READ_ROLES,
@@ -354,6 +358,16 @@ interface AuditRecord {
 export interface MemoryRepositoryOptions {
   readonly bootstrapPassword?: string;
   readonly now?: () => Date;
+}
+
+interface MemoryReshareOrder {
+  readonly id: string;
+  readonly code: string;
+  readonly orderedAt: string;
+  readonly actorAccountId: string;
+  readonly actorRole: 'STORE' | 'WHOLESALE' | 'HTKD';
+  readonly totalQuantity: number;
+  readonly lines: readonly { readonly productId: string; readonly quantity: number }[];
 }
 
 /** Deterministic in-memory adapter for inject tests and local demos. Never used by default in production. */
@@ -762,6 +776,9 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     string,
     { readonly requestHash: string; readonly decisionId: string }
   >();
+  /** RE orders by decision id: the memory stand-in for reshare_orders (0042). */
+  private readonly reshareOrders = new Map<string, MemoryReshareOrder>();
+  private reshareOrderSequence = 0;
   private readonly idempotency = new Map<string, IdempotencyRecord>();
   private readonly sessionMutationIdempotency = new Map<string, SessionMutationIdempotencyRecord>();
   private readonly receiptIdempotency = new Map<string, ReceiptIdempotencyRecord>();
@@ -1744,7 +1761,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       );
     return {
       data: slicePage(values, query.page, query.pageSize).map(
-        ({ sources: _sources, ...decision }) => this.decisionForActor(actor, decision),
+        ({ sources: _sources, ...decision }) =>
+          this.decisionForActor(actor, decision, { includeReshare: query.includeReshare === true }),
       ),
       pagination: pagination(query.page, query.pageSize, values.length),
     };
@@ -1753,12 +1771,108 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   public async getAllocationDecision(
     actor: AuthenticatedPrincipal,
     decisionId: string,
+    view: AllocationDecisionView = {},
   ): Promise<AllocationDecisionDetail> {
     const decision = this.allocationDecisions.get(decisionId);
     if (!decision || !canAccessStore(actor, decision.storeId)) {
       throw notFound('Không tìm thấy phiếu kết quả phân bổ');
     }
-    return this.decisionForActor(actor, decision);
+    return this.decisionForActor(actor, decision, view);
+  }
+
+  public async listReshareOrders(
+    actor: AuthenticatedPrincipal,
+    query: ListReshareOrdersQuery,
+  ): Promise<ListReshareOrdersResponse> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const rows = [...this.allocationDecisions.values()]
+      .filter((decision) => decision.status === 'PENDING' || decision.status === 'ACCEPTED')
+      .filter((decision) => canAccessStore(actor, decision.storeId))
+      .filter((decision) => query.storeId === undefined || decision.storeId === query.storeId)
+      .filter((decision) => query.sessionId === undefined || decision.sessionId === query.sessionId)
+      .filter((decision) => query.decisionId === undefined || decision.id === query.decisionId)
+      .map((decision) => {
+        const order = this.reshareOrders.get(decision.id) ?? null;
+        const lines = order
+          ? order.lines
+          : decision.lines
+              .filter((line) => line.allocatedQuantity > 0)
+              .map((line) => ({ productId: line.productId, quantity: line.allocatedQuantity }));
+        const time = order?.orderedAt ?? decision.createdAt;
+        return { decision, order, lines, time };
+      })
+      .filter(({ order }) =>
+        query.status === undefined
+          ? true
+          : query.status === 'ORDERED'
+            ? order !== null
+            : query.status === 'NOT_ORDERED'
+              ? order === null
+              : false,
+      )
+      .filter(({ lines }) =>
+        query.productId === undefined
+          ? true
+          : lines.some((line) => line.productId === query.productId),
+      )
+      .filter(({ order }) => (query.code ? (order?.code ?? '').includes(query.code) : true))
+      .filter(({ time }) => (query.from ? time >= new Date(query.from).toISOString() : true))
+      .filter(({ time }) => (query.to ? time < new Date(query.to).toISOString() : true))
+      .sort(
+        (left, right) =>
+          right.time.localeCompare(left.time) || right.decision.id.localeCompare(left.decision.id),
+      );
+    return {
+      data: slicePage(rows, query.page, query.pageSize).map(({ decision, order, lines }) => {
+        const product = (id: string) => this.products.get(id);
+        return {
+          decisionId: decision.id,
+          decisionStatus: decision.status === 'PENDING' ? 'PENDING' : 'ACCEPTED',
+          sessionId: decision.sessionId,
+          sessionCode: decision.sessionCode,
+          businessDate: decision.businessDate,
+          runVersion: decision.runVersion,
+          sessionOpenedAt: null,
+          allocationCompletedAt: decision.createdAt,
+          publishedAt: decision.createdAt,
+          acceptedAt: decision.respondedAt,
+          acceptedByName: decision.respondedByName,
+          storeId: decision.storeId,
+          storeName: this.stores.get(decision.storeId)?.name ?? decision.storeId,
+          status: order ? 'ORDERED' : 'NOT_ORDERED',
+          order: order
+            ? {
+                id: order.id,
+                code: order.code,
+                orderedAt: order.orderedAt,
+                origin: 'ACCEPTANCE',
+                actorName: this.accounts.get(order.actorAccountId)?.displayName ?? null,
+                actorRole: order.actorRole,
+                cancelledAt: null,
+                cancelReason: null,
+              }
+            : null,
+          lines: lines.map((line) => ({
+            productId: line.productId,
+            productName: product(line.productId)?.name ?? line.productId,
+            productSku: product(line.productId)?.sku ?? '',
+            quantity: line.quantity,
+          })),
+          totalQuantity: lines.reduce((total, line) => total + line.quantity, 0),
+          delivery: order
+            ? {
+                issuedQuantity: order.totalQuantity,
+                receivedQuantity: 0,
+                shortageQuantity: 0,
+                awaitingReceiptQuantity: order.totalQuantity,
+                onShipmentQuantity: decision.shipment ? order.totalQuantity : 0,
+              }
+            : null,
+        };
+      }),
+      pagination: pagination(query.page, query.pageSize, rows.length),
+      scoped: actor.role !== 'ADMIN',
+    };
   }
 
   public async respondAllocationDecision(
@@ -1768,8 +1882,14 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     idempotencyKey: string,
     requestHash: string,
     context: RequestContext,
+    view: AllocationDecisionView = {},
   ): Promise<IdempotentResource<AllocationDecisionDetail>> {
-    if (actor.role !== 'STORE' && actor.role !== 'WHOLESALE') throw forbidden();
+    if (actor.role !== 'STORE' && actor.role !== 'WHOLESALE' && actor.role !== 'HTKD') {
+      throw forbidden();
+    }
+    if (actor.role === 'HTKD' && input.action !== 'ACCEPT') {
+      throw forbidden('HTKD chỉ được chấp nhận kết quả phân bổ thay cửa hàng, không được từ chối.');
+    }
     if (actor.role === 'STORE') await this.authorizeRetailStoreOperation(actor);
     const current = this.allocationDecisions.get(decisionId);
     if (!current || !canAccessStore(actor, current.storeId)) {
@@ -1778,11 +1898,11 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const store = this.stores.get(current.storeId);
     if (
       !store ||
-      !mayAnswerAllocationDecision(actor, {
+      !allocationDecisionActionsFor(actor, {
         id: store.id,
         kind: store.kind,
         active: store.status === 'ACTIVE',
-      })
+      }).includes(input.action)
     ) {
       throw forbidden();
     }
@@ -1796,7 +1916,10 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
           409,
         );
       }
-      return { data: await this.getAllocationDecision(actor, previous.decisionId), replayed: true };
+      return {
+        data: await this.getAllocationDecision(actor, previous.decisionId, view),
+        replayed: true,
+      };
     }
     let reason: string | null;
     try {
@@ -1854,6 +1977,26 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (transition.next === 'REJECTED') {
       for (const line of current.lines)
         this.adjustMemoryReserved(line.productId, -line.allocatedQuantity);
+    } else {
+      // Acceptance creates the RE order and issues its goods: on-hand and reserved drop together.
+      const lines = current.lines
+        .filter((line) => line.allocatedQuantity > 0)
+        .map((line) => ({ productId: line.productId, quantity: line.allocatedQuantity }));
+      for (const line of lines) {
+        this.adjustMemoryReserved(line.productId, -line.quantity);
+        const balance = this.warehouseBalances.get(line.productId);
+        if (balance) balance.onHandQuantity = Math.max(0, balance.onHandQuantity - line.quantity);
+      }
+      this.reshareOrderSequence += 1;
+      this.reshareOrders.set(decisionId, {
+        id: randomUUID(),
+        code: formatReshareOrderCode(this.reshareOrderSequence),
+        orderedAt: now,
+        actorAccountId: actor.accountId,
+        actorRole: actor.role,
+        totalQuantity: lines.reduce((total, line) => total + line.quantity, 0),
+        lines,
+      });
     }
     const updated: AllocationDecisionDetail = {
       ...current,
@@ -1880,23 +2023,44 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       { status: current.status, version: current.version },
       { status: updated.status, version: updated.version, reason },
     );
-    return { data: await this.getAllocationDecision(actor, decisionId), replayed: false };
+    return { data: await this.getAllocationDecision(actor, decisionId, view), replayed: false };
   }
 
   private decisionForActor<T extends AllocationDecision>(
     actor: AuthenticatedPrincipal,
     decision: T,
+    view: AllocationDecisionView = {},
   ): T {
     const store = this.stores.get(decision.storeId);
-    const canRespond =
-      decision.status === 'PENDING' &&
-      store !== undefined &&
-      mayAnswerAllocationDecision(actor, {
-        id: store.id,
-        kind: store.kind,
-        active: store.status === 'ACTIVE',
-      });
-    return structuredClone({ ...decision, canRespond });
+    const allowedActions =
+      decision.status === 'PENDING' && store !== undefined
+        ? [
+            ...allocationDecisionActionsFor(actor, {
+              id: store.id,
+              kind: store.kind,
+              active: store.status === 'ACTIVE',
+            }),
+          ]
+        : [];
+    const order = this.reshareOrders.get(decision.id);
+    return structuredClone({
+      ...decision,
+      canRespond: allowedActions.length > 0,
+      ...(view.includeReshare
+        ? {
+            allowedActions,
+            reshareOrder: order
+              ? {
+                  id: order.id,
+                  code: order.code,
+                  status: 'ORDERED' as const,
+                  orderedAt: order.orderedAt,
+                  totalQuantity: order.totalQuantity,
+                }
+              : null,
+          }
+        : {}),
+    });
   }
 
   private adjustMemoryReserved(productId: string, delta: number): void {

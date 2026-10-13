@@ -99,8 +99,20 @@ export interface SupplierPositionInput {
   /** Live priority-offer holds; never orderable at B, so always part of U. */
   readonly offerHoldQuantity: number;
   readonly reservations: readonly SupplierReservationFact[];
+  /**
+   * RE orders A already issued out of its ledger (docs/reshare-auto-orders.md). Until a
+   * confirmed observation declares a line's quantity deducted in S (reflected), the line is
+   * still an A commitment B may not show yet, so it stays in U whether or not it was received.
+   */
+  readonly issuedOrders?: readonly SupplierIssuedOrderFact[];
   readonly ledgerOnHand: number;
   readonly ledgerReserved: number;
+}
+
+export interface SupplierIssuedOrderFact {
+  readonly quantity: number;
+  /** Quantity already accounted for in B: declared reflected by an observation or B-ordered. */
+  readonly reflectedQuantity: number;
 }
 
 export interface SupplierPosition {
@@ -113,6 +125,8 @@ export interface SupplierPosition {
   readonly offerHoldQuantity: number;
   readonly unorderedReservedQuantity: number;
   readonly orderedReservedQuantity: number;
+  /** Issued RE quantity not yet reflected in any observation (part of U). */
+  readonly issuedUnreflectedQuantity: number;
   /** U. */
   readonly unorderedCommitmentQuantity: number;
   /** F; 0 without baseline. */
@@ -154,7 +168,20 @@ export function computeSupplierPosition(input: SupplierPositionInput): SupplierP
     unorderedReservedQuantity += quantity - ordered;
     orderedReservedQuantity += ordered;
   }
-  const unorderedCommitmentQuantity = offerHoldQuantity + unorderedReservedQuantity;
+  let issuedUnreflectedQuantity = 0;
+  for (const order of input.issuedOrders ?? []) {
+    const quantity = positiveInteger(order.quantity, 'issuedOrder.quantity');
+    const reflected = nonNegativeInteger(order.reflectedQuantity, 'issuedOrder.reflectedQuantity');
+    invariant(
+      reflected <= quantity,
+      'LEDGER_CORRUPTED',
+      'An issued RE order cannot be reflected beyond its quantity.',
+      { quantity, reflected },
+    );
+    issuedUnreflectedQuantity += quantity - reflected;
+  }
+  const unorderedCommitmentQuantity =
+    offerHoldQuantity + unorderedReservedQuantity + issuedUnreflectedQuantity;
   const pendingDelta = pendingSupplierDelta(input.events);
   const ambiguousEventCount = input.events.filter((event) => event.coverage === 'AMBIGUOUS').length;
   const ledgerAvailable = ledgerOnHand - ledgerReserved;
@@ -169,6 +196,7 @@ export function computeSupplierPosition(input: SupplierPositionInput): SupplierP
       offerHoldQuantity,
       unorderedReservedQuantity,
       orderedReservedQuantity,
+      issuedUnreflectedQuantity,
       unorderedCommitmentQuantity,
       freeQuantity: 0,
       shortfallQuantity: 0,
@@ -201,6 +229,7 @@ export function computeSupplierPosition(input: SupplierPositionInput): SupplierP
     offerHoldQuantity,
     unorderedReservedQuantity,
     orderedReservedQuantity,
+    issuedUnreflectedQuantity,
     unorderedCommitmentQuantity,
     freeQuantity,
     shortfallQuantity,

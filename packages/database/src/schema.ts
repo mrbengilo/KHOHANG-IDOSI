@@ -115,6 +115,11 @@ export const reservationStatusEnum = pgEnum('reservation_status', [
   'released',
   'expired',
   'cancelled',
+  /**
+   * Left the central warehouse with a Reshare order (RE): out of on-hand and reserved, still owed
+   * to the store until its receipt settles it. See docs/reshare-auto-orders.md.
+   */
+  'issued',
 ]);
 export const receiptStatusEnum = pgEnum('receipt_status', [
   'draft',
@@ -1396,6 +1401,9 @@ export const reservations = pgTable(
       ),
     index('reservations_product_status_idx').on(table.productId, table.status),
     index('reservations_store_status_idx').on(table.storeId, table.status),
+    index('reservations_outbound_line_idx')
+      .on(table.outboundRequestLineId)
+      .where(sql`${table.outboundRequestLineId} IS NOT NULL AND ${table.deletedAt} IS NULL`),
     index('reservations_active_expiry_idx')
       .on(table.expiresAt)
       .where(sql`${table.status} = 'active' AND ${table.deletedAt} IS NULL`),
@@ -1908,6 +1916,11 @@ export const warehouseShortageChecks = pgTable(
       { onDelete: 'restrict' },
     ),
     quantity: integer('quantity').notNull(),
+    /**
+     * held: the missing units are still on-hand and reserved by this check (legacy receipts).
+     * issued: the units already left on-hand with a Reshare order; the check holds nothing.
+     */
+    stockMode: text('stock_mode').notNull().default('held'),
     status: warehouseShortageCheckStatusEnum('status').notNull().default('pending'),
     shortageReason: text('shortage_reason'),
     resolutionReason: text('resolution_reason'),
@@ -1920,8 +1933,10 @@ export const warehouseShortageChecks = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex('warehouse_shortage_checks_receipt_line_uidx')
-      .on(table.storeReceiptLineId)
+    // A receipt line mixing holds from before RE orders and issued goods may need one check of
+    // each stock mode; never two of the same mode.
+    uniqueIndex('warehouse_shortage_checks_receipt_line_mode_uidx')
+      .on(table.storeReceiptLineId, table.stockMode)
       .where(sql`${table.storeReceiptAdjustmentLineId} IS NULL`),
     uniqueIndex('warehouse_shortage_checks_adjustment_line_uidx').on(
       table.storeReceiptAdjustmentLineId,
@@ -1930,6 +1945,10 @@ export const warehouseShortageChecks = pgTable(
     index('warehouse_shortage_checks_store_idx').on(table.storeId),
     check('warehouse_shortage_checks_quantity_positive', sql`${table.quantity} > 0`),
     check('warehouse_shortage_checks_version_nonnegative', sql`${table.version} >= 0`),
+    check(
+      'warehouse_shortage_checks_stock_mode_valid',
+      sql`${table.stockMode} IN ('held', 'issued')`,
+    ),
     check(
       'warehouse_shortage_checks_resolution',
       sql`(${table.status} = 'pending' AND ${table.resolvedAt} IS NULL AND ${table.resolvedByUserId} IS NULL) OR (${table.status} <> 'pending' AND ${table.resolvedAt} IS NOT NULL AND ${table.resolvedByUserId} IS NOT NULL AND length(btrim(coalesce(${table.resolutionReason}, ''))) >= 3)`,
@@ -3432,6 +3451,10 @@ export const supplierStockObservationLines = pgTable(
     unorderedReservedQuantity: integer('unordered_reserved_quantity').notNull(),
     orderedReservedQuantity: integer('ordered_reserved_quantity').notNull(),
     attestedUnlinkedQuantity: integer('attested_unlinked_quantity').notNull().default(0),
+    /** RE orders issued by A that no observation had reflected yet (part of U). */
+    issuedUnreflectedQuantity: integer('issued_unreflected_quantity').notNull().default(0),
+    /** RE quantity this observation declared already deducted in S. */
+    reflectedReshareQuantity: integer('reflected_reshare_quantity').notNull().default(0),
     unorderedCommitmentQuantity: integer('unordered_commitment_quantity').notNull(),
     freeQuantity: integer('free_quantity').notNull(),
     shortfallQuantity: integer('shortfall_quantity').notNull(),
@@ -3462,7 +3485,7 @@ export const supplierStockObservationLines = pgTable(
     ),
     check(
       'supplier_stock_observation_lines_formula',
-      sql`${table.unorderedCommitmentQuantity} = ${table.offerHoldQuantity} + ${table.unorderedReservedQuantity} AND ${table.effectiveSupplierQuantity} = ${table.observedQuantity} + ${table.pendingDelta} AND ${table.freeQuantity} - ${table.shortfallQuantity} = ${table.effectiveSupplierQuantity} - ${table.unorderedCommitmentQuantity} AND (${table.freeQuantity} = 0 OR ${table.shortfallQuantity} = 0)`,
+      sql`${table.issuedUnreflectedQuantity} >= 0 AND ${table.reflectedReshareQuantity} >= 0 AND ${table.unorderedCommitmentQuantity} = ${table.offerHoldQuantity} + ${table.unorderedReservedQuantity} + ${table.issuedUnreflectedQuantity} AND ${table.effectiveSupplierQuantity} = ${table.observedQuantity} + ${table.pendingDelta} AND ${table.freeQuantity} - ${table.shortfallQuantity} = ${table.effectiveSupplierQuantity} - ${table.unorderedCommitmentQuantity} AND (${table.freeQuantity} = 0 OR ${table.shortfallQuantity} = 0)`,
     ),
     check(
       'supplier_stock_observation_lines_projection',
@@ -3656,6 +3679,200 @@ export const supplierObservationEventCoverage = pgTable(
   (table) => [
     primaryKey({ columns: [table.observationId, table.eventId] }),
     index('supplier_observation_event_coverage_event_idx').on(table.eventId),
+  ],
+);
+
+export const reshareOrderStatusEnum = pgEnum('reshare_order_status', ['ordered', 'cancelled']);
+
+/**
+ * Internal Reshare order (RE-000001...) created atomically when the receiving side accepts an
+ * allocation result with new goods. Creating it issues the accepted goods out of the central
+ * warehouse. It is an IDOSI document: nothing is sent to Reshare. docs/reshare-auto-orders.md.
+ */
+export const reshareOrders = pgTable(
+  'reshare_orders',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    /** Assigned by the database (next_reshare_order_code) on insert. */
+    code: text('code').notNull().default(''),
+    allocationDecisionId: uuid('allocation_decision_id')
+      .notNull()
+      .references(() => allocationResultDecisions.id, { onDelete: 'restrict' }),
+    allocationRunId: uuid('allocation_run_id')
+      .notNull()
+      .references(() => allocationRuns.id, { onDelete: 'restrict' }),
+    orderSessionId: uuid('order_session_id')
+      .notNull()
+      .references(() => orderSessions.id, { onDelete: 'restrict' }),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    status: reshareOrderStatusEnum('status').notNull().default('ordered'),
+    /** acceptance: created by the accept command; backfill: a reviewed cutover manifest. */
+    origin: text('origin').notNull().default('acceptance'),
+    storeNameSnapshot: text('store_name_snapshot').notNull(),
+    sessionCodeSnapshot: text('session_code_snapshot').notNull(),
+    totalQuantity: integer('total_quantity').notNull(),
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }).notNull(),
+    orderedAt: timestamp('ordered_at', { withTimezone: true }).notNull(),
+    actorUserId: uuid('actor_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    actorRole: text('actor_role').notNull(),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    cancelledByUserId: uuid('cancelled_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    cancelReason: text('cancel_reason'),
+    requestId: text('request_id'),
+    version: integer('version').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('reshare_orders_code_uidx').on(table.code),
+    uniqueIndex('reshare_orders_decision_uidx').on(table.allocationDecisionId),
+    uniqueIndex('reshare_orders_run_store_uidx').on(table.allocationRunId, table.storeId),
+    index('reshare_orders_ordered_idx').on(table.orderedAt.desc(), table.id.desc()),
+    index('reshare_orders_store_ordered_idx').on(
+      table.storeId,
+      table.orderedAt.desc(),
+      table.id.desc(),
+    ),
+    index('reshare_orders_session_idx').on(table.orderSessionId),
+    check('reshare_orders_code_format', sql`${table.code} ~ '^RE-[0-9]{6}$'`),
+    check('reshare_orders_total_positive', sql`${table.totalQuantity} > 0`),
+    check('reshare_orders_version_positive', sql`${table.version} > 0`),
+    check('reshare_orders_origin_valid', sql`${table.origin} IN ('acceptance', 'backfill')`),
+    check(
+      'reshare_orders_actor_role_valid',
+      sql`${table.actorRole} IN ('store', 'wholesale', 'htkd', 'admin')`,
+    ),
+    check(
+      'reshare_orders_cancellation_recorded',
+      sql`(${table.status} = 'cancelled') = (${table.cancelledAt} IS NOT NULL AND ${table.cancelledByUserId} IS NOT NULL AND length(btrim(coalesce(${table.cancelReason}, ''))) >= 3)`,
+    ),
+  ],
+);
+
+/** One line per product of an RE order, with the ledger entry that issued it. */
+export const reshareOrderLines = pgTable(
+  'reshare_order_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    reshareOrderId: uuid('reshare_order_id')
+      .notNull()
+      .references(() => reshareOrders.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    productNameSnapshot: text('product_name_snapshot').notNull(),
+    productSkuSnapshot: text('product_sku_snapshot').notNull(),
+    quantity: integer('quantity').notNull(),
+    issueLedgerEntryId: uuid('issue_ledger_entry_id')
+      .notNull()
+      .references(() => warehouseLedgerEntries.id, { onDelete: 'restrict' }),
+    /**
+     * Part of this line a confirmed Reshare stock observation declared already deducted in its
+     * total (so it is no longer an unreflected commitment). Only ever grows.
+     */
+    supplierReflectedQuantity: integer('supplier_reflected_quantity').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('reshare_order_lines_order_product_uidx').on(table.reshareOrderId, table.productId),
+    uniqueIndex('reshare_order_lines_ledger_uidx').on(table.issueLedgerEntryId),
+    index('reshare_order_lines_product_unreflected_idx')
+      .on(table.productId)
+      .where(sql`${table.supplierReflectedQuantity} < ${table.quantity}`),
+    check('reshare_order_lines_quantity_positive', sql`${table.quantity} > 0`),
+    check(
+      'reshare_order_lines_reflected_range',
+      sql`${table.supplierReflectedQuantity} >= 0 AND ${table.supplierReflectedQuantity} <= ${table.quantity}`,
+    ),
+  ],
+);
+
+/**
+ * Issuance lineage: exactly which hold (reservation of an allocation line) an RE line issued,
+ * and how the store's receipt later settled it. One issuance per reservation and per line.
+ */
+export const reshareOrderSources = pgTable(
+  'reshare_order_sources',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    reshareOrderId: uuid('reshare_order_id')
+      .notNull()
+      .references(() => reshareOrders.id, { onDelete: 'restrict' }),
+    reshareOrderLineId: uuid('reshare_order_line_id')
+      .notNull()
+      .references(() => reshareOrderLines.id, { onDelete: 'restrict' }),
+    reservationId: uuid('reservation_id')
+      .notNull()
+      .references(() => reservations.id, { onDelete: 'restrict' }),
+    allocationLineId: uuid('allocation_line_id')
+      .notNull()
+      .references(() => allocationLines.id, { onDelete: 'restrict' }),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    quantity: integer('quantity').notNull(),
+    settledStoreReceiptId: uuid('settled_store_receipt_id').references(() => storeReceipts.id, {
+      onDelete: 'restrict',
+    }),
+    settledOutboundRequestLineId: uuid('settled_outbound_request_line_id').references(
+      () => outboundRequestLines.id,
+      { onDelete: 'restrict' },
+    ),
+    receivedQuantity: integer('received_quantity'),
+    shortageQuantity: integer('shortage_quantity'),
+    shortageCheckId: uuid('shortage_check_id').references(() => warehouseShortageChecks.id, {
+      onDelete: 'restrict',
+    }),
+    settledAt: timestamp('settled_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('reshare_order_sources_reservation_uidx').on(table.reservationId),
+    uniqueIndex('reshare_order_sources_allocation_line_uidx').on(table.allocationLineId),
+    index('reshare_order_sources_line_idx').on(table.reshareOrderLineId),
+    index('reshare_order_sources_order_idx').on(table.reshareOrderId),
+    index('reshare_order_sources_receipt_idx')
+      .on(table.settledStoreReceiptId)
+      .where(sql`${table.settledStoreReceiptId} IS NOT NULL`),
+    check('reshare_order_sources_quantity_positive', sql`${table.quantity} > 0`),
+    check(
+      'reshare_order_sources_settlement',
+      sql`(${table.settledAt} IS NULL AND ${table.settledStoreReceiptId} IS NULL AND ${table.settledOutboundRequestLineId} IS NULL AND ${table.receivedQuantity} IS NULL AND ${table.shortageQuantity} IS NULL AND ${table.shortageCheckId} IS NULL) OR (${table.settledAt} IS NOT NULL AND ${table.settledStoreReceiptId} IS NOT NULL AND ${table.settledOutboundRequestLineId} IS NOT NULL AND ${table.receivedQuantity} >= 0 AND ${table.shortageQuantity} >= 0 AND ${table.receivedQuantity} + ${table.shortageQuantity} = ${table.quantity} AND ((${table.shortageQuantity} > 0) = (${table.shortageCheckId} IS NOT NULL)))`,
+    ),
+  ],
+);
+
+/** RE quantity a confirmed observation declared already deducted in B's observed total. */
+export const supplierObservationReshareCoverage = pgTable(
+  'supplier_observation_reshare_coverage',
+  {
+    observationId: uuid('observation_id')
+      .notNull()
+      .references(() => supplierStockObservations.id, { onDelete: 'restrict' }),
+    reshareOrderLineId: uuid('reshare_order_line_id')
+      .notNull()
+      .references(() => reshareOrderLines.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    quantity: integer('quantity').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.observationId, table.reshareOrderLineId] }),
+    index('supplier_observation_reshare_coverage_line_idx').on(table.reshareOrderLineId),
+    check('supplier_observation_reshare_coverage_quantity_positive', sql`${table.quantity} > 0`),
   ],
 );
 

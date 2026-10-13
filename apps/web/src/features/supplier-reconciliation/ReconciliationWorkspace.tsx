@@ -93,7 +93,7 @@ export function ReconciliationWorkspace({
           targets={formTargets}
         />
       ) : null}
-      <section className="panel supplier-summary" aria-label="Đối chiếu tồn Reshare theo mặt hàng">
+      <section className="panel supplier-summary" aria-label="Cập nhật tồn Reshare theo mặt hàng">
         <h2>Số liệu theo mặt hàng</h2>
         <p className="supplier-hint">
           Khả dụng = Reshare còn cho đặt − phần IDOSI đã giữ/cấp nhưng HTKD chưa đặt Reshare. Số

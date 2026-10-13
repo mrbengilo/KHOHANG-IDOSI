@@ -1,6 +1,7 @@
 import { useOutletContext, useSearchParams } from 'react-router-dom';
 
 import type { AppOutletContext } from '../components/AppShell';
+import { Button } from '../components/Button';
 import { PageHeader } from '../components/PageHeader';
 import { TabPanel, Tabs } from '../components/Tabs';
 import { UnavailableFeature } from '../components/UnavailableFeature';
@@ -15,15 +16,19 @@ import {
 import { ObservationHistory } from '../features/supplier-reconciliation/ObservationHistory';
 import { ReconciliationWorkspace } from '../features/supplier-reconciliation/ReconciliationWorkspace';
 import { SourceSettings } from '../features/supplier-reconciliation/SourceSettings';
+import { ReshareOrdersPanel } from '../features/supplier-reconciliation/ReshareOrdersPanel';
 import { SupplierOrdersPanel } from '../features/supplier-reconciliation/SupplierOrdersPanel';
 import '../features/supplier-reconciliation/supplier-reconciliation.css';
 
-const DESCRIPTION: Record<AppOutletContext['role'], string> = {
+const DESCRIPTION =
+  'Xác nhận kết quả phân bổ để tự tạo đơn Reshare và xuất kho IDOSI. Dùng đơn này để đặt hàng trên Reshare.';
+
+const ROLE_HINT: Record<AppOutletContext['role'], string> = {
   ADMIN:
-    'Nhập tổng tồn Reshare đang cho đặt; hệ thống tự trừ phần IDOSI đã giữ/cấp nhưng chưa đặt và chỉ phân bổ phần còn lại.',
-  HTKD: 'Ghi nhận đúng số bao Reshare đã nhận cho các kết quả phân bổ của cửa hàng được phân công.',
-  STORE: 'Theo dõi hàng đã phân bổ cho cửa hàng đã được đặt bên Reshare hay chưa.',
-  WHOLESALE: 'Theo dõi hàng đã phân bổ cho cửa hàng sỉ đã được đặt bên Reshare hay chưa.',
+    'Admin xem đơn của mọi cửa hàng, cập nhật tổng tồn Reshare đang cho đặt và cấu hình nguồn.',
+  HTKD: 'Đơn của các cửa hàng được phân công. Xác nhận kết quả phân bổ ở trang Phân bổ hàng hóa.',
+  STORE: 'Đơn của cửa hàng. Xác nhận kết quả phân bổ ở trang Phân bổ hàng hóa.',
+  WHOLESALE: 'Đơn của cửa hàng sỉ trong phạm vi. Xác nhận kết quả ở trang Phân bổ hàng hóa.',
 };
 
 export function SupplierReconciliationPage() {
@@ -42,12 +47,13 @@ export function SupplierReconciliationPage() {
     });
 
   if (mockModeEnabled) {
-    return <UnavailableFeature title="Đối chiếu tồn Reshare" />;
+    return <UnavailableFeature title="Đơn đặt và tồn Reshare" />;
   }
 
   return (
     <>
-      <PageHeader title="Đối chiếu tồn Reshare" description={DESCRIPTION[role]} />
+      <PageHeader title="Đơn đặt và tồn Reshare" description={DESCRIPTION} />
+      <p className="supplier-hint supplier-role-hint">{ROLE_HINT[role]}</p>
       {tabs.length > 1 ? (
         <Tabs
           active={tab}
@@ -58,20 +64,47 @@ export function SupplierReconciliationPage() {
           onChange={setTab}
         />
       ) : null}
-      <TabPanel idPrefix="supplier-reconciliation" tab={tab}>
-        {tab === 'reconcile' ? (
+      <TabPanel idPrefix="supplier-reconciliation" tab={tabs.includes(tab) ? tab : tabs[0]!}>
+        {tab === 'orders' ? (
+          <>
+            <ReshareOrdersPanel
+              accountId={accountId}
+              initialCode={params.get('code')?.slice(0, 20) ?? ''}
+            />
+            {role === 'ADMIN' || role === 'HTKD' ? (
+              <div className="supplier-legacy-link">
+                <p className="supplier-hint">
+                  Đơn Reshare ghi nhận thủ công cho hàng giữ trước khi có đơn RE vẫn được lưu để tra
+                  cứu.
+                </p>
+                <Button onClick={() => setTab('legacy')} tone="secondary">
+                  Xem đơn ghi nhận thủ công
+                </Button>
+              </div>
+            ) : null}
+          </>
+        ) : tab === 'reconcile' ? (
           <ReconciliationWorkspace
             accountId={accountId}
             onOpenSettings={() => setTab('settings')}
           />
-        ) : tab === 'orders' ? (
-          <SupplierOrdersPanel accountId={accountId} />
+        ) : tab === 'legacy' ? (
+          <>
+            <div className="supplier-legacy-link">
+              <p className="supplier-hint">
+                Dữ liệu cũ: đơn đặt trên Reshare được ghi nhận thủ công cho hàng giữ từ trước khi có
+                đơn RE. Luồng mới không cần nhập mã đơn Reshare hay thời điểm Reshare nhận đơn.
+              </p>
+              <Button onClick={() => setTab('orders')} tone="secondary">
+                Quay lại Đơn đặt Reshare
+              </Button>
+            </div>
+            <SupplierOrdersPanel accountId={accountId} />
+          </>
         ) : tab === 'history' ? (
           <ObservationHistory accountId={accountId} />
-        ) : tab === 'settings' ? (
-          <SourceSettings accountId={accountId} />
         ) : (
-          <SupplierOrdersPanel accountId={accountId} readOnly />
+          <SourceSettings accountId={accountId} />
         )}
       </TabPanel>
     </>

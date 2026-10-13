@@ -8,27 +8,39 @@ import type {
 
 import type { Role, StatusTone } from '../../lib/types';
 
-/** Tabs of the workspace. Admin reconciles; HTKD records B orders; stores only read. */
-export type SupplierTab = 'reconcile' | 'orders' | 'history' | 'settings' | 'status';
+/**
+ * Tabs of the workspace. Every role starts on its RE orders ("Đơn đặt Reshare"); only Admin
+ * updates Reshare stock and configures sources. "legacy" (manual order records from before RE
+ * orders) is reachable by link, never part of the main flow.
+ */
+export type SupplierTab = 'orders' | 'reconcile' | 'history' | 'settings' | 'legacy';
 
 export function supplierTabsFor(role: Role): readonly SupplierTab[] {
-  if (role === 'ADMIN') return ['reconcile', 'orders', 'history', 'settings'];
-  if (role === 'HTKD') return ['orders'];
-  return ['status'];
+  if (role === 'ADMIN') return ['orders', 'reconcile', 'history', 'settings'];
+  return ['orders'];
+}
+
+/** Tabs reachable by URL but not shown in the tab bar. */
+function hiddenTabsFor(role: Role): readonly SupplierTab[] {
+  return role === 'ADMIN' || role === 'HTKD' ? ['legacy'] : [];
 }
 
 export const SUPPLIER_TAB_LABELS: Record<SupplierTab, string> = {
-  reconcile: 'Đối chiếu tồn',
-  orders: 'Chờ đặt Reshare',
-  history: 'Lịch sử đối chiếu',
+  orders: 'Đơn đặt Reshare',
+  reconcile: 'Cập nhật tồn Reshare',
+  history: 'Lịch sử cập nhật tồn',
   settings: 'Cấu hình nguồn',
-  status: 'Trạng thái đặt Reshare',
+  legacy: 'Đơn ghi nhận thủ công (trước khi có đơn RE)',
 };
 
+/** Old deep links keep working: the previous "status" tab is now the order history. */
+const TAB_ALIASES: Record<string, SupplierTab> = { status: 'orders' };
+
 export function readSupplierTab(value: string | null, role: Role): SupplierTab {
-  const allowed = supplierTabsFor(role);
-  return value !== null && (allowed as readonly string[]).includes(value)
-    ? (value as SupplierTab)
+  const allowed = [...supplierTabsFor(role), ...hiddenTabsFor(role)];
+  const resolved = value === null ? null : (TAB_ALIASES[value] ?? value);
+  return resolved !== null && (allowed as readonly string[]).includes(resolved)
+    ? (resolved as SupplierTab)
     : allowed[0]!;
 }
 
@@ -85,9 +97,12 @@ export function positionSentence(position: SupplierPosition): string {
   if (position.state === 'NO_BASELINE') {
     return 'Chưa có số tồn Reshare đã xác nhận: chưa cấp mới mặt hàng này.';
   }
+  const issued = position.issuedUnreflectedQuantity ?? 0;
   const parts = [
     `Reshare còn đặt được ${position.effectiveSupplierQuantity ?? 0} bao`,
-    `IDOSI đã giữ/cấp nhưng chưa đặt ${position.unorderedCommitmentQuantity} bao`,
+    issued > 0
+      ? `IDOSI đã giữ/cấp hoặc đã lập đơn RE nhưng số tồn chưa trừ ${position.unorderedCommitmentQuantity} bao (gồm ${issued} bao đơn RE)`
+      : `IDOSI đã giữ/cấp nhưng chưa đặt ${position.unorderedCommitmentQuantity} bao`,
   ];
   if (position.shortfallQuantity > 0) {
     return `${parts.join(', ')} → thiếu nguồn ${position.shortfallQuantity} bao, không cấp mới.`;

@@ -10,6 +10,7 @@ import {
 } from './common.js';
 import { WarehouseOutboundRequestStatusSchema } from './outbound.js';
 import { ReceiptStatusSchema } from './receipts.js';
+import { ReshareOrderSummarySchema } from './reshare-orders.js';
 
 /**
  * A store's answer to one published allocation result (one run for one store). Independent of
@@ -33,6 +34,8 @@ export const ReservationStatusSchema = z.enum([
   'RELEASED',
   'EXPIRED',
   'CANCELLED',
+  /** Issued with an RE order: out of the central warehouse, still owed to the store. */
+  'ISSUED',
 ]);
 export type ReservationStatus = z.infer<typeof ReservationStatusSchema>;
 
@@ -92,8 +95,15 @@ export const AllocationDecisionSchema = z
     version: z.number().int().positive(),
     grantedQuantity: QuantitySchema,
     origin: z.enum(['ALLOCATION_RUN', 'LEGACY_BACKFILL']),
-    /** Server-computed: the current account may answer this result now. */
+    /** Server-computed: the current account may answer this result now (any action). */
     canRespond: z.boolean(),
+    /**
+     * Server-computed actions the current account may take (an assigned HTKD may only accept).
+     * Present only when requested with includeReshare=true, so older bundles keep parsing.
+     */
+    allowedActions: z.array(AllocationDecisionActionSchema).optional(),
+    /** The RE order created by the acceptance (null when none); only with includeReshare=true. */
+    reshareOrder: ReshareOrderSummarySchema.nullable().optional(),
     respondedAt: IsoDateTimeSchema.nullable(),
     respondedByAccountId: EntityIdSchema.nullable(),
     respondedByName: z.string().nullable(),
@@ -135,6 +145,10 @@ export const ListAllocationDecisionsQuerySchema = PaginationQuerySchema.extend({
   storeId: EntityIdSchema.optional(),
   sessionId: EntityIdSchema.optional(),
   outboundRequestId: EntityIdSchema.optional(),
+  includeReshare: z
+    .enum(['true', 'false'])
+    .transform((value) => value === 'true')
+    .optional(),
 }).strict();
 export type ListAllocationDecisionsQuery = z.infer<typeof ListAllocationDecisionsQuerySchema>;
 
@@ -144,6 +158,17 @@ export const ListAllocationDecisionsResponseSchema = z
 export type ListAllocationDecisionsResponse = z.infer<typeof ListAllocationDecisionsResponseSchema>;
 
 export const AllocationDecisionParamsSchema = z.object({ decisionId: EntityIdSchema }).strict();
+
+/** Opt-in for the RE fields on the detail and respond endpoints. */
+export const AllocationDecisionViewQuerySchema = z
+  .object({
+    includeReshare: z
+      .enum(['true', 'false'])
+      .transform((value) => value === 'true')
+      .optional(),
+  })
+  .strict();
+export type AllocationDecisionViewQuery = z.infer<typeof AllocationDecisionViewQuerySchema>;
 export type AllocationDecisionParams = z.infer<typeof AllocationDecisionParamsSchema>;
 
 export const AllocationDecisionResponseSchema = z

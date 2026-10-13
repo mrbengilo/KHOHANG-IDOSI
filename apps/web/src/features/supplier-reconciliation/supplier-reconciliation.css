@@ -365,3 +365,117 @@
     content: none;
   }
 }
+
+/* Đơn đặt Reshare: nhóm theo đơn (một mã RE), mỗi mặt hàng một dòng, tổng một lần. */
+.supplier-role-hint {
+  margin-top: -4px;
+}
+.reshare-orders__filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 10px 12px;
+  align-items: end;
+}
+.reshare-orders__filters label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  font-weight: 600;
+}
+.reshare-orders__filters :is(select, input) {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+}
+.reshare-orders__search {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.reshare-orders__search input {
+  flex: 1 1 auto;
+}
+.reshare-orders__empty {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+.reshare-history__group + .reshare-history__group {
+  border-top: 2px solid var(--border);
+}
+.reshare-history__group td {
+  vertical-align: top;
+}
+.reshare-history__group:hover {
+  background: #f8fafc;
+}
+.reshare-history__group tr:hover {
+  background: transparent;
+}
+.reshare-history__product {
+  min-width: 12ch;
+}
+.reshare-history__number {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.reshare-history__code {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.reshare-history td small {
+  max-width: 34ch;
+}
+/*
+ * Màn hình hẹp: cùng bảng hiển thị mỗi đơn (tbody) là một thẻ. Dòng con không tạo thẻ riêng
+ * (display: contents) nên các dòng mặt hàng nằm liền nhau trong thẻ, tổng hiển thị một lần.
+ */
+@media (max-width: 620px) {
+  .reshare-history table {
+    display: grid;
+    gap: 12px;
+  }
+  .reshare-history .reshare-history__group {
+    gap: 8px;
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    background: white;
+    padding: 11px;
+  }
+  .reshare-history__group + .reshare-history__group {
+    border-top: 1px solid var(--border);
+  }
+  .reshare-history .reshare-history__group tr {
+    display: contents;
+  }
+  .reshare-history__order {
+    order: 1;
+  }
+  .reshare-history__store {
+    order: 2;
+  }
+  .reshare-history__session {
+    order: 3;
+  }
+  .reshare-history__product,
+  .reshare-history__line {
+    order: 4;
+  }
+  .reshare-history__total {
+    order: 5;
+  }
+  .reshare-history__status {
+    order: 6;
+  }
+  .reshare-history__product {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+.supplier-legacy-link {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  min-width: 0;
+}

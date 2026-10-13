@@ -1,4 +1,4 @@
-import { and, eq, isNull, notInArray, or } from 'drizzle-orm';
+import { and, eq, inArray, isNull, notInArray, or } from 'drizzle-orm';
 
 import {
   allocationLines,
@@ -110,7 +110,7 @@ export async function assertShipmentMayDispatch(
     .where(
       and(
         eq(outboundRequestLines.outboundRequestId, outbound.id),
-        eq(reservations.status, 'active'),
+        inArray(reservations.status, ['active', 'issued']),
         isNull(reservations.deletedAt),
         or(
           isNull(allocationLines.id),

@@ -1,0 +1,257 @@
+import type { ReshareOrderHistoryStatus } from '@idosi/contracts';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+
+import { Button } from '../../components/Button';
+import {
+  ApiClientError,
+  listAccessibleStores,
+  listCatalog,
+  listOrderSessions,
+} from '../../lib/api';
+import { businessDate } from '../../lib/business-time';
+import { formatInteger } from '../../lib/format';
+import { Pager } from './ReconciliationWorkspace';
+import { RESHARE_STATUS_LABEL, ReshareOrderHistoryTable } from './ReshareOrderHistoryTable';
+import { loadReshareOrders, type ReshareOrderFilters } from './supplierApi';
+
+const STATUSES: readonly ReshareOrderHistoryStatus[] = ['ORDERED', 'NOT_ORDERED', 'CANCELLED'];
+
+/** Start of a Vietnam business day as an ISO instant (independent of the browser zone). */
+export function businessDayStart(date: string): string {
+  return new Date(`${date}T00:00:00+07:00`).toISOString();
+}
+
+/** Exclusive end of an inclusive Vietnam business day. */
+export function businessDayEnd(date: string): string {
+  return new Date(new Date(`${date}T00:00:00+07:00`).getTime() + 86_400_000).toISOString();
+}
+
+function errorText(error: unknown): string {
+  if (error instanceof ApiClientError && error.status === 403) {
+    return 'Tài khoản không có quyền xem đơn của cửa hàng này.';
+  }
+  return 'Không tải được lịch sử đơn đặt Reshare. Kiểm tra mạng rồi thử lại.';
+}
+
+/**
+ * "Đơn đặt Reshare": every role sees the RE orders of its own scope (Admin: all stores). Filters,
+ * sorting and paging are done by the server; the store list only offers stores in scope.
+ */
+export function ReshareOrdersPanel({
+  accountId,
+  initialCode = '',
+}: {
+  readonly accountId: string;
+  readonly initialCode?: string;
+}) {
+  const [page, setPage] = useState(1);
+  const [sessionId, setSessionId] = useState('');
+  const [storeId, setStoreId] = useState('');
+  const [productId, setProductId] = useState('');
+  const [status, setStatus] = useState<ReshareOrderHistoryStatus | ''>('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [code, setCode] = useState(initialCode);
+  const [codeDraft, setCodeDraft] = useState(initialCode);
+  const recentFrom = (() => {
+    const today = new Date(`${businessDate()}T00:00:00+07:00`);
+    return businessDate(new Date(today.getTime() - 60 * 86_400_000));
+  })();
+  const sessions = useQuery({
+    queryKey: ['order-sessions', 'reshare-filter', recentFrom],
+    queryFn: () => listOrderSessions(recentFrom),
+    retry: false,
+  });
+  const stores = useQuery({
+    queryKey: ['stores', 'accessible', accountId],
+    queryFn: listAccessibleStores,
+    retry: false,
+  });
+  const catalog = useQuery({ queryKey: ['catalog'], queryFn: listCatalog, retry: false });
+  const rangeInvalid = fromDate !== '' && toDate !== '' && fromDate > toDate;
+  const filters: ReshareOrderFilters = {
+    page,
+    ...(sessionId ? { sessionId } : {}),
+    ...(storeId ? { storeId } : {}),
+    ...(productId ? { productId } : {}),
+    ...(status ? { status } : {}),
+    ...(fromDate && !rangeInvalid ? { from: businessDayStart(fromDate) } : {}),
+    ...(toDate && !rangeInvalid ? { to: businessDayEnd(toDate) } : {}),
+    ...(code ? { code } : {}),
+  };
+  const orders = useQuery({
+    queryKey: ['reshare-orders', accountId, filters],
+    queryFn: ({ signal }) => loadReshareOrders(filters, signal),
+    placeholderData: keepPreviousData,
+    retry: false,
+  });
+  const reset =
+    <T,>(setter: (value: T) => void) =>
+    (value: T) => {
+      setter(value);
+      setPage(1);
+    };
+  const data = orders.data;
+  const filtered = Boolean(
+    sessionId || storeId || productId || status || fromDate || toDate || code,
+  );
+
+  return (
+    <section
+      className="panel supplier-orders reshare-orders"
+      aria-labelledby="reshare-orders-title"
+    >
+      <h2 id="reshare-orders-title">Lịch sử đặt hàng theo phân bổ</h2>
+      <p className="supplier-hint">
+        Mỗi kết quả phân bổ được chấp nhận tạo một đơn mã RE và xuất hàng khỏi kho tổng IDOSI. Dùng
+        mã đơn và số bao dưới đây để đặt hàng trên Reshare; đơn chưa xác nhận hiển thị “Chưa đặt
+        Reshare”.
+      </p>
+      <form
+        className="supplier-filters reshare-orders__filters"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setCode(codeDraft.trim().toUpperCase());
+          setPage(1);
+        }}
+      >
+        <label>
+          Phiên phân bổ
+          <select onChange={(event) => reset(setSessionId)(event.target.value)} value={sessionId}>
+            <option value="">Tất cả phiên</option>
+            {(sessions.data ?? []).map((session) => (
+              <option key={session.id} value={session.id}>
+                {session.code} · {session.businessDate}
+              </option>
+            ))}
+          </select>
+        </label>
+        {(stores.data?.length ?? 0) > 1 ? (
+          <label>
+            Cửa hàng
+            <select onChange={(event) => reset(setStoreId)(event.target.value)} value={storeId}>
+              <option value="">Tất cả cửa hàng trong phạm vi</option>
+              {(stores.data ?? []).map((store) => (
+                <option key={store.id} value={store.id}>
+                  {store.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        <label>
+          Mặt hàng
+          <select onChange={(event) => reset(setProductId)(event.target.value)} value={productId}>
+            <option value="">Tất cả mặt hàng</option>
+            {(catalog.data ?? []).map((product) => (
+              <option key={product.id} value={product.id}>
+                {product.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Trạng thái
+          <select
+            onChange={(event) =>
+              reset(setStatus)(event.target.value as ReshareOrderHistoryStatus | '')
+            }
+            value={status}
+          >
+            <option value="">Tất cả trạng thái</option>
+            {STATUSES.map((value) => (
+              <option key={value} value={value}>
+                {RESHARE_STATUS_LABEL[value]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Từ ngày
+          <input
+            onChange={(event) => reset(setFromDate)(event.target.value)}
+            type="date"
+            value={fromDate}
+          />
+        </label>
+        <label>
+          Đến ngày
+          <input
+            onChange={(event) => reset(setToDate)(event.target.value)}
+            type="date"
+            value={toDate}
+          />
+        </label>
+        <label>
+          Mã đơn RE
+          <span className="reshare-orders__search">
+            <input
+              autoComplete="off"
+              inputMode="text"
+              maxLength={20}
+              onChange={(event) => setCodeDraft(event.target.value)}
+              placeholder="RE-000001"
+              value={codeDraft}
+            />
+            <Button tone="secondary" type="submit">
+              Tìm
+            </Button>
+          </span>
+        </label>
+      </form>
+      {rangeInvalid ? (
+        <p className="form-error" role="alert">
+          “Từ ngày” phải trước hoặc bằng “Đến ngày”.
+        </p>
+      ) : null}
+      {orders.isPending ? (
+        <p role="status">Đang tải lịch sử đơn đặt Reshare…</p>
+      ) : orders.isError && !data ? (
+        <div role="alert" className="supplier-error">
+          <p>{errorText(orders.error)}</p>
+          <Button tone="secondary" onClick={() => void orders.refetch()}>
+            Thử lại
+          </Button>
+        </div>
+      ) : data ? (
+        <>
+          {orders.isError ? (
+            <div role="alert" className="supplier-error">
+              <p>Không làm mới được; đang hiển thị dữ liệu đã tải trước đó.</p>
+              <Button tone="secondary" onClick={() => void orders.refetch()}>
+                Thử lại
+              </Button>
+            </div>
+          ) : null}
+          <p className="supplier-totals" aria-live="polite">
+            {formatInteger(data.pagination.totalItems)} kết quả phân bổ
+            {data.scoped ? ' trong phạm vi tài khoản' : ' toàn hệ thống'}.
+            {orders.isFetching ? ' Đang cập nhật…' : ''}
+          </p>
+          {data.data.length === 0 ? (
+            <div className="supplier-empty reshare-orders__empty">
+              <p>
+                {filtered
+                  ? 'Không có đơn nào khớp bộ lọc. Thử bỏ bớt điều kiện lọc.'
+                  : 'Chưa có kết quả phân bổ nào cần đặt Reshare. Đơn RE được tạo khi cửa hàng hoặc HTKD chấp nhận kết quả phân bổ.'}
+              </p>
+              <Link className="button button--secondary" to="/allocations">
+                Mở kết quả phân bổ
+              </Link>
+            </div>
+          ) : (
+            <ReshareOrderHistoryTable caption="Lịch sử đặt hàng theo phân bổ" rows={data.data} />
+          )}
+          <Pager
+            disabled={orders.isFetching}
+            onPage={setPage}
+            page={page}
+            totalPages={data.pagination.totalPages}
+          />
+        </>
+      ) : null}
+    </section>
+  );
+}

@@ -216,12 +216,14 @@ describePostgres('store decisions on published allocation results', () => {
     expect(actions).toEqual(['ALLOCATION_RESULT_PUBLISHED', 'ALLOCATION_RESULT_REJECTED']);
     expect(await auditActions(a.outboundId!)).toContain('OUTBOUND_REQUEST_CANCELLED');
 
-    // B accepts: stock stays on hand and reserved until the actual receipt is finalized.
+    // B accepts: its RE order issues the 7 bags out of on-hand and out of reserved at once;
+    // availability (93) is unchanged and the store's stock does not grow before its receipt.
     const accepted = await respond(b.decisionId, fx.storeB.userId, 'ACCEPT');
     expect(accepted).toMatchObject({
       value: { status: 'accepted', dispatchedOutboundRequestId: b.outboundId },
     });
-    expect(await balanceOf(product)).toEqual({ onHand: 100, reserved: 7 });
+    expect(accepted.replayed ? null : accepted.value.reshareOrderCode).toMatch(/^RE-\d{6}$/u);
+    expect(await balanceOf(product)).toEqual({ onHand: 93, reserved: 0 });
     expect(
       await db.select().from(storeInventoryBags).where(eq(storeInventoryBags.productId, product)),
     ).toEqual([]);
@@ -305,7 +307,7 @@ describePostgres('store decisions on published allocation results', () => {
         .from(outboundRequests)
         .where(eq(outboundRequests.id, result.outboundId!));
       if (decision!.status === 'accepted') {
-        expect(await balanceOf(product)).toEqual({ onHand: 30, reserved: 5 });
+        expect(await balanceOf(product)).toEqual({ onHand: 25, reserved: 0 });
         expect(shipment!.status).toBe('dispatched');
       } else {
         expect(decision!.status).toBe('rejected');
@@ -410,7 +412,8 @@ describePostgres('store decisions on published allocation results', () => {
       [2, 'accepted'],
       [1, 'accepted'],
     ]);
-    expect(await balanceOf(product)).toEqual({ onHand: 50, reserved: 5 });
+    // The earlier 2 bags were issued with its RE order; only the new 3 are still reserved.
+    expect(await balanceOf(product)).toEqual({ onHand: 48, reserved: 3 });
 
     const rejected = await respond(next.decisionId, fx.storeA.userId, 'REJECT');
     expect(rejected).toMatchObject({
@@ -420,9 +423,9 @@ describePostgres('store decisions on published allocation results', () => {
         cancelledOutboundRequestId: next.outboundId,
       },
     });
-    // Only the new grant goes back; the earlier accepted goods stay reserved for the store.
-    expect(await balanceOf(product)).toEqual({ onHand: 50, reserved: 2 });
-    expect(await balanceOf(otherProduct)).toEqual({ onHand: 50, reserved: 1 });
+    // Only the new grant goes back; the earlier accepted goods stay issued for the store.
+    expect(await balanceOf(product)).toEqual({ onHand: 48, reserved: 0 });
+    expect(await balanceOf(otherProduct)).toEqual({ onHand: 49, reserved: 0 });
     const held = await listHeldAllocationStock(db, { storeIds: [fx.storeA.id] });
     expect(held.filter((row) => [product, otherProduct].includes(row.productId))).toEqual(
       expect.arrayContaining([
@@ -432,31 +435,19 @@ describePostgres('store decisions on published allocation results', () => {
     );
     const earlierAfter = await getAllocationDecision(db, earlier.decisionId);
     expect(earlierAfter).toMatchObject({ status: 'accepted', heldQuantity: 3 });
-    // Provenance survives: the old rows stay linked to the cancelled shipment, cancelled; the
-    // live hold is a new row on the same allocation line with the same quantity and age.
+    // Issued holds keep their row (it is the RE source identity): still issued, unlinked from
+    // the cancelled shipment so the next ordinary shipment carries them. Audit keeps the path.
     const lineage = await db
       .select()
       .from(reservations)
       .where(inArray(reservations.allocationLineId, earlier.lineIds));
-    expect(lineage.filter((row) => row.status === 'cancelled')).toHaveLength(2);
-    expect(
-      lineage
-        .filter((row) => row.status === 'cancelled')
-        .every((row) => row.outboundRequestLineId !== null),
-    ).toBe(true);
-    const live = lineage.filter((row) => row.status === 'active');
-    expect(live).toHaveLength(2);
-    expect(live.every((row) => row.outboundRequestLineId === null)).toBe(true);
-    for (const row of live) {
-      const original = carriedRows.find((old) => old.allocationLineId === row.allocationLineId)!;
+    expect(lineage).toHaveLength(2);
+    expect(lineage.every((row) => row.status === 'issued')).toBe(true);
+    expect(lineage.every((row) => row.outboundRequestLineId === null)).toBe(true);
+    for (const row of lineage) {
+      const original = carriedRows.find((old) => old.id === row.id)!;
       expect(row.quantity).toBe(original.quantity);
-      expect(row.createdAt.getTime()).toBe(original.createdAt.getTime());
     }
-    const nextAfter = await getAllocationDecision(db, next.decisionId);
-    expect(nextAfter.carried.map((row) => row.reservationStatus)).toEqual([
-      'cancelled',
-      'cancelled',
-    ]);
     const [audit] = await db
       .select()
       .from(auditLogs)
@@ -490,7 +481,9 @@ describePostgres('store decisions on published allocation results', () => {
     expect(rejected).toMatchObject({
       value: { releasedQuantity: 3, cancelledOutboundRequestId: null },
     });
-    expect(await balanceOf(product)).toEqual({ onHand: 10, reserved: 2 });
+    // The accepted 2 left with their RE order (no shipment yet: they wait for the next ordinary
+    // order); the rejected 3 went back to availability.
+    expect(await balanceOf(product)).toEqual({ onHand: 8, reserved: 0 });
     expect(await outboundCount(fx.storeA.id, kept.runId)).toBe(0);
   });
 

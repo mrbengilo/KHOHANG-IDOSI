@@ -41,6 +41,11 @@ export function useAllocationDecisionResponder() {
           ['store-receipt-sources'],
           ['held-allocations'],
           ['warehouse-inventory'],
+          ['warehouse-outbound-history'],
+          ['reshare-orders'],
+          ['supplier-reconciliation'],
+          ['supplier-commitments'],
+          ['session-documents'],
         ].map((queryKey) => queryClient.invalidateQueries({ queryKey })),
       ),
     [queryClient],
@@ -63,10 +68,14 @@ export function useAllocationDecisionResponder() {
           decisionId: decision.id,
           message:
             updated.status === 'ACCEPTED'
-              ? `Đã chấp nhận phiếu ${decisionCode(updated)}. ${
+              ? `Đã chấp nhận phiếu ${decisionCode(updated)}${
+                  updated.reshareOrder
+                    ? `, tạo đơn ${updated.reshareOrder.code} và xuất ${updated.reshareOrder.totalQuantity} bao khỏi kho tổng IDOSI. Dùng mã đơn này để đặt hàng trên Reshare.`
+                    : '.'
+                } ${
                   updated.shipment?.status === 'DISPATCHED'
-                    ? 'Kho đã xuất hàng; cửa hàng khai nhận đủ hoặc thiếu theo thực tế khi hàng đến.'
-                    : 'Hàng được giữ tại kho và giao chung với đơn thường kế tiếp.'
+                    ? 'Cửa hàng khai nhận đủ hoặc thiếu theo thực tế khi hàng đến.'
+                    : 'Hàng chờ ghép chuyến với đơn thường kế tiếp.'
                 }`
               : `Đã ghi nhận từ chối nhận phiếu ${decisionCode(updated)}; ${updated.releasedQuantity} bao đã trả lại kho.`,
         });

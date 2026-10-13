@@ -183,13 +183,13 @@ test('an order approved by the 09:00 allocation reaches the store and can be rec
     await page.getByRole('button', { name: 'Gửi HTKD duyệt' }).click();
     await expect(page.getByText('Đã gửi số thực nhận cho HTKD duyệt.')).toBeVisible();
 
-    // Stock rules: the warehouse keeps the two bags reserved until HTKD finalizes, and the
-    // store gains nothing before that.
+    // Stock rules: accepting the result created its RE order and issued the two bags out of the
+    // central warehouse at once; the store gains nothing before HTKD finalizes the receipt.
     const [balance] = await client.db
       .select()
       .from(warehouseBalances)
       .where(eq(warehouseBalances.productId, product!.id));
-    expect(balance).toMatchObject({ onHandQuantity: 5, reservedQuantity: 2 });
+    expect(balance).toMatchObject({ onHandQuantity: 3, reservedQuantity: 0 });
     const storeBags = await client.db
       .select()
       .from(storeInventoryBags)
@@ -279,6 +279,13 @@ test('an order approved by the 09:00 allocation reaches the store and can be rec
     await expect(summary).toContainText(/112\.500/);
     await expect(summary).toContainText(/Cơ sở tính VAT \/ giá vốn\s*1\.125\.000/);
     await expect(summary).toContainText(/Tổng tiền phiếu \(gồm VAT\)\s*1\.237\.500/);
+    // The finalized receipt settles the goods already issued with the RE order: the central
+    // warehouse is not deducted a second time.
+    const [afterReceipt] = await client.db
+      .select()
+      .from(warehouseBalances)
+      .where(eq(warehouseBalances.productId, product!.id));
+    expect(afterReceipt).toMatchObject({ onHandQuantity: 3, reservedQuantity: 0 });
   } finally {
     if (restoreVatRate !== null) await changeVat(restoreVatRate);
     await client.close();

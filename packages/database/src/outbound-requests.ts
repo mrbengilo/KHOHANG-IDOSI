@@ -234,7 +234,7 @@ export type WarehouseOutboundDispatcher =
       readonly kind: 'allocation-decision';
       readonly decisionId: string;
       readonly acceptedByUserId: string;
-      readonly acceptedByRole: 'store' | 'wholesale';
+      readonly acceptedByRole: 'store' | 'wholesale' | 'htkd';
     };
 
 export interface DispatchWarehouseOutboundInTransactionInput {
@@ -251,8 +251,8 @@ export interface DispatchWarehouseOutboundInTransactionInput {
 /**
  * The only place a warehouse outbound moves from reserved to dispatched. Dispatch releases the
  * shipment to the store; it does not move warehouse stock. On-hand stock leaves the warehouse
- * once, when HTKD finalizes the store receipt, and the reservation keeps it out of other
- * allocations until then.
+ * once: when the result's RE order is created at acceptance (issued holds), or, for holds from
+ * before RE orders, when HTKD finalizes the store receipt.
  */
 export async function dispatchWarehouseOutboundInTransaction(
   tx: Transaction,
@@ -324,7 +324,8 @@ export async function dispatchWarehouseOutboundInTransaction(
       .where(
         and(
           inArray(reservations.outboundRequestLineId, lineIds),
-          eq(reservations.status, 'active'),
+          // Issued (RE) holds left on-hand already but are still the goods this shipment carries.
+          inArray(reservations.status, ['active', 'issued']),
           isNull(reservations.deletedAt),
         ),
       )
@@ -503,7 +504,7 @@ async function assertAcceptedDecisionReleasesShipment(
   tx: Transaction,
   dispatcher: Extract<WarehouseOutboundDispatcher, { kind: 'allocation-decision' }>,
   outbound: typeof outboundRequests.$inferSelect,
-): Promise<'store' | 'wholesale'> {
+): Promise<'store' | 'wholesale' | 'htkd'> {
   const [decision] = await tx
     .select({
       allocationRunId: allocationResultDecisions.allocationRunId,

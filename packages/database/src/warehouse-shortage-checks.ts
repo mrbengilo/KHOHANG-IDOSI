@@ -153,28 +153,53 @@ export async function resolveWarehouseShortageCheck(
           check.productId,
         );
         const leavesOnHand = input.decision === 'lost' || supplierReconciled;
-        await applyWarehouseMovement(tx, {
-          productId: check.productId,
-          eventType: leavesOnHand ? 'adjustment' : 'reservation_release',
-          onHandDelta: leavesOnHand ? -check.quantity : 0,
-          reservedDelta: -check.quantity,
-          sourceType: 'warehouse_shortage_check',
-          sourceId: check.id,
-          eventSequence: 2,
-          reason:
-            input.decision === 'lost'
-              ? `Hàng thiếu xác nhận thất lạc: ${reason}`
-              : supplierReconciled
-                ? `Hàng thiếu nguồn Reshare xác nhận đã xử lý (không tự cộng khả dụng): ${reason}`
-                : `Hàng thiếu xác nhận còn ở kho: ${reason}`,
-          metadata: {
-            storeId: check.storeId,
-            storeReceiptId: check.storeReceiptId,
-            supplierReconciled,
-          },
-          actorUserId: actor.id,
-          occurredAt: now,
-        });
+        if (check.stockMode === 'issued') {
+          // The units already left on-hand with their RE order and nothing is held for them.
+          // Lost: nothing more to deduct. Found on the shelf: they come back with a linked
+          // compensating entry, except on a Reshare-reconciled SKU where only the source
+          // observation may add free stock.
+          if (input.decision === 'returned_to_stock' && !supplierReconciled) {
+            await applyWarehouseMovement(tx, {
+              productId: check.productId,
+              eventType: 'return',
+              onHandDelta: check.quantity,
+              reservedDelta: 0,
+              sourceType: 'warehouse_shortage_check',
+              sourceId: check.id,
+              eventSequence: 2,
+              reason: `Hàng thiếu của đơn RE đã xuất xác nhận còn ở kho, nhập lại: ${reason}`,
+              metadata: {
+                storeId: check.storeId,
+                storeReceiptId: check.storeReceiptId,
+                stockMode: 'issued',
+              },
+              actorUserId: actor.id,
+              occurredAt: now,
+            });
+          }
+        } else
+          await applyWarehouseMovement(tx, {
+            productId: check.productId,
+            eventType: leavesOnHand ? 'adjustment' : 'reservation_release',
+            onHandDelta: leavesOnHand ? -check.quantity : 0,
+            reservedDelta: -check.quantity,
+            sourceType: 'warehouse_shortage_check',
+            sourceId: check.id,
+            eventSequence: 2,
+            reason:
+              input.decision === 'lost'
+                ? `Hàng thiếu xác nhận thất lạc: ${reason}`
+                : supplierReconciled
+                  ? `Hàng thiếu nguồn Reshare xác nhận đã xử lý (không tự cộng khả dụng): ${reason}`
+                  : `Hàng thiếu xác nhận còn ở kho: ${reason}`,
+            metadata: {
+              storeId: check.storeId,
+              storeReceiptId: check.storeReceiptId,
+              supplierReconciled,
+            },
+            actorUserId: actor.id,
+            occurredAt: now,
+          });
 
         const [updated] = await tx
           .update(warehouseShortageChecks)
@@ -198,7 +223,11 @@ export async function resolveWarehouseShortageCheck(
           throw new StoreOperationConflictError('Phiếu kiểm hàng thiếu đã thay đổi khi xử lý.');
         }
 
-        const before: JsonObject = { status: 'pending', quantity: check.quantity };
+        const before: JsonObject = {
+          status: 'pending',
+          quantity: check.quantity,
+          stockMode: check.stockMode,
+        };
         await tx.insert(auditLogs).values({
           requestId: input.requestId ?? null,
           actorUserId: actor.id,

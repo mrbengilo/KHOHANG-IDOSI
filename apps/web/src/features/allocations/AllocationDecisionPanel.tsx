@@ -7,9 +7,11 @@ import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { useDialogAccessibility } from '../../lib/use-dialog-accessibility';
 import {
+  decisionActions,
   decisionCode,
   decisionStatusLabel,
   decisionStatusTone,
+  reshareOrderLink,
   shipmentProgressLabel,
 } from './allocationDecisionApi';
 import type { useAllocationDecisionResponder } from './useAllocationDecisionResponder';
@@ -29,10 +31,13 @@ export interface AllocationDecisionPanelProps {
   readonly onClose?: () => void;
   /** Show the receive-page link for the store side once goods are on their way. */
   readonly canReceive?: boolean;
+  /** The viewer answers on the store's behalf (assigned HTKD): acceptance only. */
+  readonly actingForStore?: boolean;
 }
 
 /** One published result: what was granted, carried goods, the store's answer and delivery. */
 export function AllocationDecisionPanel({
+  actingForStore = false,
   canReceive = false,
   decision,
   onClose,
@@ -46,8 +51,12 @@ export function AllocationDecisionPanel({
   const anyBusy = responder.busy !== null;
   const error = responder.error?.decisionId === decision.id ? responder.error : null;
   const success = responder.success?.decisionId === decision.id ? responder.success : null;
-  const carried = decision.carried.filter((row) => row.reservationStatus === 'ACTIVE');
-  const carriedHistory = decision.carried.filter((row) => row.reservationStatus !== 'ACTIVE');
+  // Riding the shipment: still on-hand (ACTIVE) or issued with its own RE order (ISSUED).
+  const riding = (status: string) => status === 'ACTIVE' || status === 'ISSUED';
+  const carried = decision.carried.filter((row) => riding(row.reservationStatus));
+  const carriedHistory = decision.carried.filter((row) => !riding(row.reservationStatus));
+  const actions = decisionActions(decision);
+  const reshareOrder = decision.reshareOrder ?? null;
   const carriedQuantity = carried.reduce((total, row) => total + row.quantity, 0);
   const waitlisted = decision.lines.reduce((total, line) => total + line.waitlistedQuantity, 0);
   const shipment = decision.shipment;
@@ -69,6 +78,15 @@ export function AllocationDecisionPanel({
           <Badge tone={decisionStatusTone[decision.status]}>
             {decisionStatusLabel[decision.status]}
           </Badge>
+          {reshareOrder ? (
+            <Link
+              aria-label={`Đã đặt Reshare, mở đơn ${reshareOrder.code}`}
+              className="allocation-decision__reshare-tag"
+              to={reshareOrderLink(reshareOrder.code)}
+            >
+              <Badge tone="success">Đã đặt Reshare · {reshareOrder.code}</Badge>
+            </Link>
+          ) : null}
           {onClose ? (
             <button
               aria-label={`Đóng phiếu ${decisionCode(decision)}`}
@@ -137,13 +155,15 @@ export function AllocationDecisionPanel({
                   {productName(row.productId)}: {row.quantity} bao
                 </span>
                 <small>
-                  {row.reservationStatus === 'ACTIVE'
-                    ? 'Đi cùng chuyến này'
-                    : row.reservationStatus === 'CANCELLED'
-                      ? 'Đã tách khỏi chuyến bị hủy, vẫn giữ cho cửa hàng'
-                      : row.reservationStatus === 'CONSUMED'
-                        ? 'Đã xử lý theo thực nhận'
-                        : 'Đã giải phóng phần giữ hàng'}
+                  {row.reservationStatus === 'ISSUED'
+                    ? 'Đi cùng chuyến này (đã xuất kho theo đơn RE của phiên trước)'
+                    : row.reservationStatus === 'ACTIVE'
+                      ? 'Đi cùng chuyến này'
+                      : row.reservationStatus === 'CANCELLED'
+                        ? 'Đã tách khỏi chuyến bị hủy, vẫn giữ cho cửa hàng'
+                        : row.reservationStatus === 'CONSUMED'
+                          ? 'Đã xử lý theo thực nhận'
+                          : 'Đã giải phóng phần giữ hàng'}
                 </small>
               </li>
             ))}
@@ -159,6 +179,13 @@ export function AllocationDecisionPanel({
             <span>
               Phiếu xuất {shipment.requestNumber}
               {shipment.receiptNumber ? ` · Phiếu nhận ${shipment.receiptNumber}` : ''}
+            </span>
+          ) : null}
+          {reshareOrder ? (
+            <span>
+              Đã xuất {reshareOrder.totalQuantity} bao khỏi kho tổng theo đơn {reshareOrder.code}{' '}
+              lúc {timeFormatter.format(new Date(reshareOrder.orderedAt))}. Xuất kho không phải đã
+              nhận: tồn cửa hàng chỉ tăng khi phiếu nhận được duyệt.
             </span>
           ) : null}
           {decision.respondedAt ? (
@@ -194,25 +221,33 @@ export function AllocationDecisionPanel({
         </div>
       ) : null}
 
-      {decision.canRespond ? (
+      {actions.length > 0 ? (
         <div className="allocation-decision__actions">
           <p>
-            Chấp nhận là đồng ý nhận đúng kết quả trên; khi hàng đến, cửa hàng vẫn khai nhận đủ hoặc
+            {actingForStore || !actions.includes('REJECT')
+              ? 'Bạn chấp nhận thay cửa hàng được phân công. '
+              : ''}
+            Chấp nhận sẽ tự tạo đơn đặt Reshare (mã RE) đúng các mặt hàng và số bao được cấp, đồng
+            thời xuất số hàng này khỏi kho tổng IDOSI. Khi hàng đến, cửa hàng vẫn khai nhận đủ hoặc
             thiếu theo thực tế.
           </p>
           <div className="allocation-decision__buttons">
-            <Button
-              busy={busy === 'REJECT'}
-              className="allocation-decision__reject"
-              disabled={anyBusy}
-              onClick={() => setConfirmingReject(true)}
-              tone="secondary"
-            >
-              <XCircle aria-hidden="true" size={18} /> Từ chối
-            </Button>
-            <Button busy={busy === 'ACCEPT'} disabled={anyBusy} onClick={accept} tone="primary">
-              <CheckCircle2 aria-hidden="true" size={18} /> Chấp nhận
-            </Button>
+            {actions.includes('REJECT') ? (
+              <Button
+                busy={busy === 'REJECT'}
+                className="allocation-decision__reject"
+                disabled={anyBusy}
+                onClick={() => setConfirmingReject(true)}
+                tone="secondary"
+              >
+                <XCircle aria-hidden="true" size={18} /> Từ chối
+              </Button>
+            ) : null}
+            {actions.includes('ACCEPT') ? (
+              <Button busy={busy === 'ACCEPT'} disabled={anyBusy} onClick={accept} tone="primary">
+                <CheckCircle2 aria-hidden="true" size={18} /> Chấp nhận
+              </Button>
+            ) : null}
           </div>
         </div>
       ) : null}

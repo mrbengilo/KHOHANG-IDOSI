@@ -47,7 +47,8 @@ export function ShortageChecksPanel({
       setReasons(({ [check.id]: _resolved, ...rest }) => rest);
       setNotice(
         decision === 'LOST'
-          ? `Đã ghi thất lạc ${resolved.quantity} bao của phiếu ${resolved.receiptNumber}; tồn kho tổng đã giảm.`
+          ? // Goods already issued with an RE order left on-hand then; only held units leave now.
+            `Đã ghi thất lạc ${resolved.quantity} bao của phiếu ${resolved.receiptNumber}; tồn kho tổng đã cập nhật theo sổ phát sinh (hàng đã xuất theo đơn RE không bị trừ lần hai).`
           : `Đã trả ${resolved.quantity} bao của phiếu ${resolved.receiptNumber} về hàng có thể phân bổ.`,
       );
       await Promise.all([

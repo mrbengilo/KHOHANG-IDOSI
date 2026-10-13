@@ -98,7 +98,7 @@ async function listReservedAllocationOutbounds(
           .where(
             and(
               inArray(reservations.outboundRequestLineId, lineIds),
-              eq(reservations.status, 'active'),
+              inArray(reservations.status, ['active', 'issued']),
               isNull(reservations.deletedAt),
             ),
           );
@@ -139,7 +139,7 @@ async function listReservedAllocationOutbounds(
           .where(
             and(
               inArray(reservations.outboundRequestLineId, lineIds),
-              eq(reservations.status, 'active'),
+              inArray(reservations.status, ['active', 'issued']),
               isNull(reservations.deletedAt),
               or(
                 isNull(allocationLines.id),

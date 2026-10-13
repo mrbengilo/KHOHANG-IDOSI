@@ -177,6 +177,9 @@ export const SUPPLIER_CONSISTENT_SOURCE_TYPES: ReadonlySet<string> = new Set([
   'priority_offer',
   'allocation_run',
   'allocation_result_decision',
+  // Issuing an RE order lowers on-hand and reserved together (H - R unchanged) while the issued
+  // quantity stays in U until an observation reflects it: F is unchanged (supplier-commitments).
+  'reshare_order',
   'store_receipt',
   'warehouse_shortage_check',
   'supplier_stock_observation',

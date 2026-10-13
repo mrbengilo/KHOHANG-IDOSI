@@ -30,7 +30,7 @@ describe('allocation decision API client', () => {
     vi.stubGlobal('fetch', fetch);
     const page = await listAllocationDecisions({ status: 'PENDING', pageSize: 5 });
     expect(String(fetch.mock.calls[0]?.[0])).toContain(
-      '/allocation-decisions?page=1&pageSize=5&status=PENDING',
+      '/allocation-decisions?page=1&pageSize=5&includeReshare=true&status=PENDING',
     );
     expect(page.pagination.totalItems).toBe(7);
     expect(page.data[0]?.status).toBe('PENDING');
@@ -74,7 +74,7 @@ describe('allocation decision API client', () => {
       status: 'ACCEPTED',
       shipment: { ...testDecision().shipment!, status: 'DISPATCHED' },
     });
-    expect(shipmentProgressLabel(accepted)).toBe('Đã xuất kho, chờ cửa hàng khai nhận');
+    expect(shipmentProgressLabel(accepted)).toBe('Đã giao đi, chờ cửa hàng khai nhận');
     expect(shipmentProgressLabel(testDecision())).toContain('Chờ cửa hàng xác nhận');
     expect(shipmentProgressLabel(testDecision({ status: 'ACCEPTED', shipment: null }))).toContain(
       'giao chung',

@@ -89,7 +89,7 @@ describe('allocation result panel', () => {
       }),
     );
     expect(html).toContain('Đã chấp nhận');
-    expect(html).toContain('Đã xuất kho, chờ cửa hàng khai nhận');
+    expect(html).toContain('Đã giao đi, chờ cửa hàng khai nhận');
     expect(html).toContain('Khai nhận thực tế');
     expect(html).not.toContain('Đã nhận hàng');
   });
@@ -114,5 +114,39 @@ describe('allocation result panel', () => {
     );
     expect(html).toContain('Hàng đã giữ từ phiên trước · 2 bao');
     expect(html).toContain('Quần áo nam: 2 bao');
+  });
+
+  it('shows the RE tag linked to the order, and keeps issue apart from receipt', () => {
+    const html = render(
+      testDecision({
+        status: 'ACCEPTED',
+        version: 2,
+        canRespond: false,
+        allowedActions: [],
+        respondedAt: '2026-10-05T03:00:00.000Z',
+        reshareOrder: {
+          id: '70000000-0000-4000-8000-000000000001',
+          code: 'RE-000007',
+          status: 'ORDERED',
+          orderedAt: '2026-10-05T03:00:00.000Z',
+          totalQuantity: 3,
+        },
+        shipment: { ...testDecision().shipment!, status: 'DISPATCHED' },
+      }),
+    );
+    expect(html).toContain('Đã đặt Reshare · RE-000007');
+    expect(html).toContain('/supplier-reconciliation?tab=orders&amp;code=RE-000007');
+    expect(html).toContain('Đã xuất 3 bao khỏi kho tổng theo đơn RE-000007');
+    expect(html).not.toContain('Đã nhận hàng');
+  });
+
+  it('offers an assigned HTKD acceptance only, never rejection', () => {
+    const html = render(testDecision({ canRespond: true, allowedActions: ['ACCEPT'] }));
+    expect(html).toContain('Chấp nhận');
+    expect(html).toContain('Bạn chấp nhận thay cửa hàng được phân công.');
+    expect(html).not.toContain('Từ chối');
+    const store = render(testDecision({ canRespond: true, allowedActions: ['ACCEPT', 'REJECT'] }));
+    expect(store).toContain('Từ chối');
+    expect(store).toContain('tự tạo đơn đặt Reshare');
   });
 });
