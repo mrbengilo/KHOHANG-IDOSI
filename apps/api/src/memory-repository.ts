@@ -1,3 +1,20 @@
+import type {
+  CancelSupplierOrderRequest,
+  CreateSupplierSourceRequest,
+  ListSupplierOrdersQuery,
+  RecordSupplierOrderRequest,
+  RecordSupplierSourceReturnRequest,
+  SupplierBatch,
+  SupplierCommitmentsQuery,
+  SupplierCommitmentsResponse,
+  SupplierObservation,
+  SupplierObservationHistoryQuery,
+  SupplierObservationHistoryRow,
+  SupplierObservationPreview,
+  SupplierReconciliationQuery,
+  SupplierReconciliationResponse,
+  SupplierSource,
+} from '@idosi/contracts';
 import {
   calculateReceiptVat,
   DomainError,
@@ -341,6 +358,122 @@ export interface MemoryRepositoryOptions {
 
 /** Deterministic in-memory adapter for inject tests and local demos. Never used by default in production. */
 export class MemoryWarehouseRepository implements WarehouseRepository {
+  // Reshare supplier reconciliation: the in-memory fixture has no supplier source configured,
+  // so reads are empty and commands fail exactly as a fresh PostgreSQL system would.
+
+  public async listSupplierSources(actor: AuthenticatedPrincipal): Promise<SupplierSource[]> {
+    if (actor.role !== 'ADMIN')
+      throw forbidden('Chỉ Admin được đối chiếu và cấu hình nguồn Reshare.');
+    return [];
+  }
+
+  public async createSupplierSource(
+    actor: AuthenticatedPrincipal,
+    _input: CreateSupplierSourceRequest,
+  ): Promise<IdempotentResource<{ id: string }>> {
+    if (actor.role !== 'ADMIN')
+      throw forbidden('Chỉ Admin được đối chiếu và cấu hình nguồn Reshare.');
+    throw new ApiError(
+      'INTEGRATION_NOT_CONFIGURED',
+      'Cấu hình nguồn Reshare cần cơ sở dữ liệu PostgreSQL.',
+      503,
+    );
+  }
+
+  public async addSupplierSourceProducts(
+    actor: AuthenticatedPrincipal,
+  ): Promise<IdempotentResource<{ added: string[] }>> {
+    if (actor.role !== 'ADMIN')
+      throw forbidden('Chỉ Admin được đối chiếu và cấu hình nguồn Reshare.');
+    throw notFound('Không tìm thấy nguồn Reshare.');
+  }
+
+  public async getSupplierReconciliation(
+    actor: AuthenticatedPrincipal,
+    query: SupplierReconciliationQuery,
+  ): Promise<SupplierReconciliationResponse> {
+    if (actor.role !== 'ADMIN')
+      throw forbidden('Chỉ Admin được đối chiếu và cấu hình nguồn Reshare.');
+    return {
+      data: [],
+      pagination: pagination(query.page, query.pageSize, 0),
+      revision: 'memory',
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  public async previewSupplierObservation(
+    actor: AuthenticatedPrincipal,
+  ): Promise<SupplierObservationPreview> {
+    if (actor.role !== 'ADMIN')
+      throw forbidden('Chỉ Admin được đối chiếu và cấu hình nguồn Reshare.');
+    throw notFound('Không tìm thấy nguồn Reshare.');
+  }
+
+  public async confirmSupplierObservation(
+    actor: AuthenticatedPrincipal,
+  ): Promise<IdempotentResource<SupplierObservation>> {
+    if (actor.role !== 'ADMIN')
+      throw forbidden('Chỉ Admin được đối chiếu và cấu hình nguồn Reshare.');
+    throw notFound('Không tìm thấy nguồn Reshare.');
+  }
+
+  public async listSupplierObservationHistory(
+    actor: AuthenticatedPrincipal,
+    query: SupplierObservationHistoryQuery,
+  ): Promise<Page<SupplierObservationHistoryRow>> {
+    if (actor.role !== 'ADMIN')
+      throw forbidden('Chỉ Admin được đối chiếu và cấu hình nguồn Reshare.');
+    return { data: [], pagination: pagination(query.page, query.pageSize, 0) };
+  }
+
+  public async listSupplierCommitments(
+    actor: AuthenticatedPrincipal,
+    query: SupplierCommitmentsQuery,
+  ): Promise<SupplierCommitmentsResponse> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    return {
+      data: [],
+      pagination: pagination(query.page, query.pageSize, 0),
+      totals: { quantity: 0, orderedQuantity: 0, unorderedQuantity: 0 },
+      scoped: actor.role !== 'ADMIN',
+    };
+  }
+
+  public async listSupplierOrders(
+    actor: AuthenticatedPrincipal,
+    query: ListSupplierOrdersQuery,
+  ): Promise<Page<SupplierBatch>> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    return { data: [], pagination: pagination(query.page, query.pageSize, 0) };
+  }
+
+  public async recordSupplierOrder(
+    actor: AuthenticatedPrincipal,
+    _input: RecordSupplierOrderRequest,
+  ): Promise<IdempotentResource<SupplierBatch>> {
+    if (actor.role !== 'ADMIN' && actor.role !== 'HTKD') throw forbidden();
+    throw new ApiError('SOURCE_NOT_RECONCILED', 'Mặt hàng chưa thuộc nguồn Reshare.', 409);
+  }
+
+  public async cancelSupplierOrder(
+    actor: AuthenticatedPrincipal,
+    _eventId: string,
+    _input: CancelSupplierOrderRequest,
+  ): Promise<IdempotentResource<SupplierBatch>> {
+    if (actor.role !== 'ADMIN' && actor.role !== 'HTKD') throw forbidden();
+    throw notFound('Không tìm thấy dòng đơn Reshare.');
+  }
+
+  public async recordSupplierSourceReturn(
+    actor: AuthenticatedPrincipal,
+    _input: RecordSupplierSourceReturnRequest,
+  ): Promise<IdempotentResource<SupplierBatch>> {
+    if (actor.role !== 'ADMIN')
+      throw forbidden('Chỉ Admin được đối chiếu và cấu hình nguồn Reshare.');
+    throw new ApiError('SOURCE_NOT_RECONCILED', 'Mặt hàng chưa thuộc nguồn Reshare.', 409);
+  }
+
   public async listWarehouseInventory(
     actor: AuthenticatedPrincipal,
     query: WarehouseInventoryQuery,

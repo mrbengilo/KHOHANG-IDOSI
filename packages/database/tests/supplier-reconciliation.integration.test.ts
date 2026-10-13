@@ -10,6 +10,16 @@ import {
   confirmSupplierStockObservation,
   createWarehouseStockAdjustment,
   db,
+  declareStoreReceipt,
+  htkdAssignments,
+  finalizeStoreReceipt,
+  operationalSettingsVersions,
+  outboundRequestLines,
+  outboundRequests,
+  reservations,
+  resolveWarehouseShortageCheck,
+  submitStoreReceipt,
+  warehouseShortageChecks,
   listSupplierCommitments,
   listSupplierObservationHistory,
   listSupplierReconciliationSummary,
@@ -563,6 +573,106 @@ describePostgres('Reshare supplier reconciliation (PostgreSQL)', () => {
     );
   });
 
+  it('T26/T27: receipt after a B order consumes A once; a "found" shortage frees nothing', async () => {
+    const product = await createMappedProduct(fx);
+    await observe(fx, [{ productId: product, observedQuantity: 5 }], {
+      observedAt: minutesAgo(10),
+    });
+    const granted = await grant(fx, { storeId: fx.storeA, productId: product, quantity: 3 });
+    await order(fx, { reservationId: granted.reservationId, quantity: 3, externalRef: 'B-T26' });
+    expect(await balanceOf(product)).toMatchObject({ onHand: 5, reserved: 3, available: 2 });
+
+    // Shipment of the accepted result, then the store declares 2 of 3 received.
+    const now = new Date();
+    const [outbound] = await db
+      .insert(outboundRequests)
+      .values({
+        requestNumber: '',
+        storeId: fx.storeA,
+        orderSessionId: granted.sessionId,
+        allocationRunId: granted.runId,
+        status: 'dispatched',
+        requestedByUserId: fx.adminId,
+        submittedAt: now,
+        approvedAt: now,
+        dispatchedAt: now,
+      })
+      .returning();
+    const [line] = await db
+      .insert(outboundRequestLines)
+      .values({
+        outboundRequestId: outbound!.id,
+        productId: product,
+        allocationLineId: granted.allocationLineId,
+        requestedQuantity: 3,
+        approvedQuantity: 3,
+        reservedQuantity: 3,
+        dispatchedQuantity: 3,
+      })
+      .returning();
+    await db
+      .update(reservations)
+      .set({ outboundRequestLineId: line!.id })
+      .where(eq(reservations.id, granted.reservationId));
+    const lines = [{ productId: product, approvedQuantity: 3, receivedQuantity: 2 }];
+    const declared = await declareStoreReceipt(db, {
+      outboundRequestId: outbound!.id,
+      storeId: fx.storeA,
+      declaredByUserId: fx.storeUserA,
+      lines,
+      discrepancyNote: 'Thiếu 1 bao',
+      idempotencyKey: randomUUID(),
+      requestHash: randomUUID(),
+    });
+    if (declared.replayed) throw new Error('unexpected replay');
+    const submitted = await submitStoreReceipt(db, {
+      receiptId: declared.value.receiptId,
+      expectedVersion: declared.value.version,
+      submittedByUserId: fx.storeUserA,
+      lines,
+      discrepancyNote: 'Thiếu 1 bao',
+      idempotencyKey: randomUUID(),
+      requestHash: randomUUID(),
+    });
+    if (submitted.replayed) throw new Error('unexpected replay');
+    await finalizeStoreReceipt(db, {
+      receiptId: declared.value.receiptId,
+      expectedVersion: submitted.value.version,
+      reviewedByUserId: fx.htkdId,
+      freightVnd: 0n,
+      handlingVnd: 0n,
+      expectedVatSettingsVersion: Math.max(
+        ...(await db.select().from(operationalSettingsVersions)).map((row) => row.version),
+      ),
+      lines: [{ productId: product, pricePerKgVnd: 50_000n, bagWeightsKg: ['20.000', '20.000'] }],
+      idempotencyKey: randomUUID(),
+      requestHash: randomUUID(),
+    });
+    // T26: received bags leave on-hand and reserved once; B is not deducted again; the missing
+    // bag stays held in a shortage check. Free stock is unchanged.
+    expect(await balanceOf(product)).toMatchObject({ onHand: 3, reserved: 1, available: 2 });
+    expect(await statusOf(product)).toBe('active');
+
+    // T27: resolving the shortage as "found" releases the hold without creating free stock.
+    const [check] = await db
+      .select()
+      .from(warehouseShortageChecks)
+      .where(eq(warehouseShortageChecks.productId, product));
+    expect(check).toMatchObject({ quantity: 1, status: 'pending' });
+    await resolveWarehouseShortageCheck(db, {
+      checkId: check!.id,
+      decision: 'returned_to_stock',
+      reason: 'Đã kiểm với Reshare',
+      expectedVersion: check!.version,
+      actorUserId: fx.adminId,
+      idempotencyKey: randomUUID(),
+      requestHash: 'found',
+    });
+    expect(await balanceOf(product)).toMatchObject({ onHand: 2, reserved: 0, available: 2 });
+    expect(await statusOf(product)).toBe('active');
+    expect(await ledgerTotals(product)).toEqual({ onHand: 2, reserved: 0 });
+  });
+
   it('T21/T23: concurrent observation, orders and holds never over-allocate', async () => {
     const product = await createMappedProduct(fx);
     await observe(fx, [{ productId: product, observedQuantity: 6 }], {
@@ -659,5 +769,49 @@ describePostgres('Reshare supplier reconciliation (PostgreSQL)', () => {
       'FORBIDDEN',
     );
     expect(SupplierReconciliationError).toBeDefined();
+  });
+  it("T31: an exact replay re-checks today's scope before returning the stored order", async () => {
+    const local = await createSupplierFixture();
+    const product = await createMappedProduct(local);
+    await observe(local, [{ productId: product, observedQuantity: 4 }], {
+      observedAt: minutesAgo(5),
+    });
+    const granted = await grant(local, { storeId: local.storeA, productId: product, quantity: 2 });
+    const key = randomUUID();
+    const first = await order(local, {
+      reservationId: granted.reservationId,
+      quantity: 1,
+      key,
+      externalRef: 'B-REPLAY',
+    });
+    const again = await order(local, {
+      reservationId: granted.reservationId,
+      quantity: 1,
+      key,
+      externalRef: 'B-REPLAY',
+    });
+    expect(again).toMatchObject({ replayed: true, batch: { id: first.batch.id } });
+    await rejected(
+      order(local, {
+        reservationId: granted.reservationId,
+        quantity: 2,
+        key,
+        externalRef: 'B-REPLAY',
+      }),
+      'IDEMPOTENCY_CONFLICT',
+    );
+    await db
+      .update(htkdAssignments)
+      .set({ revokedAt: new Date() })
+      .where(eq(htkdAssignments.userId, local.htkdId));
+    await rejected(
+      order(local, {
+        reservationId: granted.reservationId,
+        quantity: 1,
+        key,
+        externalRef: 'B-REPLAY',
+      }),
+      'FORBIDDEN',
+    );
   });
 });
