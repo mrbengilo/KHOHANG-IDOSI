@@ -18,6 +18,11 @@ const WarehouseInboundPage = lazy(() =>
     default: module.WarehouseInboundPage,
   })),
 );
+const SupplierReconciliationPage = lazy(() =>
+  import('./pages/SupplierReconciliationPage').then((module) => ({
+    default: module.SupplierReconciliationPage,
+  })),
+);
 const AllocationPage = lazy(() =>
   import('./pages/AllocationPage').then((module) => ({ default: module.AllocationPage })),
 );
@@ -99,6 +104,10 @@ export const router = createBrowserRouter([
           { path: 'allocations', element: suspense(<AllocationPage />) },
           { path: 'requests', element: suspense(<RequestsPage />) },
           { path: 'warehouse-inbound', element: suspense(<WarehouseInboundPage />) },
+          {
+            path: 'supplier-reconciliation',
+            element: suspense(<SupplierReconciliationPage />),
+          },
           { path: 'receive', element: suspense(<ReceivePage />) },
           { path: 'partner-inbound', element: suspense(<PartnerInboundPage />) },
           { path: 'inventory', element: suspense(<InventoryPage />) },

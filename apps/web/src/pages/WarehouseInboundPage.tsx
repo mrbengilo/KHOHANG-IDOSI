@@ -4,6 +4,7 @@ import {
 } from '@idosi/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { AdminAccess } from '../features/admin/AdminAccess';
 import { Button } from '../components/Button';
 import { PageHeader } from '../components/PageHeader';
@@ -118,6 +119,12 @@ function WarehouseInboundContent() {
         title="Nhập kho tổng"
         description="Tiếp nhận hàng từ nhà cung cấp vào kho tổng. Chọn mặt hàng và nhập số bao thực nhận."
       />
+      <p className="inline-notice warehouse-inbound-reshare" role="note">
+        Hàng lấy từ kho Reshare không nhập cộng dồn bằng phiếu này. Admin nhập{' '}
+        <strong>tổng số Reshare đang cho đặt</strong> tại{' '}
+        <Link to="/supplier-reconciliation">Đối chiếu tồn Reshare</Link>; hệ thống tự trừ phần đã
+        cấp nhưng chưa đặt. Phiếu nhập cho mặt hàng đã bật đối chiếu sẽ bị từ chối.
+      </p>
       {catalog.isError ? (
         <div role="alert">
           Không tải được danh mục.{' '}

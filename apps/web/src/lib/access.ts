@@ -16,6 +16,9 @@ export const routeAccessPolicies = {
   '/allocations': { roles: ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE'] },
   '/requests': { roles: ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE'] },
   '/warehouse-inbound': { roles: ['ADMIN', 'HTKD'] },
+  // Admin reconciles Reshare stock; HTKD records Reshare orders for its stores; store and
+  // wholesale accounts read the Reshare order state of their own stores (server-scoped).
+  '/supplier-reconciliation': { roles: ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE'] },
   '/receive': {
     roles: ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE'],
     storeKinds: ['RETAIL'],

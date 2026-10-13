@@ -24,6 +24,8 @@ export default defineConfig({
     '**/desktop-login-shell.spec.ts',
     // Prominent allocation/Admin inventory tab bars: sizes, roles, keyboard, zoom, deep links.
     '**/prominent-tabs.spec.ts',
+    // Reshare reconciliation: Admin/HTKD/store flows, idempotent retry and responsive widths.
+    '**/supplier-reconciliation.spec.ts',
   ],
   use: { ...smokeConfig.use, baseURL: webOrigin },
   webServer: {
