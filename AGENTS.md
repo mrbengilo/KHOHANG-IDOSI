@@ -64,6 +64,7 @@ Các invariant sau là bắt buộc, trừ khi task mới thay đổi rõ ràng 
 - Audit quan trọng phải bất biến; không xóa cứng chứng từ đã phát sinh giao dịch.
 - Tiền VND không dùng floating point. Khối lượng phải dùng kiểu decimal có độ chính xác xác định.
 - Số tồn hiện tại phải đối soát được với sổ phát sinh kho.
+- Mặt hàng đã bật đối chiếu Reshare (kho B): không nhập cộng dồn hay điều chỉnh tồn thủ công; C nhập **tổng** tồn B đang cho đặt, khả dụng = max(0, B_eff − U) với U là phần A đã giữ/cấp nhưng chưa được B ghi nhận; ghi nhận đơn B không làm tăng khả dụng; thiếu nguồn D hiển thị riêng và chặn cấp mới. Chi tiết: `docs/supplier-stock-reconciliation.md`.
 
 Nếu task thay đổi một invariant, phải:
 1. Nêu rõ invariant cũ và mới.
