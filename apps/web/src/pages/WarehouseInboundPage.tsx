@@ -122,8 +122,8 @@ function WarehouseInboundContent() {
       <p className="inline-notice warehouse-inbound-reshare" role="note">
         Hàng lấy từ kho Reshare không nhập cộng dồn bằng phiếu này. Admin nhập{' '}
         <strong>tổng số Reshare đang cho đặt</strong> tại{' '}
-        <Link to="/supplier-reconciliation">Đối chiếu tồn Reshare</Link>; hệ thống tự trừ phần đã
-        cấp nhưng chưa đặt. Phiếu nhập cho mặt hàng đã bật đối chiếu sẽ bị từ chối.
+        <Link to="/supplier-reconciliation?tab=reconcile">Cập nhật tồn Reshare</Link>; hệ thống tự
+        trừ phần đã cấp nhưng chưa đặt. Phiếu nhập cho mặt hàng đã bật đối chiếu sẽ bị từ chối.
       </p>
       {catalog.isError ? (
         <div role="alert">

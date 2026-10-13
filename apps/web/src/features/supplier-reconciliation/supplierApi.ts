@@ -4,6 +4,7 @@ import {
   ConfirmSupplierObservationRequestSchema,
   CreateSupplierSourceRequestSchema,
   CreateSupplierSourceResponseSchema,
+  ListReshareOrdersResponseSchema,
   ListSupplierOrdersResponseSchema,
   ListSupplierSourcesResponseSchema,
   RecordSupplierOrderRequestSchema,
@@ -18,6 +19,7 @@ import {
   type ConfirmSupplierObservationRequest,
   type CreateSupplierSourceRequest,
   type RecordSupplierOrderRequest,
+  type ReshareOrderHistoryStatus,
   type SupplierCommitmentFilter,
   type SupplierObservationRequest,
   type SupplierReconciliationFilter,
@@ -33,6 +35,7 @@ export const SUPPLIER_QUERY_ROOTS = [
   'supplier-history',
   'supplier-sources',
   'warehouse-inventory',
+  'reshare-orders',
 ] as const;
 
 function query(values: Record<string, string | number | undefined>): string {
@@ -83,7 +86,32 @@ export async function loadSupplierReconciliation(
   signal?: AbortSignal,
 ) {
   return SupplierReconciliationResponseSchema.parse(
-    await request(`/supplier-reconciliation?${query({ pageSize: 20, ...filters })}`, {
+    await request(
+      `/supplier-reconciliation?${query({ pageSize: 20, includeIssued: 'true', ...filters })}`,
+      {
+        signal: signal ?? null,
+      },
+    ),
+  );
+}
+
+export interface ReshareOrderFilters {
+  readonly page: number;
+  readonly pageSize?: number;
+  readonly sessionId?: string;
+  readonly storeId?: string;
+  readonly productId?: string;
+  readonly status?: ReshareOrderHistoryStatus;
+  /** ISO instants (Vietnam business days converted by the caller). */
+  readonly from?: string;
+  readonly to?: string;
+  readonly code?: string;
+}
+
+/** "Lịch sử đặt hàng theo phân bổ": filtered, sorted and paged on the server. */
+export async function loadReshareOrders(filters: ReshareOrderFilters, signal?: AbortSignal) {
+  return ListReshareOrdersResponseSchema.parse(
+    await request(`/reshare-orders?${query({ pageSize: 20, ...filters })}`, {
       signal: signal ?? null,
     }),
   );
@@ -128,11 +156,17 @@ export async function loadSupplierHistory(
   );
 }
 
+/** Always sends reshareCoverage (even empty) so the preview carries the RE details. */
 export async function previewSupplierObservation(input: SupplierObservationRequest) {
   return SupplierObservationPreviewResponseSchema.parse(
     await request('/supplier-stock-observations/preview', {
       method: 'POST',
-      body: JSON.stringify(SupplierObservationRequestSchema.parse(input)),
+      body: JSON.stringify(
+        SupplierObservationRequestSchema.parse({
+          ...input,
+          reshareCoverage: input.reshareCoverage ?? [],
+        }),
+      ),
     }),
   ).data;
 }

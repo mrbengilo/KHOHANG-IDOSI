@@ -365,3 +365,175 @@
     content: none;
   }
 }
+
+/* Đơn đặt Reshare: nhóm theo đơn (một mã RE), mỗi mặt hàng một dòng, tổng một lần. */
+.supplier-role-hint {
+  margin-top: -4px;
+}
+.reshare-orders__filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 10px 12px;
+  align-items: end;
+}
+.reshare-orders__filters label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  font-weight: 600;
+}
+.reshare-orders__filters :is(select, input) {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+}
+.reshare-orders__search {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.reshare-orders__search input {
+  flex: 1 1 auto;
+}
+.reshare-orders__empty {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+.reshare-history__group + .reshare-history__group {
+  border-top: 2px solid var(--border);
+}
+.reshare-history__group td {
+  vertical-align: top;
+}
+.reshare-history__group:hover {
+  background: #f8fafc;
+}
+.reshare-history__group tr:hover {
+  background: transparent;
+}
+.reshare-history__product {
+  min-width: 12ch;
+}
+.reshare-history__number {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.reshare-history__code {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.reshare-history td small {
+  max-width: 34ch;
+}
+.reshare-history__cards {
+  display: none;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* Màn hình hẹp: mỗi đơn là một thẻ, các dòng mặt hàng nằm trong thẻ, tổng hiển thị một lần. */
+@media (max-width: 620px) {
+  .app-main .reshare-history__table {
+    display: none;
+  }
+  .reshare-history__cards {
+    display: grid;
+    gap: 12px;
+  }
+  .reshare-history__card {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface, #fff);
+    padding: 12px;
+  }
+  .reshare-history__card-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .reshare-history__card-code {
+    font-size: 16px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .reshare-history__card-store {
+    margin: 0;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+  }
+  .reshare-history__card-meta {
+    margin: 0;
+  }
+  .reshare-history__card-meta dt {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .reshare-history__card-meta dd {
+    display: grid;
+    gap: 2px;
+    margin: 0;
+  }
+  .reshare-history__card-meta dd small {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .reshare-history__card-note {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+  }
+  /* Bảng dòng hàng trong thẻ giữ dạng bảng hai cột, không chuyển thành thẻ con. */
+  .reshare-history__card-lines {
+    display: table;
+    width: 100%;
+  }
+  .reshare-history__card-lines thead {
+    display: table-header-group;
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+  }
+  .reshare-history__card-lines tbody {
+    display: table-row-group;
+  }
+  .reshare-history__card-lines tfoot {
+    display: table-footer-group;
+  }
+  .reshare-history__card-lines tr {
+    display: table-row;
+    border: 0;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    padding: 0;
+  }
+  .reshare-history__card-lines :is(th, td) {
+    display: table-cell;
+    padding: 6px 4px;
+    overflow-wrap: anywhere;
+  }
+  .reshare-history__card-lines td::before {
+    content: none;
+  }
+  .reshare-history__card-lines td:last-child,
+  .reshare-history__card-lines th:last-child {
+    text-align: right;
+    white-space: nowrap;
+  }
+}
+
+.supplier-legacy-link {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  min-width: 0;
+}

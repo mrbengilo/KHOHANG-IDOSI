@@ -70,6 +70,8 @@ export function ObservationForm({
   const [evidenceRef, setEvidenceRef] = useState('');
   const [coverage, setCoverage] = useState<Record<string, boolean>>({});
   const [attest, setAttest] = useState(false);
+  /** RE line → bags the person states the entered total already deducted. */
+  const [reflected, setReflected] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState<SupplierObservationPreview | null>(null);
   const [previewStale, setPreviewStale] = useState(false);
   const [busy, setBusy] = useState<'preview' | 'confirm' | null>(null);
@@ -92,10 +94,18 @@ export function ObservationForm({
       }
       lines.push({ productId: target.productId, observedQuantity: value });
     }
+    const reshareCoverage = [];
+    for (const [reshareOrderLineId, value] of Object.entries(reflected)) {
+      if (value.trim() === '') continue;
+      const quantity = parseBags(value);
+      if (quantity === null) return 'Số bao đơn RE đã trừ phải là số nguyên không âm.';
+      if (quantity > 0) reshareCoverage.push({ reshareOrderLineId, quantity });
+    }
     return {
       sourceId,
       observedAt: iso,
       lines,
+      reshareCoverage,
       eventCoverage: Object.entries(coverage).map(([eventId, included]) => ({ eventId, included })),
       attestUnlinkedAsNotOrdered: attest,
       ...(note.trim() ? { note: note.trim() } : {}),
@@ -144,7 +154,7 @@ export function ObservationForm({
         SUPPLIER_QUERY_ROOTS.map((root) => client.invalidateQueries({ queryKey: [root] })),
       );
       onDone(
-        `Đã lưu đối chiếu lúc ${formatDocumentTime(saved.observedAt)}. ${saved.lines
+        `Đã lưu cập nhật tồn lúc ${formatDocumentTime(saved.observedAt)}. ${saved.lines
           .map((line) =>
             freeChangeSentence(line.sku, beforeBySku.get(line.productId) ?? 0, line.freeQuantity),
           )
@@ -173,10 +183,11 @@ export function ObservationForm({
       noValidate
       onSubmit={(event) => void runPreview(event)}
     >
-      <h2>Nhập tổng tồn Reshare đang thấy</h2>
+      <h2>Cập nhật tổng tồn Reshare</h2>
       <p className="supplier-hint">
-        Nhập <strong>tổng số bao Reshare đang cho đặt</strong> tại thời điểm xem — không tự trừ các
-        đơn đã cấp. Hệ thống tự tính phần IDOSI đã giữ/cấp nhưng chưa đặt và phần còn phân bổ được.
+        Nhập <strong>tổng số bao hiện có thể đặt trên Reshare</strong>, không phải số nhập thêm. Sau
+        khi xem trước, đánh dấu các đơn RE mà số tồn này đã trừ; hệ thống tự tính phần còn phân bổ
+        được và không trừ một đơn hai lần.
       </p>
       <fieldset className="supplier-observation__meta" disabled={busy !== null}>
         <label>
@@ -301,8 +312,12 @@ export function ObservationForm({
                   <dd>{formatInteger(line.after.offerHoldQuantity)}</dd>
                 </div>
                 <div>
-                  <dt>Đã cấp chưa đặt Reshare</dt>
+                  <dt>Đã cấp, đang giữ chưa đặt</dt>
                   <dd>{formatInteger(line.after.unorderedReservedQuantity)}</dd>
+                </div>
+                <div>
+                  <dt>Đơn RE số tồn chưa trừ</dt>
+                  <dd>{formatInteger(line.after.issuedUnreflectedQuantity ?? 0)}</dd>
                 </div>
                 <div>
                   <dt>Khả dụng hiện tại → sau</dt>
@@ -319,9 +334,82 @@ export function ObservationForm({
               {line.unlinkedLegacyQuantity > 0 ? (
                 <p className="inline-notice" role="note">
                   {formatInteger(line.unlinkedLegacyQuantity)} bao đang giữ từ trước khi bật đối
-                  chiếu chưa có đơn Reshare. Nếu đã đặt Reshare, ghi nhận đơn trước ở tab “Chờ đặt
-                  Reshare”.
+                  chiếu chưa có đơn Reshare. Nếu đã đặt Reshare, ghi nhận đơn trước ở mục “Đơn ghi
+                  nhận thủ công”.
                 </p>
+              ) : null}
+              {(line.issuedOrders ?? []).length > 0 ? (
+                <fieldset
+                  className="supplier-coverage supplier-reshare-coverage"
+                  disabled={busy !== null}
+                >
+                  <legend>Số tồn này đã trừ các đơn RE nào?</legend>
+                  <p className="supplier-hint">
+                    Đánh dấu đơn đã đặt trên Reshare trước lúc xem tồn (số tồn đã giảm theo đơn đó).
+                    Đơn chưa đặt thì để trống: hệ thống vẫn giữ phần đó, không cấp trùng.
+                  </p>
+                  <ul>
+                    {(line.issuedOrders ?? []).map((order) => {
+                      const value = reflected[order.lineId] ?? '';
+                      const checked = value !== '' && Number(value) > 0;
+                      return (
+                        <li key={order.lineId}>
+                          <span>
+                            <strong>
+                              {order.code} · {formatInteger(order.unreflectedQuantity)} bao chưa trừ
+                            </strong>
+                            <small>
+                              {order.storeName} · lập lúc {formatDocumentTime(order.orderedAt)}
+                            </small>
+                          </span>
+                          {order.afterObservation ? (
+                            <small>Lập sau lúc xem tồn: số tồn chưa thể trừ đơn này.</small>
+                          ) : (
+                            <span className="supplier-coverage__choice">
+                              <label>
+                                <input
+                                  checked={checked}
+                                  onChange={(event) => {
+                                    setReflected((current) => ({
+                                      ...current,
+                                      [order.lineId]: event.target.checked
+                                        ? String(order.unreflectedQuantity)
+                                        : '',
+                                    }));
+                                    changed();
+                                  }}
+                                  type="checkbox"
+                                />
+                                Đã trừ trong số vừa nhập
+                              </label>
+                              {checked ? (
+                                <label>
+                                  Số bao đã trừ
+                                  <input
+                                    aria-label={`Số bao của ${order.code} đã trừ trong số tồn`}
+                                    className="supplier-quantity-input"
+                                    inputMode="numeric"
+                                    max={order.unreflectedQuantity}
+                                    min={1}
+                                    onChange={(event) => {
+                                      setReflected((current) => ({
+                                        ...current,
+                                        [order.lineId]: event.target.value,
+                                      }));
+                                      changed();
+                                    }}
+                                    type="number"
+                                    value={value}
+                                  />
+                                </label>
+                              ) : null}
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </fieldset>
               ) : null}
               {line.events.length > 0 ? (
                 <fieldset className="supplier-coverage" disabled={busy !== null}>
@@ -402,7 +490,7 @@ export function ObservationForm({
               onClick={() => void confirm()}
               tone="success"
             >
-              Lưu đối chiếu
+              Lưu cập nhật tồn
             </Button>
           </div>
         </section>

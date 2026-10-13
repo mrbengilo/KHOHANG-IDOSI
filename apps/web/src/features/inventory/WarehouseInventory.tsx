@@ -120,8 +120,8 @@ function WarehouseStock({
       {!readOnly ? (
         <p className="supplier-inventory-note">
           Mặt hàng nguồn Reshare: “Có thể xuất” là phần còn phân bổ được theo{' '}
-          <Link to="/supplier-reconciliation">đối chiếu tồn Reshare</Link> (đã trừ hàng đã cấp nhưng
-          chưa đặt Reshare); không điều chỉnh tồn thủ công các mặt hàng này.
+          <Link to="/supplier-reconciliation?tab=reconcile">cập nhật tồn Reshare</Link> (đã trừ hàng
+          đã cấp nhưng chưa đặt Reshare); không điều chỉnh tồn thủ công các mặt hàng này.
         </p>
       ) : null}
       {notice ? (
@@ -252,6 +252,11 @@ function WarehouseHistory({ page: historyPage }: { readonly page: number }) {
   return (
     <section className="panel warehouse-stock-panel" aria-label="Lịch sử phiếu xuất kho tổng">
       <h2>Phiếu chờ xuất & lịch sử xuất kho</h2>
+      <p className="supplier-inventory-note">
+        Từ khi có đơn RE, hàng rời kho tổng lúc kết quả phân bổ được chấp nhận (bút toán “Xuất theo
+        đơn RE-…”); phiếu xuất dưới đây là chuyến giao. Xem mã đơn, số bao, cửa hàng, phiên và người
+        lập tại <Link to="/supplier-reconciliation?tab=orders">Đơn đặt Reshare</Link>.
+      </p>
       {catalog.isError || stores.isError ? (
         <p role="alert">Chưa tải được tên mặt hàng/cửa hàng; tạm hiển thị mã để đối soát.</p>
       ) : null}

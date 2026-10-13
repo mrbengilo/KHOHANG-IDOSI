@@ -1162,6 +1162,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
               ) : null}
               {decisionQuery.data ? (
                 <AllocationDecisionPanel
+                  actingForStore={role === 'HTKD'}
                   canReceive={role === 'STORE' || role === 'WHOLESALE'}
                   decision={decisionQuery.data}
                   onClose={() => openDecision(null)}

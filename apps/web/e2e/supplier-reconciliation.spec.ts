@@ -3,9 +3,10 @@ import { expect, test, type Page, type Request } from '@playwright/test';
 import { layoutAdminSession } from './layout-fixtures';
 
 /*
- * Đối chiếu tồn Reshare trên production bundle với API giả lập theo đúng contract: luồng Admin
- * (xem, chi tiết, xem trước, xác nhận coverage, lưu), giữ Idempotency-Key khi gửi lại, HTKD chỉ
- * thấy hàng chờ đặt, và bố cục không tràn ở các bề rộng đại diện.
+ * Đơn đặt và tồn Reshare trên production bundle với API giả lập theo đúng contract: mọi vai trò
+ * mở vào "Đơn đặt Reshare" (lịch sử RE nhóm theo đơn, lọc phía server), Admin cập nhật tồn (xem
+ * trước, coverage biến động và đơn RE, lưu, giữ Idempotency-Key khi gửi lại), đơn ghi nhận thủ
+ * công chỉ còn ở mục dữ liệu cũ, và bố cục không tràn ở các bề rộng đại diện.
  */
 
 type Role = 'ADMIN' | 'HTKD' | 'STORE';
@@ -18,6 +19,68 @@ const page1 = (count: number) => ({
   totalPages: count ? 1 : 0,
 });
 const productId = id(501);
+const reshareLineId = id(1101);
+
+const reshareRows = [
+  {
+    decisionId: id(1001),
+    decisionStatus: 'ACCEPTED',
+    sessionId: id(801),
+    sessionCode: 'PDH-000012',
+    businessDate: '2026-10-13',
+    runVersion: 1,
+    sessionOpenedAt: '2026-10-12T17:00:00.000Z',
+    allocationCompletedAt: '2026-10-13T02:00:05.000Z',
+    publishedAt: '2026-10-13T02:00:05.000Z',
+    acceptedAt: '2026-10-13T02:20:00.000Z',
+    acceptedByName: 'Cửa hàng Gò Vấp',
+    storeId: id(31),
+    storeName: 'Cửa hàng Gò Vấp — chi nhánh có tên rất dài để kiểm tra xuống dòng',
+    status: 'ORDERED',
+    order: {
+      id: id(1002),
+      code: 'RE-000001',
+      orderedAt: '2026-10-13T02:20:00.000Z',
+      origin: 'ACCEPTANCE',
+      actorName: 'Cửa hàng Gò Vấp',
+      actorRole: 'STORE',
+      cancelledAt: null,
+      cancelReason: null,
+    },
+    lines: [
+      { productId, productName: 'Quần dài nữ', productSku: 'QDN', quantity: 2 },
+      { productId: id(502), productName: 'Áo', productSku: 'AO', quantity: 3 },
+    ],
+    totalQuantity: 5,
+    delivery: {
+      issuedQuantity: 5,
+      receivedQuantity: 0,
+      shortageQuantity: 0,
+      awaitingReceiptQuantity: 5,
+      onShipmentQuantity: 5,
+    },
+  },
+  {
+    decisionId: id(1003),
+    decisionStatus: 'PENDING',
+    sessionId: id(803),
+    sessionCode: 'PDH-000013',
+    businessDate: '2026-10-13',
+    runVersion: 1,
+    sessionOpenedAt: '2026-10-13T03:00:00.000Z',
+    allocationCompletedAt: '2026-10-13T05:00:02.000Z',
+    publishedAt: '2026-10-13T05:00:02.000Z',
+    acceptedAt: null,
+    acceptedByName: null,
+    storeId: id(31),
+    storeName: 'Cửa hàng Gò Vấp — chi nhánh có tên rất dài để kiểm tra xuống dòng',
+    status: 'NOT_ORDERED',
+    order: null,
+    lines: [{ productId, productName: 'Quần dài nữ', productSku: 'QDN', quantity: 1 }],
+    totalQuantity: 1,
+    delivery: null,
+  },
+];
 const eventId = id(601);
 const reservationId = id(701);
 
@@ -119,6 +182,21 @@ function preview(decided: boolean) {
         undecidedEventCount: decided ? 0 : 1,
         coveredEventCount: decided ? 1 : 0,
         unlinkedLegacyQuantity: 0,
+        issuedOrders: [
+          {
+            lineId: reshareLineId,
+            orderId: id(1002),
+            code: 'RE-000001',
+            storeId: id(31),
+            storeName: 'Cửa hàng Gò Vấp',
+            orderedAt: time,
+            quantity: 2,
+            unreflectedQuantity: 2,
+            declaredReflectedQuantity: 0,
+            afterObservation: false,
+          },
+        ],
+        reflectedReshareQuantity: 0,
         onHandDelta: 0,
       },
     ],
@@ -175,11 +253,12 @@ function sessionFor(role: Role) {
 
 interface Log {
   readonly mutations: Request[];
+  readonly orderQueries: URLSearchParams[];
   failNextConfirm: boolean;
 }
 
 async function mockApi(page: Page, role: Role): Promise<Log> {
-  const log: Log = { mutations: [], failNextConfirm: false };
+  const log: Log = { mutations: [], orderQueries: [], failNextConfirm: false };
   let previews = 0;
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request();
@@ -206,6 +285,16 @@ async function mockApi(page: Page, role: Role): Promise<Log> {
         pagination: { ...page1(1), pageSize: 100 },
       });
     if (request.method() !== 'GET') log.mutations.push(request);
+    if (path === '/reshare-orders') {
+      log.orderQueries.push(url.searchParams);
+      const status = url.searchParams.get('status');
+      const code = url.searchParams.get('code');
+      const rows = reshareRows.filter(
+        (row) =>
+          (!status || row.status === status) && (!code || (row.order?.code ?? '').includes(code)),
+      );
+      return json({ data: rows, pagination: page1(rows.length), scoped: role !== 'ADMIN' });
+    }
     if (path === '/supplier-sources' && request.method() === 'GET')
       return json({
         data: [
@@ -291,13 +380,66 @@ async function expectNoPageOverflow(page: Page) {
   expect(overflow).toBeLessThanOrEqual(1);
 }
 
-test('Admin reconciles the AC01 case: re-observing 3 bags frees nothing and keeps the key on retry', async ({
+test('every role opens on its RE orders: one group per order, total once, server filters', async ({
   page,
 }) => {
   const log = await mockApi(page, 'ADMIN');
   await page.goto('/supplier-reconciliation');
-  await expect(page.getByRole('heading', { name: 'Đối chiếu tồn Reshare' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Đối chiếu tồn' })).toHaveAttribute(
+  await expect(page.getByRole('heading', { name: 'Đơn đặt và tồn Reshare' })).toBeVisible();
+  await expect(page.getByText('Xác nhận kết quả phân bổ để tự tạo đơn Reshare')).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Đơn đặt Reshare' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await expect(page.getByRole('heading', { name: 'Lịch sử đặt hàng theo phân bổ' })).toBeVisible();
+  // Desktop shows the grouped table, narrow screens one card per order: check the visible one.
+  const narrow = (page.viewportSize()?.width ?? 1440) <= 620;
+  const table = page.locator(narrow ? '.reshare-history__cards' : '.reshare-history__table');
+  await expect(table.getByText('RE-000001')).toHaveCount(1);
+  await expect(table.getByText('Quần dài nữ').first()).toBeVisible();
+  await expect(table.getByText('Áo', { exact: true })).toBeVisible();
+  const totals = narrow
+    ? table.locator('.reshare-history__card').first().locator('tfoot td')
+    : table.locator('tbody').first().locator('td strong').filter({ hasText: /^5$/u });
+  await expect(totals).toHaveCount(1);
+  await expect(totals).toHaveText('5');
+  await expect(table.getByText('Chưa đặt Reshare')).toBeVisible();
+  await expect(table.getByText('Mở phiên: 00:00:00 13/10/2026').first()).toBeVisible();
+  // The manual order form is no longer part of the main flow.
+  await expect(page.getByLabel('Mã đơn Reshare')).toHaveCount(0);
+  await page.getByLabel('Trạng thái').selectOption('ORDERED');
+  await expect(table.getByText('Chưa đặt Reshare')).toHaveCount(0);
+  expect(log.orderQueries.at(-1)?.get('status')).toBe('ORDERED');
+  await page.getByLabel('Mã đơn RE').fill('re-000001');
+  await page.getByRole('button', { name: 'Tìm' }).click();
+  await expect.poll(() => log.orderQueries.at(-1)?.get('code')).toBe('RE-000001');
+  expect(log.mutations).toHaveLength(0);
+});
+
+test('a deep link from the result tag opens the order by its RE code', async ({ page }) => {
+  const log = await mockApi(page, 'STORE');
+  await page.goto('/supplier-reconciliation?tab=orders&code=RE-000001');
+  await expect(page.getByRole('tablist')).toHaveCount(0);
+  const narrow = (page.viewportSize()?.width ?? 1440) <= 620;
+  await expect(
+    page
+      .locator(narrow ? '.reshare-history__cards' : '.reshare-history__table')
+      .getByText('RE-000001'),
+  ).toBeVisible();
+  expect(log.orderQueries[0]?.get('code')).toBe('RE-000001');
+  // The old "status" tab link still lands on the order history.
+  await page.goto('/supplier-reconciliation?tab=status');
+  await expect(page.getByRole('heading', { name: 'Lịch sử đặt hàng theo phân bổ' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Ghi nhận đơn Reshare' })).toHaveCount(0);
+  expect(log.mutations).toHaveLength(0);
+});
+
+test('Admin updates Reshare stock: re-observing frees nothing, RE coverage is explicit and the key is kept on retry', async ({
+  page,
+}) => {
+  const log = await mockApi(page, 'ADMIN');
+  await page.goto('/supplier-reconciliation?tab=reconcile');
+  await expect(page.getByRole('tab', { name: 'Cập nhật tồn Reshare' })).toHaveAttribute(
     'aria-selected',
     'true',
   );
@@ -314,12 +456,16 @@ test('Admin reconciles the AC01 case: re-observing 3 bags frees nothing and keep
   await expect(page.getByText(/Reshare còn đặt được 2 bao/u)).toBeVisible();
 
   await row.getByRole('button', { name: 'Đối chiếu' }).click();
+  await expect(page.getByText('không phải số nhập thêm')).toBeVisible();
   await page.getByLabel('Tổng số bao Reshare đang cho đặt của NAM-01').fill('2');
   await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
-  const save = page.getByRole('button', { name: 'Lưu đối chiếu' });
+  const save = page.getByRole('button', { name: 'Lưu cập nhật tồn' });
   await expect(page.getByText('Còn 1 biến động chưa trả lời')).toBeVisible();
   await expect(save).toBeDisabled();
+  await expect(page.getByText('Số tồn này đã trừ các đơn RE nào?')).toBeVisible();
   await page.getByLabel('Đã gồm trong số vừa nhập').check();
+  await page.getByLabel('Đã trừ trong số vừa nhập').check();
+  await expect(page.getByLabel('Số bao của RE-000001 đã trừ trong số tồn')).toHaveValue('2');
   await expect(page.getByText(/Bấm “Xem trước lại”/u)).toBeVisible();
   await page.getByRole('button', { name: 'Xem trước lại' }).click();
   await expect(save).toBeEnabled();
@@ -329,7 +475,7 @@ test('Admin reconciles the AC01 case: re-observing 3 bags frees nothing and keep
   await save.click();
   await expect(page.getByRole('alert')).toContainText('cùng thao tác sẽ không bị ghi hai lần');
   await save.click();
-  await expect(page.getByRole('status').filter({ hasText: 'Đã lưu đối chiếu' })).toContainText(
+  await expect(page.getByRole('status').filter({ hasText: 'Đã lưu cập nhật tồn' })).toContainText(
     'NAM-01: khả dụng giữ nguyên 0 bao.',
   );
   const confirms = log.mutations.filter((request) =>
@@ -343,17 +489,23 @@ test('Admin reconciles the AC01 case: re-observing 3 bags frees nothing and keep
     expectedRevision: 'rev-2',
     lines: [{ productId, observedQuantity: 2 }],
     eventCoverage: [{ eventId, included: true }],
+    reshareCoverage: [{ reshareOrderLineId: reshareLineId, quantity: 2 }],
   });
   // The client never sends derived numbers.
   expect(JSON.stringify(body)).not.toMatch(/freeQuantity|onHand|reserved/u);
   await expectNoPageOverflow(page);
 });
 
-test('HTKD only records Reshare orders for its stores', async ({ page }) => {
+test('HTKD sees its orders; manual Reshare records are only kept as old data', async ({ page }) => {
   const log = await mockApi(page, 'HTKD');
   await page.goto('/supplier-reconciliation?tab=settings');
   await expect(page.getByRole('tablist')).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'Chờ đặt Reshare' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Lịch sử đặt hàng theo phân bổ' })).toBeVisible();
+  await expect(page.getByLabel('Mã đơn Reshare')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Xem đơn ghi nhận thủ công' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Hàng giữ trước khi có đơn RE (ghi nhận thủ công)' }),
+  ).toBeVisible();
   await expect(page.getByText('Chỉ gồm cửa hàng thuộc phạm vi tài khoản')).toBeVisible();
   await page.getByLabel('Chọn NAM-01 của CH-GOVAP').check();
   await expect(page.getByLabel('Số bao Reshare đã nhận cho NAM-01 của CH-GOVAP')).toHaveValue('2');
@@ -371,12 +523,13 @@ test('HTKD only records Reshare orders for its stores', async ({ page }) => {
   await expectNoPageOverflow(page);
 });
 
-test('stores read their Reshare order state without any action', async ({ page }) => {
+test('stores read their RE orders without any action', async ({ page }) => {
   const log = await mockApi(page, 'STORE');
   await page.goto('/supplier-reconciliation');
-  await expect(page.getByRole('heading', { name: 'Hàng đang giữ cho cửa hàng' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Lịch sử đặt hàng theo phân bổ' })).toBeVisible();
   await expect(page.getByRole('checkbox')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Ghi nhận đơn Reshare' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Xem đơn ghi nhận thủ công' })).toHaveCount(0);
   expect(log.mutations).toHaveLength(0);
 });
 
@@ -385,7 +538,7 @@ for (const width of [360, 390, 412, 683, 768, 821, 911, 1093, 1366, 1440, 1920, 
   test(`reconciliation layout fits at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     await mockApi(page, 'ADMIN');
-    await page.goto('/supplier-reconciliation');
+    await page.goto('/supplier-reconciliation?tab=reconcile');
     const row = page.getByRole('row').filter({ hasText: 'NAM-01' }).first();
     await row.getByRole('button', { name: 'Xem giữ hàng' }).click();
     await row.getByRole('button', { name: 'Đối chiếu' }).click();
@@ -393,6 +546,7 @@ for (const width of [360, 390, 412, 683, 768, 821, 911, 1093, 1366, 1440, 1920, 
     await page.getByLabel('Tổng số bao Reshare đang cho đặt của NAM-01').fill('2');
     await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
     await expect(page.getByRole('region', { name: 'Xem trước đối chiếu' })).toBeVisible();
+    await expect(page.getByText('Số tồn này đã trừ các đơn RE nào?')).toBeVisible();
     await expectNoPageOverflow(page);
     if (width === 390 || width === 1440) {
       await page.screenshot({
@@ -411,18 +565,44 @@ for (const width of [360, 390, 412, 683, 768, 821, 911, 1093, 1366, 1440, 1920, 
 }
 
 for (const role of ['ADMIN', 'HTKD', 'STORE'] as const) {
-  test(`Reshare order queue fits from 360 to 2560px for ${role}`, async ({ page }) => {
+  test(`RE order history fits from 360 to 2560px for ${role}`, async ({ page }, testInfo) => {
     await mockApi(page, role);
-    await page.goto(
-      role === 'ADMIN' ? '/supplier-reconciliation?tab=orders' : '/supplier-reconciliation',
-    );
-    await expect(page.getByText('CH-GOVAP').first()).toBeVisible();
-    for (const width of [360, 390, 768, 821, 911, 1093, 1366, 1920]) {
+    await page.goto('/supplier-reconciliation');
+    await expect(
+      page.getByRole('heading', { name: 'Lịch sử đặt hàng theo phân bổ' }),
+    ).toBeVisible();
+    for (const width of [360, 390, 412, 683, 768, 1366, 1440, 1920, 2560]) {
       await page.setViewportSize({ width, height: 900 });
-      if (role !== 'STORE' && width === 821) {
-        await page.getByLabel('Chọn NAM-01 của CH-GOVAP').check();
-      }
       await expectNoPageOverflow(page);
+      // Narrow screens show one card per order (lines inside, total once); wide ones the table.
+      const cards = page.locator('.reshare-history__cards');
+      const table = page.locator('.reshare-history__table');
+      if (width <= 620) {
+        await expect(cards).toBeVisible();
+        await expect(table).toBeHidden();
+        const card = cards.locator('.reshare-history__card').first();
+        await expect(card).toContainText('RE-000001');
+        await expect(card).toContainText('Tổng số lượng (bao)');
+        const box = await card.boundingBox();
+        expect(box!.x).toBeGreaterThanOrEqual(0);
+        expect(box!.x + box!.width).toBeLessThanOrEqual(width + 1);
+      } else {
+        await expect(table).toBeVisible();
+        await expect(cards).toBeHidden();
+      }
+      for (const button of await page.getByRole('button').all()) {
+        if (!(await button.isVisible())) continue;
+        const fits = await button.evaluate(
+          (element) => element.scrollWidth <= element.clientWidth + 1 && element.clientHeight >= 32,
+        );
+        expect(fits, await button.innerText()).toBe(true);
+      }
+      if (role === 'ADMIN' && (width === 390 || width === 1440)) {
+        await page.screenshot({
+          path: testInfo.outputPath(`reshare-orders-${width}.png`),
+          fullPage: true,
+        });
+      }
     }
   });
 }
