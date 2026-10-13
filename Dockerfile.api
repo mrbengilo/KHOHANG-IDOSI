@@ -68,6 +68,7 @@ COPY --chown=node:node infra/scripts/run-migrations.mjs ./infra/scripts/run-migr
 COPY --chown=node:node infra/scripts/reset-test-data.mjs ./infra/scripts/reset-test-data.mjs
 COPY --chown=node:node infra/scripts/test-data-backups.mjs ./infra/scripts/test-data-backups.mjs
 COPY --chown=node:node infra/scripts/purge-test-data-backups.mjs ./infra/scripts/purge-test-data-backups.mjs
+COPY --chown=node:node infra/scripts/backfill-reshare-orders.mjs ./infra/scripts/backfill-reshare-orders.mjs
 
 USER node
 CMD ["sh", "-ceu", "node infra/scripts/run-migrations.mjs && node packages/database/dist/seed.js"]

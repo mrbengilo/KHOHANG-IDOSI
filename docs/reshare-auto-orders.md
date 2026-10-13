@@ -112,7 +112,19 @@ trước/sau) → dispatch chuyến (nếu có) → audit `ALLOCATION_RESULT_ACC
 
 ## 7. Cutover dữ liệu cũ
 
-`node infra/scripts/backfill-reshare-orders.mjs` (mặc định **dry-run**, chỉ đọc) phân loại:
+`node infra/scripts/backfill-reshare-orders.mjs` (mặc định **dry-run**, chỉ đọc).
+Trên VPS, script nằm trong ảnh `migrate` của release đang chạy (không cần Node trên host):
+
+```bash
+cd /opt/khohang-idosi/current
+mkdir -p /root/reshare-cutover
+docker compose --env-file /etc/khohang-idosi/production.env --file docker-compose.yml \
+  --project-name khohang-idosi run --rm --no-deps --pull never --user 0:0 \
+  --volume /root/reshare-cutover:/out --entrypoint node migrate \
+  infra/scripts/backfill-reshare-orders.mjs --output /out/plan.json
+```
+
+Dry-run phân loại:
 
 | Nhóm                    | Ý nghĩa / xử lý                                                                                          |
 | ----------------------- | -------------------------------------------------------------------------------------------------------- |
