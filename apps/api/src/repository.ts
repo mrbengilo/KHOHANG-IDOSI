@@ -2,6 +2,8 @@ import type { InboundStatistics, InboundStatisticsQuery } from '@idosi/contracts
 import type { ReceiptSummary } from '@idosi/contracts';
 import type { ListSessionDocumentsQuery, SessionDocument } from '@idosi/contracts';
 import type {
+  UpdateReshareOrderStatusRequest,
+  ReshareOrderStatusUpdate,
   AddSupplierSourceProductsRequest,
   CancelSupplierOrderRequest,
   ConfirmSupplierObservationRequest,
@@ -526,6 +528,14 @@ export interface WarehouseRepository extends SupplierReconciliationRepository {
     actor: AuthenticatedPrincipal,
     query: ListReshareOrdersQuery,
   ): Promise<ListReshareOrdersResponse>;
+  updateReshareOrderStatus(
+    actor: AuthenticatedPrincipal,
+    decisionId: string,
+    input: UpdateReshareOrderStatusRequest,
+    key: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ReshareOrderStatusUpdate>>;
   listAllocations(
     actor: AuthenticatedPrincipal,
     query: ListAllocationsQuery,

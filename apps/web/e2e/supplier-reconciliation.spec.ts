@@ -255,11 +255,21 @@ interface Log {
   readonly mutations: Request[];
   readonly orderQueries: URLSearchParams[];
   failNextConfirm: boolean;
+  failNextStatus?: boolean;
 }
 
 async function mockApi(page: Page, role: Role, unlinkedLegacyQuantity = 0): Promise<Log> {
   const log: Log = { mutations: [], orderQueries: [], failNextConfirm: false };
   let previews = 0;
+  const historyRows = reshareRows.map((row) => ({
+    ...structuredClone(row),
+    statusControl: {
+      version: 0,
+      updatedAt: null as string | null,
+      updatedByName: null as string | null,
+    },
+  }));
+  const savedStatus = new Map<string, unknown>();
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -285,11 +295,34 @@ async function mockApi(page: Page, role: Role, unlinkedLegacyQuantity = 0): Prom
         pagination: { ...page1(1), pageSize: 100 },
       });
     if (request.method() !== 'GET') log.mutations.push(request);
+    if (/^\/reshare-orders\/.+\/status$/u.test(path)) {
+      const key = request.headers()['idempotency-key']!;
+      if (savedStatus.has(key)) return json({ data: savedStatus.get(key) });
+      const row = historyRows.find((row) => path.includes(row.decisionId))!;
+      const input = request.postDataJSON();
+      row.status = input.status;
+      row.statusControl = {
+        version: row.statusControl.version + 1,
+        updatedAt: time,
+        updatedByName: 'Quản trị viên',
+      };
+      const data = {
+        decisionId: row.decisionId,
+        status: row.status,
+        version: row.statusControl.version,
+      };
+      savedStatus.set(key, data);
+      if (log.failNextStatus) {
+        log.failNextStatus = false;
+        return route.abort('failed');
+      }
+      return json({ data });
+    }
     if (path === '/reshare-orders') {
       log.orderQueries.push(url.searchParams);
       const status = url.searchParams.get('status');
       const code = url.searchParams.get('code');
-      const rows = reshareRows.filter(
+      const rows = historyRows.filter(
         (row) =>
           (!status || row.status === status) && (!code || (row.order?.code ?? '').includes(code)),
       );
@@ -380,6 +413,47 @@ async function expectNoPageOverflow(page: Page) {
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
   expect(overflow).toBeLessThanOrEqual(1);
+}
+
+test('Admin persists both states for legacy rows, reloads, filters and retries the same command', async ({
+  page,
+}) => {
+  const log = await mockApi(page, 'ADMIN');
+  await page.goto('/supplier-reconciliation');
+  const group = page.locator('.reshare-history tbody').filter({ hasText: 'PDH-000013' });
+  log.failNextStatus = true;
+  await group.getByRole('button', { name: 'Đánh dấu đã đặt', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Không xác nhận được kết quả lưu');
+  await expect(group.getByText('Chưa đặt Reshare', { exact: true })).toBeVisible();
+  await group.getByRole('button', { name: 'Đánh dấu đã đặt', exact: true }).click();
+  await expect(group.getByText('Đã đặt Reshare', { exact: true })).toBeVisible();
+  const writes = log.mutations.filter((request) => request.url().endsWith('/status'));
+  expect(writes).toHaveLength(2);
+  expect(writes[0]!.method()).toBe('PUT');
+  expect(writes[0]!.headers()['idempotency-key']).toBe(writes[1]!.headers()['idempotency-key']);
+  expect(writes[0]!.postDataJSON()).toEqual({
+    status: 'ORDERED',
+    expectedStatus: 'NOT_ORDERED',
+    expectedVersion: 0,
+  });
+  await page.reload();
+  await expect(group.getByText('Đã đặt Reshare', { exact: true })).toBeVisible();
+  await expect(group).toContainText('Chưa có chứng từ RE');
+  await expect(group).toContainText('Quản trị viên');
+  await group.getByRole('button', { name: 'Đánh dấu chưa đặt', exact: true }).click();
+  await expect(group.getByText('Chưa đặt Reshare', { exact: true })).toBeVisible();
+  await page.getByLabel('Trạng thái').selectOption('ORDERED');
+  await expect(group).toHaveCount(0);
+  await expectNoPageOverflow(page);
+});
+
+for (const role of ['HTKD', 'STORE'] as const) {
+  test(`${role} sees the acknowledgement with no edit controls`, async ({ page }) => {
+    await mockApi(page, role);
+    await page.goto('/supplier-reconciliation');
+    await expect(page.locator('.reshare-history')).toBeVisible();
+    await expect(page.getByRole('button', { name: /Đánh dấu (chưa đặt|đã đặt)/u })).toHaveCount(0);
+  });
 }
 
 test('every role opens on its RE orders: one group per order, total once, server filters', async ({
@@ -713,18 +787,16 @@ for (const role of ['ADMIN', 'HTKD', 'STORE'] as const) {
       const box = await group.boundingBox();
       expect(box!.x).toBeGreaterThanOrEqual(0);
       expect(box!.x + box!.width).toBeLessThanOrEqual(width + 1);
-      // Read labels and dimensions together: responsive navigation can replace buttons on resize.
-      const buttons = await page.getByRole('button').evaluateAll((elements) =>
-        elements
+      // Read a single DOM snapshot: responsive shell buttons can mount/unmount between awaits.
+      const buttonSizes = await page.getByRole('button').evaluateAll((buttons) =>
+        buttons
           .filter((element) => element.getClientRects().length > 0)
           .map((element) => ({
-            label: element.textContent,
+            label: element.textContent ?? '',
             fits: element.scrollWidth <= element.clientWidth + 1 && element.clientHeight >= 32,
           })),
       );
-      for (const button of buttons) {
-        expect(button.fits, button.label ?? '').toBe(true);
-      }
+      for (const button of buttonSizes) expect(button.fits, button.label).toBe(true);
       if (role === 'ADMIN' && (width === 390 || width === 1440)) {
         await page.screenshot({
           path: testInfo.outputPath(`reshare-orders-${width}.png`),

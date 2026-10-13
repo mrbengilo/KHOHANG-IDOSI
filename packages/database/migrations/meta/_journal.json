@@ -302,6 +302,13 @@
       "when": 1791891806414,
       "tag": "0042_reshare_orders_and_issue",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1791904794823,
+      "tag": "0043_admin_reshare_status",
+      "breakpoints": true
     }
   ]
 }

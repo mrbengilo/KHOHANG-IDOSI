@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { describe, test } from 'node:test';
+import { after, describe, test } from 'node:test';
 import { ListOrderSessionsResponseSchema } from '@idosi/contracts';
 
 import {
@@ -8,6 +8,7 @@ import {
   allocationRuns,
   applyWarehouseMovement,
   db,
+  closeDatabase,
   htkdAssignments,
   inventorySnapshots,
   mergedOrderItems,
@@ -35,10 +36,20 @@ import { PostgresWarehouseRepository } from '../dist/postgres-repository.js';
 import { hashSessionToken } from '../dist/security.js';
 
 const describePostgres = process.env.RUN_POSTGRES_TESTS === '1' ? describe : describe.skip;
+after(async () => {
+  if (process.env.RUN_POSTGRES_TESTS === '1') await closeDatabase();
+});
+
+function sharedRepository() {
+  const repository = new PostgresWarehouseRepository();
+  // Both API scenarios share this process's pool; release it once after the suite.
+  repository.close = async () => {};
+  return repository;
+}
 
 describePostgres('allocation result decisions through the API on PostgreSQL', () => {
   test('scopes reads, answers once per result and gates shipping server-side', async () => {
-    const repository = new PostgresWarehouseRepository();
+    const repository = sharedRepository();
     const app = await createApi({ repository });
     try {
       const fx = await createFixture();
@@ -281,6 +292,76 @@ describePostgres('allocation result decisions through the API on PostgreSQL', ()
 function accept(expectedVersion = 1) {
   return { action: 'ACCEPT', expectedVersion };
 }
+
+describePostgres('Admin Reshare acknowledgement API', () => {
+  test('persists, filters, replays and protects both directions independently of allocation acceptance', async () => {
+    const app = await createApi({ repository: sharedRepository() });
+    try {
+      const fx = await createFixture();
+      const result = await publishResult(fx, fx.storeA, 3, { shipment: true });
+      const url = `/api/v1/reshare-orders/${result.decisionId}/status`;
+      const input = { status: 'ORDERED', expectedStatus: 'NOT_ORDERED', expectedVersion: 0 };
+      const key = randomUUID();
+      const put = (token, payload = input, idempotencyKey = key) =>
+        app.inject({
+          method: 'PUT',
+          url,
+          headers: { cookie: `idosi_session=${token}`, 'idempotency-key': idempotencyKey },
+          payload,
+        });
+      for (const token of [fx.tokens.htkd, fx.tokens.storeA, fx.tokens.storeB, fx.tokens.wholesale])
+        assert.equal((await put(token)).statusCode, 403);
+      const before = await balance(fx.productId);
+      const saved = await put(fx.tokens.admin);
+      assert.equal(saved.statusCode, 200, saved.body);
+      assert.deepEqual(saved.json().data, {
+        decisionId: result.decisionId,
+        status: 'ORDERED',
+        version: 1,
+      });
+      assert.equal((await put(fx.tokens.admin)).headers['idempotency-replayed'], 'true');
+      assert.equal(
+        (await put(fx.tokens.admin, { ...input, status: 'NOT_ORDERED' })).statusCode,
+        409,
+      );
+      assert.equal((await put(fx.tokens.admin, input, randomUUID())).statusCode, 409);
+      assert.equal(
+        (await put(fx.tokens.admin, { ...input, status: 'CANCELLED' }, randomUUID())).statusCode,
+        400,
+      );
+      const get = (token, suffix = '') =>
+        app.inject({
+          method: 'GET',
+          url: `/api/v1/reshare-orders?decisionId=${result.decisionId}${suffix}`,
+          headers: { cookie: `idosi_session=${token}` },
+        });
+      const read = await get(fx.tokens.storeA, '&includeStatusControl=true&status=ORDERED');
+      assert.equal(read.statusCode, 200, read.body);
+      assert.equal(read.json().data[0].statusControl.version, 1);
+      assert.equal(read.json().data[0].decisionStatus, 'PENDING');
+      assert.equal(read.json().data[0].order, null);
+      assert.equal(
+        (await get(fx.tokens.admin, '&status=NOT_ORDERED')).json().pagination.totalItems,
+        0,
+      );
+      assert.equal('statusControl' in (await get(fx.tokens.admin)).json().data[0], false);
+      assert.equal((await get(fx.tokens.storeB)).json().pagination.totalItems, 0);
+      const undone = await put(
+        fx.tokens.admin,
+        { status: 'NOT_ORDERED', expectedStatus: 'ORDERED', expectedVersion: 1 },
+        randomUUID(),
+      );
+      assert.equal(undone.statusCode, 200, undone.body);
+      assert.equal(
+        (await get(fx.tokens.admin, '&status=NOT_ORDERED')).json().pagination.totalItems,
+        1,
+      );
+      assert.deepEqual(await balance(fx.productId), before);
+    } finally {
+      await app.close();
+    }
+  });
+});
 function reject(expectedVersion = 1) {
   return { action: 'REJECT', expectedVersion };
 }

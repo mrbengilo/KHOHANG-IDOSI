@@ -6,6 +6,7 @@ import {
   ListReshareOrdersQuerySchema,
   ListReshareOrdersResponseSchema,
   ReshareOrderSummarySchema,
+  UpdateReshareOrderStatusRequestSchema,
   SupplierObservationRequestSchema,
   SupplierPositionSchema,
 } from '../src/index.js';
@@ -13,6 +14,18 @@ import {
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 describe('RE order contracts', () => {
+  it('requires a version and previous status, allows only both acknowledgement states', () => {
+    const input = { status: 'ORDERED', expectedStatus: 'NOT_ORDERED', expectedVersion: 0 };
+    expect(UpdateReshareOrderStatusRequestSchema.parse(input)).toEqual(input);
+    for (const bad of [
+      { ...input, status: 'CANCELLED' },
+      { ...input, expectedVersion: -1 },
+      { ...input, expectedVersion: undefined },
+      { ...input, expectedStatus: undefined },
+      { ...input, quantity: 99 },
+    ])
+      expect(UpdateReshareOrderStatusRequestSchema.safeParse(bad).success).toBe(false);
+  });
   it('accepts only six-digit RE codes', () => {
     const base = {
       id: id(1),

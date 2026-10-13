@@ -170,7 +170,7 @@ test('a store accepts and rejects allocation results; state survives reload, con
     await expect(panel).toContainText('Đã giao đi, chờ cửa hàng khai nhận');
     // Accepting created the RE order and issued its 3 bags (on-hand and reserved drop together).
     await expect(
-      panel.getByRole('link', { name: /Đã đặt Reshare, mở đơn RE-\d{6}/u }),
+      panel.getByRole('link', { name: /Đã lập đơn Reshare, mở đơn RE-\d{6}/u }),
     ).toBeVisible();
     await expect(panel).toContainText('Đã xuất 3 bao khỏi kho tổng theo đơn RE-');
     expect(await balance(db, product!.id)).toEqual({ onHand: 47, reserved: 4 });

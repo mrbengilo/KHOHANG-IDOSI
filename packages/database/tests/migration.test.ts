@@ -404,7 +404,11 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(43);
+    expect(journal.entries).toHaveLength(44);
+    expect(journal.entries[43]).toMatchObject({
+      tag: '0043_admin_reshare_status',
+      breakpoints: true,
+    });
     expect(journal.entries[42]).toMatchObject({
       tag: '0042_reshare_orders_and_issue',
       breakpoints: true,

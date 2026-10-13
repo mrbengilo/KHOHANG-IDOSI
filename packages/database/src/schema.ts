@@ -1459,6 +1459,13 @@ export const allocationResultDecisions = pgTable(
       onDelete: 'restrict',
     }),
     responseReason: text('response_reason'),
+    /** Admin's display acknowledgement; never an inventory or supplier event. */
+    reshareStatus: text('reshare_status'),
+    reshareStatusVersion: integer('reshare_status_version').notNull().default(0),
+    reshareStatusUpdatedAt: timestamp('reshare_status_updated_at', { withTimezone: true }),
+    reshareStatusUpdatedBy: uuid('reshare_status_updated_by').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -1478,6 +1485,10 @@ export const allocationResultDecisions = pgTable(
     ),
     index('allocation_result_decisions_status_created_idx').on(table.status, table.createdAt),
     check('allocation_result_decisions_version_positive', sql`${table.version} > 0`),
+    check(
+      'allocation_result_decisions_reshare_status_valid',
+      sql`(${table.reshareStatus} IS NULL AND ${table.reshareStatusVersion} = 0 AND ${table.reshareStatusUpdatedAt} IS NULL AND ${table.reshareStatusUpdatedBy} IS NULL) OR (${table.reshareStatus} IS NOT NULL AND ${table.reshareStatus} IN ('ordered', 'not_ordered') AND ${table.reshareStatusVersion} > 0 AND ${table.reshareStatusUpdatedAt} IS NOT NULL AND ${table.reshareStatusUpdatedBy} IS NOT NULL)`,
+    ),
     check('allocation_result_decisions_granted_nonnegative', sql`${table.grantedQuantity} >= 0`),
     check(
       'allocation_result_decisions_origin_valid',
