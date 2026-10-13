@@ -1,4 +1,8 @@
+import { UpdateReshareOrderStatusResponseSchema as ReshareStatusResponseSchema } from '@idosi/contracts';
+import { updateReshareOrderStatus as updateDatabaseReshareOrderStatus } from '@idosi/database';
 import type {
+  UpdateReshareOrderStatusRequest,
+  ReshareOrderStatusUpdate,
   AddSupplierSourceProductsRequest,
   CancelSupplierOrderRequest,
   ConfirmSupplierObservationRequest,
@@ -1687,6 +1691,41 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       () => this.authorizeRetailStoreOperation(actor),
       view,
     );
+  }
+
+  public async updateReshareOrderStatus(
+    actor: AuthenticatedPrincipal,
+    decisionId: string,
+    input: UpdateReshareOrderStatusRequest,
+    key: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ReshareOrderStatusUpdate>> {
+    if (actor.role !== 'ADMIN') throw forbidden();
+    try {
+      const result = await updateDatabaseReshareOrderStatus(db, {
+        ...input,
+        decisionId,
+        actorUserId: actor.accountId,
+        idempotencyKey: key,
+        requestHash,
+        requestId: context.requestId,
+      });
+      return {
+        data: ReshareStatusResponseSchema.parse({
+          data: result.replayed ? result.responseBody : result.value,
+        }).data,
+        replayed: result.replayed,
+      };
+    } catch (error) {
+      if (error instanceof IdempotencyConflictError)
+        throw new ApiError(
+          'IDEMPOTENCY_CONFLICT',
+          'Khóa thao tác đã được dùng cho nội dung khác.',
+          409,
+        );
+      throw error;
+    }
   }
 
   public async listReshareOrders(

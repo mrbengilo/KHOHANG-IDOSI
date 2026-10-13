@@ -20,9 +20,41 @@ import {
 export const RESHARE_ORDER_CODE_REGEX = /^RE-\d{6}$/u;
 export const ReshareOrderCodeSchema = z.string().regex(RESHARE_ORDER_CODE_REGEX);
 
-/** Order status shown in history: ordered (RE committed), not ordered, cancelled. */
+/** Persisted Admin acknowledgement when set; otherwise the existing RE-derived default. */
 export const ReshareOrderHistoryStatusSchema = z.enum(['ORDERED', 'NOT_ORDERED', 'CANCELLED']);
 export type ReshareOrderHistoryStatus = z.infer<typeof ReshareOrderHistoryStatusSchema>;
+
+export const UpdateReshareOrderStatusRequestSchema = z
+  .object({
+    status: z.enum(['ORDERED', 'NOT_ORDERED']),
+    expectedStatus: z.enum(['ORDERED', 'NOT_ORDERED']),
+    expectedVersion: z.number().int().nonnegative(),
+  })
+  .strict();
+export type UpdateReshareOrderStatusRequest = z.infer<typeof UpdateReshareOrderStatusRequestSchema>;
+
+export const ReshareStatusControlSchema = z
+  .object({
+    version: z.number().int().nonnegative(),
+    updatedAt: IsoDateTimeSchema.nullable(),
+    updatedByName: z.string().nullable(),
+  })
+  .strict();
+
+export const UpdateReshareOrderStatusResponseSchema = z
+  .object({
+    data: z
+      .object({
+        decisionId: EntityIdSchema,
+        status: z.enum(['ORDERED', 'NOT_ORDERED']),
+        version: z.number().int().nonnegative(),
+      })
+      .strict(),
+  })
+  .strict();
+export type ReshareOrderStatusUpdate = z.infer<
+  typeof UpdateReshareOrderStatusResponseSchema
+>['data'];
 
 export const ReshareOrderSummarySchema = z
   .object({
@@ -60,6 +92,7 @@ export const ReshareOrderHistoryRowSchema = z
     storeId: EntityIdSchema,
     storeName: z.string(),
     status: ReshareOrderHistoryStatusSchema,
+    statusControl: ReshareStatusControlSchema.optional(),
     order: z
       .object({
         id: EntityIdSchema,
@@ -92,6 +125,10 @@ export const ReshareOrderHistoryRowSchema = z
 export type ReshareOrderHistoryRow = z.infer<typeof ReshareOrderHistoryRowSchema>;
 
 export const ListReshareOrdersQuerySchema = PaginationQuerySchema.extend({
+  includeStatusControl: z
+    .enum(['true', 'false'])
+    .transform((value) => value === 'true')
+    .optional(),
   sessionId: EntityIdSchema.optional(),
   storeId: EntityIdSchema.optional(),
   productId: EntityIdSchema.optional(),

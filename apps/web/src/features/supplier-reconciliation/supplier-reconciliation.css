@@ -1,4 +1,11 @@
 /* Đối chiếu tồn Reshare: dùng token màu chung; bảng chuyển thẻ trên mobile theo .responsive-table. */
+.reshare-history__status-button {
+  margin-top: 0.65rem;
+  min-height: 44px;
+  max-width: 100%;
+  white-space: normal;
+}
+
 .supplier-summary,
 .supplier-orders,
 .supplier-history,

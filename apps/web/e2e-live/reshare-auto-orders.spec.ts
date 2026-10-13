@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 import {
   applyWarehouseMovement,
+  allocationResultDecisions,
+  auditLogs,
   createDatabase,
   products,
   reshareOrders,
@@ -128,7 +130,7 @@ test('accepting creates one RE order, issues stock at once and shows it in the s
     const panel = page.locator('.allocation-decision');
     await expect(panel.getByRole('button', { name: 'Từ chối' })).toBeVisible();
     await panel.getByRole('button', { name: 'Chấp nhận' }).click();
-    const tag = panel.getByRole('link', { name: /Đã đặt Reshare, mở đơn RE-\d{6}/u });
+    const tag = panel.getByRole('link', { name: /Đã lập đơn Reshare, mở đơn RE-\d{6}/u });
     await expect(tag).toBeVisible();
     await expect(panel.locator('.inline-notice--success')).toContainText(/tạo đơn RE-\d{6}/u);
     await expect(panel.locator('.inline-notice--success')).toContainText(
@@ -156,13 +158,13 @@ test('accepting creates one RE order, issues stock at once and shows it in the s
     // Reload keeps the tag (server state, not a client flag).
     await page.reload();
     await expect(
-      page.locator('.allocation-decision').getByText(`Đã đặt Reshare · ${orderA!.code}`),
+      page.locator('.allocation-decision').getByText(`Đã lập đơn Reshare · ${orderA!.code}`),
     ).toBeVisible();
 
     // 2. The tag opens the history on that order: lines and total once.
     await page
       .locator('.allocation-decision')
-      .getByRole('link', { name: /Đã đặt Reshare/u })
+      .getByRole('link', { name: /Đã lập đơn Reshare/u })
       .click();
     await expect(page).toHaveURL(new RegExp(`code=${orderA!.code}`, 'u'));
     const history = page.locator('.reshare-history');
@@ -183,7 +185,7 @@ test('accepting creates one RE order, issues stock at once and shows it in the s
     await expect(htkdPanel.getByRole('button', { name: 'Từ chối' })).toHaveCount(0);
     await htkdPanel.getByRole('button', { name: 'Chấp nhận' }).click();
     await expect(
-      htkdPanel.getByRole('link', { name: /Đã đặt Reshare, mở đơn RE-\d{6}/u }),
+      htkdPanel.getByRole('link', { name: /Đã lập đơn Reshare, mở đơn RE-\d{6}/u }),
     ).toBeVisible();
     const [orderB] = await db
       .select()
@@ -216,6 +218,61 @@ test('accepting creates one RE order, issues stock at once and shows it in the s
           fullPage: true,
         });
       }
+    }
+    // Admin edits on the real UI must persist through API/DB and reload without a second issue.
+    await page.context().clearCookies();
+    await signIn(page, adminLogin);
+    await page.goto(`/supplier-reconciliation?code=${orderA!.code}`);
+    const adminGroup = page.locator('.reshare-history tbody').filter({ hasText: orderA!.code });
+    const beforeStatusChange = await balance(db, pants!.id);
+    await adminGroup.getByRole('button', { name: 'Đánh dấu chưa đặt', exact: true }).click();
+    await expect(adminGroup.getByText('Chưa đặt Reshare', { exact: true })).toBeVisible();
+    await page.reload();
+    await expect(adminGroup.getByText('Chưa đặt Reshare', { exact: true })).toBeVisible();
+    let [persisted] = await db
+      .select()
+      .from(allocationResultDecisions)
+      .where(eq(allocationResultDecisions.id, resultA.decisionId));
+    expect(persisted).toMatchObject({
+      reshareStatus: 'not_ordered',
+      reshareStatusVersion: 1,
+      status: 'accepted',
+    });
+    await adminGroup.getByRole('button', { name: 'Đánh dấu đã đặt', exact: true }).click();
+    await expect(adminGroup.getByText('Đã đặt Reshare', { exact: true })).toBeVisible();
+    [persisted] = await db
+      .select()
+      .from(allocationResultDecisions)
+      .where(eq(allocationResultDecisions.id, resultA.decisionId));
+    expect(persisted).toMatchObject({
+      reshareStatus: 'ordered',
+      reshareStatusVersion: 2,
+      status: 'accepted',
+    });
+    const changes = await db
+      .select()
+      .from(auditLogs)
+      .where(
+        and(
+          eq(auditLogs.entityId, resultA.decisionId),
+          eq(auditLogs.action, 'RESHARE_ORDER_STATUS_UPDATED'),
+        ),
+      );
+    expect(changes).toHaveLength(2);
+    expect(changes.every((row) => row.actorRole === 'admin')).toBe(true);
+    expect(await balance(db, pants!.id)).toEqual(beforeStatusChange);
+    for (const width of [360, 390, 768, 1366, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await noPageOverflow(page);
+      const button = adminGroup.getByRole('button', { name: 'Đánh dấu chưa đặt', exact: true });
+      await expect(button).toBeVisible();
+      const bounds = await button.boundingBox();
+      expect(bounds!.height).toBeGreaterThanOrEqual(44);
+      if (width === 390 || width === 1440)
+        await page.screenshot({
+          path: testInfo.outputPath(`admin-reshare-status-${width}.png`),
+          fullPage: true,
+        });
     }
   } finally {
     await client.close();

@@ -108,6 +108,10 @@ export async function publishPendingResult(
     readonly carry?: readonly string[];
     /** Publish as legacy (pre-confirmation) instead of pending. */
     readonly legacy?: boolean;
+    /** Historical accepted row inserted before the RE acceptance trigger existed. */
+    readonly acceptedLegacy?: boolean;
+    /** Upgrade fixture writes the old column list before migration 0043. */
+    readonly preReshareStatusSchema?: boolean;
   },
   /** Another database (e.g. an isolated upgrade test); defaults to the shared test database. */
   database: Database = db,
@@ -270,13 +274,20 @@ export async function publishPendingResult(
       grantedQuantity: input.grants.reduce((total, grant) => total + grant.quantity, 0),
     });
   }
-  await withSerializableTransaction(database, (tx) =>
-    publishAllocationDecisionsInTransaction(tx, {
-      allocationRunId: run!.id,
-      orderSessionId: session!.id,
-      publishedAt: new Date(),
-    }),
-  );
+  if (input.acceptedLegacy || input.preReshareStatusSchema) {
+    await database.execute(sql`insert into allocation_result_decisions
+      (allocation_run_id, order_session_id, store_id, status, version, granted_quantity, origin, responded_at, responded_by_user_id)
+      values (${run!.id}, ${session!.id}, ${input.storeId}, ${input.acceptedLegacy ? 'accepted' : 'pending'}::allocation_decision_status,
+        ${input.acceptedLegacy ? 2 : 1}, ${input.grants.reduce((sum, grant) => sum + grant.quantity, 0)}, 'allocation_run',
+        ${input.acceptedLegacy ? new Date().toISOString() : null}, ${input.acceptedLegacy ? fx.adminId : null})`);
+  } else
+    await withSerializableTransaction(database, (tx) =>
+      publishAllocationDecisionsInTransaction(tx, {
+        allocationRunId: run!.id,
+        orderSessionId: session!.id,
+        publishedAt: new Date(),
+      }),
+    );
   let outboundId: string | null = null;
   if (input.shipment !== false) {
     const carried = input.carry?.length
@@ -337,7 +348,7 @@ export async function publishPendingResult(
     .set({ status: 'completed' })
     .where(eq(allocationRuns.id, run!.id));
   const [decision] = await database
-    .select()
+    .select({ id: allocationResultDecisions.id })
     .from(allocationResultDecisions)
     .where(
       and(

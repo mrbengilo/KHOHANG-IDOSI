@@ -80,8 +80,9 @@ export const RESHARE_ORDER_DISPLAY_STATUSES = ['ORDERED', 'NOT_ORDERED', 'CANCEL
 export type ReshareOrderDisplayStatus = (typeof RESHARE_ORDER_DISPLAY_STATUSES)[number];
 
 /**
- * "Đã đặt Reshare" needs a committed RE order (its issue ledger is enforced by the database);
- * an accepted decision alone never shows as ordered. Without an order the result is not ordered.
+ * Default history status before an Admin acknowledgement exists. The persisted acknowledgement
+ * (0043) takes precedence in the history projection; cancellation always wins. Acceptance alone
+ * is never proof of ordering. This helper describes the unchanged RE-derived default only.
  */
 export function reshareOrderDisplayStatus(input: {
   readonly orderStatus: 'ORDERED' | 'CANCELLED' | null;

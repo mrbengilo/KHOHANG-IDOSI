@@ -6,6 +6,8 @@ import {
 } from '@idosi/contracts';
 import {
   AllocationDecisionParamsSchema,
+  UpdateReshareOrderStatusRequestSchema,
+  UpdateReshareOrderStatusResponseSchema,
   AllocationDecisionViewQuerySchema,
   ListReshareOrdersQuerySchema,
   ListReshareOrdersResponseSchema,
@@ -861,7 +863,25 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return reply.send(AllocationDecisionResponseSchema.parse({ data: result.data }));
   });
 
-  // Internal Reshare orders (docs/reshare-auto-orders.md): read-only history, server-scoped.
+  // Internal RE documents and independently persisted Admin ordering acknowledgements.
+  app.put('/api/v1/reshare-orders/:decisionId/status', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN']);
+    const { decisionId } = AllocationDecisionParamsSchema.parse(request.params);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = UpdateReshareOrderStatusRequestSchema.parse(request.body);
+    const result = await repository.updateReshareOrderStatus(
+      session.principal,
+      decisionId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ operation: 'UPDATE_RESHARE_ORDER_STATUS', decisionId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    reply.header('cache-control', 'no-store');
+    return UpdateReshareOrderStatusResponseSchema.parse({ data: result.data });
+  });
   app.get('/api/v1/reshare-orders', async (request, reply) => {
     const session = await authenticate(request, repository);
     const query = ListReshareOrdersQuerySchema.parse(request.query);
@@ -3588,6 +3608,18 @@ function openApiDocument(): Record<string, unknown> {
           responses: {
             '200': { description: 'Page of RE order history rows' },
             '403': { description: 'Store outside the caller scope' },
+          },
+        },
+      },
+      '/api/v1/reshare-orders/{decisionId}/status': {
+        put: {
+          security: cookieSecurity,
+          summary:
+            'Admin changes persisted Reshare ordering acknowledgement, including legacy results without RE. Requires Idempotency-Key, expectedStatus and expectedVersion; audits changes without issuing, receiving or returning stock.',
+          responses: {
+            '200': { description: 'Saved acknowledgement and new version' },
+            '403': { description: 'Admin only' },
+            '409': { description: 'Stale state, ineligible result or reused idempotency key' },
           },
         },
       },

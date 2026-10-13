@@ -2,6 +2,9 @@ import { planReshareOrder, type ReshareOrderPlan } from '@idosi/domain';
 import { and, asc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 
 import type { Database } from './client.js';
+import { withIdempotency } from './idempotency.js';
+import { loadSupplierActor } from './supplier-reconciliation.js';
+import { SupplierReconciliationError } from './supplier-errors.js';
 import {
   allocationLines,
   allocationResultDecisions,
@@ -340,6 +343,11 @@ export interface ReshareHistoryDelivery {
 }
 
 export interface ReshareHistoryRow {
+  readonly statusControl: {
+    readonly version: number;
+    readonly updatedAt: Date | null;
+    readonly updatedByName: string | null;
+  };
   readonly decisionId: string;
   readonly decisionStatus: (typeof allocationResultDecisions.$inferSelect)['status'];
   readonly allocationRunId: string;
@@ -399,6 +407,7 @@ type Reader = Database | Transaction;
 
 /** History time of a row: when its RE was ordered, else when its result was published. */
 const historyTime = sql`coalesce(${reshareOrders.orderedAt}, ${allocationResultDecisions.createdAt})`;
+const historyStatus = sql`case when ${reshareOrders.status} = 'cancelled' then 'cancelled' else coalesce(${allocationResultDecisions.reshareStatus}, ${reshareOrders.status}::text, 'not_ordered') end`;
 
 /**
  * One row per allocation result that granted new goods and was not rejected: an RE order
@@ -435,9 +444,7 @@ export async function listReshareOrderHistory(
       if (input.sessionId) {
         predicates.push(eq(allocationResultDecisions.orderSessionId, input.sessionId));
       }
-      if (input.status === 'ordered') predicates.push(eq(reshareOrders.status, 'ordered'));
-      if (input.status === 'cancelled') predicates.push(eq(reshareOrders.status, 'cancelled'));
-      if (input.status === 'not_ordered') predicates.push(isNull(reshareOrders.id));
+      if (input.status) predicates.push(sql`${historyStatus} = ${input.status}`);
       if (input.from) predicates.push(sql`${historyTime} >= ${input.from}`);
       if (input.to) predicates.push(sql`${historyTime} < ${input.to}`);
       if (input.code) {
@@ -559,7 +566,12 @@ async function assembleHistoryRows(
           .where(inArray(reshareOrderSources.reshareOrderId, orderIds))
           .groupBy(reshareOrderSources.reshareOrderId);
   const orderActorIds = [
-    ...new Set(headers.flatMap((header) => (header.order ? [header.order.actorUserId] : []))),
+    ...new Set(
+      headers.flatMap((header) => [
+        ...(header.order ? [header.order.actorUserId] : []),
+        ...(header.decision.reshareStatusUpdatedBy ? [header.decision.reshareStatusUpdatedBy] : []),
+      ]),
+    ),
   ];
   const orderActors =
     orderActorIds.length === 0
@@ -642,7 +654,14 @@ async function assembleHistoryRows(
       respondedByName: header.actorName,
       storeId: decision.storeId,
       storeName: order?.storeNameSnapshot ?? header.storeName,
-      status: order ? (order.status === 'cancelled' ? 'cancelled' : 'ordered') : 'not_ordered',
+      status: effectiveReshareStatus(decision.reshareStatus, order?.status ?? null),
+      statusControl: {
+        version: decision.reshareStatusVersion,
+        updatedAt: decision.reshareStatusUpdatedAt,
+        updatedByName: decision.reshareStatusUpdatedBy
+          ? (actorName.get(decision.reshareStatusUpdatedBy) ?? null)
+          : null,
+      },
       order: order
         ? {
             id: order.id,
@@ -714,4 +733,111 @@ export async function loadReshareOrderSummaries(
 
 function escapeLike(value: string): string {
   return value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_');
+}
+
+function effectiveReshareStatus(
+  manual: string | null,
+  order: 'ordered' | 'cancelled' | null,
+): ReshareHistoryStatus {
+  if (order === 'cancelled') return 'cancelled';
+  return manual === 'ordered' || manual === 'not_ordered' ? manual : (order ?? 'not_ordered');
+}
+
+/** Admin acknowledgement only. No RE creation, warehouse movement or supplier coverage change. */
+export async function updateReshareOrderStatus(
+  database: Database,
+  input: {
+    readonly decisionId: string;
+    readonly actorUserId: string;
+    readonly status: 'ORDERED' | 'NOT_ORDERED';
+    readonly expectedStatus: 'ORDERED' | 'NOT_ORDERED';
+    readonly expectedVersion: number;
+    readonly idempotencyKey: string;
+    readonly requestHash: string;
+    readonly requestId?: string;
+  },
+) {
+  if (
+    !['ORDERED', 'NOT_ORDERED'].includes(input.status) ||
+    !['ORDERED', 'NOT_ORDERED'].includes(input.expectedStatus) ||
+    !Number.isSafeInteger(input.expectedVersion) ||
+    input.expectedVersion < 0
+  ) {
+    throw new SupplierReconciliationError('VALIDATION', 'Trạng thái hoặc phiên bản không hợp lệ.');
+  }
+  return withIdempotency(
+    database,
+    {
+      scope: `reshare-status:${input.actorUserId}:${input.decisionId}`,
+      key: input.idempotencyKey,
+      requestHash: input.requestHash,
+    },
+    async (tx) => {
+      const [decision] = await tx
+        .select()
+        .from(allocationResultDecisions)
+        .where(eq(allocationResultDecisions.id, input.decisionId))
+        .for('update');
+      if (!decision)
+        throw new SupplierReconciliationError('NOT_FOUND', 'Không tìm thấy kết quả phân bổ.');
+      const [order] = await tx
+        .select({ status: reshareOrders.status })
+        .from(reshareOrders)
+        .where(eq(reshareOrders.allocationDecisionId, decision.id))
+        .for('update');
+      const before = effectiveReshareStatus(decision.reshareStatus, order?.status ?? null);
+      if (
+        !['pending', 'accepted'].includes(decision.status) ||
+        decision.grantedQuantity <= 0 ||
+        before === 'cancelled'
+      ) {
+        throw new SupplierReconciliationError(
+          'ORDER_SOURCE_NOT_ELIGIBLE',
+          'Chỉ đổi trạng thái cho kết quả còn hiệu lực, có hàng được cấp và chưa hủy.',
+        );
+      }
+      if (
+        decision.reshareStatusVersion !== input.expectedVersion ||
+        before.toUpperCase() !== input.expectedStatus
+      ) {
+        throw new SupplierReconciliationError(
+          'VERSION_CONFLICT',
+          'Trạng thái đã thay đổi. Hãy tải lại danh sách trước khi sửa.',
+        );
+      }
+      const status = input.status === 'ORDERED' ? 'ordered' : 'not_ordered';
+      const version = decision.reshareStatusVersion + 1;
+      await tx
+        .update(allocationResultDecisions)
+        .set({
+          reshareStatus: status,
+          reshareStatusVersion: version,
+          reshareStatusUpdatedAt: new Date(),
+          reshareStatusUpdatedBy: input.actorUserId,
+        })
+        .where(eq(allocationResultDecisions.id, decision.id));
+      await tx.insert(auditLogs).values({
+        actorUserId: input.actorUserId,
+        actorRole: 'admin',
+        actorStoreId: decision.storeId,
+        requestId: input.requestId,
+        action: 'RESHARE_ORDER_STATUS_UPDATED',
+        entityType: 'allocation_result_decision',
+        entityId: decision.id,
+        before: { status: before, version: decision.reshareStatusVersion },
+        after: { status, version },
+      });
+      const value = { decisionId: decision.id, status: input.status, version };
+      return {
+        value,
+        responseBody: value,
+        responseStatus: 200,
+        resourceType: 'allocation_result_decision',
+        resourceId: decision.id,
+      };
+    },
+    async (tx) => {
+      await loadSupplierActor(tx, input.actorUserId, ['admin']);
+    },
+  );
 }

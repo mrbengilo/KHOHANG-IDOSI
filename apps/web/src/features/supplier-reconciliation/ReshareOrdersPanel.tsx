@@ -1,6 +1,10 @@
-import type { ReshareOrderHistoryStatus } from '@idosi/contracts';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import type {
+  ReshareOrderHistoryRow,
+  ReshareOrderHistoryStatus,
+  UpdateReshareOrderStatusRequest,
+} from '@idosi/contracts';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { Button } from '../../components/Button';
@@ -14,7 +18,12 @@ import { businessDate } from '../../lib/business-time';
 import { formatInteger } from '../../lib/format';
 import { Pager } from './ReconciliationWorkspace';
 import { RESHARE_STATUS_LABEL, ReshareOrderHistoryTable } from './ReshareOrderHistoryTable';
-import { loadReshareOrders, type ReshareOrderFilters } from './supplierApi';
+import {
+  loadReshareOrders,
+  updateReshareOrderStatus,
+  type ReshareOrderFilters,
+} from './supplierApi';
+import { retainIdempotencyForExactRetry, type RetryAttempt } from '../../lib/idempotency-retry';
 
 const STATUSES: readonly ReshareOrderHistoryStatus[] = ['ORDERED', 'NOT_ORDERED', 'CANCELLED'];
 
@@ -42,10 +51,18 @@ function errorText(error: unknown): string {
 export function ReshareOrdersPanel({
   accountId,
   initialCode = '',
+  canEdit = false,
 }: {
   readonly accountId: string;
   readonly initialCode?: string;
+  readonly canEdit?: boolean;
 }) {
+  const client = useQueryClient();
+  const [busyDecisionId, setBusyDecisionId] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState('');
+  const [notice, setNotice] = useState('');
+  const busy = useRef(false);
+  const attempt = useRef<RetryAttempt | null>(null);
   const [page, setPage] = useState(1);
   const [sessionId, setSessionId] = useState('');
   const [storeId, setStoreId] = useState('');
@@ -97,6 +114,43 @@ export function ReshareOrdersPanel({
   const filtered = Boolean(
     sessionId || storeId || productId || status || fromDate || toDate || code,
   );
+  const changeStatus = async (row: ReshareOrderHistoryRow) => {
+    if (!canEdit || busy.current || !row.statusControl || row.status === 'CANCELLED') return;
+    const input: UpdateReshareOrderStatusRequest = {
+      status: row.status === 'ORDERED' ? 'NOT_ORDERED' : 'ORDERED',
+      expectedStatus: row.status,
+      expectedVersion: row.statusControl.version,
+    };
+    attempt.current = retainIdempotencyForExactRetry(
+      attempt.current,
+      JSON.stringify({ decisionId: row.decisionId, ...input }),
+    );
+    busy.current = true;
+    setBusyDecisionId(row.decisionId);
+    setMutationError('');
+    setNotice('');
+    try {
+      const saved = await updateReshareOrderStatus(row.decisionId, input, attempt.current.key);
+      attempt.current = null;
+      setNotice(
+        `${row.sessionCode} · ${row.storeName}: đã lưu “${RESHARE_STATUS_LABEL[saved.status]}”.`,
+      );
+      await client.invalidateQueries({ queryKey: ['reshare-orders'] });
+    } catch (error) {
+      setMutationError(
+        error instanceof ApiClientError && error.status < 500 && error.code !== 'NETWORK_ERROR'
+          ? error.message
+          : 'Không xác nhận được kết quả lưu. Kiểm tra mạng rồi bấm lại; thao tác sẽ không ghi trùng.',
+      );
+      if (error instanceof ApiClientError && error.code === 'VERSION_CONFLICT') {
+        attempt.current = null;
+        await client.invalidateQueries({ queryKey: ['reshare-orders'] });
+      }
+    } finally {
+      busy.current = false;
+      setBusyDecisionId(null);
+    }
+  };
 
   return (
     <section
@@ -106,8 +160,8 @@ export function ReshareOrdersPanel({
       <h2 id="reshare-orders-title">Lịch sử đặt hàng theo phân bổ</h2>
       <p className="supplier-hint">
         Mỗi kết quả phân bổ được chấp nhận tạo một đơn mã RE và xuất hàng khỏi kho tổng IDOSI. Dùng
-        mã đơn và số bao dưới đây để đặt hàng trên Reshare; đơn chưa xác nhận hiển thị “Chưa đặt
-        Reshare”.
+        mã đơn và số bao dưới đây để đặt hàng trên Reshare. Admin có thể cập nhật xác nhận đã đặt
+        hoặc chưa đặt; thao tác được lưu vào lịch sử và không làm thay đổi số lượng kho.
       </p>
       <form
         className="supplier-filters reshare-orders__filters"
@@ -206,6 +260,16 @@ export function ReshareOrdersPanel({
           “Từ ngày” phải trước hoặc bằng “Đến ngày”.
         </p>
       ) : null}
+      {notice ? (
+        <p className="supplier-notice" role="status">
+          {notice}
+        </p>
+      ) : null}
+      {mutationError ? (
+        <p className="form-error" role="alert">
+          {mutationError}
+        </p>
+      ) : null}
       {orders.isPending ? (
         <p role="status">Đang tải lịch sử đơn đặt Reshare…</p>
       ) : orders.isError && !data ? (
@@ -242,7 +306,15 @@ export function ReshareOrdersPanel({
               </Link>
             </div>
           ) : (
-            <ReshareOrderHistoryTable caption="Lịch sử đặt hàng theo phân bổ" rows={data.data} />
+            <ReshareOrderHistoryTable
+              caption="Lịch sử đặt hàng theo phân bổ"
+              rows={data.data}
+              {...(canEdit
+                ? { onChangeStatus: (row: ReshareOrderHistoryRow) => void changeStatus(row) }
+                : {})}
+              busyDecisionId={busyDecisionId}
+              disabled={orders.isFetching || orders.isError}
+            />
           )}
           <Pager
             disabled={orders.isFetching}
