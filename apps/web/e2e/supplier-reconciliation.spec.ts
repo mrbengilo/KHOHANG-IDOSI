@@ -380,7 +380,7 @@ test('stores read their Reshare order state without any action', async ({ page }
   expect(log.mutations).toHaveLength(0);
 });
 
-for (const width of [360, 390, 412, 683, 768, 911, 1093, 1366, 1440, 1920, 2560]) {
+for (const width of [360, 390, 412, 683, 768, 821, 911, 1093, 1366, 1440, 1920, 2560]) {
   // 683, 911 and 1093 px are a 1366 px screen at 200/150/125% browser zoom.
   test(`reconciliation layout fits at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
@@ -406,6 +406,23 @@ for (const width of [360, 390, 412, 683, 768, 911, 1093, 1366, 1440, 1920, 2560]
         (element) => element.scrollWidth <= element.clientWidth + 1 && element.clientHeight >= 32,
       );
       expect(fits, await button.innerText()).toBe(true);
+    }
+  });
+}
+
+for (const role of ['ADMIN', 'HTKD', 'STORE'] as const) {
+  test(`Reshare order queue fits from 360 to 2560px for ${role}`, async ({ page }) => {
+    await mockApi(page, role);
+    await page.goto(
+      role === 'ADMIN' ? '/supplier-reconciliation?tab=orders' : '/supplier-reconciliation',
+    );
+    await expect(page.getByText('CH-GOVAP').first()).toBeVisible();
+    for (const width of [360, 390, 768, 821, 911, 1093, 1366, 1920]) {
+      await page.setViewportSize({ width, height: 900 });
+      if (role !== 'STORE' && width === 821) {
+        await page.getByLabel('Chọn NAM-01 của CH-GOVAP').check();
+      }
+      await expectNoPageOverflow(page);
     }
   });
 }

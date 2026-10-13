@@ -66,6 +66,8 @@ describe('route access policy', () => {
       '/allocations': [1, 1, 1, 1, 1],
       '/requests': [1, 1, 1, 1, 1],
       '/warehouse-inbound': [1, 1, 0, 0, 0],
+      // Admin reconciles, HTKD records Reshare orders, stores read their own Reshare state.
+      '/supplier-reconciliation': [1, 1, 1, 1, 1],
       '/receive': [1, 1, 1, 0, 1],
       '/partner-inbound': [0, 1, 1, 0, 0],
       '/inventory': [1, 1, 1, 1, 1],

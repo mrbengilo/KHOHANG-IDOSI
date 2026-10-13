@@ -8,6 +8,18 @@
   gap: 12px;
   min-width: 0;
 }
+/* Grid children default to min-width:auto; a wide table must scroll inside, not widen the page. */
+.supplier-summary > *,
+.supplier-orders > *,
+.supplier-history > *,
+.supplier-settings > *,
+.supplier-observation > *,
+.supplier-preview > *,
+.supplier-orders form,
+.supplier-detail-row td {
+  min-width: 0;
+  max-width: 100%;
+}
 .supplier-hint {
   margin: 0;
   color: var(--text-secondary);
