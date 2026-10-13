@@ -653,16 +653,14 @@ for (const role of ['ADMIN', 'HTKD', 'STORE'] as const) {
       expect(box!.x).toBeGreaterThanOrEqual(0);
       expect(box!.x + box!.width).toBeLessThanOrEqual(width + 1);
       // Read a single DOM snapshot: responsive shell buttons can mount/unmount between awaits.
-      const buttonSizes = await page
-        .getByRole('button')
-        .evaluateAll((buttons) =>
-          buttons
-            .filter((element) => element.getClientRects().length > 0)
-            .map((element) => ({
-              label: element.textContent ?? '',
-              fits: element.scrollWidth <= element.clientWidth + 1 && element.clientHeight >= 32,
-            })),
-        );
+      const buttonSizes = await page.getByRole('button').evaluateAll((buttons) =>
+        buttons
+          .filter((element) => element.getClientRects().length > 0)
+          .map((element) => ({
+            label: element.textContent ?? '',
+            fits: element.scrollWidth <= element.clientWidth + 1 && element.clientHeight >= 32,
+          })),
+      );
       for (const button of buttonSizes) expect(button.fits, button.label).toBe(true);
       if (role === 'ADMIN' && (width === 390 || width === 1440)) {
         await page.screenshot({
