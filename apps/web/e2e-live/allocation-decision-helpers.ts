@@ -16,6 +16,6 @@ export async function acceptAllocationResultFromNotice(page: Page, productName: 
   await expect(panel).toContainText(productName);
   await expect(panel).toContainText('Chờ xác nhận');
   await panel.getByRole('button', { name: 'Chấp nhận' }).click();
-  await expect(panel.locator('.badge')).toHaveText('Đã chấp nhận');
-  await expect(panel).toContainText('Đã xuất kho, chờ cửa hàng khai nhận');
+  await expect(panel.locator('.allocation-decision__status > .badge')).toHaveText('Đã chấp nhận');
+  await expect(panel).toContainText('Đã giao đi, chờ cửa hàng khai nhận');
 }
