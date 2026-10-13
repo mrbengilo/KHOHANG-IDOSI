@@ -77,8 +77,16 @@ function readerStoreScope(
   return { storeIds: storeId ? [storeId] : own, scoped: true };
 }
 
-export function supplierPositionDto(position: DomainSupplierPosition): SupplierPosition {
-  return { ...position };
+/**
+ * The issued RE part of U is only sent to callers that asked for it, so bundles that validate
+ * the older strict shape keep parsing (it is still counted in U and F for everyone).
+ */
+export function supplierPositionDto(
+  position: DomainSupplierPosition,
+  includeIssued = false,
+): SupplierPosition {
+  const { issuedUnreflectedQuantity, ...rest } = position;
+  return includeIssued ? { ...rest, issuedUnreflectedQuantity } : rest;
 }
 
 export async function listPostgresSupplierSources(
@@ -165,7 +173,7 @@ export async function getPostgresSupplierReconciliation(
             observedAt: row.baseline.observedAt.toISOString(),
           }
         : null,
-      position: supplierPositionDto(row.position),
+      position: supplierPositionDto(row.position, query.includeIssued === true),
       integrityIssueCount: row.integrityIssues.length,
     })),
     pagination: pagination(query.page, query.pageSize, result.totalItems),
@@ -184,6 +192,7 @@ function observationInput(actor: AuthenticatedPrincipal, input: SupplierObservat
     attestUnlinkedAsNotOrdered: input.attestUnlinkedAsNotOrdered,
     note: input.note ?? null,
     evidenceRef: input.evidenceRef ?? null,
+    reshareCoverage: input.reshareCoverage ?? [],
   };
 }
 
@@ -194,6 +203,7 @@ export async function previewPostgresSupplierObservation(
 ): Promise<SupplierObservationPreview> {
   requireAdmin(actor);
   const plan = await previewSupplierStockObservation(db, observationInput(actor, input));
+  const includeIssued = input.reshareCoverage !== undefined;
   return {
     revision: plan.revision,
     observedAt: plan.observedAt.toISOString(),
@@ -216,8 +226,8 @@ export async function previewPostgresSupplierObservation(
             observedAt: line.baselineBefore.observedAt.toISOString(),
           }
         : null,
-      before: supplierPositionDto(line.before),
-      after: supplierPositionDto(line.after),
+      before: supplierPositionDto(line.before, includeIssued),
+      after: supplierPositionDto(line.after, includeIssued),
       events: line.events.map((event) => ({
         id: event.id,
         kind: event.kind,
@@ -233,6 +243,23 @@ export async function previewPostgresSupplierObservation(
       undecidedEventCount: line.undecidedEventCount,
       coveredEventCount: line.coveredEventCount,
       unlinkedLegacyQuantity: line.unlinkedLegacyQuantity,
+      ...(includeIssued
+        ? {
+            issuedOrders: line.issuedOrders.map((order) => ({
+              lineId: order.lineId,
+              orderId: order.orderId,
+              code: order.code,
+              storeId: order.storeId,
+              storeName: order.storeName,
+              orderedAt: order.orderedAt.toISOString(),
+              quantity: order.quantity,
+              unreflectedQuantity: order.unreflectedQuantity,
+              declaredReflectedQuantity: order.declaredReflectedQuantity,
+              afterObservation: order.afterObservation,
+            })),
+            reflectedReshareQuantity: line.reflectedReshareQuantity,
+          }
+        : {}),
       onHandDelta: line.onHandDelta,
     })),
   };

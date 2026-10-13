@@ -82,10 +82,19 @@ describePostgres('allocation result decisions through the API on PostgreSQL', ()
       assert.equal(storeList.json().data[0].grantedQuantity, 3);
       assert.equal(storeList.json().data[0].shipment.status, 'RESERVED');
       const htkdList = await get(fx.tokens.htkd, '/api/v1/allocation-decisions');
+      // The assigned HTKD may accept for the store (never reject): canRespond is true and,
+      // when asked, the allowed actions say exactly that.
       assert.deepEqual(
         htkdList.json().data.map((row) => [row.id, row.canRespond]),
-        [[resultA.decisionId, false]],
+        [[resultA.decisionId, true]],
       );
+      assert.equal('allowedActions' in htkdList.json().data[0], false);
+      const htkdListV2 = await get(
+        fx.tokens.htkd,
+        '/api/v1/allocation-decisions?includeReshare=true',
+      );
+      assert.deepEqual(htkdListV2.json().data[0].allowedActions, ['ACCEPT']);
+      assert.equal(htkdListV2.json().data[0].reshareOrder, null);
       const otherStore = await get(fx.tokens.storeB, '/api/v1/allocation-decisions');
       assert.deepEqual(
         otherStore.json().data.map((row) => row.id),
@@ -110,9 +119,9 @@ describePostgres('allocation result decisions through the API on PostgreSQL', ()
       assert.equal(detail.json().data.version, 1);
       assert.equal(detail.json().data.runVersion, 1);
 
-      // Only the receiving side answers; nobody can answer outside their scope.
+      // The receiving side answers, an assigned HTKD may only accept; nobody outside scope.
       assert.equal((await respond(fx.tokens.admin, resultA.decisionId, accept())).statusCode, 403);
-      assert.equal((await respond(fx.tokens.htkd, resultA.decisionId, accept())).statusCode, 403);
+      assert.equal((await respond(fx.tokens.htkd, resultA.decisionId, reject())).statusCode, 403);
       assert.equal((await respond(fx.tokens.storeB, resultA.decisionId, accept())).statusCode, 404);
       assert.equal(
         (await respond(fx.tokens.wholesale, resultA.decisionId, accept())).statusCode,
@@ -160,8 +169,49 @@ describePostgres('allocation result decisions through the API on PostgreSQL', ()
       assert.equal(accepted.json().data.canRespond, false);
       assert.equal(accepted.json().data.respondedByAccountId, fx.storeUserA);
       assert.equal(accepted.json().data.shipment.status, 'DISPATCHED');
-      // Acceptance is not receipt: stock stays on hand and reserved.
-      assert.deepEqual(await balance(fx.productId), { onHand: 100, reserved: 6 });
+      // Acceptance creates the RE order and issues the 3 bags at once (on-hand and reserved
+      // drop together); it is not a receipt, so the store's stock is untouched.
+      assert.deepEqual(await balance(fx.productId), { onHand: 97, reserved: 3 });
+      const acceptedV2 = await get(
+        fx.tokens.storeA,
+        `/api/v1/allocation-decisions/${resultA.decisionId}?includeReshare=true`,
+      );
+      assert.match(acceptedV2.json().data.reshareOrder.code, /^RE-\d{6}$/u);
+      assert.equal(acceptedV2.json().data.reshareOrder.totalQuantity, 3);
+      assert.deepEqual(acceptedV2.json().data.allowedActions, []);
+      const history = await get(
+        fx.tokens.storeA,
+        `/api/v1/reshare-orders?decisionId=${resultA.decisionId}`,
+      );
+      assert.equal(history.statusCode, 200);
+      assert.equal(history.json().scoped, true);
+      assert.deepEqual(
+        history.json().data.map((row) => [row.status, row.order.code, row.totalQuantity]),
+        [['ORDERED', acceptedV2.json().data.reshareOrder.code, 3]],
+      );
+      // Server scope: another store and an unassigned query never see it.
+      assert.deepEqual(
+        (
+          await get(fx.tokens.storeB, `/api/v1/reshare-orders?decisionId=${resultA.decisionId}`)
+        ).json().data,
+        [],
+      );
+      assert.equal(
+        (await get(fx.tokens.storeB, `/api/v1/reshare-orders?storeId=${fx.storeA}`)).statusCode,
+        403,
+      );
+      assert.equal(
+        (
+          await get(fx.tokens.htkd, `/api/v1/reshare-orders?decisionId=${resultA.decisionId}`)
+        ).json().data.length,
+        1,
+      );
+      const adminHistory = await get(
+        fx.tokens.admin,
+        `/api/v1/reshare-orders?decisionId=${resultA.decisionId}`,
+      );
+      assert.equal(adminHistory.json().scoped, false);
+      assert.equal(adminHistory.json().data.length, 1);
       assert.equal(await receiptSourceCount(app, fx.tokens.storeA), 1);
       const linked = await get(
         fx.tokens.storeA,
@@ -198,7 +248,7 @@ describePostgres('allocation result decisions through the API on PostgreSQL', ()
       assert.equal(rejected.json().data.status, 'REJECTED');
       assert.equal(rejected.json().data.reason, 'Kho sỉ đã đủ hàng');
       assert.equal(rejected.json().data.releasedQuantity, 2);
-      assert.deepEqual(await balance(fx.productId), { onHand: 100, reserved: 4 });
+      assert.deepEqual(await balance(fx.productId), { onHand: 97, reserved: 1 });
       const stale = await respond(fx.tokens.storeB, resultB.decisionId, accept(9));
       assert.equal(stale.statusCode, 409);
       assert.equal(stale.json().error.code, 'VERSION_CONFLICT');
@@ -221,7 +271,7 @@ describePostgres('allocation result decisions through the API on PostgreSQL', ()
       await db.update(users).set({ status: 'locked' }).where(eq(users.id, fx.storeUserB));
       const locked = await respond(fx.tokens.storeB, resultB.decisionId, accept(), keyB);
       assert.ok([401, 403].includes(locked.statusCode));
-      assert.deepEqual(await balance(fx.productId), { onHand: 100, reserved: 4 });
+      assert.deepEqual(await balance(fx.productId), { onHand: 97, reserved: 1 });
     } finally {
       await app.close();
     }

@@ -26,6 +26,8 @@ import {
   type AllocationDecision,
   type AllocationDecisionDetail,
   type ListAllocationDecisionsQuery,
+  type ListReshareOrdersQuery,
+  type ListReshareOrdersResponse,
   type ListSessionDocumentsQuery,
   type RespondAllocationDecisionRequest,
   type SessionDocument,
@@ -35,6 +37,7 @@ import {
   decisionDtosFor,
   getPostgresAllocationDecision,
   listPostgresAllocationDecisions,
+  listPostgresReshareOrders,
   respondPostgresAllocationDecision,
 } from './postgres-allocation-decisions.js';
 import {
@@ -400,6 +403,7 @@ import {
 } from './postgres-receipt-adjustments.js';
 import type {
   AccountCredentials,
+  AllocationDecisionView,
   HtkdAssignmentsState,
   IdosiStatisticsTarget,
   IdosiStoreCodeRecord,
@@ -1658,8 +1662,9 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
   public async getAllocationDecision(
     actor: AuthenticatedPrincipal,
     decisionId: string,
+    view?: AllocationDecisionView,
   ): Promise<AllocationDecisionDetail> {
-    return getPostgresAllocationDecision(db, actor, decisionId);
+    return getPostgresAllocationDecision(db, actor, decisionId, view);
   }
 
   public async respondAllocationDecision(
@@ -1669,6 +1674,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     idempotencyKey: string,
     requestHash: string,
     context: RequestContext,
+    view?: AllocationDecisionView,
   ): Promise<IdempotentResource<AllocationDecisionDetail>> {
     return respondPostgresAllocationDecision(
       db,
@@ -1679,7 +1685,15 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       requestHash,
       context,
       () => this.authorizeRetailStoreOperation(actor),
+      view,
     );
+  }
+
+  public async listReshareOrders(
+    actor: AuthenticatedPrincipal,
+    query: ListReshareOrdersQuery,
+  ): Promise<ListReshareOrdersResponse> {
+    return listPostgresReshareOrders(db, actor, query);
   }
 
   public async listSessionDocuments(

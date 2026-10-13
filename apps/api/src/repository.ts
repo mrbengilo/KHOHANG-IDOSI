@@ -22,6 +22,8 @@ import type {
   SupplierSource,
   AllocationDecision,
   AllocationDecisionDetail,
+  ListReshareOrdersQuery,
+  ListReshareOrdersResponse,
   ListAllocationDecisionsQuery,
   RespondAllocationDecisionRequest,
 } from '@idosi/contracts';
@@ -508,6 +510,7 @@ export interface WarehouseRepository extends SupplierReconciliationRepository {
   getAllocationDecision(
     actor: AuthenticatedPrincipal,
     decisionId: string,
+    view?: AllocationDecisionView,
   ): Promise<AllocationDecisionDetail>;
   respondAllocationDecision(
     actor: AuthenticatedPrincipal,
@@ -516,7 +519,13 @@ export interface WarehouseRepository extends SupplierReconciliationRepository {
     idempotencyKey: string,
     requestHash: string,
     context: RequestContext,
+    view?: AllocationDecisionView,
   ): Promise<IdempotentResource<AllocationDecisionDetail>>;
+  /** "Lịch sử đặt hàng theo phân bổ": RE orders and results waiting for an answer, scoped. */
+  listReshareOrders(
+    actor: AuthenticatedPrincipal,
+    query: ListReshareOrdersQuery,
+  ): Promise<ListReshareOrdersResponse>;
   listAllocations(
     actor: AuthenticatedPrincipal,
     query: ListAllocationsQuery,
@@ -1050,16 +1059,40 @@ export interface WarehouseRepository extends SupplierReconciliationRepository {
  * active retail store, the wholesale desk for an active wholesale store in its scope (the same
  * parties that declare receipts). Admin and HTKD can read results but never answer for a store.
  */
+/** Opt-in response fields of allocation decisions (older bundles validate the strict shape). */
+export interface AllocationDecisionView {
+  readonly includeReshare?: boolean;
+}
+
 export function mayAnswerAllocationDecision(
   principal: AuthenticatedPrincipal,
   store: { readonly id: string; readonly kind: 'RETAIL' | 'WHOLESALE'; readonly active: boolean },
 ): boolean {
-  if (!store.active) return false;
-  if (principal.role === 'STORE') return principal.storeId === store.id && store.kind === 'RETAIL';
-  if (principal.role === 'WHOLESALE') {
-    return principal.assignedStoreIds.includes(store.id) && store.kind === 'WHOLESALE';
+  return allocationDecisionActionsFor(principal, store).length > 0;
+}
+
+/**
+ * Actions the account may take on a pending result of this store: the receiving side accepts or
+ * rejects; an HTKD assigned to the active store may accept on its behalf (never reject). The
+ * database re-checks the live account, store and assignment inside the command transaction.
+ */
+export function allocationDecisionActionsFor(
+  principal: AuthenticatedPrincipal,
+  store: { readonly id: string; readonly kind: 'RETAIL' | 'WHOLESALE'; readonly active: boolean },
+): readonly ('ACCEPT' | 'REJECT')[] {
+  if (!store.active) return [];
+  if (principal.role === 'STORE') {
+    return principal.storeId === store.id && store.kind === 'RETAIL' ? ['ACCEPT', 'REJECT'] : [];
   }
-  return false;
+  if (principal.role === 'WHOLESALE') {
+    return principal.assignedStoreIds.includes(store.id) && store.kind === 'WHOLESALE'
+      ? ['ACCEPT', 'REJECT']
+      : [];
+  }
+  if (principal.role === 'HTKD') {
+    return principal.assignedStoreIds.includes(store.id) ? ['ACCEPT'] : [];
+  }
+  return [];
 }
 
 export function canAccessStore(principal: AuthenticatedPrincipal, storeId: string): boolean {
