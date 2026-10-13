@@ -142,6 +142,7 @@ jobs:
           bash infra/scripts/tests/deployment-scripts.test.sh
           bash infra/scripts/tests/autodeploy.test.sh
           node --check infra/scripts/run-migrations.mjs
+          node --check infra/scripts/backfill-reshare-orders.mjs
           node infra/scripts/check-migration-safety.mjs
           node --test infra/scripts/check-migration-safety.test.mjs
           node --check infra/web-server.mjs
