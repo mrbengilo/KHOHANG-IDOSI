@@ -391,7 +391,9 @@ export type {
 
 export {
   applyWarehouseMovement,
+  flagSupplierProductForReconciliation,
   loadWarehouseBalancesAt,
+  SUPPLIER_CONSISTENT_SOURCE_TYPES,
   recordWarehouseMovement,
   WarehouseBalanceViolationError,
   WarehouseMovementConflictError,
@@ -553,3 +555,6 @@ export type {
   OrderHistoryRecord,
   OrderHistoryStatusFilter,
 } from './order-history.js';
+export * from './supplier-commitments.js';
+export * from './supplier-reconciliation.js';
+export * from './supplier-orders.js';

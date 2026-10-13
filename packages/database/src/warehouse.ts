@@ -1,7 +1,13 @@
-import { and, asc, desc, eq, inArray, lte } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lte, sql } from 'drizzle-orm';
 
 import type { Database } from './client.js';
-import { products, warehouseBalances, warehouseLedgerEntries, type JsonObject } from './schema.js';
+import {
+  products,
+  supplierSourceProducts,
+  warehouseBalances,
+  warehouseLedgerEntries,
+  type JsonObject,
+} from './schema.js';
 import { withAdvisoryLock, withSerializableTransaction, type Transaction } from './transaction.js';
 
 export interface WarehouseMovementInput {
@@ -143,6 +149,13 @@ export async function applyWarehouseMovement(
     if (!ledgerEntry) {
       throw new Error('Warehouse ledger insert returned no row.');
     }
+    if (!SUPPLIER_CONSISTENT_SOURCE_TYPES.has(input.sourceType)) {
+      await flagSupplierProductForReconciliation(
+        tx,
+        input.productId,
+        `Biến động kho ngoài luồng đối chiếu (${input.sourceType}); cần đối chiếu lại tồn Reshare.`,
+      );
+    }
 
     return {
       ledgerEntryId: ledgerEntry.id,
@@ -151,6 +164,47 @@ export async function applyWarehouseMovement(
       replayed: false,
     };
   });
+}
+
+/**
+ * Movements that keep onHand - reserved equal to a reconciled SKU's supplier free stock F:
+ * holds and releases of commitments B has not recorded, receipt finalization (B already
+ * deducted those units), shortage-check holds of units B already deducted, and the supplier
+ * projection itself. Any other movement on a reconciled SKU (an unforeseen path) blocks the
+ * SKU's new allocations until C re-observes B; it never silently creates free stock.
+ */
+export const SUPPLIER_CONSISTENT_SOURCE_TYPES: ReadonlySet<string> = new Set([
+  'priority_offer',
+  'allocation_run',
+  'allocation_result_decision',
+  'store_receipt',
+  'warehouse_shortage_check',
+  'supplier_stock_observation',
+  'supplier_event_batch',
+]);
+
+/**
+ * Marks a reconciled SKU as needing a new observation before it may be allocated again. A SKU
+ * without a baseline is already blocked and keeps its state; an unmapped SKU is untouched.
+ * Returns whether the SKU is reconciled at all.
+ */
+export async function flagSupplierProductForReconciliation(
+  tx: Transaction,
+  productId: string,
+  reason: string,
+): Promise<boolean> {
+  const updated = await tx
+    .update(supplierSourceProducts)
+    .set({
+      status: sql`case when ${supplierSourceProducts.status} = 'active' then 'needs_reconciliation'::supplier_source_product_status else ${supplierSourceProducts.status} end`,
+      blockReason: sql`case when ${supplierSourceProducts.status} = 'active' then ${reason.slice(0, 500)} else ${supplierSourceProducts.blockReason} end`,
+      blockedAt: sql`case when ${supplierSourceProducts.status} = 'active' then now() else ${supplierSourceProducts.blockedAt} end`,
+      revision: sql`${supplierSourceProducts.revision} + 1`,
+      updatedAt: new Date(),
+    })
+    .where(eq(supplierSourceProducts.productId, productId))
+    .returning({ id: supplierSourceProducts.id });
+  return updated.length > 0;
 }
 
 export async function recordWarehouseMovement(
