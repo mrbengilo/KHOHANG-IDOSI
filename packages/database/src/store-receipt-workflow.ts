@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm';
 import { assertShipmentMayBeReceived } from './allocation-decision-gate.js';
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
+import { reconcileReceiptStoreWaitDocument } from './store-wait-documents.js';
 import {
   auditLogs,
   htkdAssignments,
@@ -393,6 +394,12 @@ export async function submitStoreReceipt(
     },
     async (tx) => {
       const submitted = await submitStoreReceiptInTransaction(tx, input);
+      await reconcileReceiptStoreWaitDocument(
+        tx,
+        input.receiptId,
+        input.submittedByUserId,
+        input.requestId ?? null,
+      );
       return asIdempotentResult(submitted, 200);
     },
   );

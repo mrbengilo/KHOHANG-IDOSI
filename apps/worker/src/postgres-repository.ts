@@ -22,6 +22,7 @@ import {
   outboundRequestLines,
   outboundRequests,
   publishAllocationDecisionsInTransaction,
+  reconcileStoreWaitDocumentsInTransaction,
   recordWorkerHeartbeat,
   reservations,
   shippableResultCondition,
@@ -46,6 +47,7 @@ import {
   type DailyPriorityOffer,
   type MergedDemand,
   type StoreOrderRequest,
+  type StoreWaitDeclaredReduction,
   type WaitTicket,
 } from '@idosi/domain';
 import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, max, or, sql } from 'drizzle-orm';
@@ -529,6 +531,9 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
     // later session. Cancelled tickets are excluded from the run below because only active
     // tickets are loaded after this point.
     let timedOutTicketCount = 0;
+    // Stores whose wait document this run may change, with what the run itself cancelled.
+    const documentStoreIds = new Set<string>();
+    const documentReductions: (StoreWaitDeclaredReduction & { readonly storeId: string })[] = [];
     for (const offer of expiringOffers) {
       const ticket = lockedTicketById.get(offer.waitTicketId);
       if (!ticket) continue;
@@ -543,6 +548,13 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
       if (cancelled) {
         timedOutTicketCount += 1;
         lockedTicketById.delete(ticket.id);
+        documentStoreIds.add(ticket.storeId);
+        documentReductions.push({
+          storeId: ticket.storeId,
+          productId: ticket.productId,
+          category: 'cancelled',
+          quantity: ticket.remainingQuantity,
+        });
       }
     }
 
@@ -781,6 +793,7 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
             ticket.remainingQuantity = remaining;
             ticket.fulfilledQuantity = fulfilled;
             ticket.status = remaining === 0 ? 'fulfilled' : 'active';
+            documentStoreIds.add(remainder.storeId);
           }
           affectedRows += 1;
           continue;
@@ -845,7 +858,10 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
         if (allocationLeft !== 0 || allocatedStepOffset !== remainderSteps.length) {
           throw new Error(`Allocation ${remainder.demandId} did not reconcile to its sources.`);
         }
-        if (remainder.remainingQuantity > 0) waitRemainders.push(remainder);
+        if (remainder.remainingQuantity > 0) {
+          waitRemainders.push(remainder);
+          documentStoreIds.add(remainder.storeId);
+        }
       }
 
       const additionalReservation =
@@ -949,6 +965,28 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
       },
       createdAt: processedAt,
     });
+
+    // Last write of the run (docs/store-active-wait-document.md): every store whose waiting
+    // demand changed gets its document merged or rolled over by this one run event. Moving bags
+    // from waiting to a PENDING result keeps the open demand, so such a store is left unchanged.
+    await reconcileStoreWaitDocumentsInTransaction(
+      tx,
+      [...documentStoreIds].map((storeId) => ({
+        storeId,
+        declared: documentReductions
+          .filter((reduction) => reduction.storeId === storeId)
+          .map(({ productId, category, quantity }) => ({ productId, category, quantity })),
+        event: {
+          kind: 'allocation_run' as const,
+          sourceKey: `allocation-run:${persistedRunId}`,
+          actorUserId: null,
+          occurredAt: processedAt,
+          orderSessionId: session.id,
+          allocationRunId: persistedRunId,
+          metadata: { orderSessionCode: lockedSession.code, businessDate: session.businessDate },
+        },
+      })),
+    );
 
     return { replayed: false, resourceId: persistedRunId, affectedRows: affectedRows + 1 };
   }

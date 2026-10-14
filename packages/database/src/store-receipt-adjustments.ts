@@ -38,6 +38,7 @@ import { alias } from 'drizzle-orm/pg-core';
 
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
+import { reconcileStoreWaitDocumentsInTransaction } from './store-wait-documents.js';
 import {
   allocationLines,
   auditLogs,
@@ -577,121 +578,146 @@ export async function transitionReceiptAdjustment(
     },
     async (tx) => {
       const [located] = await tx
-        .select({ receiptId: storeReceiptAdjustments.storeReceiptId })
+        .select({
+          receiptId: storeReceiptAdjustments.storeReceiptId,
+          storeId: storeReceiptAdjustments.storeId,
+        })
         .from(storeReceiptAdjustments)
         .where(eq(storeReceiptAdjustments.id, input.adjustmentId))
         .limit(1);
       if (!located) throw new StoreOperationValidationError('Không tìm thấy hồ sơ sai lệch.');
       // Every command on any adjustment of a receipt is serialized by the same receipt lock, so
       // applied sequences and effective values are computed against a stable base.
-      return withAdvisoryLock(tx, 'store-receipt-adjustment', located.receiptId, async () => {
-        const [adjustment] = await tx
-          .select()
-          .from(storeReceiptAdjustments)
-          .where(eq(storeReceiptAdjustments.id, input.adjustmentId))
-          .for('update')
-          .limit(1);
-        if (!adjustment) throw new StoreOperationValidationError('Không tìm thấy hồ sơ sai lệch.');
-        const actor = await resolveActor(tx, input.actorUserId, adjustment.storeId, [
-          'ADMIN',
-          'HTKD',
-          'STORE',
-        ]);
-        if (adjustment.version !== input.expectedVersion) {
-          throw new StoreOperationConflictError('Hồ sơ sai lệch đã thay đổi; hãy tải lại.');
-        }
-        const next = planTransition(adjustment.status, input.action, actor.role);
-        if (['RESUBMIT', 'VERIFY', 'APPLY'].includes(input.action)) {
-          const blocked: Record<string, ReceiptAdjustmentBagBlocker[]> = {};
-          for (const line of sortLinesByBag(await loadLines(tx, adjustment.id))) {
-            await withAdvisoryLock(
-              tx,
-              'store-inventory-bag',
-              line.storeInventoryBagId,
-              async () => {
-                const bag = await lockInventoryBag(tx, line.storeInventoryBagId);
-                const result = assessReceiptDiscrepancy(
-                  await bagFactsFor(tx, bag, line, adjustment.id),
-                  true,
-                );
-                if (!result.canReportDiscrepancy)
-                  blocked[line.storeReceiptBagId] = result.reportBlockers;
-              },
-            );
+      const result = await withAdvisoryLock(
+        tx,
+        'store-receipt-adjustment',
+        located.receiptId,
+        async () => {
+          const [adjustment] = await tx
+            .select()
+            .from(storeReceiptAdjustments)
+            .where(eq(storeReceiptAdjustments.id, input.adjustmentId))
+            .for('update')
+            .limit(1);
+          if (!adjustment)
+            throw new StoreOperationValidationError('Không tìm thấy hồ sơ sai lệch.');
+          const actor = await resolveActor(tx, input.actorUserId, adjustment.storeId, [
+            'ADMIN',
+            'HTKD',
+            'STORE',
+          ]);
+          if (adjustment.version !== input.expectedVersion) {
+            throw new StoreOperationConflictError('Hồ sơ sai lệch đã thay đổi; hãy tải lại.');
           }
-          if (Object.keys(blocked).length) throw new ReceiptAdjustmentBlockedError(blocked);
-        }
-        const now = new Date();
-        const context: TransitionContext = { tx, adjustment, actor, now, next, input };
-        switch (input.action) {
-          case 'RESUBMIT':
-            await resubmit(context, input);
-            break;
-          case 'VERIFY': {
-            const verification = await verify(context, input);
-            // The freshly computed header and line values belong to this transaction. Persist
-            // the header only after applying, with one version increment and no intermediate state.
-            await apply(
-              { ...context, adjustment: { ...adjustment, ...verification } },
-              input.note,
-              verification,
-            );
-            break;
-          }
-          case 'APPLY': {
-            if (
-              !adjustment.cause ||
-              adjustment.baseAppliedCount !== (await countApplied(tx, located.receiptId))
-            ) {
-              throw new StoreOperationConflictError(
-                'Phiếu nhận đã thay đổi; cần HTKD xác minh lại.',
+          const next = planTransition(adjustment.status, input.action, actor.role);
+          if (['RESUBMIT', 'VERIFY', 'APPLY'].includes(input.action)) {
+            const blocked: Record<string, ReceiptAdjustmentBagBlocker[]> = {};
+            for (const line of sortLinesByBag(await loadLines(tx, adjustment.id))) {
+              await withAdvisoryLock(
+                tx,
+                'store-inventory-bag',
+                line.storeInventoryBagId,
+                async () => {
+                  const bag = await lockInventoryBag(tx, line.storeInventoryBagId);
+                  const result = assessReceiptDiscrepancy(
+                    await bagFactsFor(tx, bag, line, adjustment.id),
+                    true,
+                  );
+                  if (!result.canReportDiscrepancy)
+                    blocked[line.storeReceiptBagId] = result.reportBlockers;
+                },
               );
             }
-            const legacyLines = await loadLines(tx, adjustment.id);
-            if (
-              legacyLines.some(
-                (line) => line.verifiedWeightKg === null || line.verifiedPricePerKgVnd === null,
-              )
-            ) {
-              throw new StoreOperationConflictError('Hồ sơ chưa có đủ dữ liệu xác minh.');
-            }
-            const verification = await verify(context, {
-              ...input,
-              action: 'VERIFY',
-              cause: adjustment.cause,
-              note: input.note ?? adjustment.verificationNote ?? 'Duyệt hồ sơ đã xác minh',
-              freightDeltaVnd: adjustment.freightDeltaVnd,
-              handlingDeltaVnd: adjustment.handlingDeltaVnd,
-              lines: legacyLines.map((line) => ({
-                receiptBagId: line.storeReceiptBagId,
-                actualProductId: line.actualProductId,
-                disposition: line.disposition,
-                weightKg: line.verifiedWeightKg!,
-                pricePerKgVnd: line.verifiedPricePerKgVnd!,
-                weightChangeNote: line.weightChangeNote,
-              })),
-            });
-            await apply(
-              { ...context, adjustment: { ...adjustment, ...verification } },
-              input.note,
-              verification,
-            );
-            break;
+            if (Object.keys(blocked).length) throw new ReceiptAdjustmentBlockedError(blocked);
           }
-          case 'CANCEL':
-          case 'REJECT':
-            await close(context, input.note);
-            break;
-          case 'REQUEST_INFO':
-          case 'RETURN_TO_VERIFIER':
-            await sendBack(context, input.note);
-            break;
-        }
-        return mutationResult(
-          { adjustmentId: adjustment.id, status: next, version: adjustment.version + 1 },
-          200,
-        );
-      });
+          const now = new Date();
+          const context: TransitionContext = { tx, adjustment, actor, now, next, input };
+          switch (input.action) {
+            case 'RESUBMIT':
+              await resubmit(context, input);
+              break;
+            case 'VERIFY': {
+              const verification = await verify(context, input);
+              // The freshly computed header and line values belong to this transaction. Persist
+              // the header only after applying, with one version increment and no intermediate state.
+              await apply(
+                { ...context, adjustment: { ...adjustment, ...verification } },
+                input.note,
+                verification,
+              );
+              break;
+            }
+            case 'APPLY': {
+              if (
+                !adjustment.cause ||
+                adjustment.baseAppliedCount !== (await countApplied(tx, located.receiptId))
+              ) {
+                throw new StoreOperationConflictError(
+                  'Phiếu nhận đã thay đổi; cần HTKD xác minh lại.',
+                );
+              }
+              const legacyLines = await loadLines(tx, adjustment.id);
+              if (
+                legacyLines.some(
+                  (line) => line.verifiedWeightKg === null || line.verifiedPricePerKgVnd === null,
+                )
+              ) {
+                throw new StoreOperationConflictError('Hồ sơ chưa có đủ dữ liệu xác minh.');
+              }
+              const verification = await verify(context, {
+                ...input,
+                action: 'VERIFY',
+                cause: adjustment.cause,
+                note: input.note ?? adjustment.verificationNote ?? 'Duyệt hồ sơ đã xác minh',
+                freightDeltaVnd: adjustment.freightDeltaVnd,
+                handlingDeltaVnd: adjustment.handlingDeltaVnd,
+                lines: legacyLines.map((line) => ({
+                  receiptBagId: line.storeReceiptBagId,
+                  actualProductId: line.actualProductId,
+                  disposition: line.disposition,
+                  weightKg: line.verifiedWeightKg!,
+                  pricePerKgVnd: line.verifiedPricePerKgVnd!,
+                  weightChangeNote: line.weightChangeNote,
+                })),
+              });
+              await apply(
+                { ...context, adjustment: { ...adjustment, ...verification } },
+                input.note,
+                verification,
+              );
+              break;
+            }
+            case 'CANCEL':
+            case 'REJECT':
+              await close(context, input.note);
+              break;
+            case 'REQUEST_INFO':
+            case 'RETURN_TO_VERIFIER':
+              await sendBack(context, input.note);
+              break;
+          }
+          return mutationResult(
+            { adjustmentId: adjustment.id, status: next, version: adjustment.version + 1 },
+            200,
+          );
+        },
+      );
+      // An approved shortage entitlement is new waiting demand of the store (last write).
+      await reconcileStoreWaitDocumentsInTransaction(tx, [
+        {
+          storeId: located.storeId,
+          event: {
+            kind: 'receipt_adjustment',
+            sourceKey: null,
+            actorUserId: input.actorUserId,
+            requestId: input.requestId ?? null,
+            occurredAt: new Date(),
+            storeReceiptId: located.receiptId,
+            metadata: { adjustmentId: input.adjustmentId, action: input.action },
+          },
+        },
+      ]);
+      return result;
     },
   );
 }

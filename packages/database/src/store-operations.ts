@@ -4,6 +4,7 @@ import { and, desc, eq, gte, inArray, isNotNull, isNull, sql } from 'drizzle-orm
 import type { Database } from './client.js';
 import { assertShipmentMayBeReceived } from './allocation-decision-gate.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
+import { reconcileReceiptStoreWaitDocument } from './store-wait-documents.js';
 import {
   operationalSettingsVersions,
   allocationLines,
@@ -222,6 +223,12 @@ export async function finalizeStoreReceipt(
     },
     async (tx) => {
       const finalized = await finalizeStoreReceiptInTransaction(tx, input);
+      await reconcileReceiptStoreWaitDocument(
+        tx,
+        input.receiptId,
+        input.reviewedByUserId,
+        input.requestId ?? null,
+      );
       const responseBody: JsonObject = {
         receiptId: finalized.receiptId,
         version: finalized.version,

@@ -4037,6 +4037,228 @@ export const waitTicketSources = pgTable(
   ],
 );
 
+export const STORE_WAIT_DOCUMENT_STATUSES = [
+  'current',
+  'merged',
+  'rolled_over',
+  'completed',
+  'cancelled',
+] as const;
+export type StoreWaitDocumentDatabaseStatus = (typeof STORE_WAIT_DOCUMENT_STATUSES)[number];
+
+export const STORE_WAIT_DOCUMENT_EVENT_KINDS = [
+  'allocation_run',
+  'result_accepted',
+  'result_waitlisted',
+  'wait_ticket_cancelled',
+  'wait_document_cancelled',
+  'priority_offer_response',
+  'receipt_shortage',
+  'receipt_adjustment',
+  'system_sync',
+  'migration_backfill',
+] as const;
+export type StoreWaitDocumentEventKind = (typeof STORE_WAIT_DOCUMENT_EVENT_KINDS)[number];
+
+/**
+ * One business event that changed a store's wait document (0045): it closed the current document,
+ * opened its successor, or both. Append-only. The actor's name and role are copied at the time of
+ * the event so the history keeps who acted even if the account changes later. `source_key` names
+ * the command that caused it (a run, an answer, a cancellation); one command changes a store's
+ * document at most once, so a replay can never record the same transition twice.
+ */
+export const storeWaitDocumentEvents = pgTable(
+  'store_wait_document_events',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    kind: text('kind').notNull().$type<StoreWaitDocumentEventKind>(),
+    sourceKey: text('source_key'),
+    actorUserId: uuid('actor_user_id').references(() => users.id, { onDelete: 'restrict' }),
+    actorRole: text('actor_role').$type<DatabaseUserRole>(),
+    actorDisplayName: text('actor_display_name'),
+    requestId: text('request_id'),
+    orderSessionId: uuid('order_session_id').references(() => orderSessions.id, {
+      onDelete: 'restrict',
+    }),
+    allocationRunId: uuid('allocation_run_id').references(() => allocationRuns.id, {
+      onDelete: 'restrict',
+    }),
+    allocationDecisionId: uuid('allocation_decision_id').references(
+      () => allocationResultDecisions.id,
+      { onDelete: 'restrict' },
+    ),
+    waitTicketId: uuid('wait_ticket_id').references(() => waitTickets.id, {
+      onDelete: 'restrict',
+    }),
+    priorityOfferId: uuid('priority_offer_id').references(() => dailyPriorityOffers.id, {
+      onDelete: 'restrict',
+    }),
+    storeReceiptId: uuid('store_receipt_id').references(() => storeReceipts.id, {
+      onDelete: 'restrict',
+    }),
+    reason: text('reason'),
+    metadata: jsonb('metadata').$type<JsonObject>().notNull().default({}),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('store_wait_document_events_source_uidx')
+      .on(table.storeId, table.sourceKey)
+      .where(sql`${table.sourceKey} IS NOT NULL`),
+    index('store_wait_document_events_store_idx').on(table.storeId, table.occurredAt),
+    index('store_wait_document_events_decision_idx')
+      .on(table.allocationDecisionId)
+      .where(sql`${table.allocationDecisionId} IS NOT NULL`),
+    check(
+      'store_wait_document_events_kind_valid',
+      sql`${table.kind} IN ('allocation_run', 'result_accepted', 'result_waitlisted', 'wait_ticket_cancelled', 'wait_document_cancelled', 'priority_offer_response', 'receipt_shortage', 'receipt_adjustment', 'system_sync', 'migration_backfill')`,
+    ),
+    check(
+      'store_wait_document_events_actor_role_valid',
+      sql`${table.actorRole} IS NULL OR ${table.actorRole} IN ('admin', 'htkd', 'store', 'wholesale')`,
+    ),
+  ],
+);
+
+/**
+ * The store-level wait document "phiếu chờ" (0045, docs/store-active-wait-document.md): at most
+ * one current document per store lists every product the store still waits for. Its lines are a
+ * snapshot taken when it opened; any event that changes the open demand closes it (merged, rolled
+ * over, completed or cancelled) and opens the successor, never edits it. Wait tickets remain the
+ * per-product operational lines the allocation run reads.
+ */
+export const storeWaitDocuments = pgTable(
+  'store_wait_documents',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    code: text('code').notNull().default(''),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    status: text('status').notNull().$type<StoreWaitDocumentDatabaseStatus>(),
+    /** 1 while current; the closing write makes it 2. A current document is never edited. */
+    version: integer('version').notNull().default(1),
+    /** First document of the chain (its own id for a chain start) and its position in it. */
+    chainId: uuid('chain_id').notNull(),
+    chainSequence: integer('chain_sequence').notNull(),
+    predecessorId: uuid('predecessor_id').references((): AnyPgColumn => storeWaitDocuments.id, {
+      onDelete: 'restrict',
+    }),
+    openedEventId: uuid('opened_event_id')
+      .notNull()
+      .references(() => storeWaitDocumentEvents.id, { onDelete: 'restrict' }),
+    closedEventId: uuid('closed_event_id').references(() => storeWaitDocumentEvents.id, {
+      onDelete: 'restrict',
+    }),
+    openedAt: timestamp('opened_at', { withTimezone: true }).notNull(),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    /** Earliest wait of the open demand (ticket queue time), never reset by a new document. */
+    waitingSince: timestamp('waiting_since', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('store_wait_documents_code_uidx').on(table.code),
+    uniqueIndex('store_wait_documents_one_current_uidx')
+      .on(table.storeId)
+      .where(sql`${table.status} = 'current'`),
+    uniqueIndex('store_wait_documents_predecessor_uidx')
+      .on(table.predecessorId)
+      .where(sql`${table.predecessorId} IS NOT NULL`),
+    uniqueIndex('store_wait_documents_chain_sequence_uidx').on(table.chainId, table.chainSequence),
+    index('store_wait_documents_store_opened_idx').on(table.storeId, table.openedAt, table.id),
+    index('store_wait_documents_opened_page_idx').on(table.openedAt, table.id),
+    check(
+      'store_wait_documents_status_valid',
+      sql`${table.status} IN ('current', 'merged', 'rolled_over', 'completed', 'cancelled')`,
+    ),
+    check('store_wait_documents_code_format', sql`${table.code} ~ '^PCT-[0-9]{6}$'`),
+    check(
+      'store_wait_documents_closed_state',
+      sql`(${table.status} = 'current') = (${table.closedAt} IS NULL AND ${table.closedEventId} IS NULL)`,
+    ),
+    check(
+      'store_wait_documents_version_state',
+      sql`(${table.status} = 'current' AND ${table.version} = 1) OR (${table.status} <> 'current' AND ${table.version} = 2)`,
+    ),
+    check(
+      'store_wait_documents_chain_start',
+      sql`(${table.predecessorId} IS NULL) = (${table.chainSequence} = 1 AND ${table.chainId} = ${table.id})`,
+    ),
+    check('store_wait_documents_not_own_predecessor', sql`${table.predecessorId} <> ${table.id}`),
+  ],
+);
+
+/**
+ * One product of a wait document. Opening columns (what was carried from the predecessor, what
+ * the opening event added, and how the open bags split between waiting and awaiting the store's
+ * answer) are written once. Closing columns stay NULL while the document is current and are
+ * written once when it closes, conserving carried_in + added = confirmed + cancelled + adjusted +
+ * carried_out.
+ */
+export const storeWaitDocumentLines = pgTable(
+  'store_wait_document_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    documentId: uuid('document_id')
+      .notNull()
+      .references(() => storeWaitDocuments.id, { onDelete: 'restrict' }),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    carriedInQuantity: integer('carried_in_quantity').notNull(),
+    addedQuantity: integer('added_quantity').notNull(),
+    openingRemainingQuantity: integer('opening_remaining_quantity').notNull(),
+    openingPendingQuantity: integer('opening_pending_quantity').notNull(),
+    confirmedQuantity: integer('confirmed_quantity'),
+    cancelledQuantity: integer('cancelled_quantity'),
+    adjustedQuantity: integer('adjusted_quantity'),
+    carriedOutQuantity: integer('carried_out_quantity'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('store_wait_document_lines_product_uidx').on(table.documentId, table.productId),
+    index('store_wait_document_lines_product_idx').on(table.productId, table.documentId),
+    check(
+      'store_wait_document_lines_opening_valid',
+      sql`${table.carriedInQuantity} >= 0 AND ${table.addedQuantity} >= 0 AND ${table.openingRemainingQuantity} >= 0 AND ${table.openingPendingQuantity} >= 0 AND ${table.carriedInQuantity} + ${table.addedQuantity} > 0 AND ${table.carriedInQuantity} + ${table.addedQuantity} = ${table.openingRemainingQuantity} + ${table.openingPendingQuantity}`,
+    ),
+    check(
+      'store_wait_document_lines_closing_valid',
+      sql`(${table.confirmedQuantity} IS NULL AND ${table.cancelledQuantity} IS NULL AND ${table.adjustedQuantity} IS NULL AND ${table.carriedOutQuantity} IS NULL) OR (${table.confirmedQuantity} >= 0 AND ${table.cancelledQuantity} >= 0 AND ${table.adjustedQuantity} >= 0 AND ${table.carriedOutQuantity} >= 0 AND ${table.confirmedQuantity} + ${table.cancelledQuantity} + ${table.adjustedQuantity} + ${table.carriedOutQuantity} = ${table.carriedInQuantity} + ${table.addedQuantity})`,
+    ),
+  ],
+);
+
+/**
+ * The per-product wait tickets (PC) that were part of a document. Insert-only. wait_ticket_id has
+ * no foreign key on purpose: the reconciliation runs last in its transaction under the store's
+ * document lock, and a foreign-key check would take a KEY SHARE lock on a ticket another command
+ * of the same store may hold FOR UPDATE while it waits for that document lock (a deadlock). A
+ * trigger checks the ticket exists for the same store and product instead.
+ */
+export const storeWaitDocumentMembers = pgTable(
+  'store_wait_document_members',
+  {
+    documentId: uuid('document_id')
+      .notNull()
+      .references(() => storeWaitDocuments.id, { onDelete: 'restrict' }),
+    waitTicketId: uuid('wait_ticket_id').notNull(),
+    storeId: uuid('store_id').notNull(),
+    productId: uuid('product_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.documentId, table.waitTicketId] }),
+    index('store_wait_document_members_ticket_idx').on(table.waitTicketId),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Store = typeof stores.$inferSelect;

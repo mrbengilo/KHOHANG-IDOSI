@@ -316,6 +316,13 @@
       "when": 1791949900141,
       "tag": "0044_allocation_waitlist_response",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1791989884120,
+      "tag": "0045_store_wait_documents",
+      "breakpoints": true
     }
   ]
 }
