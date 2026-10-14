@@ -803,6 +803,46 @@ describePostgres('store decisions on published allocation results', () => {
     });
   });
 
+  it('never requeues demand of a source ticket closed concurrently under the wait lock', async () => {
+    const product = await createProduct();
+    await openingStock(product, 20);
+    const ticket = await createTicket(fx.storeA.id, product, 5);
+    const result = await publishResult({
+      storeId: fx.storeA.id,
+      grants: [{ productId: product, quantity: 2, waitTicketId: ticket.id }],
+      shipment: false,
+    });
+    let moving: ReturnType<typeof respond> | undefined;
+    // Plays a full priority-offer decline, which closes the ticket under the same store x product
+    // lock without the stock-jobs lock, after the move to waiting has read its snapshot. The
+    // serializable move then locks that (snapshot-active) ticket, fails with 40001 and is retried
+    // on fresh state, so the cancelled demand is never requeued.
+    await db.transaction(async (other) => {
+      await other.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`store-product-wait:${fx.storeA.id}:${product}`}, 0))`,
+      );
+      // The move has read its state and now waits for this lock; only then is the ticket closed.
+      moving = respond(result.decisionId, fx.storeA.userId, 'WAITLIST');
+      await waitUntilBlocked();
+      await other
+        .update(waitTickets)
+        .set({
+          status: 'cancelled',
+          cancellationKind: 'store_cancelled',
+          resolvedAt: new Date(),
+          resolutionReason: 'Đóng phiếu đồng thời',
+        })
+        .where(eq(waitTickets.id, ticket.id));
+    });
+    const moved = await moving!;
+    expect(moved.value.status).toBe('waitlisted');
+    // The goods are released, but the cancelled demand never comes back as a new ticket.
+    expect(await activeTickets(fx.storeA.id, product)).toEqual([]);
+    expect((await ticketRow(ticket.id)).status).toBe('cancelled');
+    expect(await balanceOf(product)).toEqual({ onHand: 20, reserved: 0 });
+    await expectBalanceMatchesLedger(product);
+  });
+
   it('cancelling ticket A revokes only A from a result shared with ticket B and an ordinary order', async () => {
     const product = await createProduct();
     const productB = await createProduct();
@@ -1089,6 +1129,18 @@ describePostgres('store decisions on published allocation results', () => {
   // ------------------------------------------------------------------------------------------
   // Fixture helpers: build exactly what the 09:00 worker persists.
   // ------------------------------------------------------------------------------------------
+
+  /** Resolves once another backend of this database waits on a lock (the move to waiting). */
+  async function waitUntilBlocked() {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const rows = await db.execute<{ waiting: number }>(
+        sql`SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`,
+      );
+      if ((rows.rows[0]?.waiting ?? 0) > 0) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error('The move to waiting never blocked on the concurrent lock.');
+  }
 
   async function respond(
     decisionId: string,
