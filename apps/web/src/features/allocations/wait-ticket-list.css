@@ -115,3 +115,14 @@
   cursor: pointer;
   color: var(--brand);
 }
+/* Six or seven columns: fits a desktop content area, scrolls in its own region on mobile. */
+.app-main table.wait-ticket-table.wait-ticket-table--scoped {
+  min-width: 860px;
+}
+.wait-ticket-table--scoped .wait-ticket-actions {
+  min-width: 132px;
+}
+.wait-ticket-table--scoped .wait-ticket-actions .button {
+  min-height: 44px;
+  white-space: normal;
+}

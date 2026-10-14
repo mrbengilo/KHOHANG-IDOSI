@@ -91,6 +91,59 @@ describePostgres('wait ticket cancellation through the API on PostgreSQL', () =>
     }
   });
 
+  test('previews the cancel scope read-only and refuses a stale confirmed fingerprint', async () => {
+    const fixture = await createFixture();
+    const preview = (token, ticketId) =>
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/wait-tickets/${ticketId}/cancel-preview`,
+        headers: { cookie: `idosi_session=${token}` },
+      });
+    const own = await preview(fixture.tokens.store, fixture.ticketA);
+    assert.equal(own.statusCode, 200, own.body);
+    assert.equal(own.json().data.cancellable, true);
+    assert.match(own.json().data.fingerprint, /^[0-9a-f]{64}$/u);
+    assert.deepEqual(own.json().data.revocable, []);
+    // Outside the account's scope the ticket does not exist for it.
+    assert.equal((await preview(fixture.tokens.store, fixture.ticketB)).statusCode, 404);
+    // The preview wrote nothing.
+    const [unchanged] = await db
+      .select()
+      .from(waitTickets)
+      .where(eq(waitTickets.id, fixture.ticketA));
+    assert.equal(unchanged.status, 'active');
+
+    const stale = await app.inject({
+      method: 'POST',
+      url: `/api/v1/wait-tickets/${fixture.ticketA}/cancel`,
+      headers: { cookie: `idosi_session=${fixture.tokens.store}`, 'idempotency-key': randomUUID() },
+      payload: { reason: 'Không còn nhu cầu', expectedFingerprint: 'a'.repeat(64) },
+    });
+    assert.equal(stale.statusCode, 409);
+    assert.equal(stale.json().error.code, 'WAIT_TICKET_PREVIEW_STALE');
+    const confirmed = await app.inject({
+      method: 'POST',
+      url: `/api/v1/wait-tickets/${fixture.ticketA}/cancel`,
+      headers: { cookie: `idosi_session=${fixture.tokens.store}`, 'idempotency-key': randomUUID() },
+      payload: { reason: 'Không còn nhu cầu', expectedFingerprint: own.json().data.fingerprint },
+    });
+    assert.equal(confirmed.statusCode, 200, confirmed.body);
+    assert.equal(confirmed.json().data.status, 'CANCELLED');
+    const after = await preview(fixture.tokens.store, fixture.ticketA);
+    assert.equal(after.json().data.cancellable, false);
+    assert.equal(after.json().data.refusal, 'ALREADY_CANCELLED');
+    // Lineage list: three labels, filtered on the server.
+    const cancelledPage = await app.inject({
+      method: 'GET',
+      url: `/api/v1/wait-tickets?storeId=${fixture.storeA}&displayStatus=CANCELLED&includeLineage=true`,
+      headers: { cookie: `idosi_session=${fixture.tokens.store}` },
+    });
+    assert.equal(cancelledPage.statusCode, 200, cancelledPage.body);
+    const row = cancelledPage.json().data.find((ticket) => ticket.id === fixture.ticketA);
+    assert.equal(row.lineage.displayStatus, 'CANCELLED');
+    assert.equal(row.lineage.canCancel, false);
+  });
+
   test('ADMIN cancels any store wait (inactive too), HTKD cancels assigned stores, STORE only its own', async () => {
     try {
       const fixture = await createFixture();

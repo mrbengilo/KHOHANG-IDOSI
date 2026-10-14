@@ -22,6 +22,7 @@ import {
   listAllocationDecisions,
   listHeldAllocationStock,
   listSessionDocuments,
+  listWaitTickets,
   listStoreReceiptSources,
   mergedOrderItems,
   mergedOrders,
@@ -1023,6 +1024,66 @@ describePostgres('store decisions on published allocation results', () => {
         .set({ revokedAt: new Date() })
         .where(eq(htkdAssignments.userId, fx.htkdId));
     }
+  });
+
+  it('lists tickets with three labels filtered before paging, proven sessions and cancel capability', async () => {
+    const product = await createProduct();
+    await openingStock(product, 20);
+    const pendingTicket = await createTicket(fx.storeB.id, product, 2);
+    // Granted in full by a result still waiting: "fulfilled" in the database, "Chưa xử lý" on screen.
+    const result = await publishResult({
+      storeId: fx.storeB.id,
+      grants: [{ productId: product, quantity: 2, waitTicketId: pendingTicket.id }],
+      shipment: false,
+    });
+    const other = await createProduct();
+    const waiting = await createTicket(fx.storeB.id, other, 3);
+    const list = (displayStatus?: 'UNPROCESSED' | 'PROCESSED' | 'CANCELLED') =>
+      listWaitTickets(db, {
+        actorUserId: fx.storeB.userId,
+        pageSize: 100,
+        includeLineage: true,
+        ...(displayStatus ? { displayStatus } : {}),
+      });
+    const unprocessed = await list('UNPROCESSED');
+    const ids = unprocessed.data.map((row) => row.id);
+    expect(ids).toEqual(expect.arrayContaining([pendingTicket.id, waiting.id]));
+    expect(unprocessed.pagination.totalItems).toBe(unprocessed.data.length);
+    const row = unprocessed.data.find((item) => item.id === pendingTicket.id)!;
+    expect(row.status).toBe('fulfilled');
+    expect(row.lineage).toMatchObject({
+      displayStatus: 'UNPROCESSED',
+      displayDetail: 'PENDING_DECISION',
+      pendingDecisionQuantity: 2,
+      canCancel: true,
+    });
+    expect(row.lineage!.sessions[0]).toMatchObject({ origin: true });
+    expect((await list('PROCESSED')).data.map((item) => item.id)).not.toContain(pendingTicket.id);
+
+    // After the result is confirmed (RE), the ticket is processed and no longer cancellable.
+    await respond(result.decisionId, fx.storeB.userId, 'ACCEPT');
+    const processed = await list('PROCESSED');
+    const after = processed.data.find((item) => item.id === pendingTicket.id)!;
+    expect(after.lineage).toMatchObject({
+      displayStatus: 'PROCESSED',
+      pendingDecisionQuantity: 0,
+      canCancel: false,
+    });
+    expect((await list('UNPROCESSED')).data.map((item) => item.id)).not.toContain(pendingTicket.id);
+    // Search by product name, server-side.
+    const [named] = await db.select().from(products).where(eq(products.id, other));
+    const searched = await listWaitTickets(db, {
+      actorUserId: fx.storeB.userId,
+      q: named!.name,
+      pageSize: 100,
+    });
+    expect(searched.data.map((item) => item.id)).toEqual([waiting.id]);
+    // Another store's account never sees them.
+    expect(
+      (await listWaitTickets(db, { actorUserId: fx.storeA.userId, pageSize: 100 })).data.map(
+        (item) => item.id,
+      ),
+    ).not.toContain(waiting.id);
   });
 
   // ------------------------------------------------------------------------------------------

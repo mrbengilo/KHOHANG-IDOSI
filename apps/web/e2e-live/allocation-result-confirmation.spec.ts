@@ -18,7 +18,7 @@ import { tabApi } from './tab-api';
 const api = 'http://127.0.0.1:3100/api/v1';
 const VIEWPORTS = [360, 390, 412, 768, 1366, 1440] as const;
 
-test('a store accepts and rejects allocation results; state survives reload, conflicts and lost responses', async ({
+test('a store confirms results or moves them back to waiting; state survives reload, conflicts and lost responses', async ({
   page,
 }, testInfo) => {
   test.setTimeout(180_000);
@@ -103,7 +103,7 @@ test('a store accepts and rejects allocation results; state survives reload, con
       grants: [{ productId: product!.id, quantity: 3 }],
       shipment: true,
     });
-    const toReject = await publishResult(db, {
+    const toWaitlist = await publishResult(db, {
       storeId: store.id,
       adminId: admin!.id,
       grants: [{ productId: product!.id, quantity: 4 }],
@@ -112,11 +112,14 @@ test('a store accepts and rejects allocation results; state survives reload, con
     });
     expect(await balance(db, product!.id)).toEqual({ onHand: 50, reserved: 7 });
 
-    // 1. The persistent notice lists both results after login and links the exact document.
+    // 1. The persistent blue notice lists both results with both actions after login.
     await signIn(page, storeLogin);
-    const notice = page.getByRole('complementary', { name: 'Kết quả phân bổ cần xác nhận' });
-    await expect(notice).toContainText('Có kết quả phân bổ cần xác nhận (2)');
+    const notice = page.getByRole('complementary', { name: /Có kết quả phân bổ cần xử lý/u });
+    await expect(notice).toContainText('Có kết quả phân bổ cần xử lý (2)');
     await expect(notice.getByRole('listitem')).toHaveCount(2);
+    await expect(notice.getByRole('button', { name: 'Xác nhận phân bổ' })).toHaveCount(2);
+    await expect(notice.getByRole('button', { name: 'Chuyển phiếu chờ' })).toHaveCount(2);
+    await expect(notice.getByRole('button', { name: /Bỏ qua/u })).toHaveCount(0);
     await page.reload();
     await expect(notice).toContainText('(2)');
     await page.goto(`/allocations?decision=${toAccept.decisionId}`);
@@ -128,13 +131,13 @@ test('a store accepts and rejects allocation results; state survives reload, con
     // 2. Responsive: buttons, tag and table stay inside the screen at every reference width.
     for (const width of VIEWPORTS) {
       await page.setViewportSize({ width, height: width < 768 ? 844 : 900 });
-      await expect(panel.getByRole('button', { name: 'Chấp nhận' })).toBeVisible();
+      await expect(panel.getByRole('button', { name: 'Xác nhận phân bổ' })).toBeVisible();
       await expect
         .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
         .toBe(true);
       await assertNoOverlap(page, [
-        panel.getByRole('button', { name: 'Từ chối' }),
-        panel.getByRole('button', { name: 'Chấp nhận' }),
+        panel.getByRole('button', { name: 'Chuyển phiếu chờ' }),
+        panel.getByRole('button', { name: 'Xác nhận phân bổ' }),
       ]);
       await panel.scrollIntoViewIfNeeded();
       await page.screenshot({
@@ -160,10 +163,12 @@ test('a store accepts and rejects allocation results; state survives reload, con
       }
       await route.continue();
     });
-    await panel.getByRole('button', { name: 'Chấp nhận' }).click();
+    await panel.getByRole('button', { name: 'Xác nhận phân bổ' }).click();
     await expect(panel.locator('.form-error')).toContainText('Chưa rõ máy chủ đã ghi nhận');
-    await panel.getByRole('button', { name: 'Chấp nhận' }).click();
-    await expect(panel.locator('.allocation-decision__status > .badge')).toHaveText('Đã chấp nhận');
+    await panel.getByRole('button', { name: 'Xác nhận phân bổ' }).click();
+    await expect(panel.locator('.allocation-decision__status > .badge')).toHaveText(
+      'Đã xác nhận phân bổ',
+    );
     await page.unroute('**/allocation-decisions/*/respond?**');
     expect(keys).toHaveLength(2);
     expect(keys[0]).toBe(keys[1]);
@@ -190,38 +195,68 @@ test('a store accepts and rejects allocation results; state survives reload, con
       `/allocations?decision=${toAccept.decisionId}`,
     );
 
-    // 4. Rejection with an explicit confirmation naming the document and the quantity.
-    await page.goto(`/allocations?decision=${toReject.decisionId}`);
+    // 4. "Chuyển phiếu chờ" with an explicit confirmation naming the document and the bags.
+    await page.goto(`/allocations?decision=${toWaitlist.decisionId}`);
     await expect(panel).toContainText('Hàng đã giữ từ phiên trước · 2 bao');
-    await panel.getByRole('button', { name: 'Từ chối' }).click();
+    await panel.getByRole('button', { name: 'Chuyển phiếu chờ' }).click();
     const dialog = page.getByRole('dialog');
-    await expect(dialog).toContainText('Từ chối nhận phiếu');
-    await expect(dialog).toContainText('4 bao của phiếu này sẽ trả lại kho tổng');
-    await expect(dialog).toContainText('2 bao hàng đã giữ từ phiên trước không bị hủy');
+    await expect(dialog).toContainText('về phiếu chờ?');
+    await expect(dialog).toContainText('4 bao còn hiệu lực sẽ trả lại kho tổng');
+    await expect(dialog).toContainText('2 bao hàng đã xác nhận từ phiên trước không bị ảnh hưởng');
     await page.setViewportSize({ width: 360, height: 760 });
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
       .toBe(true);
-    await page.screenshot({ path: testInfo.outputPath('decision-reject-dialog-360.png') });
+    await page.screenshot({ path: testInfo.outputPath('decision-waitlist-dialog-360.png') });
     await page.setViewportSize({ width: 1440, height: 900 });
-    await dialog.getByLabel('Lý do (không bắt buộc)').fill('Cửa hàng đã đủ hàng');
-    await dialog.getByRole('button', { name: 'Xác nhận từ chối' }).click();
+    await dialog.getByRole('button', { name: 'Xác nhận chuyển phiếu chờ' }).click();
     await expect(panel.locator('.allocation-decision__status > .badge')).toHaveText(
-      'đã từ chối nhận',
+      'Đã chuyển phiếu chờ',
     );
-    await expect(panel).toContainText('Lý do: Cửa hàng đã đủ hàng');
+    await expect(panel).toContainText('Tạo phiếu chờ mới 4 bao');
     await page.reload();
     await expect(page.locator('.allocation-decision__status > .badge')).toHaveText(
-      'đã từ chối nhận',
+      'Đã chuyển phiếu chờ',
     );
-    // Only the rejected grant went back; the carried goods stay issued with their own RE order
-    // for the store (rejecting this result created no RE order and issued nothing).
+    // Only this result's 4 bags went back (reserved only, on-hand unchanged); the carried goods
+    // stay issued with their own RE order; no RE order was created for the moved result.
     expect(await balance(db, product!.id)).toEqual({ onHand: 47, reserved: 0 });
     expect(await balance(db, carriedProduct!.id)).toEqual({ onHand: 48, reserved: 0 });
     await page.screenshot({
-      path: testInfo.outputPath('decision-rejected-1440.png'),
+      path: testInfo.outputPath('decision-waitlisted-1440.png'),
       fullPage: true,
     });
+
+    // 4b. The scoped "Phiếu chờ ưu tiên" tab shows the new PC; cancelling it uses the preview.
+    await page.goto('/allocations?tab=wait-tickets');
+    const ticketRow = page.locator('.wait-ticket-table--scoped tbody tr', {
+      hasText: productName,
+    });
+    await expect(ticketRow).toHaveCount(1);
+    await expect(ticketRow).toContainText(/PC-\d{7}/u);
+    await expect(ticketRow).toContainText('Chờ từ:');
+    await expect(ticketRow).toContainText('Còn chờ 4 bao');
+    await expect(ticketRow).toContainText('Chưa xử lý');
+    for (const width of [360, 1440]) {
+      await page.setViewportSize({ width, height: width < 768 ? 844 : 900 });
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+        .toBe(true);
+      await page.screenshot({
+        path: testInfo.outputPath(`wait-tickets-scoped-${width}.png`),
+        fullPage: true,
+      });
+    }
+    await ticketRow.getByRole('button', { name: 'Hủy phiếu chờ' }).click();
+    const cancelDialog = page.getByRole('dialog');
+    await expect(cancelDialog).toContainText('Nhu cầu còn chờ bị hủy');
+    await expect(cancelDialog).toContainText('4 bao');
+    await cancelDialog.getByLabel('Lý do hủy').fill('Cửa hàng không cần nữa');
+    await cancelDialog.getByRole('button', { name: 'Xác nhận hủy phiếu chờ' }).click();
+    await expect(page.getByRole('status')).toContainText('Đã hủy phiếu');
+    await expect(ticketRow).toContainText('Đã hủy');
+    await expect(ticketRow.getByRole('button', { name: 'Hủy phiếu chờ' })).toHaveCount(0);
+    await page.setViewportSize({ width: 1440, height: 900 });
 
     // 5. Another tab answered first: the stale screen never wins over the server.
     const raced = await publishResult(db, {
@@ -240,30 +275,35 @@ test('a store accepts and rejects allocation results; state survives reload, con
       },
     );
     expect(otherTab.status()).toBe(200);
-    await panel.getByRole('button', { name: 'Từ chối' }).click();
-    await page.getByRole('dialog').getByRole('button', { name: 'Xác nhận từ chối' }).click();
+    await panel.getByRole('button', { name: 'Chuyển phiếu chờ' }).click();
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: 'Xác nhận chuyển phiếu chờ' })
+      .click();
     await expect(page.getByRole('dialog').locator('.form-error')).toContainText(
-      'đã được chấp nhận trước đó',
+      'đã được xác nhận phân bổ trước đó',
     );
     await page.getByRole('dialog').getByRole('button', { name: 'Quay lại' }).click();
-    await expect(page.locator('.allocation-decision__status > .badge')).toHaveText('Đã chấp nhận');
+    await expect(page.locator('.allocation-decision__status > .badge')).toHaveText(
+      'Đã xác nhận phân bổ',
+    );
     expect(await decisionStatus(db, raced.decisionId)).toBe('accepted');
 
-    // 6. The notice is gone once nothing waits; the history still has the rejection tag.
-    await page.goto('/allocations?decisionStatus=REJECTED');
+    // 6. The notice is gone once nothing waits; the history still has the waitlisted tag.
+    await page.goto('/allocations?decisionStatus=WAITLISTED');
     await expect(notice).toHaveCount(0);
     await expect(page.locator('.session-document')).toHaveCount(1);
-    await expect(page.locator('.session-document')).toContainText('đã từ chối nhận');
+    await expect(page.locator('.session-document')).toContainText('Đã chuyển phiếu chờ');
 
     // 7. Admin reads every result but never answers for a store.
     await tabApi(page).post(`${api}/auth/logout`);
     await signIn(page, adminLogin);
-    await page.goto(`/allocations?decision=${toReject.decisionId}`);
+    await page.goto(`/allocations?decision=${toWaitlist.decisionId}`);
     await expect(page.locator('.allocation-decision__status > .badge')).toHaveText(
-      'đã từ chối nhận',
+      'Đã chuyển phiếu chờ',
     );
     await expect(
-      page.locator('.allocation-decision').getByRole('button', { name: 'Chấp nhận' }),
+      page.locator('.allocation-decision').getByRole('button', { name: 'Xác nhận phân bổ' }),
     ).toHaveCount(0);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: testInfo.outputPath('decision-admin-390.png'), fullPage: true });
