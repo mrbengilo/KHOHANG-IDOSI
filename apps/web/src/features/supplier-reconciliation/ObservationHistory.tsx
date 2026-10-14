@@ -51,7 +51,6 @@ export function ObservationHistory({ accountId }: { readonly accountId: string }
                   <tr key={row.lineId}>
                     <td data-label="Mặt hàng">
                       <strong>{row.productName}</strong>
-                      <small>{row.sku}</small>
                     </td>
                     <td data-label="Xem tồn lúc">
                       <time dateTime={row.observedAt}>{formatDocumentTime(row.observedAt)}</time>

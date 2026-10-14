@@ -50,7 +50,10 @@ describe('CommitmentTable', () => {
     expect(html).toContain('30 bao đang giữ');
     expect(html).toContain('<strong>26</strong> bao');
     expect(html).toContain('trang này: 3 giữ / 3 chưa đặt');
-    expect(html).toContain('Chỉ gồm cửa hàng thuộc phạm vi tài khoản');
+    expect(html).toContain('Chỉ gồm cửa hàng của tài khoản');
+    // Products are shown by name only; the SKU stays in the data, not on screen.
+    expect(html).toContain('Đồ nam');
+    expect(html).not.toContain('NAM-01');
     expect(html).toContain('Chưa đặt Reshare');
     expect(html).toContain('PH-12/10');
     expect(html).toContain('data-label="Chưa đặt"');
@@ -61,7 +64,7 @@ describe('CommitmentTable', () => {
       <CommitmentTable caption="Hàng đang giữ" page={page(false)} />,
     );
     expect(readOnly).not.toContain('type="checkbox"');
-    expect(readOnly).not.toContain('phạm vi tài khoản');
+    expect(readOnly).not.toContain('cửa hàng của tài khoản');
     const picker = renderToStaticMarkup(
       <CommitmentTable
         caption="Có thể đặt"
@@ -76,8 +79,10 @@ describe('CommitmentTable', () => {
         }}
       />,
     );
-    expect(picker).toContain('aria-label="Chọn NAM-01 của CH01"');
-    expect(picker).toContain('aria-label="Số bao Reshare đã nhận cho NAM-01 của CH01"');
+    expect(picker).toContain('aria-label="Chọn Đồ nam của Cửa hàng 1"');
+    expect(picker).toContain('aria-label="Số bao Reshare đã nhận cho Đồ nam của Cửa hàng 1"');
+    // The Reshare line reference keeps its business default (an input value, not a label).
+    expect(picker).toContain('value="NAM-01"');
     expect(picker).toContain('max="3"');
   });
 });

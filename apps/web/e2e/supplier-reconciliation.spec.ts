@@ -4,9 +4,10 @@ import { layoutAdminSession } from './layout-fixtures';
 
 /*
  * Đơn đặt và tồn Reshare trên production bundle với API giả lập theo đúng contract: mọi vai trò
- * mở vào "Đơn đặt Reshare" (lịch sử RE nhóm theo đơn, lọc phía server), Admin cập nhật tồn (xem
- * trước, coverage biến động và đơn RE, lưu, giữ Idempotency-Key khi gửi lại), đơn ghi nhận thủ
- * công chỉ còn ở mục dữ liệu cũ, và bố cục không tràn ở các bề rộng đại diện.
+ * mở vào "Đơn đặt Reshare" (lịch sử RE nhóm theo đơn, lọc phía server), Admin và HTKD quản lý
+ * toàn mục (đổi trạng thái, cập nhật tồn, cấu hình nguồn), mỗi đơn có "Lịch sử thay đổi" tải khi
+ * mở, đơn ghi nhận thủ công chỉ còn ở mục dữ liệu cũ, mặt hàng chỉ hiện tên (không kèm SKU), và
+ * bố cục/chữ đủ lớn, không tràn ở các bề rộng đại diện.
  */
 
 type Role = 'ADMIN' | 'HTKD' | 'STORE';
@@ -104,10 +105,12 @@ const position = {
   allocatableQuantity: 0,
 };
 
+const productName = 'Bao đồ nam tuyển chọn — tên dài để kiểm tra xuống dòng trong bảng đối chiếu';
+const totalLabel = `Tổng số bao Reshare đang cho đặt của ${productName}`;
 const summaryRow = {
   productId,
   sku: 'NAM-01',
-  productName: 'Bao đồ nam tuyển chọn — tên dài để kiểm tra xuống dòng trong bảng đối chiếu',
+  productName,
   productActive: true,
   sourceId: id(401),
   sourceCode: 'RESHARE',
@@ -254,12 +257,14 @@ function sessionFor(role: Role) {
 interface Log {
   readonly mutations: Request[];
   readonly orderQueries: URLSearchParams[];
+  readonly historyQueries: string[];
   failNextConfirm: boolean;
   failNextStatus?: boolean;
 }
 
 async function mockApi(page: Page, role: Role, unlinkedLegacyQuantity = 0): Promise<Log> {
-  const log: Log = { mutations: [], orderQueries: [], failNextConfirm: false };
+  const log: Log = { mutations: [], orderQueries: [], historyQueries: [], failNextConfirm: false };
+  const events = new Map<string, Record<string, unknown>[]>();
   let previews = 0;
   const historyRows = reshareRows.map((row) => ({
     ...structuredClone(row),
@@ -267,6 +272,7 @@ async function mockApi(page: Page, role: Role, unlinkedLegacyQuantity = 0): Prom
       version: 0,
       updatedAt: null as string | null,
       updatedByName: null as string | null,
+      updatedByRole: null as string | null,
     },
   }));
   const savedStatus = new Map<string, unknown>();
@@ -295,16 +301,56 @@ async function mockApi(page: Page, role: Role, unlinkedLegacyQuantity = 0): Prom
         pagination: { ...page1(1), pageSize: 100 },
       });
     if (request.method() !== 'GET') log.mutations.push(request);
+    if (path === '/reshare-orders/stores')
+      return json({
+        data: [
+          { id: id(31), code: 'CH-GOVAP', name: 'Cửa hàng Gò Vấp', isActive: true },
+          { id: id(32), code: 'CH-Q1', name: 'Cửa hàng Quận 1', isActive: false },
+        ],
+        scoped: role === 'STORE',
+      });
+    if (/^\/reshare-orders\/.+\/status-history$/u.test(path)) {
+      log.historyQueries.push(path);
+      const decisionId = path.split('/')[2]!;
+      const list = [...(events.get(decisionId) ?? [])].reverse();
+      return json({
+        data: list,
+        pagination: {
+          page: 1,
+          pageSize: 10,
+          totalItems: list.length,
+          totalPages: list.length ? 1 : 0,
+        },
+        decision: { id: decisionId, storeId: id(31), publishedAt: '2026-10-13T05:00:02.000Z' },
+      });
+    }
     if (/^\/reshare-orders\/.+\/status$/u.test(path)) {
       const key = request.headers()['idempotency-key']!;
       if (savedStatus.has(key)) return json({ data: savedStatus.get(key) });
       const row = historyRows.find((row) => path.includes(row.decisionId))!;
       const input = request.postDataJSON();
+      const actorName = role === 'ADMIN' ? 'Quản trị viên' : 'Nhân viên HTKD';
+      events.set(row.decisionId, [
+        ...(events.get(row.decisionId) ?? []),
+        {
+          id: id(5000 + (events.get(row.decisionId)?.length ?? 0)),
+          occurredAt: time,
+          kind: 'STATUS_CHANGED',
+          source: 'MANUAL',
+          statusBefore: row.status,
+          statusAfter: input.status,
+          version: row.statusControl.version + 1,
+          orderCode: row.order?.code ?? null,
+          actor: { accountId: id(3), role, nameAtEvent: actorName, currentName: null },
+          requestId: `req-${key}`,
+        },
+      ]);
       row.status = input.status;
       row.statusControl = {
         version: row.statusControl.version + 1,
         updatedAt: time,
-        updatedByName: 'Quản trị viên',
+        updatedByName: actorName,
+        updatedByRole: role,
       };
       const data = {
         decisionId: row.decisionId,
@@ -326,7 +372,14 @@ async function mockApi(page: Page, role: Role, unlinkedLegacyQuantity = 0): Prom
         (row) =>
           (!status || row.status === status) && (!code || (row.order?.code ?? '').includes(code)),
       );
-      return json({ data: rows, pagination: page1(rows.length), scoped: role !== 'ADMIN' });
+      // Like the API: the recorded role is only sent to bundles that ask for it.
+      const withActor = url.searchParams.get('includeStatusActor') === 'true';
+      const data = rows.map((row) => {
+        if (withActor) return row;
+        const { updatedByRole: _omitted, ...statusControl } = row.statusControl;
+        return { ...row, statusControl };
+      });
+      return json({ data, pagination: page1(rows.length), scoped: role === 'STORE' });
     }
     if (path === '/supplier-sources' && request.method() === 'GET')
       return json({
@@ -353,7 +406,7 @@ async function mockApi(page: Page, role: Role, unlinkedLegacyQuantity = 0): Prom
         data: [commitment],
         pagination: page1(1),
         totals: { quantity: 3, orderedQuantity: 1, unorderedQuantity: 2 },
-        scoped: role !== 'ADMIN',
+        scoped: role === 'STORE',
       });
     if (path === '/supplier-orders' && request.method() === 'GET')
       return json({ data: [], pagination: { ...page1(0), pageSize: 10 } });
@@ -447,14 +500,76 @@ test('Admin persists both states for legacy rows, reloads, filters and retries t
   await expectNoPageOverflow(page);
 });
 
-for (const role of ['HTKD', 'STORE'] as const) {
-  test(`${role} sees the acknowledgement with no edit controls`, async ({ page }) => {
-    await mockApi(page, role);
-    await page.goto('/supplier-reconciliation');
-    await expect(page.locator('.reshare-history')).toBeVisible();
-    await expect(page.getByRole('button', { name: /Đánh dấu (chưa đặt|đã đặt)/u })).toHaveCount(0);
-  });
-}
+test('STORE sees the acknowledgement and its history with no edit controls', async ({ page }) => {
+  const log = await mockApi(page, 'STORE');
+  await page.goto('/supplier-reconciliation');
+  await expect(page.locator('.reshare-history')).toBeVisible();
+  await expect(page.getByRole('button', { name: /Đánh dấu (chưa đặt|đã đặt)/u })).toHaveCount(0);
+  await expect(page.getByRole('tablist')).toHaveCount(0);
+  // The store filter only offers the account's own scope.
+  await expect(page.getByLabel('Cửa hàng', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: /^Lịch sử thay đổi của RE-000001/u }).click();
+  await expect(page.getByRole('dialog', { name: 'Lịch sử thay đổi trạng thái' })).toBeVisible();
+  await expect(page.getByText('Chưa ghi nhận thay đổi trạng thái nào')).toBeVisible();
+  expect(log.mutations).toHaveLength(0);
+});
+
+test('HTKD changes the status of any store and every change shows in the order history', async ({
+  page,
+}) => {
+  const log = await mockApi(page, 'HTKD');
+  await page.goto('/supplier-reconciliation');
+  await expect(page.getByRole('tab')).toHaveText([
+    'Đơn đặt Reshare',
+    'Cập nhật tồn Reshare',
+    'Lịch sử cập nhật tồn',
+    'Cấu hình nguồn',
+  ]);
+  // Reshare-only store filter: every store, inactive ones marked.
+  const storeFilter = page.getByRole('combobox', { name: 'Cửa hàng', exact: true });
+  await expect(storeFilter.locator('option')).toHaveText([
+    'Tất cả cửa hàng',
+    'Cửa hàng Gò Vấp',
+    'Cửa hàng Quận 1 (ngừng hoạt động)',
+  ]);
+  // No history is requested for the rows until a dialog is opened (no N+1).
+  expect(log.historyQueries).toHaveLength(0);
+  const group = page.locator('.reshare-history tbody').filter({ hasText: 'PDH-000013' });
+  await group.getByRole('button', { name: 'Đánh dấu đã đặt', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'ghi vào lịch sử' })).toBeVisible();
+  await expect(group).toContainText('Cập nhật lần cuối bởi Nhân viên HTKD (HTKD)');
+  await group.getByRole('button', { name: 'Đánh dấu chưa đặt', exact: true }).click();
+  await expect(group.getByText('Chưa đặt Reshare', { exact: true })).toBeVisible();
+  const open = group.getByRole('button', { name: /^Lịch sử thay đổi của PDH-000013/u });
+  await open.focus();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog', { name: 'Lịch sử thay đổi trạng thái' });
+  await expect(dialog).toBeVisible();
+  // Only the opened order's history is read.
+  expect(new Set(log.historyQueries)).toEqual(
+    new Set(['/reshare-orders/' + id(1003) + '/status-history']),
+  );
+  const rows = dialog.locator('tbody tr');
+  await expect(rows).toHaveCount(2);
+  // Newest first, with the real actor and role, before → after.
+  await expect(rows.nth(0)).toContainText('Đã đặt Reshare');
+  await expect(rows.nth(0).locator('td').nth(2)).toHaveText('Chưa đặt Reshare');
+  await expect(rows.nth(0)).toContainText('Nhân viên HTKD');
+  await expect(rows.nth(0).locator('td').nth(4)).toHaveText('HTKD');
+  await expect(rows.nth(1).locator('td').nth(2)).toHaveText('Đã đặt Reshare');
+  await expect(dialog).toContainText('08:00:00 13/10/2026');
+  await expect(dialog.getByText(/Không có dữ liệu lịch sử nào trước các dòng trên/u)).toBeVisible();
+  for (const width of [360, 390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expectNoPageOverflow(page);
+    const box = await dialog.boundingBox();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(width + 1);
+  }
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(open).toBeFocused();
+});
 
 test('every role opens on its RE orders: one group per order, total once, server filters', async ({
   page,
@@ -511,8 +626,11 @@ test('Admin updates Reshare stock: re-observing frees nothing, RE coverage is ex
     'aria-selected',
     'true',
   );
-  const row = page.getByRole('row').filter({ hasText: 'NAM-01' }).first();
+  const row = page.getByRole('row').filter({ hasText: productName }).first();
   await expect(row).toContainText('Đã đối chiếu');
+  // Product name only: the SKU never appears next to it.
+  await expect(row.locator('.supplier-product-name')).toHaveText(productName);
+  await expect(row).not.toContainText('NAM-01');
 
   const details = row.getByRole('button', { name: 'Xem giữ hàng' });
   await details.click();
@@ -525,7 +643,7 @@ test('Admin updates Reshare stock: re-observing frees nothing, RE coverage is ex
 
   await row.getByRole('button', { name: 'Đối chiếu' }).click();
   await expect(page.getByText('không phải số nhập thêm')).toBeVisible();
-  await page.getByLabel('Tổng số bao Reshare đang cho đặt của NAM-01').fill('2');
+  await page.getByLabel(totalLabel).fill('2');
   await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
   const save = page.getByRole('button', { name: 'Lưu cập nhật tồn' });
   await expect(page.getByText('Còn 1 biến động chưa trả lời')).toBeVisible();
@@ -544,7 +662,7 @@ test('Admin updates Reshare stock: re-observing frees nothing, RE coverage is ex
   await expect(page.getByRole('alert')).toContainText('cùng thao tác sẽ không bị ghi hai lần');
   await save.click();
   await expect(page.getByRole('status').filter({ hasText: 'Đã lưu cập nhật tồn' })).toContainText(
-    'NAM-01: khả dụng giữ nguyên 0 bao.',
+    `${productName}: khả dụng giữ nguyên 0 bao.`,
   );
   const confirms = log.mutations.filter((request) =>
     request.url().endsWith('/supplier-stock-observations'),
@@ -571,11 +689,11 @@ test('RE deducted bags stay editable while clearing and saving partial coverage'
   await page.goto('/supplier-reconciliation?tab=reconcile');
   await page
     .getByRole('row')
-    .filter({ hasText: 'NAM-01' })
+    .filter({ hasText: productName })
     .first()
     .getByRole('button', { name: 'Đối chiếu' })
     .click();
-  await page.getByLabel('Tổng số bao Reshare đang cho đặt của NAM-01').fill('26');
+  await page.getByLabel(totalLabel).fill('26');
   await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
   await page.getByLabel('Đã gồm trong số vừa nhập').check();
   const selected = page.getByLabel('Đã trừ trong số vừa nhập');
@@ -618,11 +736,11 @@ test('legacy attestation and changed totals require a fresh preview before savin
   await page.goto('/supplier-reconciliation?tab=reconcile');
   await page
     .getByRole('row')
-    .filter({ hasText: 'NAM-01' })
+    .filter({ hasText: productName })
     .first()
     .getByRole('button', { name: 'Đối chiếu' })
     .click();
-  const total = page.getByLabel('Tổng số bao Reshare đang cho đặt của NAM-01');
+  const total = page.getByLabel(totalLabel);
   await total.fill('7');
   await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
   await page.getByLabel('Đã gồm trong số vừa nhập').check();
@@ -657,11 +775,11 @@ test('RE quantity has usable dimensions and preview is next to save at responsiv
   await page.goto('/supplier-reconciliation?tab=reconcile');
   await page
     .getByRole('row')
-    .filter({ hasText: 'NAM-01' })
+    .filter({ hasText: productName })
     .first()
     .getByRole('button', { name: 'Đối chiếu' })
     .click();
-  await page.getByLabel('Tổng số bao Reshare đang cho đặt của NAM-01').fill('26');
+  await page.getByLabel(totalLabel).fill('26');
   await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
   await page.getByLabel('Đã trừ trong số vừa nhập').check();
   const quantity = page.getByLabel('Số bao của RE-000001 đã trừ trong số tồn');
@@ -697,19 +815,34 @@ test('RE quantity has usable dimensions and preview is next to save at responsiv
   }
 });
 
-test('HTKD sees its orders; manual Reshare records are only kept as old data', async ({ page }) => {
+test('HTKD opens every Reshare tab by deep link; manual records stay as old data', async ({
+  page,
+}) => {
   const log = await mockApi(page, 'HTKD');
   await page.goto('/supplier-reconciliation?tab=settings');
-  await expect(page.getByRole('tablist')).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'Cấu hình nguồn' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await page.goto('/supplier-reconciliation?tab=history');
+  await expect(page.getByRole('tab', { name: 'Lịch sử cập nhật tồn' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await page.goto('/supplier-reconciliation?tab=reconcile');
+  await expect(page.getByRole('row').filter({ hasText: productName }).first()).toBeVisible();
+  await page.goto('/supplier-reconciliation');
   await expect(page.getByRole('heading', { name: 'Lịch sử đặt hàng theo phân bổ' })).toBeVisible();
   await expect(page.getByLabel('Mã đơn Reshare')).toHaveCount(0);
   await page.getByRole('button', { name: 'Xem đơn ghi nhận thủ công' }).click();
   await expect(
     page.getByRole('heading', { name: 'Hàng giữ trước khi có đơn RE (ghi nhận thủ công)' }),
   ).toBeVisible();
-  await expect(page.getByText('Chỉ gồm cửa hàng thuộc phạm vi tài khoản')).toBeVisible();
-  await page.getByLabel('Chọn NAM-01 của CH-GOVAP').check();
-  await expect(page.getByLabel('Số bao Reshare đã nhận cho NAM-01 của CH-GOVAP')).toHaveValue('2');
+  await expect(page.getByText('Chỉ gồm cửa hàng của tài khoản')).toHaveCount(0);
+  await page.getByLabel(`Chọn ${productName} của Cửa hàng Gò Vấp`).check();
+  await expect(
+    page.getByLabel(`Số bao Reshare đã nhận cho ${productName} của Cửa hàng Gò Vấp`),
+  ).toHaveValue('2');
   await page.getByLabel('Mã đơn Reshare').fill('RS-2002');
   await page.getByRole('button', { name: 'Ghi nhận đơn Reshare' }).click();
   await expect(
@@ -740,11 +873,11 @@ for (const width of [360, 390, 412, 683, 768, 821, 911, 1093, 1366, 1440, 1920, 
     await page.setViewportSize({ width, height: 900 });
     await mockApi(page, 'ADMIN');
     await page.goto('/supplier-reconciliation?tab=reconcile');
-    const row = page.getByRole('row').filter({ hasText: 'NAM-01' }).first();
+    const row = page.getByRole('row').filter({ hasText: productName }).first();
     await row.getByRole('button', { name: 'Xem giữ hàng' }).click();
     await row.getByRole('button', { name: 'Đối chiếu' }).click();
-    await expect(page.getByLabel('Tổng số bao Reshare đang cho đặt của NAM-01')).toBeVisible();
-    await page.getByLabel('Tổng số bao Reshare đang cho đặt của NAM-01').fill('2');
+    await expect(page.getByLabel(totalLabel)).toBeVisible();
+    await page.getByLabel(totalLabel).fill('2');
     await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
     await expect(page.getByRole('region', { name: 'Xem trước đối chiếu' })).toBeVisible();
     await expect(page.getByText('Số tồn này đã trừ các đơn RE nào?')).toBeVisible();
@@ -806,3 +939,140 @@ for (const role of ['ADMIN', 'HTKD', 'STORE'] as const) {
     }
   });
 }
+
+test('Reshare readability: type scale, metric tiles, touch targets and no SKU next to names', async ({
+  page,
+}, testInfo) => {
+  await mockApi(page, 'HTKD');
+  await page.goto('/supplier-reconciliation?tab=reconcile');
+  await page
+    .getByRole('row')
+    .filter({ hasText: productName })
+    .first()
+    .getByRole('button', { name: 'Đối chiếu' })
+    .click();
+  await page.getByLabel(totalLabel).fill('2');
+  await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
+  await page.getByLabel('Đã trừ trong số vừa nhập').check();
+  for (const width of [360, 390, 412, 768, 820, 1366, 1440, 1920]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expectNoPageOverflow(page);
+    const metrics = await page.evaluate(() => {
+      const px = (element: Element | null) =>
+        element ? parseFloat(getComputedStyle(element).fontSize) : 0;
+      const weight = (element: Element | null) =>
+        element ? Number(getComputedStyle(element).fontWeight) : 0;
+      const figures = Array.from(document.querySelectorAll('.supplier-figures > div'));
+      return {
+        heading: px(document.querySelector('.supplier-observation h2')),
+        headingWeight: weight(document.querySelector('.supplier-observation h2')),
+        productHeading: px(document.querySelector('.supplier-preview__line h3')),
+        productHeadingText: document.querySelector('.supplier-preview__line h3')?.textContent,
+        tableName: document.querySelector('.supplier-observation-table .supplier-product-name')
+          ?.textContent,
+        input: px(document.querySelector('.supplier-observation-table input')),
+        hint: px(document.querySelector('.supplier-observation .supplier-hint')),
+        labels: figures.map((figure) => ({
+          text: figure.querySelector('dt')?.textContent,
+          size: px(figure.querySelector('dt')),
+          weight: weight(figure.querySelector('dt')),
+          value: px(figure.querySelector('dd')),
+          valueWeight: weight(figure.querySelector('dd')),
+          numeric: getComputedStyle(figure.querySelector('dd')!).fontVariantNumeric,
+          right: figure.getBoundingClientRect().right,
+        })),
+        after: px(document.querySelector('.supplier-figure__after')),
+        before: px(document.querySelector('.supplier-figure__before')),
+        checkboxTarget: document
+          .querySelector('.supplier-coverage__choice label')!
+          .getBoundingClientRect().height,
+        actionButtons: Array.from(
+          document.querySelectorAll('.supplier-preview .supplier-actions .button'),
+        ).map((button) => button.getBoundingClientRect().height),
+        observationTableWidth: document
+          .querySelector('.supplier-observation-table')!
+          .getBoundingClientRect().width,
+        panelWidth: document.querySelector('.supplier-observation')!.getBoundingClientRect().width,
+      };
+    });
+    expect(metrics.heading).toBeGreaterThanOrEqual(20);
+    expect(metrics.heading).toBeLessThanOrEqual(22);
+    expect(metrics.headingWeight).toBeGreaterThanOrEqual(700);
+    expect(metrics.productHeading).toBeGreaterThanOrEqual(18);
+    expect(metrics.productHeading).toBeLessThanOrEqual(20);
+    expect(metrics.productHeadingText).toBe(productName);
+    expect(metrics.tableName).toBe(productName);
+    expect(metrics.input).toBeGreaterThanOrEqual(16);
+    expect(metrics.hint).toBeGreaterThanOrEqual(14);
+    expect(metrics.labels.map((label) => label.text)).toEqual([
+      'Reshare cho đặt (S)',
+      'Biến động sau lúc xem',
+      'Giữ ưu tiên chưa đặt',
+      'Đã cấp, đang giữ chưa đặt',
+      'Đơn RE số tồn chưa trừ',
+      'Khả dụng hiện tại → sau',
+      'Thiếu nguồn',
+    ]);
+    for (const label of metrics.labels) {
+      expect(label.size).toBeGreaterThanOrEqual(14);
+      expect(label.size).toBeLessThanOrEqual(16);
+      expect(label.weight).toBeGreaterThanOrEqual(600);
+      expect(label.value).toBeGreaterThanOrEqual(22);
+      expect(label.value).toBeLessThanOrEqual(26);
+      expect(label.valueWeight).toBeGreaterThanOrEqual(700);
+      expect(label.numeric).toContain('tabular-nums');
+      expect(label.right).toBeLessThanOrEqual(width + 1);
+    }
+    expect(metrics.after).toBeGreaterThan(metrics.before);
+    expect(metrics.checkboxTarget).toBeGreaterThanOrEqual(44);
+    for (const height of metrics.actionButtons) expect(height).toBeGreaterThanOrEqual(44);
+    // The observation table uses the panel width instead of a small island.
+    expect(metrics.observationTableWidth).toBeGreaterThanOrEqual(metrics.panelWidth * 0.85);
+    if (width === 390 || width === 1440) {
+      await page.screenshot({
+        path: testInfo.outputPath(`reshare-readability-${width}.png`),
+        fullPage: true,
+        animations: 'disabled',
+      });
+    }
+  }
+});
+
+test('table headings and mobile card labels are sentence case and bold', async ({ page }) => {
+  await mockApi(page, 'ADMIN');
+  for (const [tab, width] of [
+    ['', 1440],
+    ['', 390],
+    ['?tab=reconcile', 1440],
+    ['?tab=reconcile', 390],
+  ] as const) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/supplier-reconciliation${tab}`);
+    await expect(page.locator('table').first()).toBeVisible();
+    const headings = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.app-main thead th, .app-main td[data-label]'))
+        .filter((cell) => cell.getBoundingClientRect().width > 0)
+        .map((cell) => {
+          const header = cell.tagName === 'TH';
+          const style = getComputedStyle(cell, header ? null : '::before');
+          return {
+            text: header ? cell.textContent : cell.getAttribute('data-label'),
+            shown: header || (style.content !== 'none' && style.display !== 'none'),
+            weight: Number(style.fontWeight),
+            transform: style.textTransform,
+          };
+        })
+        .filter((cell) => cell.shown),
+    );
+    expect(headings.length).toBeGreaterThan(0);
+    for (const heading of headings) {
+      expect(heading.weight, heading.text ?? '').toBeGreaterThanOrEqual(700);
+      expect(heading.transform, heading.text ?? '').toBe('none');
+    }
+    const texts = headings.map((heading) => heading.text);
+    if (tab === '' && width === 1440) {
+      expect(texts).toContain('Tổng số lượng (bao)');
+      expect(texts).toContain('Mã đặt hàng Reshare');
+    }
+  }
+});

@@ -27,7 +27,6 @@ export interface ObservationTarget {
   /** The source the SKU is mapped to; one observation covers one source. */
   readonly sourceId: string;
   readonly sourceCode: string;
-  readonly sku: string;
   readonly productName: string;
   readonly baselineQuantity: number | null;
 }
@@ -91,7 +90,7 @@ export function ObservationForm({
     for (const target of targets) {
       const value = parseBags(quantities[target.productId] ?? '');
       if (value === null) {
-        return `${target.sku}: nhập tổng số bao Reshare đang cho đặt (số nguyên, có thể là 0).`;
+        return `${target.productName}: nhập tổng số bao Reshare đang cho đặt (số nguyên, có thể là 0).`;
       }
       lines.push({ productId: target.productId, observedQuantity: value });
     }
@@ -152,7 +151,7 @@ export function ObservationForm({
     try {
       const saved = await confirmSupplierObservation(payload, attempt.current.key);
       attempt.current = null;
-      const beforeBySku = new Map(
+      const beforeByProduct = new Map(
         preview.lines.map((line) => [line.productId, line.before.ledgerAvailable]),
       );
       await Promise.all(
@@ -161,7 +160,11 @@ export function ObservationForm({
       onDone(
         `Đã lưu cập nhật tồn lúc ${formatDocumentTime(saved.observedAt)}. ${saved.lines
           .map((line) =>
-            freeChangeSentence(line.sku, beforeBySku.get(line.productId) ?? 0, line.freeQuantity),
+            freeChangeSentence(
+              line.productName,
+              beforeByProduct.get(line.productId) ?? 0,
+              line.freeQuantity,
+            ),
           )
           .join(' ')}`,
       );
@@ -245,30 +248,30 @@ export function ObservationForm({
           />
         </label>
       </fieldset>
-      <div className="responsive-table supplier-table-scroll">
-        <table className="supplier-table">
+      <div className="responsive-table supplier-table-scroll supplier-observation-table-wrap">
+        <table className="supplier-table supplier-observation-table">
+          <caption className="sr-only">Tổng tồn Reshare theo mặt hàng</caption>
           <thead>
             <tr>
               <th scope="col">Mặt hàng</th>
               <th scope="col">Số đối chiếu trước</th>
-              <th scope="col">Tổng Reshare đang cho đặt</th>
+              <th scope="col">Tổng Reshare đang cho đặt (bao)</th>
             </tr>
           </thead>
           <tbody>
             {targets.map((target) => (
               <tr key={target.productId}>
                 <td data-label="Mặt hàng">
-                  <strong>{target.productName}</strong>
-                  <small>{target.sku}</small>
+                  <strong className="supplier-product-name">{target.productName}</strong>
                 </td>
-                <td data-label="Số đối chiếu trước">
+                <td className="table-number" data-label="Số đối chiếu trước">
                   {target.baselineQuantity === null
                     ? 'Chưa có'
                     : `${formatInteger(target.baselineQuantity)} bao`}
                 </td>
                 <td data-label="Tổng Reshare đang cho đặt">
                   <input
-                    aria-label={`Tổng số bao Reshare đang cho đặt của ${target.sku}`}
+                    aria-label={`Tổng số bao Reshare đang cho đặt của ${target.productName}`}
                     className="supplier-quantity-input"
                     disabled={busy !== null}
                     inputMode="numeric"
@@ -309,9 +312,7 @@ export function ObservationForm({
           {preview.lines.map((line) => (
             <article className="supplier-preview__line" key={line.productId}>
               <header>
-                <h3>
-                  {line.productName} <small>{line.sku}</small>
-                </h3>
+                <h3>{line.productName}</h3>
                 <Badge tone={STATE_TONE[line.after.state]}>{STATE_LABEL[line.after.state]}</Badge>
               </header>
               <dl className="supplier-figures">
@@ -335,16 +336,30 @@ export function ObservationForm({
                   <dt>Đơn RE số tồn chưa trừ</dt>
                   <dd>{formatInteger(line.after.issuedUnreflectedQuantity ?? 0)}</dd>
                 </div>
-                <div>
+                <div className="supplier-figure--change">
                   <dt>Khả dụng hiện tại → sau</dt>
                   <dd>
-                    {formatInteger(line.before.ledgerAvailable)} →{' '}
-                    {formatInteger(line.after.freeQuantity)}
+                    <span className="supplier-figure__before">
+                      <span className="sr-only">Hiện tại </span>
+                      {formatInteger(line.before.ledgerAvailable)}
+                    </span>
+                    <span aria-hidden="true" className="supplier-figure__arrow">
+                      →
+                    </span>
+                    <span className="supplier-figure__after">
+                      <span className="sr-only">, sau khi lưu </span>
+                      {formatInteger(line.after.freeQuantity)}
+                    </span>
                   </dd>
                 </div>
                 <div className={line.after.shortfallQuantity > 0 ? 'is-danger' : undefined}>
                   <dt>Thiếu nguồn</dt>
-                  <dd>{formatInteger(line.after.shortfallQuantity)}</dd>
+                  <dd>
+                    {formatInteger(line.after.shortfallQuantity)}
+                    {line.after.shortfallQuantity > 0 ? (
+                      <small className="supplier-figure__warning">⚠ Chặn cấp mới</small>
+                    ) : null}
+                  </dd>
                 </div>
               </dl>
               {line.unlinkedLegacyQuantity > 0 ? (
