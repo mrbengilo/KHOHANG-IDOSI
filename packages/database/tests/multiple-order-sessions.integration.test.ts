@@ -25,10 +25,13 @@ import { countOrderingQuota } from '../src/order-requests.js';
 
 const describePostgres = process.env.RUN_POSTGRES_TESTS === '1' ? describe : describe.skip;
 
-/** A business date far from every other test, so routing only sees this test's sessions. */
+/**
+ * A business date far from every other test, so routing only sees this test's sessions. Other
+ * suites draw random dates up to early 2101 in the same database, so this range starts after them.
+ */
 function isolatedBusinessDate(): string {
   const offset = Number.parseInt(randomUUID().replaceAll('-', '').slice(0, 8), 16) % 20_000;
-  return new Date(Date.UTC(2045, 0, 1) + offset * 86_400_000).toISOString().slice(0, 10);
+  return new Date(Date.UTC(2110, 0, 1) + offset * 86_400_000).toISOString().slice(0, 10);
 }
 
 const at = (date: string, time: string) => new Date(`${date}T${time}:00+07:00`);
@@ -86,6 +89,11 @@ describePostgres('several independent allocation sessions on one business date',
   it('rejects unsupported policies without persisting a session', async () => {
     const { admin } = await fixture();
     const date = isolatedBusinessDate();
+    // Other suites share this database and pick random far-future dates too, so compare the count
+    // around the call instead of assuming the date is empty.
+    const sessionsOnDate = () =>
+      db.select().from(orderSessions).where(eq(orderSessions.businessDate, date));
+    const before = (await sessionsOnDate()).length;
     await expect(
       createOrderSession(db, {
         businessDate: date,
@@ -99,9 +107,7 @@ describePostgres('several independent allocation sessions on one business date',
         now: at(date, '00:00'),
       }),
     ).rejects.toThrow(OrderSessionValidationError);
-    expect(
-      await db.select().from(orderSessions).where(eq(orderSessions.businessDate, date)),
-    ).toHaveLength(0);
+    expect(await sessionsOnDate()).toHaveLength(before);
   });
 
   it('creates any number of Admin sessions beside the default one, each with its own code', async () => {
