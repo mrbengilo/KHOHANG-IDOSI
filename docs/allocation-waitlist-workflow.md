@@ -71,6 +71,15 @@ bao (RE). Hủy PC: hủy 0 bao còn chờ + thu hồi 2 bao của phiên A (`R 
 A còn mặt hàng khác thì A vẫn `PENDING` với phần còn lại, chuyến `reserved` được thu nhỏ đúng phần
 thu hồi.
 
+### Hủy tự động do đề nghị ưu tiên đủ hàng (không thu hồi)
+
+Chỉ thao tác **Hủy phiếu chờ** thu hồi hàng chưa xác nhận. Khi phiếu bị hủy tự động vì cửa hàng từ
+chối hoặc để hết hạn đề nghị ưu tiên đủ hàng (`full_offer_declined` / `full_offer_timeout`), chỉ
+phần nhu cầu còn chờ bị hủy; hàng phiếu đã được cấp ở phiên trước mà còn nằm trong kết quả `PENDING`
+**giữ nguyên** (quyết định của chủ repository, 14/10/2026). Kết quả đó vẫn cần cửa hàng/HTKD chọn
+“Xác nhận phân bổ” hoặc “Chuyển phiếu chờ”; khi chuyển chờ, nguồn đã hủy nên hàng chỉ được trả về
+kho, nhu cầu không được mở lại (`WAIT_TICKET_REQUEUE_SKIPPED_CANCELLED_SOURCE`).
+
 ## 4. Phân quyền (server-side)
 
 | Thao tác                                   | ADMIN         | HTKD                                       | STORE / WHOLESALE               |
