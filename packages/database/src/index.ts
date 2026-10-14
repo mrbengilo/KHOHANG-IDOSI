@@ -147,8 +147,10 @@ export {
   AllocationDecisionConflictError,
   AllocationDecisionForbiddenError,
   AllocationDecisionIntegrityError,
+  AllocationDecisionActionRetiredError,
   AllocationDecisionNotFoundError,
   AllocationDecisionValidationError,
+  assertResponderMayAnswer,
   authorizeAllocationDecisionResponder,
   databaseDecisionStatus,
   domainDecisionStatus,
@@ -160,7 +162,18 @@ export {
   shippableResultCondition,
   STOCK_JOBS_LOCK,
 } from './allocation-decisions.js';
+export {
+  ALLOCATION_RESULT_WAITLISTED_RELEASE_REASON,
+  AllocationRevocationIntegrityError,
+  DISPOSITION_LEDGER_SOURCE,
+  WAIT_TICKET_CANCELLED_RELEASE_REASON,
+} from './allocation-waitlist.js';
+export type { RequeuedTicket } from './allocation-waitlist.js';
 export type {
+  AllocationDecisionActionableLineRecord,
+  AllocationDecisionConflictReason,
+  AllocationDecisionRequeueRecord,
+  AllocationDecisionRevocationRecord,
   AllocationDecisionCarriedRecord,
   AllocationDecisionDetailRecord,
   AllocationDecisionLineRecord,
@@ -420,9 +433,12 @@ export {
   PriorityOfferNotFoundError,
   respondPriorityOffer,
   respondPriorityOfferInTransaction,
+  previewWaitTicketCancellation,
   WaitTicketAuthorizationError,
   WaitTicketConflictError,
   WaitTicketNotFoundError,
+  WaitTicketPreviewRequiredError,
+  WaitTicketPreviewStaleError,
   WaitTicketValidationError,
 } from './wait-ticket-operations.js';
 export {
@@ -471,7 +487,11 @@ export type {
   WaitTicketDatabaseStatus,
   WaitTicketEffectiveStatus,
   WaitTicketHistory,
+  WaitTicketCancellationLine,
+  WaitTicketCancellationScope,
+  WaitTicketCancelPreview,
   WaitTicketHistoryInput,
+  WaitTicketLineageRecord,
   WaitTicketListInput,
   WaitTicketPage,
   WaitTicketPriority,

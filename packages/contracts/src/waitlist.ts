@@ -48,6 +48,72 @@ export const WaitTicketCancellationKindSchema = z.enum([
 ]);
 export type WaitTicketCancellationKind = z.infer<typeof WaitTicketCancellationKindSchema>;
 
+/** Three labels for HTKD, store and wholesale lists; details stay available separately. */
+export const WaitTicketDisplayStatusSchema = z.enum(['UNPROCESSED', 'PROCESSED', 'CANCELLED']);
+export type WaitTicketDisplayStatus = z.infer<typeof WaitTicketDisplayStatusSchema>;
+
+export const WaitTicketDisplayDetailSchema = z.enum([
+  'WAITING',
+  'OFFERED',
+  'PARTIALLY_FULFILLED',
+  'PENDING_DECISION',
+  'PROCESSED',
+  'CANCELLED',
+  'EXPIRED_LEGACY',
+]);
+export type WaitTicketDisplayDetail = z.infer<typeof WaitTicketDisplayDetailSchema>;
+
+/** One recorded contribution to a ticket's demand (append-only lineage, 0044). */
+export const WaitTicketSourceSchema = z
+  .object({
+    id: EntityIdSchema,
+    kind: z.enum(['ORDER_REMAINDER', 'RESULT_WAITLISTED', 'RESULT_RESTORED']),
+    quantity: z.number().int().positive().safe(),
+    createdAt: IsoDateTimeSchema,
+    sessionId: EntityIdSchema.nullable(),
+    sessionCode: z.string().nullable(),
+    allocationDecisionId: EntityIdSchema.nullable(),
+    allocationLineId: EntityIdSchema.nullable(),
+    sourceWaitTicketId: EntityIdSchema.nullable(),
+    sourceWaitTicketCode: z.string().nullable(),
+    actorName: z.string().nullable(),
+  })
+  .strict();
+export type WaitTicketSource = z.infer<typeof WaitTicketSourceSchema>;
+
+/** A session the ticket's demand came from; ORIGIN is the order that opened the ticket. */
+export const WaitTicketSessionSchema = z
+  .object({
+    sessionId: EntityIdSchema,
+    sessionCode: z.string(),
+    businessDate: IsoDateSchema,
+    sessionAt: IsoDateTimeSchema.nullable(),
+    origin: z.boolean(),
+    quantity: z.number().int().nonnegative().safe().nullable(),
+  })
+  .strict();
+export type WaitTicketSession = z.infer<typeof WaitTicketSessionSchema>;
+
+/** Present only with includeLineage=true so bundles that validate the older shape keep working. */
+export const WaitTicketLineageSchema = z
+  .object({
+    displayStatus: WaitTicketDisplayStatusSchema,
+    displayDetail: WaitTicketDisplayDetailSchema,
+    waitingSince: IsoDateTimeSchema,
+    /** Bags granted from the ticket in results still awaiting an answer. */
+    pendingDecisionQuantity: z.number().int().nonnegative().safe(),
+    /** Bags of the ticket revoked from results (cancellation) or moved back to waiting. */
+    revokedQuantity: z.number().int().nonnegative().safe(),
+    sessions: z.array(WaitTicketSessionSchema),
+    sources: z.array(WaitTicketSourceSchema),
+    /** Demand from before lineage was recorded (migration 0044): needs reconciliation. */
+    legacyUnsourcedQuantity: z.number().int().nonnegative().safe(),
+    /** Server-computed for the current account: a cancellation can still change something. */
+    canCancel: z.boolean(),
+  })
+  .strict();
+export type WaitTicketLineage = z.infer<typeof WaitTicketLineageSchema>;
+
 export const WaitTicketSchema = z
   .object({
     id: EntityIdSchema,
@@ -92,6 +158,7 @@ export const WaitTicketSchema = z
     resolvedAt: IsoDateTimeSchema.nullable().optional(),
     createdAt: IsoDateTimeSchema,
     updatedAt: IsoDateTimeSchema,
+    lineage: WaitTicketLineageSchema.optional(),
   })
   .strict()
   .superRefine((ticket, context) => {
@@ -145,7 +212,20 @@ export type WaitTicket = z.infer<typeof WaitTicketSchema>;
 export const WaitTicketParamsSchema = z.object({ waitTicketId: EntityIdSchema }).strict();
 export type WaitTicketParams = z.infer<typeof WaitTicketParamsSchema>;
 
-export const CancelWaitTicketRequestSchema = z.object({ reason: AuditReasonSchema }).strict();
+/**
+ * expectedFingerprint is the preview the account confirmed. When the cancellation also revokes
+ * allocation goods it is required, and a changed preview is refused (409) instead of silently
+ * cancelling a different scope.
+ */
+export const CancelWaitTicketRequestSchema = z
+  .object({
+    reason: AuditReasonSchema,
+    expectedFingerprint: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/)
+      .optional(),
+  })
+  .strict();
 export type CancelWaitTicketRequest = z.infer<typeof CancelWaitTicketRequestSchema>;
 
 export const CancelWaitTicketResponseSchema = z.object({ data: WaitTicketSchema }).strict();
@@ -155,6 +235,11 @@ export const WaitTicketResponseSchema = z.object({ data: WaitTicketSchema }).str
 export type WaitTicketResponse = z.infer<typeof WaitTicketResponseSchema>;
 
 export const ListWaitTicketsQuerySchema = PaginationQuerySchema.extend({
+  displayStatus: WaitTicketDisplayStatusSchema.optional(),
+  includeLineage: z
+    .enum(['true', 'false'])
+    .transform((value) => value === 'true')
+    .optional(),
   sessionId: EntityIdSchema.optional(),
   storeId: EntityIdSchema.optional(),
   productId: EntityIdSchema.optional(),
@@ -373,3 +458,60 @@ export type WaitTicketHistory = z.infer<typeof WaitTicketHistorySchema>;
 
 export const WaitTicketHistoryResponseSchema = z.object({ data: WaitTicketHistorySchema }).strict();
 export type WaitTicketHistoryResponse = z.infer<typeof WaitTicketHistoryResponseSchema>;
+
+export const WaitTicketCancelPreviewRevocableSchema = z
+  .object({
+    allocationDecisionId: EntityIdSchema,
+    allocationLineId: EntityIdSchema,
+    sessionId: EntityIdSchema,
+    sessionCode: z.string(),
+    productId: EntityIdSchema,
+    quantity: z.number().int().positive().safe(),
+    shipmentNumber: z.string().nullable(),
+    /** The result is closed (CANCELLED) when nothing else of it remains. */
+    closesResult: z.boolean(),
+  })
+  .strict();
+
+export const WaitTicketCancelPreviewProtectedSchema = z
+  .object({
+    allocationDecisionId: EntityIdSchema.nullable(),
+    sessionCode: z.string().nullable(),
+    quantity: z.number().int().positive().safe(),
+    kind: z.enum(['RESHARE_ORDER', 'SHIPPED_OR_RECEIVED', 'ACCEPTED_LEGACY']),
+    reshareOrderCode: z.string().nullable(),
+  })
+  .strict();
+
+export const WaitTicketCancelPreviewSchema = z
+  .object({
+    waitTicketId: EntityIdSchema,
+    code: z.string(),
+    storeId: EntityIdSchema,
+    productId: EntityIdSchema,
+    cancellable: z.boolean(),
+    refusal: z.enum(['ALREADY_CANCELLED', 'NOTHING_CANCELLABLE']).nullable(),
+    waitingQuantity: z.number().int().nonnegative().safe(),
+    offers: z.array(
+      z
+        .object({
+          offerId: EntityIdSchema,
+          code: z.string(),
+          status: PriorityOfferStatusSchema,
+          heldQuantity: z.number().int().nonnegative().safe(),
+        })
+        .strict(),
+    ),
+    revocable: z.array(WaitTicketCancelPreviewRevocableSchema),
+    protected: z.array(WaitTicketCancelPreviewProtectedSchema),
+    cancelledQuantity: z.number().int().nonnegative().safe(),
+    /** Server fingerprint of exactly this scope; send it back as expectedFingerprint. */
+    fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+  })
+  .strict();
+export type WaitTicketCancelPreview = z.infer<typeof WaitTicketCancelPreviewSchema>;
+
+export const WaitTicketCancelPreviewResponseSchema = z
+  .object({ data: WaitTicketCancelPreviewSchema })
+  .strict();
+export type WaitTicketCancelPreviewResponse = z.infer<typeof WaitTicketCancelPreviewResponseSchema>;

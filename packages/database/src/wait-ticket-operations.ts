@@ -18,12 +18,41 @@ import {
   type SQL,
 } from 'drizzle-orm';
 
+import { createHash } from 'node:crypto';
+
+import {
+  planWaitTicketCancellation,
+  waitTicketDisplay,
+  type WaitTicketDisplayDetail,
+  type WaitTicketDisplayStatus,
+} from '@idosi/domain';
+
+import { STOCK_JOBS_LOCK } from './allocation-decisions.js';
+import {
+  findResultShipmentId,
+  lockActionableHolds,
+  pendingDecisionHoldsCondition,
+  revokeResultHoldsInTransaction,
+  type RevocationActorRole,
+} from './allocation-waitlist.js';
+import { alias } from 'drizzle-orm/pg-core';
+
 import type { Database } from './client.js';
 import { applyWarehouseMovement } from './warehouse.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
 import {
+  allocationLineDispositions,
+  allocationLines,
+  allocationResultDecisions,
+  allocationRuns,
   auditLogs,
   dailyPriorityOffers,
+  outboundRequestLines,
+  outboundRequests,
+  reservations,
+  reshareOrderSources,
+  reshareOrders,
+  waitTicketSources,
   htkdAssignments,
   mergedOrderItems,
   mergedOrderSources,
@@ -39,7 +68,7 @@ import {
   type WaitTicketCancellationKind,
 } from './schema.js';
 import { livePriorityOfferCondition } from './priority-offer-state.js';
-import { withAdvisoryLock, type Transaction } from './transaction.js';
+import { withAdvisoryLock, withTransaction, type Transaction } from './transaction.js';
 
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
@@ -100,7 +129,41 @@ export interface WaitTicketListInput extends PageInput {
   readonly sessionId?: string;
   readonly status?: WaitTicketDatabaseStatus;
   readonly effectiveStatus?: WaitTicketEffectiveStatus;
+  /** The three labels of the HTKD/store/wholesale list, evaluated in SQL before paging. */
+  readonly displayStatus?: WaitTicketDisplayStatus;
   readonly priorityLevel?: WaitTicketPriority;
+  /** Adds lineage (sources, sessions, pending/revoked bags, cancel capability) for the page. */
+  readonly includeLineage?: boolean;
+}
+
+export interface WaitTicketLineageRecord {
+  readonly displayStatus: WaitTicketDisplayStatus;
+  readonly displayDetail: WaitTicketDisplayDetail;
+  readonly pendingDecisionQuantity: number;
+  readonly revokedQuantity: number;
+  readonly legacyUnsourcedQuantity: number;
+  readonly canCancel: boolean;
+  readonly sources: readonly {
+    readonly id: string;
+    readonly kind: 'order_remainder' | 'result_waitlisted' | 'result_restored';
+    readonly quantity: number;
+    readonly createdAt: Date;
+    readonly sessionId: string | null;
+    readonly sessionCode: string | null;
+    readonly allocationDecisionId: string | null;
+    readonly allocationLineId: string | null;
+    readonly sourceWaitTicketId: string | null;
+    readonly sourceWaitTicketCode: string | null;
+    readonly actorName: string | null;
+  }[];
+  readonly sessions: readonly {
+    readonly sessionId: string;
+    readonly sessionCode: string;
+    readonly businessDate: string;
+    readonly sessionAt: Date | null;
+    readonly origin: boolean;
+    readonly quantity: number | null;
+  }[];
 }
 
 export interface WaitTicketRecord {
@@ -136,6 +199,7 @@ export interface WaitTicketRecord {
     deadline: string;
   } | null;
   readonly cancellationActor?: { accountId: string | null; role: DatabaseUserRole | null } | null;
+  readonly lineage?: WaitTicketLineageRecord;
 }
 
 export interface WaitTicketPage {
@@ -210,6 +274,8 @@ export interface CancelWaitTicketInput {
   readonly waitTicketId: string;
   readonly actorUserId: string;
   readonly reason: string;
+  /** Fingerprint of the preview the account confirmed; required when goods are revoked. */
+  readonly expectedFingerprint?: string;
   readonly idempotencyKey: string;
   readonly requestHash: string;
   readonly requestId?: string;
@@ -220,6 +286,9 @@ export interface CancelledWaitTicket {
   readonly status: 'cancelled';
   readonly cancellationKind: WaitTicketCancellationKind;
   readonly cancelledOfferIds: readonly string[];
+  readonly cancelledQuantity: number;
+  readonly revokedQuantity: number;
+  readonly revokedDecisionIds: readonly string[];
   readonly resolvedAt: Date;
 }
 
@@ -334,6 +403,26 @@ export class WaitTicketValidationError extends Error {
   }
 }
 
+/** The confirmed preview no longer matches; the account must review the new scope. */
+export class WaitTicketPreviewStaleError extends Error {
+  public readonly code = 'WAIT_TICKET_PREVIEW_STALE';
+
+  public constructor() {
+    super('The cancellation scope changed since it was previewed.');
+    this.name = 'WaitTicketPreviewStaleError';
+  }
+}
+
+/** Cancelling would revoke allocation goods, which requires a confirmed preview. */
+export class WaitTicketPreviewRequiredError extends Error {
+  public readonly code = 'WAIT_TICKET_PREVIEW_REQUIRED';
+
+  public constructor() {
+    super('Cancelling this wait ticket revokes allocation goods; confirm its preview first.');
+    this.name = 'WaitTicketPreviewRequiredError';
+  }
+}
+
 export async function listWaitTickets(
   database: Database,
   input: WaitTicketListInput,
@@ -402,6 +491,18 @@ export async function listWaitTickets(
   }
   if (input.priorityLevel !== undefined) {
     conditions.push(eq(waitTickets.priorityLevel, input.priorityLevel));
+  }
+  if (input.displayStatus !== undefined) {
+    // Same rule as waitTicketDisplay (domain): filtered before counting and paging, so the
+    // totals, pages and labels always agree.
+    const pending = pendingDecisionHoldsCondition(waitTickets.id);
+    conditions.push(
+      input.displayStatus === 'UNPROCESSED'
+        ? or(eq(waitTickets.status, 'active'), and(eq(waitTickets.status, 'fulfilled'), pending))!
+        : input.displayStatus === 'PROCESSED'
+          ? and(eq(waitTickets.status, 'fulfilled'), sql`not ${pending}`)!
+          : inArray(waitTickets.status, ['cancelled', 'expired']),
+    );
   }
 
   if (input.createdFrom)
@@ -563,10 +664,168 @@ export async function listWaitTickets(
     };
   });
   const totalItems = totals[0]?.value ?? 0;
+  const lineage = input.includeLineage
+    ? await loadWaitTicketLineage(
+        database,
+        rows.map((row) => ({ ...row, hasOpenOffer: openOfferTicketIds.has(row.id) })),
+      )
+    : new Map<string, WaitTicketLineageRecord>();
   return {
-    data,
+    data: data.map((row) => {
+      const extra = lineage.get(row.id);
+      return extra ? { ...row, lineage: extra } : row;
+    }),
     pagination: pageMetadata(pagination.page, pagination.pageSize, totalItems),
   };
+}
+
+/**
+ * Lineage of one page of tickets, one batched query per kind (no per-row queries). Sessions are
+ * the proven ones only: the session of the order that opened the ticket and the sessions of its
+ * recorded sources. Demand from before 0044 is reported as legacy, never assigned a session.
+ */
+async function loadWaitTicketLineage(
+  database: Database,
+  rows: readonly {
+    readonly id: string;
+    readonly status: WaitTicketDatabaseStatus;
+    readonly orderSessionId: string;
+    readonly fulfilledQuantity: number;
+    readonly hasOpenOffer: boolean;
+  }[],
+): Promise<Map<string, WaitTicketLineageRecord>> {
+  if (rows.length === 0) return new Map();
+  const ids = rows.map((row) => row.id);
+  const sourceTicket = alias(waitTickets, 'source_ticket');
+  const [pendingRows, revokedRows, sourceRows, legacyRows] = await Promise.all([
+    database
+      .select({
+        waitTicketId: allocationLines.waitTicketId,
+        quantity: sql<number>`sum(${reservations.quantity})`.mapWith(Number),
+      })
+      .from(allocationLines)
+      .innerJoin(reservations, eq(reservations.allocationLineId, allocationLines.id))
+      .innerJoin(
+        allocationResultDecisions,
+        and(
+          eq(allocationResultDecisions.allocationRunId, allocationLines.allocationRunId),
+          eq(allocationResultDecisions.storeId, allocationLines.storeId),
+        ),
+      )
+      .where(
+        and(
+          inArray(allocationLines.waitTicketId, ids),
+          eq(reservations.status, 'active'),
+          isNull(reservations.deletedAt),
+          eq(allocationResultDecisions.status, 'pending'),
+        ),
+      )
+      .groupBy(allocationLines.waitTicketId),
+    database
+      .select({
+        waitTicketId: allocationLineDispositions.waitTicketId,
+        quantity: sql<number>`sum(${allocationLineDispositions.quantity})`.mapWith(Number),
+      })
+      .from(allocationLineDispositions)
+      .where(inArray(allocationLineDispositions.waitTicketId, ids))
+      .groupBy(allocationLineDispositions.waitTicketId),
+    database
+      .select({
+        id: waitTicketSources.id,
+        waitTicketId: waitTicketSources.waitTicketId,
+        kind: waitTicketSources.kind,
+        quantity: waitTicketSources.quantity,
+        createdAt: waitTicketSources.createdAt,
+        sessionId: waitTicketSources.orderSessionId,
+        sessionCode: orderSessions.code,
+        allocationDecisionId: waitTicketSources.allocationDecisionId,
+        allocationLineId: waitTicketSources.allocationLineId,
+        sourceWaitTicketId: waitTicketSources.sourceWaitTicketId,
+        sourceWaitTicketCode: sourceTicket.code,
+        actorName: users.displayName,
+      })
+      .from(waitTicketSources)
+      .leftJoin(orderSessions, eq(orderSessions.id, waitTicketSources.orderSessionId))
+      .leftJoin(sourceTicket, eq(sourceTicket.id, waitTicketSources.sourceWaitTicketId))
+      .leftJoin(users, eq(users.id, waitTicketSources.actorUserId))
+      .where(inArray(waitTicketSources.waitTicketId, ids))
+      .orderBy(asc(waitTicketSources.createdAt), asc(waitTicketSources.id)),
+    database
+      .select({ id: waitTickets.id, legacy: waitTickets.legacyUnsourcedQuantity })
+      .from(waitTickets)
+      .where(inArray(waitTickets.id, ids)),
+  ]);
+  const sessionIds = [
+    ...new Set([
+      ...rows.map((row) => row.orderSessionId),
+      ...sourceRows.flatMap((row) => (row.sessionId ? [row.sessionId] : [])),
+    ]),
+  ];
+  const sessionRows = await database
+    .select({
+      id: orderSessions.id,
+      code: orderSessions.code,
+      businessDate: orderSessions.businessDate,
+      requestDeadlineAt: orderSessions.requestDeadlineAt,
+    })
+    .from(orderSessions)
+    .where(inArray(orderSessions.id, sessionIds));
+  const sessionById = new Map(sessionRows.map((row) => [row.id, row]));
+  const pendingById = new Map(pendingRows.map((row) => [row.waitTicketId, row.quantity]));
+  const revokedById = new Map(revokedRows.map((row) => [row.waitTicketId, row.quantity]));
+  const legacyById = new Map(legacyRows.map((row) => [row.id, row.legacy]));
+  const result = new Map<string, WaitTicketLineageRecord>();
+  for (const row of rows) {
+    const pendingDecisionQuantity = pendingById.get(row.id) ?? 0;
+    const display = waitTicketDisplay({
+      status: row.status,
+      hasOpenOffer: row.hasOpenOffer,
+      fulfilledQuantity: row.fulfilledQuantity,
+      pendingDecisionQuantity,
+    });
+    const sources = sourceRows.filter((source) => source.waitTicketId === row.id);
+    const sessions = new Map<string, WaitTicketLineageRecord['sessions'][number]>();
+    const origin = sessionById.get(row.orderSessionId);
+    if (origin) {
+      sessions.set(origin.id, {
+        sessionId: origin.id,
+        sessionCode: origin.code,
+        businessDate: origin.businessDate,
+        sessionAt: origin.requestDeadlineAt,
+        origin: true,
+        quantity: null,
+      });
+    }
+    for (const source of sources) {
+      if (!source.sessionId || source.kind === 'result_restored') continue;
+      const session = sessionById.get(source.sessionId);
+      if (!session) continue;
+      const existing = sessions.get(session.id);
+      sessions.set(session.id, {
+        sessionId: session.id,
+        sessionCode: session.code,
+        businessDate: session.businessDate,
+        sessionAt: session.requestDeadlineAt,
+        origin: existing?.origin ?? false,
+        quantity: (existing?.quantity ?? 0) + source.quantity,
+      });
+    }
+    result.set(row.id, {
+      displayStatus: display.status,
+      displayDetail: display.detail,
+      pendingDecisionQuantity,
+      revokedQuantity: revokedById.get(row.id) ?? 0,
+      legacyUnsourcedQuantity: legacyById.get(row.id) ?? 0,
+      // The list is already limited to stores the actor may cancel for (Admin: every store).
+      canCancel:
+        row.status === 'active' || (row.status === 'fulfilled' && pendingDecisionQuantity > 0),
+      sources: sources.map(({ waitTicketId: _ticket, ...source }) => source),
+      sessions: [...sessions.values()].sort(
+        (a, b) => Number(b.origin) - Number(a.origin) || a.sessionCode.localeCompare(b.sessionCode),
+      ),
+    });
+  }
+  return result;
 }
 
 export async function listPriorityOffers(
@@ -792,6 +1051,9 @@ export async function cancelWaitTicket(
         status: cancelled.status,
         cancellationKind: cancelled.cancellationKind,
         cancelledOfferIds: [...cancelled.cancelledOfferIds],
+        cancelledQuantity: cancelled.cancelledQuantity,
+        revokedQuantity: cancelled.revokedQuantity,
+        revokedDecisionIds: [...cancelled.revokedDecisionIds],
         resolvedAt: cancelled.resolvedAt.toISOString(),
       };
       return {
@@ -814,6 +1076,222 @@ export async function cancelWaitTicket(
   );
 }
 
+/** One granted line of the ticket, classified for a cancellation. */
+export interface WaitTicketCancellationLine {
+  readonly allocationLineId: string;
+  readonly reservationId: string;
+  readonly allocationDecisionId: string | null;
+  readonly decisionStatus: string | null;
+  readonly decisionVersion: number | null;
+  readonly decisionActionable: number | null;
+  readonly sessionId: string;
+  readonly sessionCode: string;
+  readonly productId: string;
+  readonly quantity: number;
+  readonly shipmentNumber: string | null;
+  readonly reshareOrderCode: string | null;
+  readonly kind: 'REVOCABLE' | 'RESHARE_ORDER' | 'SHIPPED_OR_RECEIVED' | 'ACCEPTED_LEGACY';
+}
+
+export interface WaitTicketCancellationScope {
+  readonly ticket: typeof waitTickets.$inferSelect;
+  readonly offers: readonly (typeof dailyPriorityOffers.$inferSelect)[];
+  readonly lines: readonly WaitTicketCancellationLine[];
+  readonly plan: ReturnType<typeof planWaitTicketCancellation>;
+  readonly fingerprint: string;
+}
+
+/**
+ * Everything a cancellation of this ticket would touch, from the ticket's own lineage (allocation
+ * lines naming it), never by product, date or store. Goods are revocable only while they sit in a
+ * result still waiting for an answer, on hold, unshipped and without an RE order. Issued (RE),
+ * shipped or received goods and holds of results accepted under the old rules are protected.
+ * Contradicting evidence (an active hold with an RE source, a pending result whose shipment left)
+ * refuses the cancellation instead of guessing.
+ */
+async function loadCancellationScope(
+  reader: Database | Transaction,
+  ticket: typeof waitTickets.$inferSelect,
+  options: { readonly lock: boolean },
+): Promise<WaitTicketCancellationScope> {
+  const offerQuery = reader
+    .select()
+    .from(dailyPriorityOffers)
+    .where(
+      and(
+        eq(dailyPriorityOffers.waitTicketId, ticket.id),
+        livePriorityOfferCondition(),
+        isNull(dailyPriorityOffers.deletedAt),
+      ),
+    )
+    .orderBy(asc(dailyPriorityOffers.id));
+  const offers = options.lock ? await offerQuery.for('update') : await offerQuery;
+  const rows = await reader
+    .select({
+      allocationLineId: allocationLines.id,
+      reservationId: reservations.id,
+      reservationStatus: reservations.status,
+      quantity: reservations.quantity,
+      productId: reservations.productId,
+      decisionId: allocationResultDecisions.id,
+      decisionStatus: allocationResultDecisions.status,
+      decisionVersion: allocationResultDecisions.version,
+      granted: allocationResultDecisions.grantedQuantity,
+      revoked: allocationResultDecisions.revokedQuantity,
+      sessionId: allocationRuns.orderSessionId,
+      sessionCode: orderSessions.code,
+      shipmentNumber: outboundRequests.requestNumber,
+      shipmentStatus: outboundRequests.status,
+      reshareOrderCode: reshareOrders.code,
+    })
+    .from(allocationLines)
+    .innerJoin(reservations, eq(reservations.allocationLineId, allocationLines.id))
+    .innerJoin(allocationRuns, eq(allocationRuns.id, allocationLines.allocationRunId))
+    .innerJoin(orderSessions, eq(orderSessions.id, allocationRuns.orderSessionId))
+    .leftJoin(
+      allocationResultDecisions,
+      and(
+        eq(allocationResultDecisions.allocationRunId, allocationLines.allocationRunId),
+        eq(allocationResultDecisions.storeId, allocationLines.storeId),
+      ),
+    )
+    .leftJoin(outboundRequestLines, eq(outboundRequestLines.id, reservations.outboundRequestLineId))
+    .leftJoin(outboundRequests, eq(outboundRequests.id, outboundRequestLines.outboundRequestId))
+    .leftJoin(reshareOrderSources, eq(reshareOrderSources.reservationId, reservations.id))
+    .leftJoin(reshareOrders, eq(reshareOrders.id, reshareOrderSources.reshareOrderId))
+    .where(
+      and(
+        eq(allocationLines.waitTicketId, ticket.id),
+        inArray(reservations.status, ['active', 'issued', 'consumed']),
+        isNull(reservations.deletedAt),
+      ),
+    )
+    .orderBy(asc(allocationLines.createdAt), asc(allocationLines.id), asc(reservations.id));
+  const revocableByDecision = new Map<string, number>();
+  const lines: WaitTicketCancellationLine[] = rows.map((row) => {
+    let kind: WaitTicketCancellationLine['kind'];
+    if (row.reservationStatus === 'issued' || row.reshareOrderCode !== null) {
+      if (row.reservationStatus === 'active') {
+        throw new WaitTicketConflictError(
+          `WAIT_TICKET_INTEGRITY: hold ${row.reservationId} is active but has an RE order.`,
+        );
+      }
+      kind = 'RESHARE_ORDER';
+    } else if (row.reservationStatus === 'consumed') {
+      kind = 'SHIPPED_OR_RECEIVED';
+    } else if (row.decisionStatus === 'pending') {
+      if (row.shipmentStatus !== null && row.shipmentStatus !== 'reserved') {
+        throw new WaitTicketConflictError(
+          `WAIT_TICKET_INTEGRITY: hold ${row.reservationId} of a pending result is on a ${row.shipmentStatus} shipment.`,
+        );
+      }
+      kind = 'REVOCABLE';
+      revocableByDecision.set(
+        row.decisionId!,
+        (revocableByDecision.get(row.decisionId!) ?? 0) + row.quantity,
+      );
+    } else if (row.shipmentStatus === 'dispatched' || row.shipmentStatus === 'received') {
+      kind = 'SHIPPED_OR_RECEIVED';
+    } else {
+      kind = 'ACCEPTED_LEGACY';
+    }
+    return {
+      allocationLineId: row.allocationLineId,
+      reservationId: row.reservationId,
+      allocationDecisionId: row.decisionId,
+      decisionStatus: row.decisionStatus,
+      decisionVersion: row.decisionVersion,
+      decisionActionable: row.granted === null ? null : row.granted - (row.revoked ?? 0),
+      sessionId: row.sessionId,
+      sessionCode: row.sessionCode,
+      productId: row.productId,
+      quantity: row.quantity,
+      shipmentNumber: row.shipmentNumber,
+      reshareOrderCode: row.reshareOrderCode,
+      kind,
+    };
+  });
+  const revocableQuantity = lines
+    .filter((line) => line.kind === 'REVOCABLE')
+    .reduce((total, line) => total + line.quantity, 0);
+  let plan: ReturnType<typeof planWaitTicketCancellation>;
+  try {
+    plan = planWaitTicketCancellation({
+      status: ticket.status,
+      originalQuantity: ticket.originalQuantity,
+      remainingQuantity: ticket.remainingQuantity,
+      fulfilledQuantity: ticket.fulfilledQuantity,
+      revocableQuantity,
+    });
+  } catch (error: unknown) {
+    throw new WaitTicketConflictError(
+      `WAIT_TICKET_INTEGRITY: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const fingerprint = createHash('sha256')
+    .update(
+      JSON.stringify({
+        ticket: [ticket.id, ticket.status, ticket.remainingQuantity, ticket.fulfilledQuantity],
+        offers: offers.map((offer) => [offer.id, offer.status, offer.stockHeldQuantity]),
+        lines: lines.map((line) => [
+          line.allocationLineId,
+          line.reservationId,
+          line.kind,
+          line.quantity,
+          line.allocationDecisionId,
+          line.decisionVersion,
+        ]),
+      }),
+    )
+    .digest('hex');
+  return { ticket, offers, lines, plan, fingerprint };
+}
+
+export interface WaitTicketCancelPreview {
+  readonly waitTicketId: string;
+  readonly code: string;
+  readonly storeId: string;
+  readonly productId: string;
+  readonly scope: WaitTicketCancellationScope;
+}
+
+/**
+ * Read only: what "Hủy phiếu chờ" would cancel, revoke and protect right now. The command
+ * re-evaluates everything under its locks; the preview is never the deciding source.
+ */
+export async function previewWaitTicketCancellation(
+  database: Database,
+  input: { readonly actorUserId: string; readonly waitTicketId: string },
+): Promise<WaitTicketCancelPreview> {
+  return withTransaction(
+    database,
+    async (tx) => {
+      const [ticket] = await tx
+        .select()
+        .from(waitTickets)
+        .where(and(eq(waitTickets.id, input.waitTicketId), isNull(waitTickets.deletedAt)))
+        .limit(1);
+      if (!ticket) throw new WaitTicketNotFoundError();
+      try {
+        await assertActorMayCancelWaitTicket(tx, input.actorUserId, ticket.storeId);
+      } catch (error: unknown) {
+        // Outside the actor's scope the ticket does not exist for it.
+        if (error instanceof WaitTicketAuthorizationError) throw new WaitTicketNotFoundError();
+        throw error;
+      }
+      const scope = await loadCancellationScope(tx, ticket, { lock: false });
+      return {
+        waitTicketId: ticket.id,
+        code: ticket.code,
+        storeId: ticket.storeId,
+        productId: ticket.productId,
+        scope,
+      };
+    },
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
+  );
+}
+
 export async function cancelWaitTicketInTransaction(
   tx: Transaction,
   input: Omit<CancelWaitTicketInput, 'idempotencyKey' | 'requestHash'>,
@@ -825,173 +1303,269 @@ export async function cancelWaitTicketInTransaction(
     );
   }
 
-  return withAdvisoryLock(tx, 'wait-ticket', input.waitTicketId, async () => {
-    const [scope] = await tx
-      .select({ storeId: waitTickets.storeId, productId: waitTickets.productId })
-      .from(waitTickets)
-      .where(and(eq(waitTickets.id, input.waitTicketId), isNull(waitTickets.deletedAt)))
-      .limit(1);
-    if (!scope) {
-      throw new WaitTicketNotFoundError();
-    }
-    const actor = await assertActorMayCancelWaitTicket(tx, input.actorUserId, scope.storeId);
+  // Revoking result goods changes reservations: the stock-jobs lock comes first, as for every
+  // answer and allocation run, so a cancellation never interleaves with a run or an answer.
+  return withAdvisoryLock(tx, STOCK_JOBS_LOCK.namespace, STOCK_JOBS_LOCK.key, () =>
+    withAdvisoryLock(tx, 'wait-ticket', input.waitTicketId, async () => {
+      const [scopeRow] = await tx
+        .select({ storeId: waitTickets.storeId, productId: waitTickets.productId })
+        .from(waitTickets)
+        .where(and(eq(waitTickets.id, input.waitTicketId), isNull(waitTickets.deletedAt)))
+        .limit(1);
+      if (!scopeRow) {
+        throw new WaitTicketNotFoundError();
+      }
+      const actor = await assertActorMayCancelWaitTicket(tx, input.actorUserId, scopeRow.storeId);
 
-    return withAdvisoryLock(
-      tx,
-      'store-product-wait',
-      `${scope.storeId}:${scope.productId}`,
-      async () => {
-        const [ticket] = await tx
-          .select()
-          .from(waitTickets)
-          .where(and(eq(waitTickets.id, input.waitTicketId), isNull(waitTickets.deletedAt)))
-          .for('update')
-          .limit(1);
-        if (!ticket) {
-          throw new WaitTicketNotFoundError();
-        }
-        if (ticket.storeId !== scope.storeId || ticket.productId !== scope.productId) {
-          throw new WaitTicketConflictError('The wait ticket scope changed during cancellation.');
-        }
-        if (ticket.status !== 'active') {
-          // A completed or already cancelled ticket is never rewritten; an exact retry of the
-          // original command is answered by its idempotency record instead.
-          throw new WaitTicketConflictError('Only an active wait ticket can be cancelled.');
-        }
-
-        // Only unanswered offers and accepted offers that the allocation run has not consumed
-        // still claim this ticket. Allocated quantity is history: it stays reserved for the
-        // store and ships with its next ordinary order; only the unallocated demand is cancelled.
-        const liveOffers = await tx
-          .select()
-          .from(dailyPriorityOffers)
-          .where(
-            and(
-              eq(dailyPriorityOffers.waitTicketId, ticket.id),
-              livePriorityOfferCondition(),
-              isNull(dailyPriorityOffers.deletedAt),
-            ),
-          )
-          .orderBy(asc(dailyPriorityOffers.id))
-          .for('update');
-
-        const now = new Date();
-        for (const offer of liveOffers) {
-          if (offer.stockHeldQuantity > 0) {
-            await releasePriorityOfferStock(tx, offer, now);
+      return withAdvisoryLock(
+        tx,
+        'store-product-wait',
+        `${scopeRow.storeId}:${scopeRow.productId}`,
+        async () => {
+          const [ticket] = await tx
+            .select()
+            .from(waitTickets)
+            .where(and(eq(waitTickets.id, input.waitTicketId), isNull(waitTickets.deletedAt)))
+            .for('update')
+            .limit(1);
+          if (!ticket) {
+            throw new WaitTicketNotFoundError();
           }
-        }
-        const cancelledOfferIds = liveOffers.map((offer) => offer.id);
-        if (cancelledOfferIds.length > 0) {
-          const updatedOffers = await tx
-            .update(dailyPriorityOffers)
-            .set({
-              status: 'cancelled',
-              acceptedQuantity: 0,
-              stockHeldQuantity: 0,
-              respondedAt: now,
-              updatedAt: now,
-            })
-            .where(
-              and(
-                inArray(dailyPriorityOffers.id, cancelledOfferIds),
-                inArray(dailyPriorityOffers.status, ['offered', 'accepted']),
-              ),
-            )
-            .returning({ id: dailyPriorityOffers.id });
-          if (updatedOffers.length !== cancelledOfferIds.length) {
-            throw new WaitTicketConflictError('A priority offer changed during cancellation.');
+          if (ticket.storeId !== scopeRow.storeId || ticket.productId !== scopeRow.productId) {
+            throw new WaitTicketConflictError('The wait ticket scope changed during cancellation.');
           }
-        }
+          const scope = await loadCancellationScope(tx, ticket, { lock: true });
+          if (!scope.plan.ok) {
+            // A completed or already cancelled ticket is never rewritten; an exact retry of the
+            // original command is answered by its idempotency record instead.
+            throw new WaitTicketConflictError(
+              scope.plan.reason === 'ALREADY_CANCELLED'
+                ? 'The wait ticket is already cancelled.'
+                : 'Nothing of this wait ticket can still be cancelled.',
+            );
+          }
+          const revocable = scope.lines.filter((line) => line.kind === 'REVOCABLE');
+          if (input.expectedFingerprint !== undefined) {
+            if (input.expectedFingerprint !== scope.fingerprint) {
+              throw new WaitTicketPreviewStaleError();
+            }
+          } else if (revocable.length > 0) {
+            // Revoking allocation goods needs the confirmed preview (an older client cannot).
+            throw new WaitTicketPreviewRequiredError();
+          }
 
-        const cancellationKind: WaitTicketCancellationKind =
-          actor.role === 'admin'
-            ? 'admin_cancelled'
-            : actor.role === 'htkd'
-              ? 'htkd_cancelled'
-              : 'store_cancelled';
-        const [updated] = await tx
-          .update(waitTickets)
-          .set({
-            status: 'cancelled',
-            resolvedAt: now,
-            resolutionReason: normalizedReason,
-            cancellationKind,
-            updatedAt: now,
-          })
-          .where(and(eq(waitTickets.id, ticket.id), eq(waitTickets.status, 'active')))
-          .returning({ id: waitTickets.id });
-        if (!updated) {
-          throw new WaitTicketConflictError('The wait ticket changed during cancellation.');
-        }
-
-        await tx.insert(auditLogs).values({
-          requestId: input.requestId ?? null,
-          actorUserId: actor.id,
-          actorRole: actor.role,
-          actorStoreId: ticket.storeId,
-          action:
-            actor.role === 'admin'
-              ? 'WAIT_TICKET_ADMIN_CANCELLED'
-              : actor.role === 'htkd'
-                ? 'WAIT_TICKET_HTKD_CANCELLED'
-                : 'WAIT_TICKET_STORE_CANCELLED',
-          entityType: 'wait_ticket',
-          entityId: ticket.id,
-          before: waitTicketAuditSnapshot(ticket),
-          after: {
-            ...waitTicketAuditSnapshot(ticket),
-            status: 'cancelled',
-            resolvedAt: now.toISOString(),
-            resolutionReason: normalizedReason,
-            cancellationKind,
-          },
-          metadata: {
-            cancellationKind,
-            cancelledOfferIds,
-            cancelledQuantity: ticket.remainingQuantity,
-            retainedFulfilledQuantity: ticket.fulfilledQuantity,
-          },
-        });
-
-        if (liveOffers.length > 0) {
-          await tx.insert(auditLogs).values(
-            liveOffers.map((offer) => ({
-              requestId: input.requestId ?? null,
-              actorUserId: actor.id,
-              actorRole: actor.role,
-              actorStoreId: ticket.storeId,
-              action: 'PRIORITY_OFFER_CANCELLED_WITH_WAIT_TICKET',
-              entityType: 'priority_offer',
-              entityId: offer.id,
-              before: priorityOfferAuditSnapshot(offer),
-              after: {
-                ...priorityOfferAuditSnapshot(offer),
+          const now = new Date();
+          for (const offer of scope.offers) {
+            if (offer.stockHeldQuantity > 0) {
+              await releasePriorityOfferStock(tx, offer, now);
+            }
+          }
+          const cancelledOfferIds = scope.offers.map((offer) => offer.id);
+          if (cancelledOfferIds.length > 0) {
+            const updatedOffers = await tx
+              .update(dailyPriorityOffers)
+              .set({
                 status: 'cancelled',
                 acceptedQuantity: 0,
                 stockHeldQuantity: 0,
-                respondedAt: now.toISOString(),
-              },
-              metadata: {
-                waitTicketId: ticket.id,
-                orderSessionId: offer.orderSessionId,
-                previousStatus: offer.status,
-                releasedHoldQuantity: offer.stockHeldQuantity,
-              },
-            })),
-          );
-        }
+                respondedAt: now,
+                updatedAt: now,
+              })
+              .where(
+                and(
+                  inArray(dailyPriorityOffers.id, cancelledOfferIds),
+                  inArray(dailyPriorityOffers.status, ['offered', 'accepted']),
+                ),
+              )
+              .returning({ id: dailyPriorityOffers.id });
+            if (updatedOffers.length !== cancelledOfferIds.length) {
+              throw new WaitTicketConflictError('A priority offer changed during cancellation.');
+            }
+          }
 
-        return {
-          waitTicketId: ticket.id,
-          status: 'cancelled',
-          cancellationKind,
-          cancelledOfferIds,
-          resolvedAt: now,
-        };
-      },
-    );
-  });
+          // Granted bags of this ticket still waiting in results: revoked result by result, each
+          // under its shipment lock and decision row lock (the order of every answer).
+          const decisionIds = [
+            ...new Set(revocable.map((line) => line.allocationDecisionId!)),
+          ].sort();
+          const revokedDecisions: JsonObject[] = [];
+          for (const decisionId of decisionIds) {
+            const expected = revocable.filter((line) => line.allocationDecisionId === decisionId);
+            const [located] = await tx
+              .select({
+                allocationRunId: allocationResultDecisions.allocationRunId,
+                storeId: allocationResultDecisions.storeId,
+              })
+              .from(allocationResultDecisions)
+              .where(eq(allocationResultDecisions.id, decisionId))
+              .limit(1);
+            if (!located) throw new WaitTicketConflictError('A result of the ticket is missing.');
+            const shipmentId = await findResultShipmentId(tx, located);
+            const revoke = async () => {
+              const [decision] = await tx
+                .select()
+                .from(allocationResultDecisions)
+                .where(eq(allocationResultDecisions.id, decisionId))
+                .for('update')
+                .limit(1);
+              if (!decision || decision.status !== 'pending') {
+                throw new WaitTicketConflictError('A result of the ticket changed meanwhile.');
+              }
+              const [shipment] = shipmentId
+                ? await tx
+                    .select()
+                    .from(outboundRequests)
+                    .where(eq(outboundRequests.id, shipmentId))
+                    .for('update')
+                    .limit(1)
+                : [];
+              const holds = await lockActionableHolds(tx, decision, { waitTicketId: ticket.id });
+              const holdIds = holds.map((hold) => hold.reservation.id).sort();
+              const expectedIds = expected.map((line) => line.reservationId).sort();
+              if (JSON.stringify(holdIds) !== JSON.stringify(expectedIds)) {
+                throw new WaitTicketConflictError('Holds of the ticket changed during cancellation.');
+              }
+              const revoked = await revokeResultHoldsInTransaction(tx, {
+                decision,
+                shipment: shipment ?? null,
+                holds,
+                kind: 'wait_ticket_cancelled',
+                actor: { id: actor.id, role: revocationRole(actor.role) },
+                requestId: input.requestId ?? null,
+                occurredAt: now,
+              });
+              revokedDecisions.push({
+                allocationDecisionId: decisionId,
+                revokedQuantity: revoked.releasedQuantity,
+                status: revoked.decision.status,
+                version: revoked.decision.version,
+                cancelledOutboundRequestId: revoked.cancelledOutboundRequestId,
+              });
+            };
+            if (shipmentId) {
+              await withAdvisoryLock(tx, 'warehouse-outbound', shipmentId, revoke);
+            } else {
+              await revoke();
+            }
+          }
+
+          const cancellationKind: WaitTicketCancellationKind =
+            actor.role === 'admin'
+              ? 'admin_cancelled'
+              : actor.role === 'htkd'
+                ? 'htkd_cancelled'
+                : 'store_cancelled';
+          const plan = scope.plan;
+          const [updated] = await tx
+            .update(waitTickets)
+            .set({
+              status: 'cancelled',
+              // remaining keeps the cancelled demand: what waited plus the revoked grants;
+              // fulfilled keeps only grants protected by an RE order, shipment or legacy rule.
+              remainingQuantity: plan.remainingAfter,
+              fulfilledQuantity: plan.fulfilledAfter,
+              resolvedAt: now,
+              resolutionReason: normalizedReason,
+              cancellationKind,
+              updatedAt: now,
+            })
+            .where(and(eq(waitTickets.id, ticket.id), inArray(waitTickets.status, ['active', 'fulfilled'])))
+            .returning({ id: waitTickets.id });
+          if (!updated) {
+            throw new WaitTicketConflictError('The wait ticket changed during cancellation.');
+          }
+
+          const revokedQuantity = revocable.reduce((total, line) => total + line.quantity, 0);
+          await tx.insert(auditLogs).values({
+            requestId: input.requestId ?? null,
+            actorUserId: actor.id,
+            actorRole: actor.role,
+            actorStoreId: ticket.storeId,
+            action:
+              actor.role === 'admin'
+                ? 'WAIT_TICKET_ADMIN_CANCELLED'
+                : actor.role === 'htkd'
+                  ? 'WAIT_TICKET_HTKD_CANCELLED'
+                  : 'WAIT_TICKET_STORE_CANCELLED',
+            entityType: 'wait_ticket',
+            entityId: ticket.id,
+            before: waitTicketAuditSnapshot(ticket),
+            after: {
+              ...waitTicketAuditSnapshot(ticket),
+              status: 'cancelled',
+              remainingQuantity: plan.remainingAfter,
+              fulfilledQuantity: plan.fulfilledAfter,
+              resolvedAt: now.toISOString(),
+              resolutionReason: normalizedReason,
+              cancellationKind,
+            },
+            metadata: {
+              cancellationKind,
+              cancelledOfferIds,
+              cancelledQuantity: plan.cancelledQuantity,
+              waitingQuantity: ticket.remainingQuantity,
+              revokedQuantity,
+              revokedDecisions,
+              retainedFulfilledQuantity: plan.fulfilledAfter,
+              protected: scope.lines
+                .filter((line) => line.kind !== 'REVOCABLE')
+                .map((line) => ({
+                  allocationLineId: line.allocationLineId,
+                  kind: line.kind,
+                  quantity: line.quantity,
+                  reshareOrderCode: line.reshareOrderCode,
+                })),
+              fingerprint: scope.fingerprint,
+            },
+          });
+
+          if (scope.offers.length > 0) {
+            await tx.insert(auditLogs).values(
+              scope.offers.map((offer) => ({
+                requestId: input.requestId ?? null,
+                actorUserId: actor.id,
+                actorRole: actor.role,
+                actorStoreId: ticket.storeId,
+                action: 'PRIORITY_OFFER_CANCELLED_WITH_WAIT_TICKET',
+                entityType: 'priority_offer',
+                entityId: offer.id,
+                before: priorityOfferAuditSnapshot(offer),
+                after: {
+                  ...priorityOfferAuditSnapshot(offer),
+                  status: 'cancelled',
+                  acceptedQuantity: 0,
+                  stockHeldQuantity: 0,
+                  respondedAt: now.toISOString(),
+                },
+                metadata: {
+                  waitTicketId: ticket.id,
+                  orderSessionId: offer.orderSessionId,
+                  previousStatus: offer.status,
+                  releasedHoldQuantity: offer.stockHeldQuantity,
+                },
+              })),
+            );
+          }
+
+          return {
+            waitTicketId: ticket.id,
+            status: 'cancelled',
+            cancellationKind,
+            cancelledOfferIds,
+            cancelledQuantity: plan.cancelledQuantity,
+            revokedQuantity,
+            revokedDecisionIds: decisionIds,
+            resolvedAt: now,
+          };
+        },
+      );
+    }),
+  );
+}
+
+function revocationRole(role: DatabaseUserRole): RevocationActorRole {
+  if (role === 'admin' || role === 'htkd' || role === 'store' || role === 'wholesale') return role;
+  throw new WaitTicketAuthorizationError();
 }
 
 /**

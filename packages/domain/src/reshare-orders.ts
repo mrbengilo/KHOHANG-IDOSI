@@ -95,16 +95,15 @@ export function reshareOrderDisplayStatus(input: {
 export type AllocationDecisionResponderRole = 'STORE' | 'WHOLESALE' | 'HTKD';
 
 /**
- * Who may answer a result, by action. The receiving side (store, wholesale desk) may accept or
- * reject; an HTKD assigned to the store may accept on its behalf but never reject.
+ * Who may answer a result, by action. The receiving side (store, wholesale desk) and an HTKD
+ * assigned to the store may "Xác nhận phân bổ" (ACCEPT) or "Chuyển phiếu chờ" (WAITLIST).
  */
 export function allowedAllocationDecisionActions(
   role: AllocationDecisionResponderRole | 'ADMIN',
   status: AllocationDecisionStatus,
 ): readonly AllocationDecisionAction[] {
   if (status !== 'PENDING') return [];
-  if (role === 'STORE' || role === 'WHOLESALE') return ['ACCEPT', 'REJECT'];
-  if (role === 'HTKD') return ['ACCEPT'];
+  if (role === 'STORE' || role === 'WHOLESALE' || role === 'HTKD') return ['ACCEPT', 'WAITLIST'];
   return [];
 }
 

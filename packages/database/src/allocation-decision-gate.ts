@@ -19,7 +19,11 @@ export const SHIPPABLE_DECISION_STATUSES = [
 ] as const satisfies readonly AllocationDecisionDatabaseStatus[];
 
 export type AllocationDecisionGateReason =
-  'DECISION_PENDING' | 'DECISION_REJECTED' | 'DECISION_MISSING' | 'SOURCE_NOT_SHIPPABLE';
+  | 'DECISION_PENDING'
+  | 'DECISION_REJECTED'
+  | 'DECISION_CLOSED'
+  | 'DECISION_MISSING'
+  | 'SOURCE_NOT_SHIPPABLE';
 
 export class AllocationDecisionRequiredError extends Error {
   public readonly code = 'ALLOCATION_DECISION_REQUIRED';
@@ -30,6 +34,8 @@ export class AllocationDecisionRequiredError extends Error {
       {
         DECISION_PENDING: 'The store has not accepted this allocation result yet.',
         DECISION_REJECTED: 'The store rejected this allocation result.',
+        DECISION_CLOSED:
+          'This allocation result was moved back to waiting or cancelled with its wait tickets.',
         DECISION_MISSING: 'This allocation result has no store decision record.',
         SOURCE_NOT_SHIPPABLE:
           'The shipment carries goods of an unanswered or rejected allocation result.',
@@ -40,8 +46,8 @@ export class AllocationDecisionRequiredError extends Error {
   }
 }
 
-/** SQLSTATEs raised by the 0038 guards when code reaches them without the checks below. */
-const GUARD_SQLSTATES = new Set(['IDA01', 'IDA02', 'IDA03']);
+/** SQLSTATEs raised by the 0038/0044 guards when code reaches them without the checks below. */
+const GUARD_SQLSTATES = new Set(['IDA01', 'IDA02', 'IDA03', 'IDA04']);
 
 export function isAllocationDecisionGuardError(error: unknown): boolean {
   let current = error;
@@ -75,6 +81,9 @@ function assertShippable(status: AllocationDecisionDatabaseStatus | null): void 
   if (status === null) throw new AllocationDecisionRequiredError('DECISION_MISSING');
   if (status === 'pending') throw new AllocationDecisionRequiredError('DECISION_PENDING');
   if (status === 'rejected') throw new AllocationDecisionRequiredError('DECISION_REJECTED');
+  if (status === 'waitlisted' || status === 'cancelled') {
+    throw new AllocationDecisionRequiredError('DECISION_CLOSED');
+  }
 }
 
 /**

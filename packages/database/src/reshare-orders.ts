@@ -140,9 +140,12 @@ export async function issueReshareOrderInTransaction(
   } catch (error: unknown) {
     throw new ReshareOrderIntegrityError(error instanceof Error ? error.message : String(error));
   }
-  if (plan.totalQuantity !== decision.grantedQuantity) {
+  // Revoked lines (wait-ticket cancellations) were released before; only the actionable rest of
+  // the grant is issued, never the immutable granted snapshot.
+  const actionable = decision.grantedQuantity - decision.revokedQuantity;
+  if (plan.totalQuantity !== actionable) {
     throw new ReshareOrderIntegrityError(
-      `Result ${decision.id} holds ${plan.totalQuantity} of its ${decision.grantedQuantity} granted bags.`,
+      `Result ${decision.id} holds ${plan.totalQuantity} of its ${actionable} actionable bags.`,
     );
   }
 

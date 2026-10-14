@@ -3,10 +3,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ALLOCATION_DECISION_STATUSES,
+  actionableAllocationQuantity,
   initialAllocationDecisionStatus,
   isShippableAllocationDecision,
-  normalizeAllocationDecisionReason,
   partitionRejectedShipmentSources,
+  revokeFromPendingDecision,
   transitionAllocationDecision,
 } from '../src/index.js';
 
@@ -32,9 +33,18 @@ describe('allocation result decisions', () => {
         status: 'PENDING',
         version: 1,
         expectedVersion: 1,
-        action: 'REJECT',
+        action: 'WAITLIST',
       }),
-    ).toEqual({ ok: true, next: 'REJECTED' });
+    ).toEqual({ ok: true, next: 'WAITLISTED' });
+    expect(
+      transitionAllocationDecision({
+        status: 'PENDING',
+        version: 3,
+        expectedVersion: 3,
+        action: 'ACCEPT',
+        actionableQuantity: 0,
+      }),
+    ).toEqual({ ok: false, reason: 'NOTHING_ACTIONABLE' });
     expect(
       transitionAllocationDecision({
         status: 'PENDING',
@@ -46,7 +56,7 @@ describe('allocation result decisions', () => {
     fc.assert(
       fc.property(
         fc.constantFrom(...ALLOCATION_DECISION_STATUSES),
-        fc.constantFrom('ACCEPT' as const, 'REJECT' as const),
+        fc.constantFrom('ACCEPT' as const, 'WAITLIST' as const),
         fc.integer({ min: 1, max: 5 }),
         (status, action, version) => {
           const result = transitionAllocationDecision({
@@ -56,7 +66,7 @@ describe('allocation result decisions', () => {
             action,
           });
           if (status === 'PENDING') return result.ok;
-          if (status === 'ACCEPTED' || status === 'REJECTED') {
+          if (status === 'ACCEPTED' || status === 'REJECTED' || status === 'WAITLISTED') {
             return !result.ok && result.reason === 'ALREADY_ANSWERED';
           }
           return !result.ok && result.reason === 'NOT_ANSWERABLE';
@@ -73,12 +83,67 @@ describe('allocation result decisions', () => {
     ]);
   });
 
-  it('accepts an optional, bounded rejection reason only', () => {
-    expect(normalizeAllocationDecisionReason('REJECT', '  hết chỗ  ')).toBe('hết chỗ');
-    expect(normalizeAllocationDecisionReason('REJECT', '   ')).toBeNull();
-    expect(normalizeAllocationDecisionReason('ACCEPT', undefined)).toBeNull();
-    expect(() => normalizeAllocationDecisionReason('ACCEPT', 'ok')).toThrow(RangeError);
-    expect(() => normalizeAllocationDecisionReason('REJECT', 'x'.repeat(501))).toThrow(RangeError);
+  it('revokes only actionable goods and closes the result when nothing is left', () => {
+    expect(actionableAllocationQuantity({ grantedQuantity: 6, revokedQuantity: 2 })).toBe(4);
+    expect(() => actionableAllocationQuantity({ grantedQuantity: 6, revokedQuantity: 7 })).toThrow(
+      RangeError,
+    );
+    expect(
+      revokeFromPendingDecision({
+        status: 'PENDING',
+        grantedQuantity: 6,
+        revokedQuantity: 0,
+        revoke: 2,
+      }),
+    ).toEqual({ next: 'PENDING', revokedQuantity: 2 });
+    expect(
+      revokeFromPendingDecision({
+        status: 'PENDING',
+        grantedQuantity: 6,
+        revokedQuantity: 2,
+        revoke: 4,
+      }),
+    ).toEqual({ next: 'CANCELLED', revokedQuantity: 6 });
+    expect(() =>
+      revokeFromPendingDecision({
+        status: 'PENDING',
+        grantedQuantity: 6,
+        revokedQuantity: 2,
+        revoke: 5,
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      revokeFromPendingDecision({
+        status: 'ACCEPTED',
+        grantedQuantity: 6,
+        revokedQuantity: 0,
+        revoke: 1,
+      }),
+    ).toThrow(RangeError);
+    // Any sequence of revocations ends CANCELLED exactly when every granted bag is revoked.
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 50 }),
+        fc.array(fc.integer({ min: 1, max: 10 }), { maxLength: 20 }),
+        (granted, steps) => {
+          let revoked = 0;
+          let status: 'PENDING' | 'CANCELLED' = 'PENDING';
+          for (const step of steps) {
+            if (status !== 'PENDING') break;
+            const revoke = Math.min(step, granted - revoked);
+            const result = revokeFromPendingDecision({
+              status,
+              grantedQuantity: granted,
+              revokedQuantity: revoked,
+              revoke,
+            });
+            revoked = result.revokedQuantity;
+            status = result.next;
+          }
+          return revoked <= granted && (status === 'CANCELLED') === (revoked === granted);
+        },
+      ),
+    );
   });
 
   it('releases only the rejected result own sources, whatever SKU or shipment they share', () => {

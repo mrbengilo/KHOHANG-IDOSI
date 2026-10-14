@@ -1,6 +1,4 @@
 import {
-  normalizeAllocationDecisionReason,
-  partitionRejectedShipmentSources,
   transitionAllocationDecision,
   type AllocationDecisionAction,
   type AllocationDecisionStatus,
@@ -13,9 +11,18 @@ import {
 } from './allocation-decision-gate.js';
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
+import {
+  ALLOCATION_RESULT_WAITLISTED_RELEASE_REASON,
+  lockActionableHolds,
+  requeueWaitlistedDispositionsInTransaction,
+  revokeResultHoldsInTransaction,
+  WAIT_TICKET_CANCELLED_RELEASE_REASON,
+  type RequeuedTicket,
+} from './allocation-waitlist.js';
 import { dispatchWarehouseOutboundInTransaction } from './outbound-requests.js';
 import { issueReshareOrderInTransaction, type ReshareActorRole } from './reshare-orders.js';
 import {
+  allocationLineDispositions,
   allocationLines,
   htkdAssignments,
   allocationResultDecisions,
@@ -30,10 +37,11 @@ import {
   storeReceipts,
   stores,
   users,
+  waitTicketSources,
+  waitTickets,
   type JsonObject,
 } from './schema.js';
 import { withAdvisoryLock, withTransaction, type Transaction } from './transaction.js';
-import { applyWarehouseMovement } from './warehouse.js';
 
 /**
  * Every job and command that changes which warehouse goods are reserved for whom takes this one
@@ -43,7 +51,14 @@ import { applyWarehouseMovement } from './warehouse.js';
 export const STOCK_JOBS_LOCK = { namespace: 'idosi-allocation-worker', key: 'stock-jobs' } as const;
 
 export const ALLOCATION_RESULT_REJECTED_RELEASE_REASON = 'allocation_result_rejected';
-export const ALLOCATION_RESULT_DETACHED_REASON = 'detached_from_rejected_shipment';
+export { ALLOCATION_RESULT_DETACHED_REASON } from './allocation-waitlist.js';
+
+/** Release reasons of goods a result gave back to the warehouse (never shipped). */
+const RETURNED_RELEASE_REASONS = [
+  ALLOCATION_RESULT_REJECTED_RELEASE_REASON,
+  ALLOCATION_RESULT_WAITLISTED_RELEASE_REASON,
+  WAIT_TICKET_CANCELLED_RELEASE_REASON,
+];
 
 /** Holds still owed to the store and not yet received: on-hand (active) or issued with an RE. */
 export const OWED_RESERVATION_STATUSES = ['active', 'issued'] as const;
@@ -54,6 +69,8 @@ const DATABASE_STATUS: Record<AllocationDecisionDatabaseStatus, AllocationDecisi
   rejected: 'REJECTED',
   not_required: 'NOT_REQUIRED',
   legacy: 'LEGACY',
+  waitlisted: 'WAITLISTED',
+  cancelled: 'CANCELLED',
 };
 
 export function domainDecisionStatus(
@@ -88,7 +105,7 @@ export class AllocationDecisionForbiddenError extends Error {
 
   public constructor() {
     super(
-      'Only the receiving store account, or an HTKD assigned to the store for acceptance, may answer this allocation result.',
+      'Only the receiving store account, or an HTKD assigned to the store, may answer this allocation result.',
     );
     this.name = 'AllocationDecisionForbiddenError';
   }
@@ -103,14 +120,30 @@ export class AllocationDecisionValidationError extends Error {
   }
 }
 
+/** "Từ chối" was retired by 0044; an older client sending it gets this structured refusal. */
+export class AllocationDecisionActionRetiredError extends Error {
+  public readonly code = 'ALLOCATION_DECISION_ACTION_RETIRED';
+
+  public constructor() {
+    super('REJECT was retired; use WAITLIST ("Chuyển phiếu chờ") or ACCEPT.');
+    this.name = 'AllocationDecisionActionRetiredError';
+  }
+}
+
+export type AllocationDecisionConflictReason =
+  | 'ALREADY_ANSWERED'
+  | 'NOT_ANSWERABLE'
+  | 'STALE_VERSION'
+  | 'NOTHING_ACTIONABLE';
+
 export class AllocationDecisionConflictError extends Error {
   public readonly code = 'ALLOCATION_DECISION_CONFLICT';
-  public readonly reason: 'ALREADY_ANSWERED' | 'NOT_ANSWERABLE' | 'STALE_VERSION';
+  public readonly reason: AllocationDecisionConflictReason;
   public readonly currentStatus: AllocationDecisionStatus;
   public readonly currentVersion: number;
 
   public constructor(
-    reason: 'ALREADY_ANSWERED' | 'NOT_ANSWERABLE' | 'STALE_VERSION',
+    reason: AllocationDecisionConflictReason,
     currentStatus: AllocationDecisionStatus,
     currentVersion: number,
   ) {
@@ -278,6 +311,34 @@ export interface AllocationDecisionSourceRecord {
   readonly priorityOfferId: string | null;
 }
 
+export interface AllocationDecisionActionableLineRecord {
+  readonly productId: string;
+  readonly grantedQuantity: number;
+  readonly revokedQuantity: number;
+  readonly actionableQuantity: number;
+}
+
+export interface AllocationDecisionRevocationRecord {
+  readonly allocationLineId: string;
+  readonly productId: string;
+  readonly quantity: number;
+  readonly kind: 'wait_ticket_cancelled' | 'waitlisted';
+  readonly waitTicketId: string | null;
+  readonly waitTicketCode: string | null;
+  readonly actorName: string | null;
+  readonly actorRole: 'store' | 'wholesale' | 'htkd' | 'admin';
+  readonly createdAt: Date;
+}
+
+export interface AllocationDecisionRequeueRecord {
+  readonly waitTicketId: string;
+  readonly waitTicketCode: string;
+  readonly productId: string;
+  readonly quantity: number;
+  readonly mode: 'RESTORE_SOURCE' | 'ADD_DEMAND';
+  readonly createdTicket: boolean;
+}
+
 export interface AllocationDecisionRecord {
   readonly id: string;
   readonly allocationRunId: string;
@@ -289,6 +350,8 @@ export interface AllocationDecisionRecord {
   readonly status: AllocationDecisionDatabaseStatus;
   readonly version: number;
   readonly grantedQuantity: number;
+  /** Granted bags taken out since publication (cancellations or the move to waiting). */
+  readonly revokedQuantity: number;
   readonly origin: 'allocation_run' | 'legacy_backfill';
   readonly respondedAt: Date | null;
   readonly respondedByUserId: string | null;
@@ -303,6 +366,9 @@ export interface AllocationDecisionRecord {
   /** Goods of this result given back to the warehouse by the store's rejection. */
   readonly releasedQuantity: number;
   readonly shipment: AllocationDecisionShipmentRecord | null;
+  readonly actionableLines: readonly AllocationDecisionActionableLineRecord[];
+  readonly revocations: readonly AllocationDecisionRevocationRecord[];
+  readonly requeued: readonly AllocationDecisionRequeueRecord[];
 }
 
 export interface AllocationDecisionDetailRecord extends AllocationDecisionRecord {
@@ -523,9 +589,10 @@ async function assembleDecisionRecords(
         Number,
       ),
       released:
-        sql<number>`coalesce(sum(${reservations.quantity}) filter (where ${reservations.status} = 'released' and ${reservations.releaseReason} = ${ALLOCATION_RESULT_REJECTED_RELEASE_REASON}), 0)`.mapWith(
-          Number,
-        ),
+        sql<number>`coalesce(sum(${reservations.quantity}) filter (where ${reservations.status} = 'released' and ${reservations.releaseReason} in (${sql.join(
+          RETURNED_RELEASE_REASONS.map((reason) => sql`${reason}`),
+          sql`, `,
+        )})), 0)`.mapWith(Number),
     })
     .from(reservations)
     .innerJoin(allocationLines, eq(allocationLines.id, reservations.allocationLineId))
@@ -613,9 +680,60 @@ async function assembleDecisionRecords(
           )
           .orderBy(asc(reservations.productId), asc(reservations.createdAt), asc(reservations.id));
 
+  const decisionIds = headers.map((header) => header.decision.id);
+  const revocationRows = await reader
+    .select({
+      decisionId: allocationLineDispositions.allocationDecisionId,
+      allocationLineId: allocationLineDispositions.allocationLineId,
+      productId: allocationLineDispositions.productId,
+      quantity: allocationLineDispositions.quantity,
+      kind: allocationLineDispositions.kind,
+      waitTicketId: allocationLineDispositions.waitTicketId,
+      waitTicketCode: waitTickets.code,
+      actorName: users.displayName,
+      actorRole: allocationLineDispositions.actorRole,
+      createdAt: allocationLineDispositions.createdAt,
+    })
+    .from(allocationLineDispositions)
+    .leftJoin(waitTickets, eq(waitTickets.id, allocationLineDispositions.waitTicketId))
+    .leftJoin(users, eq(users.id, allocationLineDispositions.actorUserId))
+    .where(inArray(allocationLineDispositions.allocationDecisionId, decisionIds))
+    .orderBy(
+      asc(allocationLineDispositions.createdAt),
+      asc(allocationLineDispositions.productId),
+      asc(allocationLineDispositions.id),
+    );
+  const requeueRows = await reader
+    .select({
+      decisionId: waitTicketSources.allocationDecisionId,
+      waitTicketId: waitTicketSources.waitTicketId,
+      waitTicketCode: waitTickets.code,
+      productId: waitTickets.productId,
+      kind: waitTicketSources.kind,
+      quantity: sql<number>`sum(${waitTicketSources.quantity})`.mapWith(Number),
+      createdTicket: sql<boolean>`bool_or(${waitTickets.createdAt} = ${waitTicketSources.createdAt} and ${waitTicketSources.kind} = 'result_waitlisted')`,
+    })
+    .from(waitTicketSources)
+    .innerJoin(waitTickets, eq(waitTickets.id, waitTicketSources.waitTicketId))
+    .where(inArray(waitTicketSources.allocationDecisionId, decisionIds))
+    .groupBy(
+      waitTicketSources.allocationDecisionId,
+      waitTicketSources.waitTicketId,
+      waitTickets.code,
+      waitTickets.productId,
+      waitTicketSources.kind,
+    )
+    .orderBy(asc(waitTickets.productId), asc(waitTicketSources.kind));
+
   return headers.map((header) => {
     const { decision } = header;
     const key = pairKey(decision.allocationRunId, decision.storeId);
+    const lines = lineRows
+      .filter((row) => pairKey(row.allocationRunId, row.storeId) === key)
+      .map(({ allocationRunId: _run, storeId: _store, ...line }) => line);
+    const revocations = revocationRows
+      .filter((row) => row.decisionId === decision.id)
+      .map(({ decisionId: _decision, ...row }) => row);
     const shipment =
       shipmentRows.find(
         (row) => row.allocationRunId !== null && pairKey(row.allocationRunId, row.storeId) === key,
@@ -634,6 +752,7 @@ async function assembleDecisionRecords(
       status: decision.status,
       version: decision.version,
       grantedQuantity: decision.grantedQuantity,
+      revokedQuantity: decision.revokedQuantity,
       origin: decision.origin === 'legacy_backfill' ? 'legacy_backfill' : 'allocation_run',
       respondedAt: decision.respondedAt,
       respondedByUserId: decision.respondedByUserId,
@@ -641,9 +760,29 @@ async function assembleDecisionRecords(
       responseReason: decision.responseReason,
       createdAt: decision.createdAt,
       updatedAt: decision.updatedAt,
-      lines: lineRows
-        .filter((row) => pairKey(row.allocationRunId, row.storeId) === key)
-        .map(({ allocationRunId: _run, storeId: _store, ...line }) => line),
+      lines,
+      actionableLines: lines.map((line) => {
+        const revoked = revocations
+          .filter((row) => row.productId === line.productId)
+          .reduce((total, row) => total + row.quantity, 0);
+        return {
+          productId: line.productId,
+          grantedQuantity: line.allocatedQuantity,
+          revokedQuantity: revoked,
+          actionableQuantity: Math.max(0, line.allocatedQuantity - revoked),
+        };
+      }),
+      revocations,
+      requeued: requeueRows
+        .filter((row) => row.decisionId === decision.id)
+        .map((row) => ({
+          waitTicketId: row.waitTicketId,
+          waitTicketCode: row.waitTicketCode,
+          productId: row.productId,
+          quantity: row.quantity,
+          mode: row.kind === 'result_restored' ? ('RESTORE_SOURCE' as const) : ('ADD_DEMAND' as const),
+          createdTicket: row.createdTicket === true,
+        })),
       carried: shipment
         ? carriedRows
             .filter((row) => row.outboundRequestId === shipment.outboundRequestId)
@@ -672,7 +811,8 @@ async function assembleDecisionRecords(
 
 export interface RespondAllocationDecisionInput {
   readonly decisionId: string;
-  readonly action: AllocationDecisionAction;
+  /** REJECT is accepted only to be refused with AllocationDecisionActionRetiredError. */
+  readonly action: AllocationDecisionAction | 'REJECT';
   readonly expectedVersion: number;
   readonly reason?: string | null;
   readonly actorUserId: string;
@@ -686,12 +826,14 @@ export interface RespondAllocationDecisionResult {
   readonly decisionId: string;
   readonly status: AllocationDecisionDatabaseStatus;
   readonly version: number;
+  /** Bags given back to the warehouse by the move to waiting (ΔR = −q, on-hand unchanged). */
   readonly releasedQuantity: number;
   readonly keptHeldQuantity: number;
   readonly dispatchedOutboundRequestId: string | null;
   readonly cancelledOutboundRequestId: string | null;
   readonly reshareOrderId: string | null;
   readonly reshareOrderCode: string | null;
+  readonly requeued: readonly RequeuedTicket[];
 }
 
 /**
@@ -702,7 +844,6 @@ export async function authorizeAllocationDecisionResponder(
   reader: Reader,
   decisionId: string,
   actorUserId: string,
-  action: AllocationDecisionAction,
 ): Promise<ResponderRole> {
   const [decision] = await reader
     .select({ storeId: allocationResultDecisions.storeId })
@@ -710,33 +851,25 @@ export async function authorizeAllocationDecisionResponder(
     .where(eq(allocationResultDecisions.id, decisionId))
     .limit(1);
   if (!decision) throw new AllocationDecisionNotFoundError();
-  return assertResponderMayAnswer(reader, actorUserId, decision.storeId, action);
+  return assertResponderMayAnswer(reader, actorUserId, decision.storeId);
 }
 
 export async function respondAllocationDecision(
   database: Database,
   input: RespondAllocationDecisionInput,
 ): Promise<IdempotencyResult<RespondAllocationDecisionResult>> {
-  if (input.action !== 'ACCEPT' && input.action !== 'REJECT') {
-    throw new AllocationDecisionValidationError('action must be ACCEPT or REJECT.');
+  if (input.action === 'REJECT') throw new AllocationDecisionActionRetiredError();
+  if (input.action !== 'ACCEPT' && input.action !== 'WAITLIST') {
+    throw new AllocationDecisionValidationError('action must be ACCEPT or WAITLIST.');
   }
   if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1) {
     throw new AllocationDecisionValidationError('expectedVersion must be a positive integer.');
   }
-  let reason: string | null;
-  try {
-    reason = normalizeAllocationDecisionReason(input.action, input.reason);
-  } catch (error: unknown) {
-    throw new AllocationDecisionValidationError(
-      error instanceof Error ? error.message : 'Invalid reason.',
-    );
+  if ((input.reason?.trim() ?? '').length > 0) {
+    throw new AllocationDecisionValidationError('Neither answer carries a reason.');
   }
-  await authorizeAllocationDecisionResponder(
-    database,
-    input.decisionId,
-    input.actorUserId,
-    input.action,
-  );
+  const action = input.action;
+  await authorizeAllocationDecisionResponder(database, input.decisionId, input.actorUserId);
   return withIdempotency(
     database,
     {
@@ -746,11 +879,14 @@ export async function respondAllocationDecision(
       requestHash: input.requestHash,
     },
     async (tx) => {
-      const result = await respondAllocationDecisionInTransaction(tx, { ...input, reason });
+      const result = await respondAllocationDecisionInTransaction(tx, { ...input, action });
       return {
         value: result,
         responseStatus: 200,
-        responseBody: { ...result },
+        responseBody: {
+          ...result,
+          requeued: result.requeued.map((row) => ({ ...row })),
+        },
         resourceType: 'allocation_result_decision',
         resourceId: result.decisionId,
       };
@@ -758,19 +894,14 @@ export async function respondAllocationDecision(
     // Re-checked in the transaction before an exact replay too: a locked account, a revoked
     // HTKD assignment or a deactivated store never gets a stored answer back.
     async (tx) => {
-      await authorizeAllocationDecisionResponder(
-        tx,
-        input.decisionId,
-        input.actorUserId,
-        input.action,
-      );
+      await authorizeAllocationDecisionResponder(tx, input.decisionId, input.actorUserId);
     },
   );
 }
 
 async function respondAllocationDecisionInTransaction(
   tx: Transaction,
-  input: RespondAllocationDecisionInput & { readonly reason: string | null },
+  input: RespondAllocationDecisionInput & { readonly action: AllocationDecisionAction },
 ): Promise<RespondAllocationDecisionResult> {
   return withAdvisoryLock(tx, STOCK_JOBS_LOCK.namespace, STOCK_JOBS_LOCK.key, async () => {
     const [located] = await tx
@@ -782,12 +913,7 @@ async function respondAllocationDecisionInTransaction(
       .where(eq(allocationResultDecisions.id, input.decisionId))
       .limit(1);
     if (!located) throw new AllocationDecisionNotFoundError();
-    const actorRole = await assertResponderMayAnswer(
-      tx,
-      input.actorUserId,
-      located.storeId,
-      input.action,
-    );
+    const actorRole = await assertResponderMayAnswer(tx, input.actorUserId, located.storeId);
 
     const [shipmentHeader] = await tx
       .select({ id: outboundRequests.id })
@@ -811,7 +937,7 @@ async function respondAllocationDecisionInTransaction(
 
 async function respondLocked(
   tx: Transaction,
-  input: RespondAllocationDecisionInput & { readonly reason: string | null },
+  input: RespondAllocationDecisionInput & { readonly action: AllocationDecisionAction },
   actorRole: ResponderRole,
   shipmentId: string | null,
 ): Promise<RespondAllocationDecisionResult> {
@@ -827,6 +953,7 @@ async function respondLocked(
     version: decision.version,
     expectedVersion: input.expectedVersion,
     action: input.action,
+    actionableQuantity: decision.grantedQuantity - decision.revokedQuantity,
   });
   if (!transition.ok) {
     throw new AllocationDecisionConflictError(
@@ -850,14 +977,50 @@ async function respondLocked(
     );
   }
 
+  if (transition.next === 'WAITLISTED') {
+    // "Chuyển phiếu chờ": every actionable hold of the result is released (ΔR = −q, on-hand
+    // unchanged) and its demand requeued, all in this transaction. Goods carried from earlier
+    // results stay held; the run's own unallocated remainder is already waiting and is not
+    // added again.
+    const holds = await lockActionableHolds(tx, decision);
+    const revoked = await revokeResultHoldsInTransaction(tx, {
+      decision,
+      shipment: shipment ?? null,
+      holds,
+      kind: 'waitlisted',
+      actor: { id: input.actorUserId, role: actorRole },
+      requestId: input.requestId ?? null,
+      occurredAt: respondedAt,
+    });
+    const requeued = await requeueWaitlistedDispositionsInTransaction(tx, {
+      decision: revoked.decision,
+      dispositions: revoked.dispositions,
+      actorUserId: input.actorUserId,
+      requestId: input.requestId ?? null,
+      occurredAt: respondedAt,
+    });
+    return {
+      decisionId: revoked.decision.id,
+      status: revoked.decision.status,
+      version: revoked.decision.version,
+      releasedQuantity: revoked.releasedQuantity,
+      keptHeldQuantity: revoked.keptHeldQuantity,
+      dispatchedOutboundRequestId: null,
+      cancelledOutboundRequestId: revoked.cancelledOutboundRequestId,
+      reshareOrderId: null,
+      reshareOrderCode: null,
+      requeued,
+    };
+  }
+
   const [updated] = await tx
     .update(allocationResultDecisions)
     .set({
-      status: transition.next === 'ACCEPTED' ? 'accepted' : 'rejected',
+      status: 'accepted',
       version: decision.version + 1,
       respondedAt,
       respondedByUserId: input.actorUserId,
-      responseReason: input.reason,
+      responseReason: null,
       updatedAt: respondedAt,
     })
     .where(
@@ -875,7 +1038,36 @@ async function respondLocked(
       decision.version,
     );
   }
-  const auditBase = {
+  // The acceptance creates the result's RE order and issues its actionable goods (granted minus
+  // revoked) out of the central warehouse in this transaction (on-hand and reserved both drop by
+  // the bags). The store's stock is untouched until its receipt is finalized.
+  // docs/reshare-auto-orders.md
+  const reshareOrder = await issueReshareOrderInTransaction(tx, {
+    decision: updated,
+    actorUserId: input.actorUserId,
+    actorRole,
+    requestId: input.requestId ?? null,
+    occurredAt: respondedAt,
+  });
+  let dispatchedOutboundRequestId: string | null = null;
+  if (shipment) {
+    // The acceptance is also the release trigger of the result's shipment (read FOR UPDATE above,
+    // after any partial cancellation that shrank it).
+    const dispatched = await dispatchWarehouseOutboundInTransaction(tx, {
+      outboundRequestId: shipment.id,
+      expectedVersion: shipment.version,
+      dispatcher: {
+        kind: 'allocation-decision',
+        decisionId: decision.id,
+        acceptedByUserId: input.actorUserId,
+        acceptedByRole: actorRole,
+      },
+      requestId: input.requestId ?? null,
+      dispatchedAt: respondedAt,
+    });
+    dispatchedOutboundRequestId = dispatched.id;
+  }
+  await tx.insert(auditLogs).values({
     requestId: input.requestId ?? null,
     actorUserId: input.actorUserId,
     actorRole,
@@ -884,346 +1076,47 @@ async function respondLocked(
     entityId: decision.id,
     before: decisionAuditSnapshot(decision),
     createdAt: respondedAt,
-  } as const;
-
-  if (transition.next === 'ACCEPTED') {
-    // The acceptance creates the result's RE order and issues its goods out of the central
-    // warehouse (on-hand and reserved both drop by the granted bags) in this transaction. The
-    // store's stock is untouched until its receipt is finalized. docs/reshare-auto-orders.md
-    const reshareOrder = await issueReshareOrderInTransaction(tx, {
-      decision: updated,
-      actorUserId: input.actorUserId,
-      actorRole,
-      requestId: input.requestId ?? null,
-      occurredAt: respondedAt,
-    });
-    let dispatchedOutboundRequestId: string | null = null;
-    if (shipment) {
-      // The acceptance is also the release trigger of the result's shipment.
-      const dispatched = await dispatchWarehouseOutboundInTransaction(tx, {
-        outboundRequestId: shipment.id,
-        expectedVersion: shipment.version,
-        dispatcher: {
-          kind: 'allocation-decision',
-          decisionId: decision.id,
-          acceptedByUserId: input.actorUserId,
-          acceptedByRole: actorRole,
-        },
-        requestId: input.requestId ?? null,
-        dispatchedAt: respondedAt,
-      });
-      dispatchedOutboundRequestId = dispatched.id;
-    }
-    await tx.insert(auditLogs).values({
-      ...auditBase,
-      action: 'ALLOCATION_RESULT_ACCEPTED',
-      after: decisionAuditSnapshot(updated),
-      metadata: {
-        allocationRunId: decision.allocationRunId,
-        orderSessionId: decision.orderSessionId,
-        grantedQuantity: decision.grantedQuantity,
-        dispatchedOutboundRequestId,
-        heldUntilNextOrdinaryShipment: shipment === undefined,
-        reshareOrderId: reshareOrder.id,
-        reshareOrderCode: reshareOrder.code,
-      },
-    });
-    return {
-      decisionId: updated.id,
-      status: updated.status,
-      version: updated.version,
-      releasedQuantity: 0,
-      keptHeldQuantity: 0,
-      dispatchedOutboundRequestId,
-      cancelledOutboundRequestId: null,
-      reshareOrderId: reshareOrder.id,
-      reshareOrderCode: reshareOrder.code,
-    };
-  }
-
-  // REJECT -------------------------------------------------------------------------------
-  const shipmentLines = shipment
-    ? await tx
-        .select()
-        .from(outboundRequestLines)
-        .where(eq(outboundRequestLines.outboundRequestId, shipment.id))
-        .orderBy(asc(outboundRequestLines.productId), asc(outboundRequestLines.id))
-        .for('update')
-    : [];
-  const shipmentLineIds = new Set(shipmentLines.map((line) => line.id));
-  const sourceConditions: SQL[] = [
-    and(
-      eq(allocationLines.allocationRunId, decision.allocationRunId),
-      eq(allocationLines.storeId, decision.storeId),
-    )!,
-  ];
-  if (shipmentLines.length > 0) {
-    sourceConditions.push(inArray(reservations.outboundRequestLineId, [...shipmentLineIds]));
-  }
-  const activeSources = await tx
-    .select({
-      reservation: reservations,
-      sourceAllocationRunId: allocationLines.allocationRunId,
-    })
-    .from(reservations)
-    .innerJoin(allocationLines, eq(allocationLines.id, reservations.allocationLineId))
-    .where(
-      and(
-        inArray(reservations.status, [...OWED_RESERVATION_STATUSES]),
-        isNull(reservations.deletedAt),
-        or(...sourceConditions),
-      ),
-    )
-    .orderBy(asc(reservations.id))
-    .for('update', { of: reservations });
-  const { release, keepHeld } = partitionRejectedShipmentSources(
-    activeSources.map((row) => ({ ...row, storeId: row.reservation.storeId })),
-    { allocationRunId: decision.allocationRunId, storeId: decision.storeId },
-  );
-  for (const source of release) {
-    if (source.reservation.status !== 'active') {
-      throw new AllocationDecisionIntegrityError(
-        `Reservation ${source.reservation.id} of an unanswered result is already ${source.reservation.status}.`,
-      );
-    }
-    const link = source.reservation.outboundRequestLineId;
-    if (link !== null && !shipmentLineIds.has(link)) {
-      throw new AllocationDecisionIntegrityError(
-        `Reservation ${source.reservation.id} of an unanswered result rides another shipment.`,
-      );
-    }
-  }
-  const releasedQuantity = release.reduce((total, row) => total + row.reservation.quantity, 0);
-  if (releasedQuantity !== decision.grantedQuantity) {
-    throw new AllocationDecisionIntegrityError(
-      `Result ${decision.id} reserves ${releasedQuantity} of its ${decision.grantedQuantity} granted goods.`,
-    );
-  }
-  if (release.length > 0) {
-    const releasedRows = await tx
-      .update(reservations)
-      .set({
-        status: 'released',
-        releasedAt: respondedAt,
-        releaseReason: ALLOCATION_RESULT_REJECTED_RELEASE_REASON,
-        updatedAt: respondedAt,
-      })
-      .where(
-        and(
-          inArray(
-            reservations.id,
-            release.map((row) => row.reservation.id),
-          ),
-          eq(reservations.status, 'active'),
-        ),
-      )
-      .returning({ id: reservations.id });
-    if (releasedRows.length !== release.length) {
-      throw new AllocationDecisionIntegrityError('Reservations changed during the rejection.');
-    }
-  }
-  const releasedByProduct = new Map<string, number>();
-  for (const row of release) {
-    releasedByProduct.set(
-      row.reservation.productId,
-      (releasedByProduct.get(row.reservation.productId) ?? 0) + row.reservation.quantity,
-    );
-  }
-  for (const [productId, quantity] of [...releasedByProduct].sort(([a], [b]) =>
-    a.localeCompare(b),
-  )) {
-    // The goods never left the warehouse (dispatch moves no stock), so only the reservation
-    // is given back: on-hand is unchanged and the goods are available again.
-    await applyWarehouseMovement(tx, {
-      productId,
-      eventType: 'reservation_release',
-      onHandDelta: 0,
-      reservedDelta: -quantity,
-      sourceType: 'allocation_result_decision',
-      sourceId: decision.id,
-      eventSequence: 1,
-      reason: 'Cửa hàng từ chối nhận kết quả phân bổ',
-      metadata: {
-        allocationRunId: decision.allocationRunId,
-        orderSessionId: decision.orderSessionId,
-        storeId: decision.storeId,
-      },
-      actorUserId: input.actorUserId,
-      occurredAt: respondedAt,
-    });
-  }
-
-  // Goods from earlier accepted results that rode this shipment stay held for the store. The
-  // old reservation row keeps its link to the cancelled shipment (history); a new active row
-  // with the same source and quantity is the hold that the next ordinary shipment picks up.
-  // The total reserved quantity does not change, so there is no ledger movement.
-  const detached: JsonObject[] = [];
-  for (const row of keepHeld) {
-    const old = row.reservation;
-    if (old.status === 'issued') {
-      // Issued goods keep their reservation row: it is the RE order's source identity. Only the
-      // link to the cancelled shipment is cleared so the next ordinary shipment carries them.
-      const [unlinked] = await tx
-        .update(reservations)
-        .set({ outboundRequestLineId: null, updatedAt: respondedAt })
-        .where(and(eq(reservations.id, old.id), eq(reservations.status, 'issued')))
-        .returning({ id: reservations.id });
-      if (!unlinked) throw new AllocationDecisionIntegrityError('A carried issued hold changed.');
-      detached.push({
-        previousReservationId: old.id,
-        reservationId: old.id,
-        allocationLineId: old.allocationLineId,
-        allocationRunId: row.sourceAllocationRunId,
-        productId: old.productId,
-        quantity: old.quantity,
-        fromOutboundRequestLineId: old.outboundRequestLineId,
-        issued: true,
-      });
-      continue;
-    }
-    const [cancelled] = await tx
-      .update(reservations)
-      .set({
-        status: 'cancelled',
-        releasedAt: respondedAt,
-        releaseReason: ALLOCATION_RESULT_DETACHED_REASON,
-        updatedAt: respondedAt,
-      })
-      .where(and(eq(reservations.id, old.id), eq(reservations.status, 'active')))
-      .returning({ id: reservations.id });
-    if (!cancelled) throw new AllocationDecisionIntegrityError('A carried hold changed.');
-    const [replacement] = await tx
-      .insert(reservations)
-      .values({
-        productId: old.productId,
-        storeId: old.storeId,
-        allocationLineId: old.allocationLineId,
-        outboundRequestLineId: null,
-        quantity: old.quantity,
-        status: 'active',
-        createdByUserId: old.createdByUserId,
-        createdAt: old.createdAt,
-        updatedAt: respondedAt,
-      })
-      .returning({ id: reservations.id });
-    detached.push({
-      previousReservationId: old.id,
-      reservationId: replacement!.id,
-      allocationLineId: old.allocationLineId,
-      allocationRunId: row.sourceAllocationRunId,
-      productId: old.productId,
-      quantity: old.quantity,
-      fromOutboundRequestLineId: old.outboundRequestLineId,
-    });
-  }
-  const keptHeldQuantity = keepHeld.reduce((total, row) => total + row.reservation.quantity, 0);
-
-  let cancelledOutboundRequestId: string | null = null;
-  if (shipment) {
-    // The representative pointer is cleared so a later shipment can name the carried source;
-    // the full provenance stays on the reservation rows and in this audit.
-    await tx
-      .update(outboundRequestLines)
-      .set({ allocationLineId: null, updatedAt: respondedAt })
-      .where(eq(outboundRequestLines.outboundRequestId, shipment.id));
-    const [cancelledShipment] = await tx
-      .update(outboundRequests)
-      .set({ status: 'cancelled', version: shipment.version + 1, updatedAt: respondedAt })
-      .where(
-        and(
-          eq(outboundRequests.id, shipment.id),
-          eq(outboundRequests.status, 'reserved'),
-          eq(outboundRequests.version, shipment.version),
-        ),
-      )
-      .returning({ id: outboundRequests.id });
-    if (!cancelledShipment) {
-      throw new AllocationDecisionIntegrityError('The shipment changed during the rejection.');
-    }
-    cancelledOutboundRequestId = shipment.id;
-    await tx.insert(auditLogs).values({
-      requestId: input.requestId ?? null,
-      actorUserId: input.actorUserId,
-      actorRole,
-      actorStoreId: shipment.storeId,
-      action: 'OUTBOUND_REQUEST_CANCELLED',
-      entityType: 'outbound_request',
-      entityId: shipment.id,
-      before: {
-        requestNumber: shipment.requestNumber,
-        status: shipment.status,
-        version: shipment.version,
-        lines: shipmentLines.map((line) => ({
-          id: line.id,
-          productId: line.productId,
-          allocationLineId: line.allocationLineId,
-          approvedQuantity: line.approvedQuantity,
-          reservedQuantity: line.reservedQuantity,
-        })),
-        sources: activeSources.map((row) => ({
-          reservationId: row.reservation.id,
-          allocationLineId: row.reservation.allocationLineId,
-          allocationRunId: row.sourceAllocationRunId,
-          outboundRequestLineId: row.reservation.outboundRequestLineId,
-          productId: row.reservation.productId,
-          quantity: row.reservation.quantity,
-        })),
-      },
-      after: { status: 'cancelled', version: shipment.version + 1 },
-      metadata: {
-        trigger: 'allocation-result-rejected',
-        allocationDecisionId: decision.id,
-      },
-      createdAt: respondedAt,
-    });
-  }
-
-  await tx.insert(auditLogs).values({
-    ...auditBase,
-    action: 'ALLOCATION_RESULT_REJECTED',
+    action: 'ALLOCATION_RESULT_ACCEPTED',
     after: decisionAuditSnapshot(updated),
     metadata: {
       allocationRunId: decision.allocationRunId,
       orderSessionId: decision.orderSessionId,
       grantedQuantity: decision.grantedQuantity,
-      releasedQuantity,
-      released: release.map((row) => ({
-        reservationId: row.reservation.id,
-        allocationLineId: row.reservation.allocationLineId,
-        productId: row.reservation.productId,
-        quantity: row.reservation.quantity,
-      })),
-      keptHeldQuantity,
-      keptHeld: detached,
-      cancelledOutboundRequestId,
+      revokedQuantity: decision.revokedQuantity,
+      acceptedQuantity: decision.grantedQuantity - decision.revokedQuantity,
+      dispatchedOutboundRequestId,
+      heldUntilNextOrdinaryShipment: shipment === undefined,
+      reshareOrderId: reshareOrder.id,
+      reshareOrderCode: reshareOrder.code,
     },
   });
   return {
     decisionId: updated.id,
     status: updated.status,
     version: updated.version,
-    releasedQuantity,
-    keptHeldQuantity,
-    dispatchedOutboundRequestId: null,
-    cancelledOutboundRequestId,
-    reshareOrderId: null,
-    reshareOrderCode: null,
+    releasedQuantity: 0,
+    keptHeldQuantity: 0,
+    dispatchedOutboundRequestId,
+    cancelledOutboundRequestId: null,
+    reshareOrderId: reshareOrder.id,
+    reshareOrderCode: reshareOrder.code,
+    requeued: [],
   };
 }
 
 export type ResponderRole = ReshareActorRole;
 
 /**
- * The receiving side of the store answers: a store account for its own store, and the wholesale
- * desk for a wholesale store (the same parties that declare receipts). An HTKD with a live
- * assignment to the active store may accept on its behalf, never reject. Admin reads only.
- * Always read from the database (never a cached principal), inside the command transaction.
+ * The receiving side of the store answers: a store account for its own store, the wholesale desk
+ * for a wholesale store (the same parties that declare receipts), and an HTKD with a live
+ * assignment to the active store, for both answers. Admin reads only. HTKD rights over every
+ * store in "Đơn & tồn Reshare" do not apply here. Always read from the database (never a cached
+ * principal), inside the command transaction.
  */
-async function assertResponderMayAnswer(
+export async function assertResponderMayAnswer(
   reader: Reader,
   userId: string,
   storeId: string,
-  action: AllocationDecisionAction,
 ): Promise<ResponderRole> {
   const [user] = await reader
     .select({ role: users.role, status: users.status, storeId: users.storeId })
@@ -1238,7 +1131,7 @@ async function assertResponderMayAnswer(
   if (!user || user.status !== 'active' || !store) throw new AllocationDecisionForbiddenError();
   if (user.role === 'store' && user.storeId === storeId && store.kind === 'retail') return 'store';
   if (user.role === 'wholesale' && store.kind === 'wholesale') return 'wholesale';
-  if (user.role === 'htkd' && action === 'ACCEPT') {
+  if (user.role === 'htkd') {
     const [assignment] = await reader
       .select({ id: htkdAssignments.id })
       .from(htkdAssignments)
@@ -1260,6 +1153,7 @@ function decisionAuditSnapshot(row: typeof allocationResultDecisions.$inferSelec
     status: row.status,
     version: row.version,
     grantedQuantity: row.grantedQuantity,
+    revokedQuantity: row.revokedQuantity,
     respondedAt: row.respondedAt?.toISOString() ?? null,
     respondedByUserId: row.respondedByUserId,
     responseReason: row.responseReason,

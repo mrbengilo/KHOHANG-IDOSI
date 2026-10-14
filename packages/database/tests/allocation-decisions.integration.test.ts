@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { assertShipmentMayBeReceived } from '../src/allocation-decision-gate.js';
 
 import {
+  AllocationDecisionActionRetiredError,
   AllocationDecisionConflictError,
   AllocationDecisionForbiddenError,
   allocationLines,
@@ -37,6 +38,7 @@ import {
   storeReceipts,
   stores,
   users,
+  waitTickets,
   warehouseBalances,
   warehouseLedgerEntries,
   warehouseShortageChecks,
@@ -133,7 +135,7 @@ describePostgres('store decisions on published allocation results', () => {
     expect(detail.sources).toHaveLength(2);
   });
 
-  it('conserves stock: rejecting A releases exactly its 10, B keeps its 7, on-hand untouched', async () => {
+  it('conserves stock: moving A to waiting releases exactly its 10, B keeps its 7, on-hand untouched', async () => {
     const product = await createProduct();
     await openingStock(product, 100);
     const a = await publishResult({
@@ -146,17 +148,16 @@ describePostgres('store decisions on published allocation results', () => {
     });
     expect(await balanceOf(product)).toEqual({ onHand: 100, reserved: 17 });
 
-    const rejected = await respond(a.decisionId, fx.storeA.userId, 'REJECT', {
-      reason: '  Cửa hàng đủ hàng  ',
-    });
+    const rejected = await respond(a.decisionId, fx.storeA.userId, 'WAITLIST');
     expect(rejected).toMatchObject({
       replayed: false,
       value: {
-        status: 'rejected',
+        status: 'waitlisted',
         version: 2,
         releasedQuantity: 10,
         keptHeldQuantity: 0,
         cancelledOutboundRequestId: a.outboundId,
+        requeued: [{ productId: product, quantity: 10, mode: 'ADD_DEMAND', createdTicket: true }],
       },
     });
     expect(await balanceOf(product)).toEqual({ onHand: 100, reserved: 7 });
@@ -166,26 +167,30 @@ describePostgres('store decisions on published allocation results', () => {
       .where(
         and(
           eq(warehouseLedgerEntries.productId, product),
-          eq(warehouseLedgerEntries.sourceId, a.decisionId),
+          eq(warehouseLedgerEntries.sourceType, 'allocation_line_disposition'),
         ),
       );
     expect(ledger).toEqual([
-      expect.objectContaining({
-        eventType: 'reservation_release',
-        onHandDelta: 0,
-        reservedDelta: -10,
-        sourceType: 'allocation_result_decision',
-      }),
+      expect.objectContaining({ eventType: 'reservation_release', onHandDelta: 0, reservedDelta: -10 }),
+    ]);
+    // The 10 bags wait again for store A on one active ticket, with the result as its source.
+    const tickets = await db
+      .select()
+      .from(waitTickets)
+      .where(and(eq(waitTickets.storeId, fx.storeA.id), eq(waitTickets.productId, product)));
+    expect(tickets).toEqual([
+      expect.objectContaining({ status: 'active', originalQuantity: 10, remainingQuantity: 10 }),
     ]);
     await expectBalanceMatchesLedger(product);
     await expectReservedMatchesActiveReservations(product);
 
     const detail = await getAllocationDecision(db, a.decisionId);
     expect(detail).toMatchObject({
-      status: 'rejected',
-      responseReason: 'Cửa hàng đủ hàng',
+      status: 'waitlisted',
+      responseReason: null,
       respondedByUserId: fx.storeA.userId,
       releasedQuantity: 10,
+      revokedQuantity: 10,
       heldQuantity: 0,
       shipment: { status: 'cancelled' },
     });
@@ -193,7 +198,7 @@ describePostgres('store decisions on published allocation results', () => {
     expect(detail.lines).toEqual([
       expect.objectContaining({ productId: product, allocatedQuantity: 10 }),
     ]);
-    // Rejecting is not a short receipt: no receipt, no shortage check, no store stock.
+    // Moving to waiting is not a short receipt: no receipt, no shortage check, no store stock.
     expect(
       await db
         .select()
@@ -213,7 +218,7 @@ describePostgres('store decisions on published allocation results', () => {
       (await listStoreReceiptSources(db, { storeId: fx.storeA.id })).data.map((row) => row.id),
     ).not.toContain(a.outboundId);
     const actions = await auditActions(a.decisionId);
-    expect(actions).toEqual(['ALLOCATION_RESULT_PUBLISHED', 'ALLOCATION_RESULT_REJECTED']);
+    expect(actions).toEqual(['ALLOCATION_RESULT_PUBLISHED', 'ALLOCATION_RESULT_WAITLISTED']);
     expect(await auditActions(a.outboundId!)).toContain('OUTBOUND_REQUEST_CANCELLED');
 
     // B accepts: its RE order issues the 7 bags out of on-hand and out of reserved at once;
@@ -247,15 +252,28 @@ describePostgres('store decisions on published allocation results', () => {
       grants: [{ productId: product, quantity: 4 }],
     });
     const key = randomUUID();
-    const first = await respond(result.decisionId, fx.storeA.userId, 'REJECT', { key });
-    const replay = await respond(result.decisionId, fx.storeA.userId, 'REJECT', { key });
+    const first = await respond(result.decisionId, fx.storeA.userId, 'WAITLIST', { key });
+    const replay = await respond(result.decisionId, fx.storeA.userId, 'WAITLIST', { key });
     expect(first.replayed).toBe(false);
     expect(replay).toMatchObject({ replayed: true, resourceId: result.decisionId });
     expect(await balanceOf(product)).toEqual({ onHand: 20, reserved: 0 });
     expect(await auditActions(result.decisionId)).toEqual([
       'ALLOCATION_RESULT_PUBLISHED',
-      'ALLOCATION_RESULT_REJECTED',
+      'ALLOCATION_RESULT_WAITLISTED',
     ]);
+    // The demand was queued once, not twice.
+    expect(
+      await db
+        .select({ remaining: waitTickets.remainingQuantity })
+        .from(waitTickets)
+        .where(
+          and(
+            eq(waitTickets.storeId, fx.storeA.id),
+            eq(waitTickets.productId, product),
+            eq(waitTickets.status, 'active'),
+          ),
+        ),
+    ).toEqual([{ remaining: 4 }]);
     await expect(
       respond(result.decisionId, fx.storeA.userId, 'ACCEPT', { key }),
     ).rejects.toBeInstanceOf(IdempotencyConflictError);
@@ -266,13 +284,17 @@ describePostgres('store decisions on published allocation results', () => {
     expect(conflict).toBeInstanceOf(AllocationDecisionConflictError);
     expect(conflict).toMatchObject({
       reason: 'ALREADY_ANSWERED',
-      currentStatus: 'REJECTED',
+      currentStatus: 'WAITLISTED',
       currentVersion: 2,
     });
 
+    // A different product: the store now waits for `product`, so a new order item for it is
+    // refused by the one-active-wait rule.
+    const otherProduct = await createProduct();
+    await openingStock(otherProduct, 5);
     const other = await publishResult({
       storeId: fx.storeA.id,
-      grants: [{ productId: product, quantity: 1 }],
+      grants: [{ productId: otherProduct, quantity: 1 }],
     });
     await expect(
       respond(other.decisionId, fx.storeA.userId, 'ACCEPT', { expectedVersion: 7 }),
@@ -289,7 +311,7 @@ describePostgres('store decisions on published allocation results', () => {
       });
       const outcomes = await Promise.allSettled([
         respond(result.decisionId, fx.storeA.userId, 'ACCEPT'),
-        respond(result.decisionId, fx.storeA.userId, 'REJECT'),
+        respond(result.decisionId, fx.storeA.userId, 'WAITLIST'),
       ]);
       const fulfilled = outcomes.filter((outcome) => outcome.status === 'fulfilled');
       const rejected = outcomes.filter((outcome) => outcome.status === 'rejected');
@@ -310,7 +332,7 @@ describePostgres('store decisions on published allocation results', () => {
         expect(await balanceOf(product)).toEqual({ onHand: 25, reserved: 0 });
         expect(shipment!.status).toBe('dispatched');
       } else {
-        expect(decision!.status).toBe('rejected');
+        expect(decision!.status).toBe('waitlisted');
         expect(await balanceOf(product)).toEqual({ onHand: 30, reserved: 0 });
         expect(shipment!.status).toBe('cancelled');
       }
@@ -319,7 +341,7 @@ describePostgres('store decisions on published allocation results', () => {
       await expectReservedMatchesActiveReservations(product);
     }
 
-    // Two rejections with different keys release the goods once.
+    // Two moves to waiting with different keys release the goods and queue the demand once.
     const product = await createProduct();
     await openingStock(product, 9);
     const result = await publishResult({
@@ -327,11 +349,17 @@ describePostgres('store decisions on published allocation results', () => {
       grants: [{ productId: product, quantity: 9 }],
     });
     const twice = await Promise.allSettled([
-      respond(result.decisionId, fx.storeA.userId, 'REJECT'),
-      respond(result.decisionId, fx.storeA.userId, 'REJECT'),
+      respond(result.decisionId, fx.storeA.userId, 'WAITLIST'),
+      respond(result.decisionId, fx.storeA.userId, 'WAITLIST'),
     ]);
     expect(twice.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
     expect(await balanceOf(product)).toEqual({ onHand: 9, reserved: 0 });
+    expect(
+      await db
+        .select({ remaining: waitTickets.remainingQuantity })
+        .from(waitTickets)
+        .where(and(eq(waitTickets.productId, product), eq(waitTickets.status, 'active'))),
+    ).toEqual([{ remaining: 9 }]);
     await expectBalanceMatchesLedger(product);
   });
 
@@ -376,7 +404,7 @@ describePostgres('store decisions on published allocation results', () => {
     ).resolves.toMatchObject({ value: { status: 'accepted' } });
   });
 
-  it('keeps carried goods of an accepted earlier result held when the new result is rejected', async () => {
+  it('keeps carried goods of an accepted earlier result held when the new result moves to waiting', async () => {
     const product = await createProduct();
     const otherProduct = await createProduct();
     await openingStock(product, 50);
@@ -415,7 +443,7 @@ describePostgres('store decisions on published allocation results', () => {
     // The earlier 2 bags were issued with its RE order; only the new 3 are still reserved.
     expect(await balanceOf(product)).toEqual({ onHand: 48, reserved: 3 });
 
-    const rejected = await respond(next.decisionId, fx.storeA.userId, 'REJECT');
+    const rejected = await respond(next.decisionId, fx.storeA.userId, 'WAITLIST');
     expect(rejected).toMatchObject({
       value: {
         releasedQuantity: 3,
@@ -454,16 +482,16 @@ describePostgres('store decisions on published allocation results', () => {
       .where(
         and(
           eq(auditLogs.entityId, next.decisionId),
-          eq(auditLogs.action, 'ALLOCATION_RESULT_REJECTED'),
+          eq(auditLogs.action, 'ALLOCATION_RESULT_WAITLISTED'),
         ),
       );
-    expect(audit!.metadata).toMatchObject({ releasedQuantity: 3, keptHeldQuantity: 3 });
+    expect(audit!.metadata).toMatchObject({ revokedNow: 3, keptHeldQuantity: 3 });
     await expectBalanceMatchesLedger(product);
     await expectReservedMatchesActiveReservations(product);
     await expectReservedMatchesActiveReservations(otherProduct);
   });
 
-  it('holds accepted priority-only goods, releases rejected ones, and never answers twice', async () => {
+  it('holds accepted priority-only goods, releases waitlisted ones, and never answers twice', async () => {
     const product = await createProduct();
     await openingStock(product, 10);
     const kept = await publishResult({
@@ -477,12 +505,12 @@ describePostgres('store decisions on published allocation results', () => {
       shipment: false,
     });
     await respond(kept.decisionId, fx.storeA.userId, 'ACCEPT');
-    const rejected = await respond(dropped.decisionId, fx.storeB.userId, 'REJECT');
+    const rejected = await respond(dropped.decisionId, fx.storeB.userId, 'WAITLIST');
     expect(rejected).toMatchObject({
       value: { releasedQuantity: 3, cancelledOutboundRequestId: null },
     });
     // The accepted 2 left with their RE order (no shipment yet: they wait for the next ordinary
-    // order); the rejected 3 went back to availability.
+    // order); the waitlisted 3 went back to availability and wait again for store B.
     expect(await balanceOf(product)).toEqual({ onHand: 8, reserved: 0 });
     expect(await outboundCount(fx.storeA.id, kept.runId)).toBe(0);
   });
@@ -506,9 +534,13 @@ describePostgres('store decisions on published allocation results', () => {
       shipment: false,
       legacy: true,
     });
-    await expect(respond(legacy.decisionId, fx.storeA.userId, 'REJECT')).rejects.toMatchObject({
+    await expect(respond(legacy.decisionId, fx.storeA.userId, 'WAITLIST')).rejects.toMatchObject({
       reason: 'NOT_ANSWERABLE',
     });
+    // The retired rejection is refused before anything is read or written.
+    await expect(respond(legacy.decisionId, fx.storeA.userId, 'REJECT')).rejects.toBeInstanceOf(
+      AllocationDecisionActionRetiredError,
+    );
     // The database itself keeps an answer final and the decision rows undeletable.
     const answered = await publishResult({
       storeId: fx.storeA.id,
@@ -645,18 +677,17 @@ describePostgres('store decisions on published allocation results', () => {
   async function respond(
     decisionId: string,
     actorUserId: string,
-    action: 'ACCEPT' | 'REJECT',
-    options: { key?: string; expectedVersion?: number; reason?: string } = {},
+    action: 'ACCEPT' | 'WAITLIST' | 'REJECT',
+    options: { key?: string; expectedVersion?: number } = {},
   ) {
     const key = options.key ?? randomUUID();
     return respondAllocationDecision(db, {
       decisionId,
       action,
       expectedVersion: options.expectedVersion ?? 1,
-      reason: options.reason ?? null,
       actorUserId,
       idempotencyKey: key,
-      requestHash: `${action}:${options.expectedVersion ?? 1}:${options.reason ?? ''}`,
+      requestHash: `${action}:${options.expectedVersion ?? 1}`,
     });
   }
 

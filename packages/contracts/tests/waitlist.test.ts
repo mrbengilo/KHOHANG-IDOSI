@@ -7,6 +7,7 @@ import {
   PriorityOfferSchema,
   RespondPriorityOfferRequestSchema,
   WaitTicketHistoryQuerySchema,
+  WaitTicketCancelPreviewSchema,
   WaitTicketHistoryResponseSchema,
   WaitTicketSchema,
 } from '../src/index.js';
@@ -258,5 +259,94 @@ describe('HTKD cancellation and admin ticket query contract', () => {
       ListWaitTicketsQuerySchema.safeParse({ createdFrom: '2026-10-07', createdTo: '2026-10-06' })
         .success,
     ).toBe(false);
+  });
+
+  it('carries lineage, three display labels and server cancel capability only on opt-in', () => {
+    const lineage = {
+      displayStatus: 'UNPROCESSED',
+      displayDetail: 'PENDING_DECISION',
+      waitingSince: TIMESTAMP,
+      pendingDecisionQuantity: 1,
+      revokedQuantity: 0,
+      sessions: [
+        {
+          sessionId: IDS.session,
+          sessionCode: 'PDH-000001',
+          businessDate: '2026-09-17',
+          sessionAt: TIMESTAMP,
+          origin: true,
+          quantity: null,
+        },
+      ],
+      sources: [
+        {
+          id: IDS.audit,
+          kind: 'RESULT_WAITLISTED',
+          quantity: 2,
+          createdAt: TIMESTAMP,
+          sessionId: IDS.session,
+          sessionCode: 'PDH-000001',
+          allocationDecisionId: IDS.order,
+          allocationLineId: IDS.offer,
+          sourceWaitTicketId: null,
+          sourceWaitTicketCode: null,
+          actorName: 'Cửa hàng A',
+        },
+      ],
+      legacyUnsourcedQuantity: 1,
+      canCancel: true,
+    };
+    expect(WaitTicketSchema.safeParse(waitTicket({ lineage })).success).toBe(true);
+    expect(
+      WaitTicketSchema.safeParse(waitTicket({ lineage: { ...lineage, displayStatus: 'DONE' } }))
+        .success,
+    ).toBe(false);
+    expect(
+      ListWaitTicketsQuerySchema.parse({ displayStatus: 'CANCELLED', includeLineage: 'true' }),
+    ).toMatchObject({ displayStatus: 'CANCELLED', includeLineage: true });
+    expect(
+      CancelWaitTicketRequestSchema.safeParse({ reason: 'Không cần nữa', expectedFingerprint: 'x' })
+        .success,
+    ).toBe(false);
+    expect(
+      CancelWaitTicketRequestSchema.parse({
+        reason: 'Không cần nữa',
+        expectedFingerprint: 'a'.repeat(64),
+      }).expectedFingerprint,
+    ).toHaveLength(64);
+    const preview = {
+      waitTicketId: IDS.ticket,
+      code: 'PC-0000001',
+      storeId: IDS.store,
+      productId: IDS.product,
+      cancellable: true,
+      refusal: null,
+      waitingQuantity: 2,
+      offers: [],
+      revocable: [
+        {
+          allocationDecisionId: IDS.order,
+          allocationLineId: IDS.offer,
+          sessionId: IDS.session,
+          sessionCode: 'PDH-000001',
+          productId: IDS.product,
+          quantity: 1,
+          shipmentNumber: null,
+          closesResult: false,
+        },
+      ],
+      protected: [
+        {
+          allocationDecisionId: IDS.order,
+          sessionCode: 'PDH-000001',
+          quantity: 3,
+          kind: 'RESHARE_ORDER',
+          reshareOrderCode: 'RE-000001',
+        },
+      ],
+      cancelledQuantity: 3,
+      fingerprint: 'b'.repeat(64),
+    };
+    expect(WaitTicketCancelPreviewSchema.parse(preview)).toEqual(preview);
   });
 });
