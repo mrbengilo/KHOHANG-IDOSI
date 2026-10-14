@@ -834,8 +834,7 @@ describePostgres('store decisions on published allocation results', () => {
         })
         .where(eq(waitTickets.id, ticket.id));
     });
-    const moved = await moving!;
-    expect(moved.value.status).toBe('waitlisted');
+    expect(await moving!).toMatchObject({ replayed: false, value: { status: 'waitlisted' } });
     // The goods are released, but the cancelled demand never comes back as a new ticket.
     expect(await activeTickets(fx.storeA.id, product)).toEqual([]);
     expect((await ticketRow(ticket.id)).status).toBe('cancelled');
