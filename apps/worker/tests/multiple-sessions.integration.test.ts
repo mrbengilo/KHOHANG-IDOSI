@@ -23,7 +23,7 @@ import {
   warehouseLedgerEntries,
   type Database,
 } from '@idosi/database';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 
 import { PostgresAllocationJobRepository } from '../src/postgres-repository.js';
@@ -132,7 +132,11 @@ describePostgres('independent allocation sessions on one business date', () => {
     const t = now.getTime() - 30 * MINUTE;
     const sessionIds: string[] = [];
     try {
-      const [admin] = await db.select().from(users).where(eq(users.role, 'admin')).limit(1);
+      const [admin] = await db
+        .select()
+        .from(users)
+        .where(and(eq(users.role, 'admin'), eq(users.status, 'active'), isNull(users.deletedAt)))
+        .limit(1);
       const [referenceStore] = await db.select().from(stores).limit(1);
       if (!admin || !referenceStore) throw new Error('Reference seed required.');
       const productRows = await db
@@ -413,7 +417,11 @@ describePostgres('independent allocation sessions on one business date', () => {
     const now = new Date();
     const sessionIds: string[] = [];
     try {
-      const [admin] = await db.select().from(users).where(eq(users.role, 'admin')).limit(1);
+      const [admin] = await db
+        .select()
+        .from(users)
+        .where(and(eq(users.role, 'admin'), eq(users.status, 'active'), isNull(users.deletedAt)))
+        .limit(1);
       const [referenceStore] = await db.select().from(stores).limit(1);
       if (!admin || !referenceStore) throw new Error('Reference seed required.');
       const productRows = await db

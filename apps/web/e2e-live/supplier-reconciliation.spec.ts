@@ -225,6 +225,13 @@ test('AC01: Reshare shows 3, A granted 3, C re-observes 3 → nothing more is al
       await summary.getByRole('button', { name: 'Tìm', exact: true }).click();
       const row = summary.getByRole('row').filter({ hasText: name }).first();
       await row.getByRole('button', { name: 'Đối chiếu', exact: true }).click();
+      // Assert before fill: Playwright's input action would otherwise conceal the viewport bug.
+      await expect(
+        page.getByRole('heading', { name: 'Cập nhật tổng tồn Reshare', exact: true }),
+      ).toBeInViewport();
+      await expect(
+        page.getByRole('heading', { name: 'Cập nhật tổng tồn Reshare', exact: true }),
+      ).toBeFocused();
       await page.getByLabel(`Tổng số bao Reshare đang cho đặt của ${name}`).fill(quantity);
       await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
       await expect(page.getByRole('region', { name: 'Xem trước đối chiếu' })).toBeVisible();
@@ -237,6 +244,9 @@ test('AC01: Reshare shows 3, A granted 3, C re-observes 3 → nothing more is al
       await expect(
         page.getByRole('status').filter({ hasText: 'Đã lưu cập nhật tồn' }),
       ).toContainText(expectedNotice);
+      await expect(
+        page.getByRole('status').filter({ hasText: 'Đã lưu cập nhật tồn' }),
+      ).toBeInViewport();
     };
 
     // Day 1: C sees 3 at Reshare; all 3 are free.

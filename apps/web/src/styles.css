@@ -4310,3 +4310,19 @@ label:has(:required) > .field-label::after {
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
+/* Programmatic destinations stay below the fixed mobile menu, without extra tab stops. */
+:root {
+  --content-reveal-offset: 16px;
+}
+.content-target {
+  scroll-margin-top: var(--content-reveal-offset);
+}
+.content-target:focus-visible {
+  outline: 2px solid var(--primary, #176b50);
+  outline-offset: 4px;
+}
+@media (max-width: 820px) {
+  :root {
+    --content-reveal-offset: 72px;
+  }
+}

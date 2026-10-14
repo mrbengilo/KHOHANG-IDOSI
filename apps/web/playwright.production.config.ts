@@ -26,6 +26,7 @@ export default defineConfig({
     '**/prominent-tabs.spec.ts',
     // Reshare reconciliation: Admin/HTKD/store flows, idempotent retry and responsive widths.
     '**/supplier-reconciliation.spec.ts',
+    '**/content-navigation.spec.ts',
   ],
   use: { ...smokeConfig.use, baseURL: webOrigin },
   webServer: {

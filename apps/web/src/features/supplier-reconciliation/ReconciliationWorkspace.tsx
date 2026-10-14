@@ -1,11 +1,13 @@
 import type { SupplierReconciliationFilter, SupplierReconciliationRow } from '@idosi/contracts';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { formatDocumentTime } from '../../lib/business-time';
 import { formatInteger } from '../../lib/format';
+import { revealContent, targetSetKey } from '../../lib/content-navigation';
+import { useContentReveal } from '../../lib/use-content-reveal';
 import { CommitmentTable } from './CommitmentTable';
 import { STATE_LABEL, STATE_TONE, positionSentence } from './model';
 import { ObservationForm, type ObservationTarget } from './ObservationForm';
@@ -27,9 +29,11 @@ const FILTERS: readonly { id: SupplierReconciliationFilter; label: string }[] = 
 export function ReconciliationWorkspace({
   accountId,
   onOpenSettings,
+  onConfirmingChange,
 }: {
   readonly accountId: string;
   readonly onOpenSettings: () => void;
+  readonly onConfirmingChange: (confirming: boolean) => void;
 }) {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
@@ -39,6 +43,55 @@ export function ReconciliationWorkspace({
   const [selected, setSelected] = useState<Map<string, ObservationTarget>>(new Map());
   const [formTargets, setFormTargets] = useState<readonly ObservationTarget[] | null>(null);
   const [notice, setNotice] = useState('');
+  const formHeading = useRef<HTMLHeadingElement>(null);
+  const listHeading = useRef<HTMLHeadingElement>(null);
+  const noticeTarget = useRef<HTMLDivElement>(null);
+  const returnTarget = useRef<HTMLElement | null>(null);
+  const formState = useRef({ dirty: false, confirming: false });
+  const [navigation, setNavigation] = useState(0);
+  const openForm = (targets: readonly ObservationTarget[], trigger: HTMLElement) => {
+    if (formState.current.confirming) return;
+    const same = formTargets && targetSetKey(formTargets) === targetSetKey(targets);
+    if (
+      !same &&
+      formState.current.dirty &&
+      !window.confirm(
+        'Bỏ bản nháp đối chiếu hiện tại để mở mặt hàng khác? Chọn Hủy để giữ bản nháp.',
+      )
+    ) {
+      setNavigation((value) => value + 1);
+      return;
+    }
+    returnTarget.current = trigger;
+    setNotice('');
+    if (!same) {
+      formState.current = { dirty: false, confirming: false };
+      setFormTargets(targets);
+    }
+    setNavigation((value) => value + 1);
+  };
+  const closeForm = () => {
+    if (
+      formState.current.dirty &&
+      !window.confirm('Bỏ bản nháp đối chiếu và quay lại danh sách? Chọn Hủy để tiếp tục nhập.')
+    )
+      return;
+    formState.current = { dirty: false, confirming: false };
+    setFormTargets(null);
+    setNavigation((value) => value + 1);
+  };
+  useLayoutEffect(() => {
+    if (!navigation) return;
+    revealContent(
+      formTargets
+        ? formHeading.current
+        : notice
+          ? noticeTarget.current
+          : returnTarget.current?.isConnected
+            ? returnTarget.current
+            : listHeading.current,
+    );
+  }, [navigation, formTargets, notice]);
   const sources = useQuery({
     queryKey: ['supplier-sources', accountId],
     queryFn: ({ signal }) => loadSupplierSources(signal),
@@ -77,24 +130,37 @@ export function ReconciliationWorkspace({
   return (
     <>
       {notice ? (
-        <div className="supplier-notice" role="status">
+        <div
+          className="supplier-notice content-target"
+          role="status"
+          ref={noticeTarget}
+          tabIndex={-1}
+        >
           {notice}
         </div>
       ) : null}
       {formTargets && formTargets[0] ? (
         <ObservationForm
-          onCancel={() => setFormTargets(null)}
+          key={targetSetKey(formTargets)}
+          headingRef={formHeading}
+          navigationState={formState}
+          onConfirmingChange={onConfirmingChange}
+          onCancel={closeForm}
           onDone={(message) => {
             setFormTargets(null);
             setSelected(new Map());
             setNotice(message);
+            formState.current = { dirty: false, confirming: false };
+            setNavigation((value) => value + 1);
           }}
           sourceId={formTargets[0].sourceId}
           targets={formTargets}
         />
       ) : null}
       <section className="panel supplier-summary" aria-label="Cập nhật tồn Reshare theo mặt hàng">
-        <h2>Số liệu theo mặt hàng</h2>
+        <h2 ref={listHeading} tabIndex={-1} className="content-target">
+          Số liệu theo mặt hàng
+        </h2>
         <p className="supplier-hint">
           Khả dụng = Reshare còn cho đặt − phần IDOSI đã giữ/cấp nhưng HTKD chưa đặt Reshare. Số
           Reshare là quan sát thủ công tại thời điểm xem, không phải số thời gian thực.
@@ -133,10 +199,7 @@ export function ReconciliationWorkspace({
           </Button>
           <Button
             disabled={selected.size === 0 || selectionSources.size > 1}
-            onClick={() => {
-              setNotice('');
-              setFormTargets([...selected.values()]);
-            }}
+            onClick={(event) => openForm([...selected.values()], event.currentTarget)}
           >
             Đối chiếu {selected.size > 0 ? `${selected.size} mặt hàng` : ''}
           </Button>
@@ -258,10 +321,7 @@ export function ReconciliationWorkspace({
                                 {open ? 'Thu gọn' : 'Xem giữ hàng'}
                               </Button>
                               <Button
-                                onClick={() => {
-                                  setNotice('');
-                                  setFormTargets([targetOf(row)]);
-                                }}
+                                onClick={(event) => openForm([targetOf(row)], event.currentTarget)}
                                 tone="secondary"
                               >
                                 Đối chiếu
@@ -317,6 +377,7 @@ function CommitmentDetail({
   readonly accountId: string;
   readonly productId: string;
 }) {
+  const heading = useContentReveal<HTMLHeadingElement>(productId);
   const [page, setPage] = useState(1);
   const detail = useQuery({
     queryKey: ['supplier-commitments', accountId, 'product', productId, page],
@@ -324,10 +385,22 @@ function CommitmentDetail({
     placeholderData: keepPreviousData,
     retry: false,
   });
-  if (detail.isPending) return <p role="status">Đang tải hàng đang giữ…</p>;
+  const title = (
+    <h3 ref={heading} tabIndex={-1} className="content-target">
+      Hàng đang giữ của mặt hàng
+    </h3>
+  );
+  if (detail.isPending)
+    return (
+      <>
+        {title}
+        <p role="status">Đang tải hàng đang giữ…</p>
+      </>
+    );
   if (detail.isError) {
     return (
       <div role="alert" className="supplier-error">
+        {title}
         <p>Không tải được hàng đang giữ.</p>
         <Button tone="secondary" onClick={() => void detail.refetch()}>
           Thử lại
@@ -337,6 +410,7 @@ function CommitmentDetail({
   }
   return (
     <>
+      {title}
       <CommitmentTable caption="Toàn bộ mặt hàng này" page={detail.data} showProduct={false} />
       <Pager
         page={page}
