@@ -17,6 +17,11 @@ Từ 0044: HTKD, cửa hàng và quầy sỉ có tab “Phiếu chờ ưu tiên�
 số bao, ba nhãn Chưa xử lý/Đã xử lý/Đã hủy, xem chi tiết, hủy có xem trước). Hủy phiếu còn thu hồi
 hàng chưa xác nhận của phiếu trong kết quả đang chờ; xem `allocation-waitlist-workflow.md`.
 
+Từ 0045: tab đổi tên thành “Phiếu chờ” cho mọi vai trò và mặc định hiển thị **phiếu chờ tổng theo
+cửa hàng** (một phiếu hiện hành `PCT-xxxxxx` nhiều mặt hàng, lịch sử đã gộp/đã xử lý/đã hủy); danh sách
+PC ở trên vẫn mở bằng nút “Dòng theo mặt hàng (mã PC)” hoặc liên kết có `wt.*`. Xem
+`store-active-wait-document.md`.
+
 Trước thay đổi, notice và phản hồi HTKD đã có nhưng kho tổng và hủy phiếu bị chặn có chủ đích. Bản này dùng lại notice 15 giây, transaction/state machine và dialog chung. HTKD không có phiếu riêng, không giả actor STORE. Nhận ưu tiên không phải thực nhận, không cộng tồn cửa hàng.
 
 ## Đường dữ liệu và file
