@@ -23,7 +23,6 @@ import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { EmptyState } from '../../components/EmptyState';
 import { PageHeader } from '../../components/PageHeader';
-import { useContentReveal } from '../../lib/use-content-reveal';
 import { AdminAccess } from './AdminAccess';
 import {
   AdminApiError,
@@ -1137,13 +1136,10 @@ function EditorHeading({
   readonly onCancel: () => void;
   readonly title: string;
 }) {
-  const heading = useContentReveal<HTMLHeadingElement>(title);
   return (
     <div className="admin-section-heading">
       <div>
-        <h2 ref={heading} tabIndex={-1} className="content-target">
-          {title}
-        </h2>
+        <h2>{title}</h2>
         <p>{description}</p>
       </div>
       <button
