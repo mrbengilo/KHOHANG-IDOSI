@@ -105,6 +105,9 @@ test('delayed deep-link failure focuses the selected detail and subsequent route
   await expect(page.getByText('Đang tải phiếu kết quả…')).toBeVisible();
   const detail = page.getByRole('region', { name: 'Phiếu kết quả đang mở' });
   await expect(detail).not.toBeFocused();
+  // Initial layout/native anchoring may emit scroll before delayed content arrives.
+  // That event belongs to this visit, not a previously saved Back/Forward entry.
+  await page.evaluate(() => window.dispatchEvent(new Event('scroll')));
   release();
   await expect(detail.getByRole('alert')).toBeVisible();
   await expect(detail).toBeInViewport();

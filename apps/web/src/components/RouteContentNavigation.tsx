@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useLayoutEffect,
+  useMemo,
   useRef,
   type ReactNode,
   type RefObject,
@@ -21,6 +22,12 @@ export function RouteContentNavigation({ children }: { readonly children: ReactN
   const positions = useRef(new Map<string, number>());
   const completed = useRef('');
   const restoreCleanup = useRef<(() => void) | null>(null);
+  // Capture only an earlier visit. Native anchoring/layout can emit scroll while the initial
+  // POP entry is still loading; those new samples must not turn it into a history restoration.
+  const restorePosition = useMemo(
+    () => (action === 'POP' ? positions.current.get(location.key) : undefined),
+    [action, location.key],
+  );
   const ready = useCallback(
     (element: HTMLElement, kind: Target) => {
       if (completed.current === location.key) return;
@@ -31,7 +38,7 @@ export function RouteContentNavigation({ children }: { readonly children: ReactN
       const tabChanged = ['tab', 'kt', 'ch'].some((key) => params.get(key) !== before.get(key));
       const detail = params.get('decision') || params.get('psl.open');
       const detailChanged = detail !== (before.get('decision') || before.get('psl.open'));
-      const saved = action === 'POP' ? positions.current.get(location.key) : undefined;
+      const saved = restorePosition;
       if (saved !== undefined) {
         completed.current = location.key;
         // Lazy/data-loaded pages can initially be shorter than the saved offset. ResizeObserver
@@ -91,7 +98,7 @@ export function RouteContentNavigation({ children }: { readonly children: ReactN
         completed.current = location.key; // filters and pagination are in-place operations
       }
     },
-    [action, location],
+    [location, restorePosition],
   );
   useLayoutEffect(() => {
     const oldRestoration = history.scrollRestoration;
