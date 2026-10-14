@@ -20,6 +20,10 @@ import {
   warehouseBalances,
   warehouseLedgerEntries,
   type DatabaseClient,
+  storeWaitDocumentEvents,
+  storeWaitDocumentLines,
+  storeWaitDocuments,
+  syncAllStoreWaitDocuments,
 } from '@idosi/database';
 import { and, eq, inArray } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -217,6 +221,35 @@ describePostgres('priority wait policy across sessions (worker + PostgreSQL)', (
       .from(dailyPriorityOffers)
       .where(eq(dailyPriorityOffers.waitTicketId, ticketId))
       .orderBy(dailyPriorityOffers.createdAt);
+  }
+
+  async function currentDocument(storeId: string) {
+    const [row] = await db()
+      .select({ id: storeWaitDocuments.id })
+      .from(storeWaitDocuments)
+      .where(
+        and(eq(storeWaitDocuments.storeId, storeId), eq(storeWaitDocuments.status, 'current')),
+      );
+    return row?.id ?? null;
+  }
+
+  async function closedDocument(documentId: string) {
+    const [row] = await db()
+      .select({ status: storeWaitDocuments.status, kind: storeWaitDocumentEvents.kind })
+      .from(storeWaitDocuments)
+      .innerJoin(
+        storeWaitDocumentEvents,
+        eq(storeWaitDocumentEvents.id, storeWaitDocuments.closedEventId),
+      )
+      .where(eq(storeWaitDocuments.id, documentId));
+    const lines = await db()
+      .select({ cancelled: storeWaitDocumentLines.cancelledQuantity })
+      .from(storeWaitDocumentLines)
+      .where(eq(storeWaitDocumentLines.documentId, documentId));
+    return {
+      ...row,
+      cancelled: lines.reduce((sum, line) => sum + (line.cancelled ?? 0), 0),
+    };
   }
 
   async function ticket(id: string) {
@@ -436,6 +469,15 @@ describePostgres('priority wait policy across sessions (worker + PostgreSQL)', (
       new Date(now - 7 * MINUTE),
     );
     await stock(item.id, 5, new Date(now - 5 * MINUTE));
+    // Each store's waiting demand is on its wait document before the 08:00 offers.
+    await syncAllStoreWaitDocuments(db());
+    const documentBefore = new Map(
+      await Promise.all(
+        [declining, silent, accepting].map(
+          async (row) => [row.id, await currentDocument(row.id)] as const,
+        ),
+      ),
+    );
 
     const s1 = await session(date, new Date(now - MINUTE), new Date(now + 10 * MINUTE), 'MAIN');
     await worker.captureSnapshotAndCreateOffers(s1.scheduled, new Date(now - MINUTE + 1_000));
@@ -473,6 +515,13 @@ describePostgres('priority wait policy across sessions (worker + PostgreSQL)', (
       basis: { offeredQuantity: 2, eligibleQuantityAtOffer: 2, ticketRemainingQuantity: 2 },
     });
     expect(await balance(item.id)).toEqual({ onHand: 5, reserved: 3 });
+    // Declining the full offer cancels the store's document in the same transaction.
+    expect(await currentDocument(declining.id)).toBeNull();
+    expect(await closedDocument(documentBefore.get(declining.id)!)).toMatchObject({
+      status: 'cancelled',
+      kind: 'priority_offer_response',
+      cancelled: 2,
+    });
 
     await respond(acceptOffer!.id, accepting.userId, 'accept', 1);
     // An ordinary order in the same session competes for the stock the cancelled waits release.
@@ -513,6 +562,15 @@ describePostgres('priority wait policy across sessions (worker + PostgreSQL)', (
       );
     expect(timeoutAudit).toHaveLength(1);
     expect(timeoutAudit[0]!.actorUserId).toBeNull();
+    // The run's last write closed the silent store's document as cancelled by the run; the
+    // accepted bag only moved from waiting to awaiting the answer, so that document stays.
+    expect(await currentDocument(silent.id)).toBeNull();
+    expect(await closedDocument(documentBefore.get(silent.id)!)).toMatchObject({
+      status: 'cancelled',
+      kind: 'allocation_run',
+      cancelled: 2,
+    });
+    expect(await currentDocument(accepting.id)).toBe(documentBefore.get(accepting.id));
     // The accepted full offer is allocated and its ticket fulfilled, never cancelled.
     expect(await ticket(acceptTicket.id)).toMatchObject({
       status: 'fulfilled',

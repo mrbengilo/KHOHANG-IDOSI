@@ -68,6 +68,7 @@ import {
   type WaitTicketCancellationKind,
 } from './schema.js';
 import { livePriorityOfferCondition } from './priority-offer-state.js';
+import { reconcileStoreWaitDocumentsInTransaction } from './store-wait-documents.js';
 import { withAdvisoryLock, withSerializableTransaction, type Transaction } from './transaction.js';
 
 const DEFAULT_PAGE_SIZE = 20;
@@ -283,6 +284,8 @@ export interface CancelWaitTicketInput {
 
 export interface CancelledWaitTicket {
   readonly waitTicketId: string;
+  readonly storeId: string;
+  readonly productId: string;
   readonly status: 'cancelled';
   readonly cancellationKind: WaitTicketCancellationKind;
   readonly cancelledOfferIds: readonly string[];
@@ -324,6 +327,10 @@ type RespondPriorityOfferTransactionInput = RespondPriorityOfferInput extends in
 export interface RespondedPriorityOffer {
   readonly offerId: string;
   readonly waitTicketId: string;
+  readonly storeId: string;
+  readonly productId: string;
+  /** Bags of the ticket's waiting demand ended by a declined or lapsed full offer. */
+  readonly cancelledWaitQuantity: number;
   readonly status: 'accepted' | 'declined' | 'expired' | 'cancelled';
   readonly acceptedQuantity: number;
   readonly effectiveAction: PriorityOfferEffectiveAction;
@@ -1058,6 +1065,33 @@ export async function cancelWaitTicket(
     },
     async (tx) => {
       const cancelled = await cancelWaitTicketInTransaction(tx, input, reason);
+      // The store's wait document records the cancelled line and continues with the others.
+      await reconcileStoreWaitDocumentsInTransaction(tx, [
+        {
+          storeId: cancelled.storeId,
+          declared: [
+            {
+              productId: cancelled.productId,
+              category: 'cancelled',
+              quantity: cancelled.cancelledQuantity,
+            },
+          ],
+          event: {
+            kind: 'wait_ticket_cancelled',
+            sourceKey: `wait-ticket-cancel:${cancelled.waitTicketId}`,
+            actorUserId: input.actorUserId,
+            requestId: input.requestId ?? null,
+            occurredAt: cancelled.resolvedAt,
+            waitTicketId: cancelled.waitTicketId,
+            reason,
+            metadata: {
+              cancellationKind: cancelled.cancellationKind,
+              revokedQuantity: cancelled.revokedQuantity,
+              revokedDecisionIds: [...cancelled.revokedDecisionIds],
+            },
+          },
+        },
+      ]);
       const responseBody: JsonObject = {
         waitTicketId: cancelled.waitTicketId,
         status: cancelled.status,
@@ -1121,7 +1155,7 @@ export interface WaitTicketCancellationScope {
  * Contradicting evidence (an active hold with an RE source, a pending result whose shipment left)
  * refuses the cancellation instead of guessing.
  */
-async function loadCancellationScope(
+export async function loadCancellationScope(
   reader: Database | Transaction,
   ticket: typeof waitTickets.$inferSelect,
   options: { readonly lock: boolean },
@@ -1566,6 +1600,8 @@ export async function cancelWaitTicketInTransaction(
 
           return {
             waitTicketId: ticket.id,
+            storeId: ticket.storeId,
+            productId: ticket.productId,
             status: 'cancelled',
             cancellationKind,
             cancelledOfferIds,
@@ -1717,6 +1753,32 @@ export async function respondPriorityOffer(
     },
     async (tx) => {
       const responded = await respondPriorityOfferInTransaction(tx, input);
+      // Accepting or a partial offer keeps the demand; ending a full offer cancels the line.
+      await reconcileStoreWaitDocumentsInTransaction(tx, [
+        {
+          storeId: responded.storeId,
+          declared:
+            responded.cancelledWaitQuantity > 0
+              ? [
+                  {
+                    productId: responded.productId,
+                    category: 'cancelled',
+                    quantity: responded.cancelledWaitQuantity,
+                  },
+                ]
+              : [],
+          event: {
+            kind: 'priority_offer_response',
+            sourceKey: `priority-offer:${responded.offerId}`,
+            actorUserId: input.actorUserId,
+            requestId: input.requestId ?? null,
+            occurredAt: responded.respondedAt,
+            waitTicketId: responded.waitTicketId,
+            priorityOfferId: responded.offerId,
+            metadata: { status: responded.status, effectiveAction: responded.effectiveAction },
+          },
+        },
+      ]);
       const responseBody: JsonObject = {
         offerId: responded.offerId,
         waitTicketId: responded.waitTicketId,
@@ -1906,6 +1968,9 @@ export async function respondPriorityOfferInTransaction(
         return {
           offerId: offer.id,
           waitTicketId: offer.waitTicketId,
+          storeId: offer.storeId,
+          productId: offer.productId,
+          cancelledWaitQuantity: waitTicketCancelled ? ticket.remainingQuantity : 0,
           status: transition.status,
           acceptedQuantity: transition.acceptedQuantity,
           effectiveAction: transition.effectiveAction,
@@ -1981,7 +2046,7 @@ export function effectivePriorityOfferStatus(
   return offer.status;
 }
 
-async function resolveAccessibleStoreIds(
+export async function resolveAccessibleStoreIds(
   database: Database,
   actorUserId: string,
   requestedStoreId?: string,
@@ -2035,7 +2100,10 @@ async function resolveAccessibleStoreIds(
   return [requestedStoreId];
 }
 
-async function loadActiveActor(database: Database, actorUserId: string): Promise<ActiveActor> {
+export async function loadActiveActor(
+  database: Database,
+  actorUserId: string,
+): Promise<ActiveActor> {
   const [actor] = await database
     .select({ id: users.id, role: users.role, status: users.status, storeId: users.storeId })
     .from(users)
@@ -2105,7 +2173,7 @@ async function assertActorMayAccessStore(
  * an Admin for every store, including an inactive one whose stale demand must still be closable.
  * HTKD may cancel active waits of currently assigned, active stores with its own audit identity.
  */
-async function assertActorMayCancelWaitTicket(
+export async function assertActorMayCancelWaitTicket(
   tx: Transaction,
   actorUserId: string,
   storeId: string,

@@ -14,6 +14,9 @@ Trạng thái: migration `0044_allocation_waitlist_response` (expand-only). Tài
 | Không có lineage của nhu cầu chờ.                                                     | `wait_ticket_sources` ghi từng nguồn góp vào phiếu chờ (phần dư của đơn, kết quả chuyển về, phần khôi phục); phiếu cũ có `legacy_unsourced_quantity`.                                          |
 | Thông báo vàng chỉ cho STORE/WHOLESALE, một nút “Mở phiếu”.                           | Khung **xanh** bền vững cho STORE, quầy sỉ và HTKD, có cả hai thao tác ngay trên khung, không có nút bỏ qua.                                                                                   |
 
+Từ 0045, mỗi lần Xác nhận phân bổ / Chuyển phiếu chờ / hủy phiếu chờ còn cập nhật phiếu chờ tổng của
+cửa hàng trong cùng transaction (bước ghi cuối); xem `store-active-wait-document.md`.
+
 Không thay đổi: phiếu RE chỉ được tạo khi xác nhận; xuất kho tổng ghi tại thời điểm xác nhận;
 xác nhận không phải thực nhận; tồn cửa hàng chỉ tăng theo thực nhận; Admin chỉ xem kết quả.
 

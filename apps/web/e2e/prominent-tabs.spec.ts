@@ -16,14 +16,9 @@ const time = '2026-10-02T03:00:00.000Z';
 const storeIds = [id(31), id(32)];
 const emptyPage = { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 };
 
-const ALLOCATION_LABELS = [
-  'Phiên và kết quả',
-  'Lịch sử đặt hàng',
-  'Danh sách phiếu chờ',
-  'Tạo phiên mới',
-];
-/** HTKD, store and wholesale read their own scope of wait tickets under this tab. */
-const SCOPED_WAIT_TICKETS_LABEL = 'Phiếu chờ ưu tiên';
+const ALLOCATION_LABELS = ['Phiên và kết quả', 'Lịch sử đặt hàng', 'Phiếu chờ', 'Tạo phiên mới'];
+/** A store or the wholesale desk reads its own results, order history and wait documents. */
+const STORE_ALLOCATION_LABELS = ['Kết quả phân bổ', 'Lịch sử đặt hàng', 'Phiếu chờ'];
 const INVENTORY_LABELS = ['Kho tổng', 'Kho cửa hàng', 'Phiếu sai lệch'];
 const WAREHOUSE_LABELS = ['Tồn hiện tại', 'Kiểm hàng thiếu', 'Lịch sử xuất', 'Lịch sử điều chỉnh'];
 const STORE_LABELS = ['Tồn cửa hàng', 'Sổ phát sinh'];
@@ -83,6 +78,7 @@ const LIST_PATHS = [
   '/order-sessions',
   '/order-requests',
   '/wait-tickets',
+  '/wait-documents',
   '/priority-offers',
   '/session-documents',
   '/order-history',
@@ -387,12 +383,7 @@ test('HTKD allocation tabs are prominent and the create tab stays Admin-only', a
   await expectSelected(page, tablist, 'Phiên và kết quả');
   await expect(page.getByRole('heading', { name: 'Tạo phiên bổ sung' })).toHaveCount(0);
   const metrics = await measureBar(tablist);
-  expectProminent(
-    metrics,
-    'primary',
-    [...ALLOCATION_LABELS.slice(0, 2), SCOPED_WAIT_TICKETS_LABEL],
-    viewportWidth(page),
-  );
+  expectProminent(metrics, 'primary', ALLOCATION_LABELS.slice(0, 3), viewportWidth(page));
   await page.goto('/allocations?tab=history');
   await expectSelected(page, tablist, 'Lịch sử đặt hàng');
   await tablist.getByRole('tab', { name: 'Phiên và kết quả', exact: true }).click();
@@ -541,10 +532,7 @@ test('store accounts keep their stock by default and read the warehouse without 
   ).toBe(false);
 
   await page.goto('/allocations');
-  await expect(allocationBar(page).getByRole('tab')).toHaveCount(2);
-  await expect(
-    allocationBar(page).getByRole('tab', { name: SCOPED_WAIT_TICKETS_LABEL, exact: true }),
-  ).toHaveCount(1);
+  await expect(allocationBar(page).getByRole('tab')).toHaveText(STORE_ALLOCATION_LABELS);
   measured['STORE:allocations'] = await measureBar(allocationBar(page));
   expectDefault(measured['STORE:allocations'], 'primary');
   expect(log.mutations).toEqual([]);
@@ -1023,7 +1011,14 @@ test('Admin wait list has nine columns, server pages, cancellation history and U
   });
   await page.goto('/allocations?tab=history');
   expect(queries).toHaveLength(0);
-  await allocationBar(page).getByRole('tab', { name: 'Danh sách phiếu chờ', exact: true }).click();
+  // The tab opens on the store wait documents; the per-product PC lines are one switch away.
+  await allocationBar(page).getByRole('tab', { name: 'Phiếu chờ', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Phiếu chờ theo cửa hàng' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  expect(queries).toHaveLength(0);
+  await page.getByRole('button', { name: 'Dòng theo mặt hàng (mã PC)', exact: true }).click();
   const table = page.locator('.wait-ticket-table');
   await expect(table.locator('th')).toHaveCount(9);
   await expect(table).toContainText('Chưa phát sinh phiếu ưu tiên');

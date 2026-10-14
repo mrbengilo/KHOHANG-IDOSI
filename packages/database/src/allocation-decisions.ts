@@ -3,7 +3,20 @@ import {
   type AllocationDecisionAction,
   type AllocationDecisionStatus,
 } from '@idosi/domain';
-import { and, asc, count, desc, eq, inArray, isNull, ne, or, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  ne,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 
 import {
   SHIPPABLE_DECISION_STATUSES,
@@ -21,6 +34,7 @@ import {
 } from './allocation-waitlist.js';
 import { dispatchWarehouseOutboundInTransaction } from './outbound-requests.js';
 import { issueReshareOrderInTransaction, type ReshareActorRole } from './reshare-orders.js';
+import { reconcileStoreWaitDocumentsInTransaction } from './store-wait-documents.js';
 import {
   allocationLineDispositions,
   allocationLines,
@@ -1013,6 +1027,15 @@ async function respondLocked(
       requestId: input.requestId ?? null,
       occurredAt: respondedAt,
     });
+    // Ordinary goods moved back are new demand (the store's document is merged); goods granted
+    // from its tickets move from awaiting the answer back to waiting, which changes nothing; goods
+    // of a cancelled ticket only return to stock and leave the document as cancelled.
+    await reconcileStoreWaitDocumentsInTransaction(tx, [
+      {
+        storeId: decision.storeId,
+        event: decisionDocumentEvent(decision, 'result_waitlisted', input, respondedAt),
+      },
+    ]);
     return {
       decisionId: revoked.decision.id,
       status: revoked.decision.status,
@@ -1027,6 +1050,26 @@ async function respondLocked(
     };
   }
 
+  // Bags granted from the store's wait tickets that this answer confirms, before they are issued.
+  const confirmedWaitGoods = await tx
+    .select({
+      productId: allocationLines.productId,
+      quantity: sql<number>`coalesce(sum(${reservations.quantity}), 0)`.mapWith(Number),
+    })
+    .from(reservations)
+    .innerJoin(allocationLines, eq(allocationLines.id, reservations.allocationLineId))
+    .where(
+      and(
+        eq(allocationLines.allocationRunId, decision.allocationRunId),
+        eq(allocationLines.storeId, decision.storeId),
+        isNotNull(allocationLines.waitTicketId),
+        eq(reservations.storeId, decision.storeId),
+        eq(reservations.status, 'active'),
+        isNull(reservations.deletedAt),
+      ),
+    )
+    .groupBy(allocationLines.productId)
+    .orderBy(asc(allocationLines.productId));
   const [updated] = await tx
     .update(allocationResultDecisions)
     .set({
@@ -1104,6 +1147,22 @@ async function respondLocked(
       reshareOrderCode: reshareOrder.code,
     },
   });
+  // Confirming goods of the store's wait document closes it: the rest moves to the successor,
+  // or the document is completed when nothing is left. Ordinary goods change nothing there.
+  await reconcileStoreWaitDocumentsInTransaction(tx, [
+    {
+      storeId: decision.storeId,
+      declared: confirmedWaitGoods.map((row) => ({
+        productId: row.productId,
+        category: 'confirmed' as const,
+        quantity: row.quantity,
+      })),
+      event: {
+        ...decisionDocumentEvent(decision, 'result_accepted', input, respondedAt),
+        metadata: { reshareOrderId: reshareOrder.id, reshareOrderCode: reshareOrder.code },
+      },
+    },
+  ]);
   return {
     decisionId: updated.id,
     status: updated.status,
@@ -1115,6 +1174,24 @@ async function respondLocked(
     reshareOrderId: reshareOrder.id,
     reshareOrderCode: reshareOrder.code,
     requeued: [],
+  };
+}
+
+function decisionDocumentEvent(
+  decision: typeof allocationResultDecisions.$inferSelect,
+  kind: 'result_accepted' | 'result_waitlisted',
+  input: Pick<RespondAllocationDecisionInput, 'actorUserId' | 'requestId'>,
+  occurredAt: Date,
+) {
+  return {
+    kind,
+    sourceKey: `allocation-decision:${decision.id}`,
+    actorUserId: input.actorUserId,
+    requestId: input.requestId ?? null,
+    occurredAt,
+    orderSessionId: decision.orderSessionId,
+    allocationRunId: decision.allocationRunId,
+    allocationDecisionId: decision.id,
   };
 }
 

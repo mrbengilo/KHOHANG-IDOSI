@@ -4,6 +4,19 @@ import { InboundStatisticsResponseSchema, type InboundStatisticsQuery } from '@i
 import { ListReceiptSummariesResponseSchema } from '@idosi/contracts';
 import { ListSessionDocumentsResponseSchema } from '@idosi/contracts';
 import {
+  CancelStoreWaitDocumentRequestSchema,
+  CancelStoreWaitDocumentResponseSchema,
+  ListStoreWaitDocumentsResponseSchema,
+  StoreWaitDocumentCancelPreviewResponseSchema,
+  StoreWaitDocumentDetailResponseSchema,
+  type CancelledStoreWaitDocument,
+  type CancelStoreWaitDocumentRequest,
+  type StoreWaitDocumentCancelPreview,
+  type StoreWaitDocumentDetail,
+  type StoreWaitDocumentStatus,
+  type StoreWaitDocumentView,
+} from '@idosi/contracts';
+import {
   ListOrderHistoryResponseSchema,
   type ListOrderHistoryQuery,
   OrderingContextResponseSchema,
@@ -548,6 +561,70 @@ export async function cancelStoreOrderRequest(
     method: 'POST',
   });
   return StoreOrderRequestResponseSchema.parse(payload).data;
+}
+
+export interface WaitDocumentFilters {
+  readonly page: number;
+  readonly pageSize?: number;
+  readonly view: StoreWaitDocumentView;
+  readonly status?: StoreWaitDocumentStatus;
+  readonly storeId?: string;
+  readonly productId?: string;
+  readonly q?: string;
+  readonly openedFrom?: string;
+  readonly openedTo?: string;
+}
+
+/** One server page of store wait documents ("phiếu chờ"); the scope is enforced server-side. */
+export async function listWaitDocuments(filters: WaitDocumentFilters, signal?: AbortSignal) {
+  const query = new URLSearchParams({
+    page: String(filters.page),
+    pageSize: String(filters.pageSize ?? 20),
+    view: filters.view,
+  });
+  for (const key of ['status', 'storeId', 'productId', 'q', 'openedFrom', 'openedTo'] as const) {
+    const value = filters[key];
+    if (value) query.set(key, value);
+  }
+  return ListStoreWaitDocumentsResponseSchema.parse(
+    await request(`/wait-documents?${query}`, { signal: signal ?? null }),
+  );
+}
+
+export async function getWaitDocument(
+  documentId: string,
+  signal?: AbortSignal,
+): Promise<StoreWaitDocumentDetail> {
+  const payload = await request(`/wait-documents/${encodeURIComponent(documentId)}`, {
+    signal: signal ?? null,
+  });
+  return StoreWaitDocumentDetailResponseSchema.parse(payload).data;
+}
+
+/** Read-only scope of cancelling a whole current document; its fingerprint confirms it. */
+export async function previewWaitDocumentCancellation(
+  documentId: string,
+  signal?: AbortSignal,
+): Promise<StoreWaitDocumentCancelPreview> {
+  const payload = await request(
+    `/wait-documents/${encodeURIComponent(documentId)}/cancel-preview`,
+    { signal: signal ?? null },
+  );
+  return StoreWaitDocumentCancelPreviewResponseSchema.parse(payload).data;
+}
+
+export async function cancelWaitDocument(
+  documentId: string,
+  input: CancelStoreWaitDocumentRequest,
+  idempotencyKey: string,
+): Promise<CancelledStoreWaitDocument> {
+  const validated = CancelStoreWaitDocumentRequestSchema.parse(input);
+  const payload = await request(`/wait-documents/${encodeURIComponent(documentId)}/cancel`, {
+    body: JSON.stringify(validated),
+    headers: { 'idempotency-key': idempotencyKey },
+    method: 'POST',
+  });
+  return CancelStoreWaitDocumentResponseSchema.parse(payload).data;
 }
 
 export async function listWaitTicketsPage(filters: ListWaitTicketsQuery, signal?: AbortSignal) {

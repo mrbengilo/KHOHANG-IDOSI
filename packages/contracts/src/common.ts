@@ -118,6 +118,8 @@ export const ApiErrorCodeSchema = z.enum([
   'CLIENT_UPGRADE_REQUIRED',
   'WAIT_TICKET_PREVIEW_REQUIRED',
   'WAIT_TICKET_PREVIEW_STALE',
+  // Store wait documents (docs/store-active-wait-document.md).
+  'WAIT_DOCUMENT_SUPERSEDED',
 ]);
 export type ApiErrorCode = z.infer<typeof ApiErrorCodeSchema>;
 

@@ -288,6 +288,11 @@ Sau đó kiểm tra bằng trình duyệt trên desktop và mobile:
 3. Thực hiện một luồng ghi thử có thể đối soát, xác nhận busy/disabled/error/retry và audit log.
 4. Xác nhận API, worker, web, database và Caddy đều healthy; log không có lỗi hoặc secret.
 5. Tạo một backup mới và kiểm tra `pg_restore --list`/checksum.
+6. Bản có migration 0045 (phiếu chờ tổng): log worker sau khởi động có
+   `store wait document catch-up completed` (hoặc `... changed documents` kèm danh sách cửa hàng được
+   đồng bộ do API cũ ghi phiếu chờ trong lúc deploy); chạy các truy vấn đối soát chỉ đọc ở
+   `store-active-wait-document.md` §9 — không cửa hàng nào có hơn một phiếu hiện hành và nhu cầu mở
+   khớp phiếu hiện hành.
 
 ## Rollback
 

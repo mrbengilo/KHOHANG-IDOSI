@@ -227,8 +227,13 @@ test('a store confirms results or moves them back to waiting; state survives rel
       fullPage: true,
     });
 
-    // 4b. The scoped "Phiếu chờ ưu tiên" tab shows the new PC; cancelling it uses the preview.
+    // 4b. The store's wait document now waits for the 4 bags moved back; the per-product line
+    //     list shows the new PC, and cancelling it uses the preview.
     await page.goto('/allocations?tab=wait-tickets');
+    const waitDocument = page.locator('.wait-document-card', { hasText: productName });
+    await expect(waitDocument).toContainText('Đang hoạt động');
+    await expect(waitDocument.locator('tbody tr', { hasText: productName })).toContainText('4');
+    await page.getByRole('button', { name: 'Dòng theo mặt hàng (mã PC)' }).click();
     const ticketRow = page.locator('.wait-ticket-table--scoped tbody tr', {
       hasText: productName,
     });

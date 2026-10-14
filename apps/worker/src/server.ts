@@ -1,4 +1,9 @@
-import { createDatabase, pruneOperationalHistory, workerSessionTimeouts } from '@idosi/database';
+import {
+  createDatabase,
+  pruneOperationalHistory,
+  syncAllStoreWaitDocuments,
+  workerSessionTimeouts,
+} from '@idosi/database';
 
 import { loadConfig } from './config.js';
 import { startHealthServer } from './health-server.js';
@@ -50,6 +55,26 @@ const maintenance = startMaintenancePolling((now) => pruneOperationalHistory(cli
 });
 let shuttingDown: Promise<void> | null = null;
 
+// The previous release may have changed wait tickets without store wait documents while this one
+// was being deployed; one catch-up per start records any difference as a system event. A store
+// already in step is left unchanged (docs/store-active-wait-document.md).
+const waitDocumentCatchUp = syncAllStoreWaitDocuments(client.db)
+  .then((results) => {
+    const changed = results.filter((result) => result.plan !== 'NOOP');
+    const fields = {
+      stores: results.length,
+      changedStoreIds: changed.map((result) => result.storeId),
+    };
+    if (changed.length > 0) logger.warn(fields, 'store wait document catch-up changed documents');
+    else logger.info(fields, 'store wait document catch-up completed');
+  })
+  .catch((error: unknown) => {
+    logger.warn(
+      { error: error instanceof Error ? error.message : String(error) },
+      'store wait document catch-up failed',
+    );
+  });
+
 logger.info(
   {
     catchUpDays: config.catchUpDays,
@@ -79,7 +104,12 @@ const shutdown = (signal: NodeJS.Signals): Promise<void> => {
     timeout.unref();
     try {
       await health.close();
-      await Promise.all([polling.stop(), idosiPolling?.stop(), maintenance.stop()]);
+      await Promise.all([
+        polling.stop(),
+        idosiPolling?.stop(),
+        maintenance.stop(),
+        waitDocumentCatchUp,
+      ]);
       logger.info({ signal }, 'allocation worker stopped');
     } catch (error) {
       logger.error(

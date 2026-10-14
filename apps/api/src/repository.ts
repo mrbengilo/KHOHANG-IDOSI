@@ -1,3 +1,11 @@
+import type {
+  CancelledStoreWaitDocument,
+  CancelStoreWaitDocumentRequest,
+  ListStoreWaitDocumentsQuery,
+  ListStoreWaitDocumentsResponse,
+  StoreWaitDocumentCancelPreview,
+  StoreWaitDocumentDetail,
+} from '@idosi/contracts';
 import type { InboundStatistics, InboundStatisticsQuery } from '@idosi/contracts';
 import type { ReceiptSummary } from '@idosi/contracts';
 import type { ListSessionDocumentsQuery, SessionDocument } from '@idosi/contracts';
@@ -1050,6 +1058,27 @@ export interface WarehouseRepository extends SupplierReconciliationRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<WaitTicket>>;
+  /** Store wait documents ("phiếu chờ"), scoped by the live principal on every call. */
+  listStoreWaitDocuments(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreWaitDocumentsQuery,
+  ): Promise<ListStoreWaitDocumentsResponse>;
+  getStoreWaitDocument(
+    actor: AuthenticatedPrincipal,
+    documentId: string,
+  ): Promise<StoreWaitDocumentDetail>;
+  previewStoreWaitDocumentCancellation(
+    actor: AuthenticatedPrincipal,
+    documentId: string,
+  ): Promise<StoreWaitDocumentCancelPreview>;
+  cancelStoreWaitDocument(
+    actor: AuthenticatedPrincipal,
+    documentId: string,
+    input: CancelStoreWaitDocumentRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<CancelledStoreWaitDocument>>;
   listPriorityOffers(
     actor: AuthenticatedPrincipal,
     query: ListPriorityOffersQuery,

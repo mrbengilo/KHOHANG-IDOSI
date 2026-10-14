@@ -1,5 +1,28 @@
 import { UpdateReshareOrderStatusResponseSchema as ReshareStatusResponseSchema } from '@idosi/contracts';
 import { updateReshareOrderStatus as updateDatabaseReshareOrderStatus } from '@idosi/database';
+import {
+  cancelStoreWaitDocument as cancelDatabaseStoreWaitDocument,
+  getStoreWaitDocument as getDatabaseStoreWaitDocument,
+  listStoreWaitDocuments as listDatabaseStoreWaitDocuments,
+  previewStoreWaitDocumentCancellation as previewDatabaseStoreWaitDocumentCancellation,
+  StoreWaitDocumentNotFoundError,
+  StoreWaitDocumentSupersededError,
+  type StoreWaitDocumentDatabaseStatus,
+  type StoreWaitDocumentDetail as DatabaseStoreWaitDocumentDetail,
+  type StoreWaitDocumentEventRecord,
+  type StoreWaitDocumentRecord,
+} from '@idosi/database';
+import type {
+  CancelledStoreWaitDocument,
+  CancelStoreWaitDocumentRequest,
+  ListStoreWaitDocumentsQuery,
+  ListStoreWaitDocumentsResponse,
+  StoreWaitDocument,
+  StoreWaitDocumentCancelPreview,
+  StoreWaitDocumentDetail,
+  StoreWaitDocumentEvent,
+  StoreWaitDocumentStatus,
+} from '@idosi/contracts';
 import type {
   UpdateReshareOrderStatusRequest,
   ReshareOrderStatusUpdate,
@@ -497,16 +520,20 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     actor: AuthenticatedPrincipal,
     query: ListOrderHistoryQuery,
   ): Promise<Page<OrderHistoryEntry>> {
-    if (actor.role !== 'ADMIN' && actor.role !== 'HTKD') throw forbidden();
     if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
-    // HTKD scope is the live assignment list resolved with this request's session, so a revoked
-    // store disappears from list, filters and counts at once.
+    // HTKD and wholesale scopes are the live lists resolved with this request's session, so a
+    // revoked store disappears from list, filters and counts at once. A store account reads its
+    // own store only, whatever the query names.
     const storeIds =
       query.storeId !== undefined
         ? [query.storeId]
         : actor.role === 'ADMIN'
           ? undefined
-          : actor.assignedStoreIds;
+          : actor.role === 'STORE'
+            ? actor.storeId
+              ? [actor.storeId]
+              : []
+            : actor.assignedStoreIds;
     const result = await listDatabaseOrderHistory(db, {
       page: query.page,
       pageSize: query.pageSize,
@@ -4461,6 +4488,107 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     });
   }
 
+  public async listStoreWaitDocuments(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreWaitDocumentsQuery,
+  ): Promise<ListStoreWaitDocumentsResponse> {
+    return withWaitDocumentErrors(async () => {
+      const result = await listDatabaseStoreWaitDocuments(db, {
+        actorUserId: actor.accountId,
+        view: query.view,
+        page: query.page,
+        pageSize: query.pageSize,
+        ...(query.status === undefined
+          ? {}
+          : { status: databaseStoreWaitDocumentStatus(query.status) }),
+        ...(query.storeId === undefined ? {} : { storeId: query.storeId }),
+        ...(query.productId === undefined ? {} : { productId: query.productId }),
+        ...(query.q === undefined ? {} : { q: query.q }),
+        ...(query.openedFrom === undefined ? {} : { openedFrom: query.openedFrom }),
+        ...(query.openedTo === undefined ? {} : { openedTo: query.openedTo }),
+      });
+      return { data: result.data.map(storeWaitDocumentDto), pagination: result.pagination };
+    });
+  }
+
+  public async getStoreWaitDocument(
+    actor: AuthenticatedPrincipal,
+    documentId: string,
+  ): Promise<StoreWaitDocumentDetail> {
+    return withWaitDocumentErrors(async () =>
+      storeWaitDocumentDetailDto(
+        await getDatabaseStoreWaitDocument(db, { actorUserId: actor.accountId, documentId }),
+      ),
+    );
+  }
+
+  public async previewStoreWaitDocumentCancellation(
+    actor: AuthenticatedPrincipal,
+    documentId: string,
+  ): Promise<StoreWaitDocumentCancelPreview> {
+    return withWaitDocumentErrors(async () => {
+      const scope = await previewDatabaseStoreWaitDocumentCancellation(db, {
+        actorUserId: actor.accountId,
+        documentId,
+      });
+      return {
+        documentId: scope.document.id,
+        code: scope.document.code,
+        storeId: scope.document.storeId,
+        version: scope.document.version,
+        tickets: scope.tickets.map((ticketScope) =>
+          waitTicketCancelPreviewDto({
+            waitTicketId: ticketScope.ticket.id,
+            code: ticketScope.ticket.code,
+            storeId: ticketScope.ticket.storeId,
+            productId: ticketScope.ticket.productId,
+            scope: ticketScope,
+          }),
+        ),
+        awaitingAnswer: scope.awaitingAnswer.map((row) => ({
+          waitTicketId: row.waitTicketId,
+          productId: row.productId,
+          quantity: row.pendingQuantity,
+        })),
+        fingerprint: scope.fingerprint,
+      };
+    });
+  }
+
+  public async cancelStoreWaitDocument(
+    actor: AuthenticatedPrincipal,
+    documentId: string,
+    input: CancelStoreWaitDocumentRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<CancelledStoreWaitDocument>> {
+    if (actor.role === 'STORE') await this.authorizeRetailStoreOperation(actor);
+    return withWaitDocumentErrors(async () => {
+      const result = await cancelDatabaseStoreWaitDocument(db, {
+        documentId,
+        actorUserId: actor.accountId,
+        reason: input.reason,
+        expectedFingerprint: input.expectedFingerprint,
+        requestId: context.requestId,
+        idempotencyKey,
+        requestHash,
+      });
+      const body = result.replayed
+        ? (result.responseBody as unknown as CancelledStoreWaitDocument)
+        : result.value;
+      return {
+        data: {
+          documentId: body.documentId,
+          cancelledQuantity: body.cancelledQuantity,
+          revokedQuantity: body.revokedQuantity,
+          currentDocumentId: body.currentDocumentId,
+        },
+        replayed: result.replayed,
+      };
+    });
+  }
+
   public async listPriorityOffers(
     actor: AuthenticatedPrincipal,
     query: ListPriorityOffersQuery,
@@ -6360,6 +6488,171 @@ async function withWarehouseOutboundErrors<T>(operation: () => Promise<T>): Prom
     }
     throw error;
   }
+}
+
+async function withWaitDocumentErrors<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await withWaitErrors(operation);
+  } catch (error: unknown) {
+    if (error instanceof StoreWaitDocumentNotFoundError) throw notFound('Không tìm thấy phiếu chờ');
+    if (error instanceof StoreWaitDocumentSupersededError) {
+      throw new ApiError(
+        'WAIT_DOCUMENT_SUPERSEDED',
+        'Phiếu chờ này đã được xử lý và thay bằng phiếu mới. Vui lòng mở phiếu hiện hành để thao tác.',
+        409,
+        { currentDocumentId: error.currentDocumentId },
+      );
+    }
+    throw error;
+  }
+}
+
+function databaseStoreWaitDocumentStatus(
+  status: StoreWaitDocumentStatus,
+): StoreWaitDocumentDatabaseStatus {
+  switch (status) {
+    case 'CURRENT':
+      return 'current';
+    case 'MERGED':
+      return 'merged';
+    case 'ROLLED_OVER':
+      return 'rolled_over';
+    case 'COMPLETED':
+      return 'completed';
+    case 'CANCELLED':
+      return 'cancelled';
+  }
+}
+
+function storeWaitDocumentStatusDto(
+  status: StoreWaitDocumentDatabaseStatus,
+): StoreWaitDocumentStatus {
+  switch (status) {
+    case 'current':
+      return 'CURRENT';
+    case 'merged':
+      return 'MERGED';
+    case 'rolled_over':
+      return 'ROLLED_OVER';
+    case 'completed':
+      return 'COMPLETED';
+    case 'cancelled':
+      return 'CANCELLED';
+  }
+}
+
+function storeWaitDocumentEventDto(event: StoreWaitDocumentEventRecord): StoreWaitDocumentEvent {
+  return {
+    id: event.id,
+    kind: event.kind.toUpperCase() as StoreWaitDocumentEvent['kind'],
+    occurredAt: event.occurredAt.toISOString(),
+    actor: event.actorUserId
+      ? {
+          accountId: event.actorUserId,
+          role: event.actorRole
+            ? (event.actorRole.toUpperCase() as NonNullable<
+                StoreWaitDocumentEvent['actor']
+              >['role'])
+            : null,
+          displayName: event.actorDisplayName,
+        }
+      : null,
+    reason: event.reason,
+    session:
+      event.orderSessionId && event.orderSessionCode
+        ? { id: event.orderSessionId, code: event.orderSessionCode }
+        : null,
+    allocationRunId: event.allocationRunId,
+    allocationDecisionId: event.allocationDecisionId,
+    reshareOrderCode: event.reshareOrderCode,
+    waitTicket:
+      event.waitTicketId && event.waitTicketCode
+        ? { id: event.waitTicketId, code: event.waitTicketCode }
+        : null,
+    priorityOffer:
+      event.priorityOfferId && event.priorityOfferCode
+        ? { id: event.priorityOfferId, code: event.priorityOfferCode }
+        : null,
+    storeReceipt:
+      event.storeReceiptId && event.storeReceiptNumber
+        ? { id: event.storeReceiptId, number: event.storeReceiptNumber }
+        : null,
+  };
+}
+
+function storeWaitDocumentDto(record: StoreWaitDocumentRecord): StoreWaitDocument {
+  return {
+    id: record.id,
+    code: record.code,
+    storeId: record.storeId,
+    storeCode: record.storeCode,
+    storeName: record.storeName,
+    status: storeWaitDocumentStatusDto(record.status),
+    version: record.version,
+    chainId: record.chainId,
+    chainSequence: record.chainSequence,
+    openedAt: record.openedAt.toISOString(),
+    closedAt: record.closedAt?.toISOString() ?? null,
+    waitingSince: record.waitingSince.toISOString(),
+    predecessor: record.predecessor,
+    successor: record.successor,
+    openedEvent: storeWaitDocumentEventDto(record.openedEvent),
+    closedEvent: record.closedEvent ? storeWaitDocumentEventDto(record.closedEvent) : null,
+    lines: record.lines.map((line) => ({
+      productId: line.productId,
+      sku: line.sku,
+      productName: line.productName,
+      unit: line.unit === 'item' ? 'ITEM' : line.unit === 'kilogram' ? 'KILOGRAM' : 'BAG',
+      carriedInQuantity: line.carriedInQuantity,
+      addedQuantity: line.addedQuantity,
+      openingRemainingQuantity: line.openingRemainingQuantity,
+      openingPendingQuantity: line.openingPendingQuantity,
+      confirmedQuantity: line.confirmedQuantity,
+      cancelledQuantity: line.cancelledQuantity,
+      adjustedQuantity: line.adjustedQuantity,
+      carriedOutQuantity: line.carriedOutQuantity,
+      remainingQuantity: line.remainingQuantity,
+      pendingQuantity: line.pendingQuantity,
+    })),
+  };
+}
+
+function storeWaitDocumentDetailDto(
+  detail: DatabaseStoreWaitDocumentDetail,
+): StoreWaitDocumentDetail {
+  return {
+    ...storeWaitDocumentDto(detail),
+    members: detail.members.map((member) => ({
+      waitTicketId: member.waitTicketId,
+      code: member.code,
+      productId: member.productId,
+      status: member.status.toUpperCase() as StoreWaitDocumentDetail['members'][number]['status'],
+      originalQuantity: member.originalQuantity,
+      remainingQuantity: member.remainingQuantity,
+      fulfilledQuantity: member.fulfilledQuantity,
+      queuedAt: member.queuedAt.toISOString(),
+    })),
+    pendingResults: detail.pendingResults.map((row) => ({
+      allocationDecisionId: row.allocationDecisionId,
+      decisionVersion: row.decisionVersion,
+      session: { id: row.orderSessionId, code: row.orderSessionCode },
+      productId: row.productId,
+      quantity: row.quantity,
+    })),
+    chain: detail.chain.map((row) => ({
+      id: row.id,
+      code: row.code,
+      status: storeWaitDocumentStatusDto(row.status),
+      chainSequence: row.chainSequence,
+      openedAt: row.openedAt.toISOString(),
+      closedAt: row.closedAt?.toISOString() ?? null,
+      openedEventKind: row.openedEventKind.toUpperCase() as StoreWaitDocumentEvent['kind'],
+      closedEventKind: row.closedEventKind
+        ? (row.closedEventKind.toUpperCase() as StoreWaitDocumentEvent['kind'])
+        : null,
+    })),
+    currentDocument: detail.currentDocument,
+  };
 }
 
 async function withWaitErrors<T>(operation: () => Promise<T>): Promise<T> {

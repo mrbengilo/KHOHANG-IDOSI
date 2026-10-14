@@ -404,7 +404,11 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(45);
+    expect(journal.entries).toHaveLength(46);
+    expect(journal.entries[45]).toMatchObject({
+      tag: '0045_store_wait_documents',
+      breakpoints: true,
+    });
     expect(journal.entries[44]).toMatchObject({
       tag: '0044_allocation_waitlist_response',
       breakpoints: true,

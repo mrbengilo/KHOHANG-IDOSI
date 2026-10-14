@@ -14,3 +14,4 @@ export * from './value-objects.js';
 export * from './wait-tickets.js';
 export * from './supplier-reconciliation.js';
 export * from './reshare-orders.js';
+export * from './store-wait-documents.js';

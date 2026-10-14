@@ -1,5 +1,9 @@
 # Phiếu chờ ưu tiên: đề nghị một phần/toàn bộ, quyền hủy và deadline
 
+> Từ 0045 (`store-active-wait-document.md`): người dùng thấy phiếu chờ tổng `PCT` theo cửa hàng;
+> “Hủy phiếu chờ” trên phiếu tổng hủy mọi dòng PC hủy được theo đúng quy tắc dưới đây, có xem trước và
+> vân tay bắt buộc; hủy từng dòng PC vẫn dùng được. Phiếu tổng đã xử lý không nhận lệnh hủy.
+
 Tài liệu nghiệp vụ cho chính sách phiếu chờ (migration `0037_priority_wait_policy`).
 
 ## Đối tượng

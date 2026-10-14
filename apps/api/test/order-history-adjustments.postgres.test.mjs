@@ -113,10 +113,10 @@ async function fixture() {
       .insert(orderRequestItems)
       .values({ orderRequestId: request.id, productId: product.id, requestedQuantity: index + 2 });
   }
-  return { admin, htkd, storeUser, storeRows, product, session };
+  return { admin, htkd, storeUser, storeUserStoreId: storeRows[1].id, storeRows, product, session };
 }
 
-test('order history is ADMIN-wide, HTKD-scoped and closed to stores', { skip }, async () => {
+test('order history is ADMIN-wide, HTKD-scoped and store-own only', { skip }, async () => {
   {
     const f = await fixture();
     const scopedQuery = `sessionId=${f.session.id}`;
@@ -170,12 +170,25 @@ test('order history is ADMIN-wide, HTKD-scoped and closed to stores', { skip }, 
       assert.equal(revoked.statusCode, 401, revoked.body);
     }
 
+    // A store account reads the history of its own store only, whatever it names.
+    const storeHeaders = await login(f.storeUser);
     const store = await app.inject({
       method: 'GET',
-      url: '/api/v1/order-history',
-      headers: await login(f.storeUser),
+      url: `/api/v1/order-history?${scopedQuery}`,
+      headers: storeHeaders,
     });
-    assert.equal(store.statusCode, 403, store.body);
+    assert.equal(store.statusCode, 200, store.body);
+    const storePage = ListOrderHistoryResponseSchema.parse(store.json());
+    assert.deepEqual(
+      storePage.data.map((entry) => entry.storeId),
+      [f.storeUserStoreId],
+    );
+    const otherStore = await app.inject({
+      method: 'GET',
+      url: `/api/v1/order-history?storeId=${f.storeRows.find((row) => row.id !== f.storeUserStoreId).id}`,
+      headers: storeHeaders,
+    });
+    assert.equal(otherStore.statusCode, 403, otherStore.body);
 
     const invalid = await app.inject({
       method: 'GET',

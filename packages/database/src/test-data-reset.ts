@@ -5,9 +5,9 @@ import { idosiProductSaleGrams, idosiItemsForProduct } from './store-sale-sync.j
 import { idosiNormalSaleGrams } from './store-normal-sale-sync.js';
 import { resetLinkSignature } from './reset-sale-boundary.js';
 
-/** Reviewed PostgreSQL 17 catalog built by migrations 0000..0044 in the isolated fixture. */
+/** Reviewed PostgreSQL 17 catalog built by migrations 0000..0045 in the isolated fixture. */
 export const EXPECTED_RESET_SCHEMA_HASH =
-  'cea2431a57b4adc177ba8da62a2c7c4236773934bce654e0889f3e04c1144b85';
+  '79d0f1868ad00f32530dee5590c44fc106eaa2edb059fab261bad3ca3ccfbc0b';
 
 /** Only this reviewed set can ever be passed to TRUNCATE. No SQL comes from a manifest. */
 export const RESET_PURGE_TABLES = [
@@ -73,6 +73,12 @@ export const RESET_PURGE_TABLES = [
   // 0044: result revocations and wait-ticket lineage go with the results and tickets they describe.
   'allocation_line_dispositions',
   'wait_ticket_sources',
+  // 0045: store wait documents describe the purged wait tickets and results. Their PCT code
+  // counter lives in document_code_counters (kept), so document codes are never reused.
+  'store_wait_document_events',
+  'store_wait_documents',
+  'store_wait_document_lines',
+  'store_wait_document_members',
 ] as const;
 export const RESET_KEEP_TABLES = [
   'users',
