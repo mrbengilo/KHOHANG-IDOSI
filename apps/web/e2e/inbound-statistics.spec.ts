@@ -465,6 +465,7 @@ test('detail keeps parent paging, searches and sort; it pages on its own', async
   await expect(detailRegion(page, beta)).toContainText('Nguồn: Đối tác khác');
   await page.getByLabel('Tìm cửa hàng', { exact: true }).fill('Beta');
   await expect(detailRows(page)).toHaveCount(0);
+  await expect(page.getByLabel('Tìm cửa hàng', { exact: true })).toBeFocused();
   await expect(parentStoreRows(page)).toHaveCount(1);
 
   // The main store dropdown still filters the whole report, as before.

@@ -8,6 +8,7 @@ import { Badge } from '../../../components/Badge';
 import { Button } from '../../../components/Button';
 import { EmptyState } from '../../../components/EmptyState';
 import { DashboardSkeleton } from '../../../components/Skeleton';
+import { useRouteContentTarget } from '../../../components/RouteContentNavigation';
 import { ApiClientError, listAccessibleStores, listCatalog } from '../../../lib/api';
 import { DraftScope } from '../../../lib/draft-guard';
 import {
@@ -157,9 +158,12 @@ export function AdminAdjustmentWorkspace() {
     }
   }, [filters.page, listQuery.isPlaceholderData, page, setParams, totalPages]);
 
-  useEffect(() => {
-    if (filters.openId) detailRef.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
-  }, [filters.openId]);
+  useRouteContentTarget(
+    detailRef,
+    'detail',
+    Boolean(filters.openId) && !openQuery.isPending,
+    filters.openId,
+  );
 
   const stores = storesQuery.data ?? [];
   const storeById = useMemo(() => new Map(stores.map((store) => [store.id, store])), [stores]);
@@ -519,7 +523,8 @@ export function AdminAdjustmentWorkspace() {
       {filters.openId ? (
         <section
           aria-label="Chi tiết hồ sơ sai lệch"
-          className="panel adjustment-workspace__detail"
+          className="panel adjustment-workspace__detail content-target"
+          tabIndex={-1}
           ref={detailRef}
         >
           <div className="adjustment-workspace__detail-head">

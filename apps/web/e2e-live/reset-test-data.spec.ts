@@ -159,6 +159,10 @@ test('isolated reset keeps login/roles, rejects old writes and shows empty inven
       });
     }
   } finally {
+    // Drain intercepted requests while the isolated API is still alive. The page can refetch
+    // after its final screenshot; stopping port 3111 first races those route.fetch handlers.
+    await page.unrouteAll({ behavior: 'wait' });
+    await page.close();
     if (server && server.exitCode === null) {
       const closed = once(server, 'exit');
       server.kill('SIGTERM');

@@ -71,7 +71,7 @@ describe('admin inventory tabs', () => {
     );
     expect(html.match(/role="tabpanel"/g)).toHaveLength(1);
     expect(html).toContain('aria-labelledby="inventory-tab-adjustments"');
-    expect(html).toContain('<h1>Tồn kho &amp; lịch sử</h1>');
+    expect(html).toMatch(/<h1[^>]*tabindex="-1"[^>]*>Tồn kho &amp; lịch sử<\/h1>/u);
   });
 
   it('mounts only the store tab queries: no warehouse or discrepancy request, no ledger yet', () => {
@@ -105,7 +105,7 @@ describe('read-only warehouse tab for store accounts and the wholesale desk', ()
     expect(html).toMatch(/aria-selected="true"[^>]*id="inventory-tab-store"/u);
     expect(keys).toContain('store-inventory-bags');
     expect(keys).not.toContain('warehouse-inventory');
-    expect(html).toContain('<h1>Tồn kho &amp; lịch sử</h1>');
+    expect(html).toMatch(/<h1[^>]*tabindex="-1"[^>]*>Tồn kho &amp; lịch sử<\/h1>/u);
   });
 
   it('opens the warehouse tab for a store from the URL without mounting store queries', () => {

@@ -2,6 +2,7 @@ import type { InboundStatistics, InboundStatisticsQuery } from '@idosi/contracts
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { getInboundStatistics } from '../../lib/api';
+import { useContentReveal } from '../../lib/use-content-reveal';
 import {
   inboundMetricLabel,
   inboundStoreDetailKey,
@@ -37,6 +38,7 @@ export function InboundStoreDetails({
         : undefined,
   });
   const headingId = `${id}-heading`;
+  const headingRef = useContentReveal<HTMLHeadingElement>(store.id, false);
   const storeLabel = `${store.code} · ${store.name}`;
   const period = scope.periodType === 'DAY' ? scope.date : scope.month;
   const source = inboundSourceLabels[scope.source];
@@ -55,7 +57,9 @@ export function InboundStoreDetails({
       className="inbound-store-detail"
     >
       <div className="inbound-store-detail-heading">
-        <h3 id={headingId}>Chi tiết cửa hàng {storeLabel}</h3>
+        <h3 id={headingId} ref={headingRef} tabIndex={-1} className="content-target">
+          Chi tiết cửa hàng {storeLabel}
+        </h3>
         <p>
           Kỳ: {period} · Nguồn: {source} · Sắp xếp: {sort} · Asia/Ho_Chi_Minh
         </p>
