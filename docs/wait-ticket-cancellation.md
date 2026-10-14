@@ -90,6 +90,10 @@ Khi hủy:
 - Phiếu `cancelled` (và `fulfilled` không còn hàng thu hồi được) không bị sửa ngược; gọi lại với key khác trả 409, cùng key cùng
   payload trả replay, cùng key khác payload trả conflict.
 
+Hủy tự động do từ chối/hết hạn đề nghị **đủ hàng** (dòng 5–6 của bảng trên) chỉ hủy nhu cầu còn
+chờ: hàng phiếu đã được cấp trong kết quả còn chờ xác nhận không bị thu hồi, cửa hàng/HTKD vẫn tự
+xác nhận hoặc chuyển phiếu chờ (`allocation-waitlist-workflow.md`).
+
 ### Phiếu sinh từ nhận thiếu chưa hoàn tất
 
 Guard cũ chặn hủy khi phiếu nhận thiếu còn chờ HTKD đã được bỏ, thay bằng xử lý an toàn:
