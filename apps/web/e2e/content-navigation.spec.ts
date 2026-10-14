@@ -157,7 +157,7 @@ test('leaving a pending detail cancels its late focus intent', async ({ page }) 
     release = resolve;
   });
   await page.route(
-    '**/api/v1/allocation-decisions/00000000-0000-4000-8000-000000009998?includeReshare=true',
+    '**/api/v1/allocation-decisions/00000000-0000-4000-8000-000000009998?*',
     async (route) => {
       await gate;
       await route
