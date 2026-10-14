@@ -76,6 +76,11 @@ export const ListSessionDocumentsQuerySchema = PaginationQuerySchema.extend({
     .enum(['true', 'false'])
     .transform((value) => value === 'true')
     .optional(),
+  /** Opt-in for WAITLISTED/CANCELLED decision statuses (older bundles read them as REJECTED). */
+  includeWaitlist: z
+    .enum(['true', 'false'])
+    .transform((value) => value === 'true')
+    .optional(),
 })
   .strict()
   .superRefine((query, context) => {

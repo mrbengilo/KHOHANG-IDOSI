@@ -1,12 +1,12 @@
 import type { AllocationDecision, AllocationDecisionDetail } from '@idosi/contracts';
-import { CheckCircle2, PackageCheck, X, XCircle } from 'lucide-react';
-import { useId, useState, type FormEvent } from 'react';
+import { CheckCircle2, PackageCheck, Undo2, X } from 'lucide-react';
+import { useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
-import { useDialogAccessibility } from '../../lib/use-dialog-accessibility';
 import {
+  actionableLines,
   decisionActions,
   decisionCode,
   decisionStatusLabel,
@@ -15,6 +15,7 @@ import {
   shipmentProgressLabel,
 } from './allocationDecisionApi';
 import type { useAllocationDecisionResponder } from './useAllocationDecisionResponder';
+import { WaitlistConfirmDialog } from './WaitlistConfirmDialog';
 import './allocation-decisions.css';
 
 const timeFormatter = new Intl.DateTimeFormat('vi-VN', {
@@ -31,7 +32,7 @@ export interface AllocationDecisionPanelProps {
   readonly onClose?: () => void;
   /** Show the receive-page link for the store side once goods are on their way. */
   readonly canReceive?: boolean;
-  /** The viewer answers on the store's behalf (assigned HTKD): acceptance only. */
+  /** The viewer answers on the store's behalf (assigned HTKD), with its own audit identity. */
   readonly actingForStore?: boolean;
 }
 
@@ -46,7 +47,7 @@ export function AllocationDecisionPanel({
   storeName,
 }: AllocationDecisionPanelProps) {
   const headingId = useId();
-  const [confirmingReject, setConfirmingReject] = useState(false);
+  const [confirmingWaitlist, setConfirmingWaitlist] = useState(false);
   const busy = responder.busy?.decisionId === decision.id ? responder.busy.action : null;
   const anyBusy = responder.busy !== null;
   const error = responder.error?.decisionId === decision.id ? responder.error : null;
@@ -59,6 +60,10 @@ export function AllocationDecisionPanel({
   const reshareOrder = decision.reshareOrder ?? null;
   const carriedQuantity = carried.reduce((total, row) => total + row.quantity, 0);
   const waitlisted = decision.lines.reduce((total, line) => total + line.waitlistedQuantity, 0);
+  const actionable = actionableLines(decision);
+  const revocations = decision.revocations ?? [];
+  const revoked = decision.revokedQuantity ?? 0;
+  const actionableTotal = decision.actionableQuantity ?? decision.grantedQuantity;
   const shipment = decision.shipment;
 
   const accept = () =>
@@ -111,22 +116,45 @@ export function AllocationDecisionPanel({
                 <tr>
                   <th>Mặt hàng</th>
                   <th>Được cấp (bao)</th>
+                  {revoked > 0 ? <th>Đã thu hồi (bao)</th> : null}
+                  {revoked > 0 ? <th>Còn hiệu lực (bao)</th> : null}
                   <th>Chưa được cấp (bao)</th>
                 </tr>
               </thead>
               <tbody>
-                {decision.lines.map((line) => (
-                  <tr key={line.productId}>
-                    <td data-label="Mặt hàng">{productName(line.productId)}</td>
-                    <td data-label="Được cấp">{line.allocatedQuantity}</td>
-                    <td data-label="Chưa được cấp">{line.waitlistedQuantity}</td>
-                  </tr>
-                ))}
+                {decision.lines.map((line) => {
+                  const row = actionable.find((item) => item.productId === line.productId);
+                  return (
+                    <tr key={line.productId}>
+                      <td data-label="Mặt hàng">{productName(line.productId)}</td>
+                      <td data-label="Được cấp">
+                        {row && row.revokedQuantity > 0 ? (
+                          <s aria-label={`Cấp ban đầu ${line.allocatedQuantity} bao`}>
+                            {line.allocatedQuantity}
+                          </s>
+                        ) : (
+                          line.allocatedQuantity
+                        )}
+                      </td>
+                      {revoked > 0 ? (
+                        <td data-label="Đã thu hồi">{row?.revokedQuantity ?? 0}</td>
+                      ) : null}
+                      {revoked > 0 ? (
+                        <td data-label="Còn hiệu lực">
+                          <strong>{row?.actionableQuantity ?? line.allocatedQuantity}</strong>
+                        </td>
+                      ) : null}
+                      <td data-label="Chưa được cấp">{line.waitlistedQuantity}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
               <tfoot>
                 <tr>
                   <th>Tổng</th>
                   <td>{decision.grantedQuantity}</td>
+                  {revoked > 0 ? <td>{revoked}</td> : null}
+                  {revoked > 0 ? <td>{actionableTotal}</td> : null}
                   <td>{waitlisted}</td>
                 </tr>
               </tfoot>
@@ -140,6 +168,56 @@ export function AllocationDecisionPanel({
           </p>
         ) : null}
       </section>
+
+      {revocations.length > 0 ? (
+        <section aria-label="Phần hàng đã thu hồi" className="allocation-decision__group">
+          <h4>Phần hàng đã thu hồi · {revoked} bao</h4>
+          <p className="allocation-decision__hint">
+            Ảnh chụp phân bổ ban đầu giữ nguyên; các phần dưới đây đã trả lại kho tổng và không được
+            xác nhận hay xuất kho.
+          </p>
+          <ul className="allocation-decision__carried">
+            {revocations.map((row) => (
+              <li key={row.allocationLineId}>
+                <span>
+                  <s>
+                    {productName(row.productId)}: {row.quantity} bao
+                  </s>
+                </span>
+                <small>
+                  {row.kind === 'WAIT_TICKET_CANCELLED'
+                    ? `Thu hồi do hủy phiếu chờ ${row.waitTicketCode ?? ''}`
+                    : 'Chuyển về phiếu chờ'}
+                  {row.actorName ? ` · ${row.actorName}` : ''} ·{' '}
+                  {timeFormatter.format(new Date(row.createdAt))}
+                </small>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {(decision.requeued ?? []).length > 0 ? (
+        <section aria-label="Phiếu chờ nhận lại hàng" className="allocation-decision__group">
+          <h4>Đã chuyển về phiếu chờ</h4>
+          <ul className="allocation-decision__carried">
+            {(decision.requeued ?? []).map((row) => (
+              <li key={`${row.waitTicketId}:${row.mode}`}>
+                <span>
+                  {row.waitTicketCode} · {productName(row.productId)}
+                </span>
+                <small>
+                  {row.mode === 'RESTORE_SOURCE'
+                    ? `${row.quantity} bao trở lại phần còn chờ của chính phiếu`
+                    : row.createdTicket
+                      ? `Tạo phiếu chờ mới ${row.quantity} bao`
+                      : `Cộng thêm ${row.quantity} bao vào phiếu chờ đang có`}
+                </small>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       {carried.length > 0 || carriedHistory.length > 0 ? (
         <section aria-label="Hàng đã giữ từ phiên trước" className="allocation-decision__group">
@@ -190,13 +268,18 @@ export function AllocationDecisionPanel({
           ) : null}
           {decision.respondedAt ? (
             <span>
-              {decision.status === 'ACCEPTED' ? 'Chấp nhận' : 'Từ chối'} bởi{' '}
-              {decision.respondedByName ?? 'tài khoản cửa hàng'} lúc{' '}
+              {decision.status === 'ACCEPTED'
+                ? 'Xác nhận phân bổ'
+                : decision.status === 'WAITLISTED'
+                  ? 'Chuyển phiếu chờ'
+                  : 'Từ chối'}{' '}
+              bởi {decision.respondedByName ?? 'tài khoản cửa hàng'} lúc{' '}
               {timeFormatter.format(new Date(decision.respondedAt))}
               {decision.reason ? ` · Lý do: ${decision.reason}` : ''}
             </span>
           ) : null}
-          {decision.status === 'REJECTED' && decision.releasedQuantity > 0 ? (
+          {(decision.status === 'REJECTED' || decision.status === 'WAITLISTED') &&
+          decision.releasedQuantity > 0 ? (
             <span>{decision.releasedQuantity} bao đã được trả lại kho tổng.</span>
           ) : null}
         </div>
@@ -224,143 +307,47 @@ export function AllocationDecisionPanel({
       {actions.length > 0 ? (
         <div className="allocation-decision__actions">
           <p>
-            {actingForStore || !actions.includes('REJECT')
-              ? 'Bạn chấp nhận thay cửa hàng được phân công. '
-              : ''}
-            Chấp nhận sẽ tự tạo đơn đặt Reshare (mã RE) đúng các mặt hàng và số bao được cấp, đồng
-            thời xuất số hàng này khỏi kho tổng IDOSI. Khi hàng đến, cửa hàng vẫn khai nhận đủ hoặc
-            thiếu theo thực tế.
+            {actingForStore ? 'Bạn thao tác thay cửa hàng được phân công. ' : ''}
+            “Xác nhận phân bổ” tự tạo đơn đặt Reshare (mã RE) đúng các mặt hàng và số bao còn hiệu
+            lực ({actionableTotal} bao), đồng thời xuất số hàng này khỏi kho tổng IDOSI. “Chuyển
+            phiếu chờ” trả hàng về kho và đưa nhu cầu trở lại phiếu chờ.
           </p>
           <div className="allocation-decision__buttons">
-            {actions.includes('REJECT') ? (
+            {actions.includes('WAITLIST') ? (
               <Button
-                busy={busy === 'REJECT'}
-                className="allocation-decision__reject"
+                busy={busy === 'WAITLIST'}
                 disabled={anyBusy}
-                onClick={() => setConfirmingReject(true)}
+                onClick={() => setConfirmingWaitlist(true)}
                 tone="secondary"
               >
-                <XCircle aria-hidden="true" size={18} /> Từ chối
+                <Undo2 aria-hidden="true" size={18} /> Chuyển phiếu chờ
               </Button>
             ) : null}
             {actions.includes('ACCEPT') ? (
               <Button busy={busy === 'ACCEPT'} disabled={anyBusy} onClick={accept} tone="primary">
-                <CheckCircle2 aria-hidden="true" size={18} /> Chấp nhận
+                <CheckCircle2 aria-hidden="true" size={18} /> Xác nhận phân bổ
               </Button>
             ) : null}
           </div>
         </div>
       ) : null}
 
-      {confirmingReject ? (
-        <RejectDialog
-          busy={busy === 'REJECT'}
-          carriedQuantity={carriedQuantity}
+      {confirmingWaitlist ? (
+        <WaitlistConfirmDialog
+          busy={busy === 'WAITLIST'}
           decision={decision}
           error={error?.message ?? null}
-          onCancel={() => setConfirmingReject(false)}
-          onConfirm={async (reason) => {
+          onCancel={() => setConfirmingWaitlist(false)}
+          onConfirm={async () => {
             const done = await responder.respond(decision, {
-              action: 'REJECT',
+              action: 'WAITLIST',
               expectedVersion: decision.version,
-              ...(reason ? { reason } : {}),
             });
-            if (done) setConfirmingReject(false);
+            if (done) setConfirmingWaitlist(false);
           }}
           productName={productName}
         />
       ) : null}
     </article>
-  );
-}
-
-function RejectDialog({
-  busy,
-  carriedQuantity,
-  decision,
-  error,
-  onCancel,
-  onConfirm,
-  productName,
-}: {
-  readonly busy: boolean;
-  readonly carriedQuantity: number;
-  readonly decision: AllocationDecision;
-  readonly error: string | null;
-  readonly onCancel: () => void;
-  readonly onConfirm: (reason: string) => Promise<void>;
-  readonly productName: (productId: string) => string;
-}) {
-  const dialogRef = useDialogAccessibility<HTMLFormElement>(busy ? undefined : onCancel);
-  const titleId = useId();
-  const [reason, setReason] = useState('');
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    void onConfirm(reason.trim());
-  };
-  return (
-    <div className="dialog-backdrop">
-      <form
-        aria-labelledby={titleId}
-        aria-modal="true"
-        className="dialog allocation-decision-dialog"
-        onSubmit={submit}
-        ref={dialogRef}
-        role="dialog"
-        tabIndex={-1}
-      >
-        <div className="dialog__header">
-          <div>
-            <h2 id={titleId}>Từ chối nhận phiếu {decisionCode(decision)}?</h2>
-            <p>
-              {decision.grantedQuantity} bao của phiếu này sẽ trả lại kho tổng và không được giao.
-              Phiếu vẫn được lưu trong lịch sử với nhãn “đã từ chối nhận”.
-            </p>
-          </div>
-          <button aria-label="Đóng hộp xác nhận" disabled={busy} onClick={onCancel} type="button">
-            <X aria-hidden="true" size={20} />
-          </button>
-        </div>
-        <ul className="allocation-decision__carried">
-          {decision.lines
-            .filter((line) => line.allocatedQuantity > 0)
-            .map((line) => (
-              <li key={line.productId}>
-                <span>{productName(line.productId)}</span>
-                <small>{line.allocatedQuantity} bao</small>
-              </li>
-            ))}
-        </ul>
-        {carriedQuantity > 0 ? (
-          <p className="allocation-decision__hint">
-            {carriedQuantity} bao hàng đã giữ từ phiên trước không bị hủy: vẫn được giữ cho cửa hàng
-            và giao chung với đơn thường kế tiếp.
-          </p>
-        ) : null}
-        {error ? (
-          <div className="form-error" role="alert">
-            {error}
-          </div>
-        ) : null}
-        <label className="allocation-decision-dialog__reason">
-          <span className="field-label">Lý do (không bắt buộc)</span>
-          <textarea
-            disabled={busy}
-            maxLength={500}
-            onChange={(event) => setReason(event.target.value)}
-            rows={3}
-            value={reason}
-          />
-        </label>
-        <div className="dialog__actions">
-          <Button data-dialog-initial-focus disabled={busy} onClick={onCancel} tone="secondary">
-            Quay lại
-          </Button>
-          <Button busy={busy} tone="danger" type="submit">
-            Xác nhận từ chối
-          </Button>
-        </div>
-      </form>
-    </div>
   );
 }

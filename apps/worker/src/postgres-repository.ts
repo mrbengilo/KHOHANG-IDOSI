@@ -29,6 +29,7 @@ import {
   stores,
   warehouseBalances,
   waitTickets,
+  waitTicketSources,
   withAdvisoryLock,
   withSerializableTransaction,
   type Database,
@@ -876,7 +877,14 @@ export class PostgresAllocationJobRepository implements AllocationJobRepository 
       waitlistedByRequestItem,
       processedAt,
     );
-    await persistWaitRemainders(tx, waitRemainders, demandById, processedAt, persistedRunId);
+    await persistWaitRemainders(
+      tx,
+      waitRemainders,
+      demandById,
+      processedAt,
+      persistedRunId,
+      session.id,
+    );
     // Published with the result itself: a store can only ever see committed results, and a
     // replayed run returns before reaching here.
     const decisions = await publishAllocationDecisionsInTransaction(tx, {
@@ -1651,6 +1659,7 @@ async function persistWaitRemainders(
   demandById: ReadonlyMap<string, MergedDemand>,
   now: Date,
   runId: string,
+  orderSessionId: string,
 ): Promise<void> {
   for (const remainder of remainders) {
     const demand = demandById.get(remainder.demandId);
@@ -1671,6 +1680,9 @@ async function persistWaitRemainders(
       )
       .for('update')
       .limit(1);
+    const ticketId =
+      active?.id ??
+      deterministicUuid(`wait-ticket:${runId}:${remainder.storeId}:${remainder.productId}`);
     if (active) {
       await tx
         .update(waitTickets)
@@ -1683,7 +1695,7 @@ async function persistWaitRemainders(
         .where(eq(waitTickets.id, active.id));
     } else {
       await tx.insert(waitTickets).values({
-        id: deterministicUuid(`wait-ticket:${runId}:${remainder.storeId}:${remainder.productId}`),
+        id: ticketId,
         storeId: remainder.storeId,
         productId: remainder.productId,
         sourceOrderRequestItemId: source.lineId,
@@ -1697,6 +1709,17 @@ async function persistWaitRemainders(
         updatedAt: now,
       });
     }
+    // Lineage (0044): which session and run added this waiting demand, so a ticket fed by
+    // several sessions shows each of them.
+    await tx.insert(waitTicketSources).values({
+      waitTicketId: ticketId,
+      kind: 'order_remainder',
+      quantity: remainder.remainingQuantity,
+      orderSessionId,
+      allocationRunId: runId,
+      orderRequestItemId: source.lineId,
+      createdAt: now,
+    });
   }
 }
 

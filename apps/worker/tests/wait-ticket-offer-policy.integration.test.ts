@@ -4,6 +4,7 @@ import {
   applyWarehouseMovement,
   auditLogs,
   cancelWaitTicket,
+  previewWaitTicketCancellation,
   createDatabase,
   dailyPriorityOffers,
   listPriorityOffers,
@@ -361,11 +362,19 @@ describePostgres('priority wait policy across sessions (worker + PostgreSQL)', (
     // The women's partial offer of session 2 lapsed again; that ticket keeps waiting too.
     expect(await ticket(womenTicket.id)).toMatchObject({ status: 'active', remainingQuantity: 2 });
 
-    // Manual cancellation now only cancels the 2 units still waiting; the held unit remains.
+    // Manual cancellation (0044) cancels the 2 units still waiting and revokes the held unit:
+    // its result is still waiting for the store's answer (no RE order, not shipped). The
+    // confirmed preview names exactly that scope.
+    const preview = await previewWaitTicketCancellation(db(), {
+      actorUserId: storeA.userId,
+      waitTicketId: menTicket.id,
+    });
+    expect(preview.scope.plan).toMatchObject({ ok: true, cancelledQuantity: 3 });
     const cancelled = await cancelWaitTicket(db(), {
       waitTicketId: menTicket.id,
       actorUserId: storeA.userId,
       reason: 'Cửa hàng không cần thêm',
+      expectedFingerprint: preview.scope.fingerprint,
       idempotencyKey: randomUUID(),
       requestHash: randomUUID(),
     });
@@ -373,12 +382,14 @@ describePostgres('priority wait policy across sessions (worker + PostgreSQL)', (
     expect(await ticket(menTicket.id)).toMatchObject({
       status: 'cancelled',
       cancellationKind: 'store_cancelled',
-      remainingQuantity: 2,
-      fulfilledQuantity: 1,
+      remainingQuantity: 3,
+      fulfilledQuantity: 0,
     });
     expect(
       (await db().select().from(reservations).where(eq(reservations.allocationLineId, line.id)))[0],
-    ).toMatchObject({ status: 'active', quantity: 1 });
+    ).toMatchObject({ status: 'released', quantity: 1 });
+    // Only the hold is returned: on-hand unchanged, reserved back to 0.
+    expect(await balance(men.id)).toEqual({ onHand: 1, reserved: 0 });
     // A cancelled ticket is never offered again.
     const s3Close = new Date(s2.scheduled.finalDueAt.getTime() + 60 * MINUTE);
     const s3 = await session(date, s3Close, new Date(s3Close.getTime() + 30 * MINUTE), 'S3');

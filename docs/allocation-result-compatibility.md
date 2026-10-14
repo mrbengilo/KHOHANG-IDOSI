@@ -49,3 +49,15 @@ Existing indexes remain unchanged. Any additional index rollout needs measured
 query plans and a separately tested concurrent-index migration, not a blocking
 index build in the transactional application migration. No deployed migration is
 rewritten or rolled back by this PR.
+
+## Allocation decision statuses (0044)
+
+`GET /api/v1/allocation-decisions[/:id]`, `POST .../respond` and `GET /api/v1/session-documents`
+keep their previous response shape unless the client sends `includeWaitlist=true`. Without it the
+new `WAITLISTED` and `CANCELLED` statuses are reported as `REJECTED`, `allowedActions` only lists
+`ACCEPT` (and is empty for a partially revoked result), and the new optional fields are omitted.
+A retired `REJECT` command returns 409 `ALLOCATION_DECISION_ACTION_RETIRED`; `WAITLIST`, or `ACCEPT`
+on a partially revoked result, from a client that did not opt in returns 409
+`CLIENT_UPGRADE_REQUIRED`. Wait tickets add `lineage` only with `includeLineage=true`, and the
+cancel command accepts an optional `expectedFingerprint`. Details:
+[allocation waitlist workflow](allocation-waitlist-workflow.md).

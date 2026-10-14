@@ -93,10 +93,14 @@ describe('order display status and answer rights', () => {
     expect(reshareOrderDisplayStatus({ orderStatus: null })).toBe('NOT_ORDERED');
   });
 
-  it('lets the receiving side accept or reject, an HTKD only accept, Admin nothing', () => {
-    expect(allowedAllocationDecisionActions('STORE', 'PENDING')).toEqual(['ACCEPT', 'REJECT']);
-    expect(allowedAllocationDecisionActions('WHOLESALE', 'PENDING')).toEqual(['ACCEPT', 'REJECT']);
-    expect(allowedAllocationDecisionActions('HTKD', 'PENDING')).toEqual(['ACCEPT']);
+  it('lets the receiving side and an assigned HTKD accept or move to waiting, Admin nothing', () => {
+    expect(allowedAllocationDecisionActions('STORE', 'PENDING')).toEqual(['ACCEPT', 'WAITLIST']);
+    expect(allowedAllocationDecisionActions('WHOLESALE', 'PENDING')).toEqual([
+      'ACCEPT',
+      'WAITLIST',
+    ]);
+    expect(allowedAllocationDecisionActions('HTKD', 'PENDING')).toEqual(['ACCEPT', 'WAITLIST']);
+    expect(allowedAllocationDecisionActions('STORE', 'WAITLISTED')).toEqual([]);
     expect(allowedAllocationDecisionActions('ADMIN', 'PENDING')).toEqual([]);
     expect(allowedAllocationDecisionActions('STORE', 'ACCEPTED')).toEqual([]);
   });

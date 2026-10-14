@@ -89,3 +89,40 @@
 .wait-ticket-table th:first-child {
   white-space: nowrap;
 }
+
+/* 0044: scoped "Phiếu chờ ưu tiên" table for HTKD, store and wholesale accounts. */
+.wait-ticket-table--scoped td {
+  vertical-align: top;
+}
+.wait-ticket-table--scoped td > small,
+.wait-ticket-table--scoped td > strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.wait-ticket-code {
+  font-size: 1.05rem;
+  letter-spacing: 0.01em;
+}
+.wait-ticket-sources {
+  display: grid;
+  gap: 4px;
+  margin: 4px 0 0;
+  padding-left: 1rem;
+  font-size: 0.875rem;
+}
+.wait-ticket-table--scoped details summary {
+  min-height: 32px;
+  cursor: pointer;
+  color: var(--brand);
+}
+/* Six or seven columns: fits a desktop content area, scrolls in its own region on mobile. */
+.app-main table.wait-ticket-table.wait-ticket-table--scoped {
+  min-width: 860px;
+}
+.wait-ticket-table--scoped .wait-ticket-actions {
+  min-width: 132px;
+}
+.wait-ticket-table--scoped .wait-ticket-actions .button {
+  min-height: 44px;
+  white-space: normal;
+}

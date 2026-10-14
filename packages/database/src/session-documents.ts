@@ -38,7 +38,8 @@ import {
 export interface ListSessionDocumentsInput extends ListAllocationResultsInput {
   /** Attach the store decision (and shipment progress) of every document header. */
   readonly includeDecision?: boolean;
-  readonly decisionStatus?: AllocationDecisionDatabaseStatus;
+  readonly decisionStatus?:
+    AllocationDecisionDatabaseStatus | readonly AllocationDecisionDatabaseStatus[];
 }
 
 /** Header pagination followed by complete sources in the same MVCC snapshot. No writes. */
@@ -73,9 +74,13 @@ export async function listSessionDocuments(database: Database, input: ListSessio
       if (input.productId) predicates.push(eq(allocationLines.productId, input.productId));
       if (input.priority) predicates.push(eq(allocationLines.priorityLevel, input.priority));
       if (input.decisionStatus) {
+        const statuses =
+          typeof input.decisionStatus === 'string'
+            ? [input.decisionStatus]
+            : [...input.decisionStatus];
         // One decision per (run, store) header: a filter, never a join that multiplies rows.
         predicates.push(
-          sql`exists (select 1 from ${allocationResultDecisions} where ${allocationResultDecisions.allocationRunId} = ${allocationRuns.id} and ${allocationResultDecisions.storeId} = ${allocationLines.storeId} and ${allocationResultDecisions.status} = ${input.decisionStatus})`,
+          sql`exists (select 1 from ${allocationResultDecisions} where ${allocationResultDecisions.allocationRunId} = ${allocationRuns.id} and ${allocationResultDecisions.storeId} = ${allocationLines.storeId} and ${inArray(allocationResultDecisions.status, statuses)})`,
         );
       }
       const headers = tx

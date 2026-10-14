@@ -6,16 +6,18 @@ import { expect, type Page } from '@playwright/test';
  */
 export async function acceptAllocationResultFromNotice(page: Page, productName: string) {
   await page.goto('/');
-  const notice = page.getByRole('complementary', { name: 'Kết quả phân bổ cần xác nhận' });
+  const notice = page.getByRole('complementary', { name: /Có kết quả phân bổ cần xử lý/u });
   await expect(notice).toBeVisible();
   const item = notice.getByRole('listitem').filter({ hasText: productName });
   await expect(item).toHaveCount(1);
-  await item.getByRole('link', { name: /Mở phiếu/ }).click();
+  await item.getByRole('link', { name: /Xem chi tiết phiếu/u }).click();
   await expect(page).toHaveURL(/\/allocations\?decision=/);
   const panel = page.locator('.allocation-decision');
   await expect(panel).toContainText(productName);
   await expect(panel).toContainText('Chờ xác nhận');
-  await panel.getByRole('button', { name: 'Chấp nhận' }).click();
-  await expect(panel.locator('.allocation-decision__status > .badge')).toHaveText('Đã chấp nhận');
+  await panel.getByRole('button', { name: 'Xác nhận phân bổ' }).click();
+  await expect(panel.locator('.allocation-decision__status > .badge')).toHaveText(
+    'Đã xác nhận phân bổ',
+  );
   await expect(panel).toContainText('Đã giao đi, chờ cửa hàng khai nhận');
 }

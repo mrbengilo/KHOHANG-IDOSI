@@ -308,9 +308,9 @@ postgres('Admin/HTKD Reshare status persistence, history and inventory invariant
     });
   });
 
-  it('rejects rejected and cancelled results and unknown IDs', async () => {
+  it('rejects waitlisted and cancelled results and unknown IDs', async () => {
     const result = await fixture();
-    await respond(result.decisionId, fx.storeUserA, 'REJECT');
+    await respond(result.decisionId, fx.storeUserA, 'WAITLIST');
     await expect(updateReshareOrderStatus(db, command(result.decisionId))).rejects.toMatchObject({
       code: 'ORDER_SOURCE_NOT_ELIGIBLE',
     });

@@ -369,14 +369,13 @@ export async function publishPendingResult(
 export async function respond(
   decisionId: string,
   actorUserId: string,
-  action: 'ACCEPT' | 'REJECT',
+  action: 'ACCEPT' | 'WAITLIST' | 'REJECT',
   options: { key?: string; expectedVersion?: number } = {},
 ) {
   return respondAllocationDecision(db, {
     decisionId,
     action,
     expectedVersion: options.expectedVersion ?? 1,
-    reason: null,
     actorUserId,
     idempotencyKey: options.key ?? randomUUID(),
     requestHash: `${action}:${options.expectedVersion ?? 1}`,

@@ -894,6 +894,12 @@ export const waitTickets = pgTable(
     originalQuantity: integer('original_quantity').notNull(),
     remainingQuantity: integer('remaining_quantity').notNull(),
     fulfilledQuantity: integer('fulfilled_quantity').notNull().default(0),
+    /**
+     * Demand recorded before wait_ticket_sources existed (migration 0044 sets it to the original
+     * quantity of every older ticket). Its sessions cannot be proven and are shown for
+     * reconciliation, never invented. 0 for tickets created afterwards.
+     */
+    legacyUnsourcedQuantity: integer('legacy_unsourced_quantity').notNull().default(0),
     queuedAt: timestamp('queued_at', { withTimezone: true }).notNull().defaultNow(),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
     resolutionReason: text('resolution_reason'),
@@ -1426,6 +1432,9 @@ export const allocationDecisionStatusEnum = pgEnum('allocation_decision_status',
   'rejected',
   'not_required',
   'legacy',
+  // 0044: "Chuyển phiếu chờ" and a result whose every granted bag was revoked by cancellations.
+  'waitlisted',
+  'cancelled',
 ]);
 
 /**
@@ -1452,6 +1461,12 @@ export const allocationResultDecisions = pgTable(
     version: integer('version').notNull().default(1),
     /** Snapshot of the goods this result granted the store when it was published. */
     grantedQuantity: integer('granted_quantity').notNull().default(0),
+    /**
+     * Granted bags taken out of the result since publication (wait-ticket cancellations, or the
+     * whole result moved to waiting). Equals the sum of its allocation_line_dispositions; the
+     * granted snapshot itself never changes. Actionable = granted - revoked.
+     */
+    revokedQuantity: integer('revoked_quantity').notNull().default(0),
     /** allocation_run: written by the worker; legacy_backfill: classified by migration 0038. */
     origin: text('origin').notNull().default('allocation_run'),
     respondedAt: timestamp('responded_at', { withTimezone: true }),
@@ -1500,7 +1515,15 @@ export const allocationResultDecisions = pgTable(
     ),
     check(
       'allocation_result_decisions_pending_has_goods',
-      sql`${table.status} NOT IN ('pending', 'accepted', 'rejected') OR ${table.grantedQuantity} > 0`,
+      sql`${table.status}::text NOT IN ('pending', 'accepted', 'rejected', 'waitlisted', 'cancelled') OR ${table.grantedQuantity} > 0`,
+    ),
+    check(
+      'allocation_result_decisions_revoked_range',
+      sql`${table.revokedQuantity} >= 0 AND ${table.revokedQuantity} <= ${table.grantedQuantity}`,
+    ),
+    check(
+      'allocation_result_decisions_revocation_state',
+      sql`(${table.status}::text IN ('pending', 'accepted') AND ${table.revokedQuantity} < ${table.grantedQuantity}) OR (${table.status}::text IN ('waitlisted', 'cancelled') AND ${table.revokedQuantity} = ${table.grantedQuantity}) OR (${table.status}::text NOT IN ('pending', 'accepted', 'waitlisted', 'cancelled') AND ${table.revokedQuantity} = 0)`,
     ),
     check(
       'allocation_result_decisions_not_required_has_no_goods',
@@ -1508,7 +1531,7 @@ export const allocationResultDecisions = pgTable(
     ),
     check(
       'allocation_result_decisions_answer_recorded',
-      sql`(${table.status} IN ('accepted', 'rejected')) = (${table.respondedAt} IS NOT NULL AND ${table.respondedByUserId} IS NOT NULL)`,
+      sql`(${table.status}::text IN ('accepted', 'rejected', 'waitlisted')) = (${table.respondedAt} IS NOT NULL AND ${table.respondedByUserId} IS NOT NULL)`,
     ),
     check(
       'allocation_result_decisions_reason_only_rejected',
@@ -3884,6 +3907,133 @@ export const supplierObservationReshareCoverage = pgTable(
     primaryKey({ columns: [table.observationId, table.reshareOrderLineId] }),
     index('supplier_observation_reshare_coverage_line_idx').on(table.reshareOrderLineId),
     check('supplier_observation_reshare_coverage_quantity_positive', sql`${table.quantity} > 0`),
+  ],
+);
+
+/**
+ * A granted allocation line taken out of a PENDING result (0044), once: by the cancellation of
+ * the wait ticket it came from, or by moving the whole result back to waiting. The reservation of
+ * the line was released in the same transaction; an RE order can never issue it afterwards.
+ */
+export const allocationLineDispositions = pgTable(
+  'allocation_line_dispositions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    allocationDecisionId: uuid('allocation_decision_id')
+      .notNull()
+      .references(() => allocationResultDecisions.id, { onDelete: 'restrict' }),
+    allocationLineId: uuid('allocation_line_id')
+      .notNull()
+      .references(() => allocationLines.id, { onDelete: 'restrict' }),
+    reservationId: uuid('reservation_id')
+      .notNull()
+      .references(() => reservations.id, { onDelete: 'restrict' }),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    /** The wait ticket the line was allocated from (priority line), null for an ordinary order. */
+    waitTicketId: uuid('wait_ticket_id').references(() => waitTickets.id, {
+      onDelete: 'restrict',
+    }),
+    kind: text('kind').notNull().$type<'wait_ticket_cancelled' | 'waitlisted'>(),
+    quantity: integer('quantity').notNull(),
+    actorUserId: uuid('actor_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    actorRole: text('actor_role').notNull().$type<'store' | 'wholesale' | 'htkd' | 'admin'>(),
+    requestId: text('request_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('allocation_line_dispositions_line_uidx').on(table.allocationLineId),
+    uniqueIndex('allocation_line_dispositions_reservation_uidx').on(table.reservationId),
+    index('allocation_line_dispositions_decision_idx').on(table.allocationDecisionId),
+    index('allocation_line_dispositions_wait_ticket_idx')
+      .on(table.waitTicketId)
+      .where(sql`${table.waitTicketId} IS NOT NULL`),
+    check('allocation_line_dispositions_quantity_positive', sql`${table.quantity} > 0`),
+    check(
+      'allocation_line_dispositions_kind_valid',
+      sql`${table.kind} IN ('wait_ticket_cancelled', 'waitlisted')`,
+    ),
+    check(
+      'allocation_line_dispositions_cancel_has_ticket',
+      sql`${table.kind} <> 'wait_ticket_cancelled' OR ${table.waitTicketId} IS NOT NULL`,
+    ),
+    check(
+      'allocation_line_dispositions_actor_role_valid',
+      sql`${table.actorRole} IN ('store', 'wholesale', 'htkd', 'admin')`,
+    ),
+  ],
+);
+
+/**
+ * Append-only lineage of a wait ticket's demand (0044): every later contribution with its
+ * session, result, line and actor, so a ticket fed by several sessions shows each of them.
+ * result_restored moves bags the run had granted from the same ticket back to waiting (the
+ * original demand is unchanged); the other kinds add demand.
+ */
+export const waitTicketSources = pgTable(
+  'wait_ticket_sources',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    waitTicketId: uuid('wait_ticket_id')
+      .notNull()
+      .references(() => waitTickets.id, { onDelete: 'restrict' }),
+    kind: text('kind')
+      .notNull()
+      .$type<'order_remainder' | 'result_waitlisted' | 'result_restored'>(),
+    quantity: integer('quantity').notNull(),
+    orderSessionId: uuid('order_session_id').references(() => orderSessions.id, {
+      onDelete: 'restrict',
+    }),
+    allocationRunId: uuid('allocation_run_id').references(() => allocationRuns.id, {
+      onDelete: 'restrict',
+    }),
+    allocationDecisionId: uuid('allocation_decision_id').references(
+      () => allocationResultDecisions.id,
+      { onDelete: 'restrict' },
+    ),
+    allocationLineId: uuid('allocation_line_id').references(() => allocationLines.id, {
+      onDelete: 'restrict',
+    }),
+    sourceWaitTicketId: uuid('source_wait_ticket_id').references(() => waitTickets.id, {
+      onDelete: 'restrict',
+    }),
+    orderRequestItemId: uuid('order_request_item_id').references(() => orderRequestItems.id, {
+      onDelete: 'restrict',
+    }),
+    storeReceiptId: uuid('store_receipt_id').references(() => storeReceipts.id, {
+      onDelete: 'restrict',
+    }),
+    actorUserId: uuid('actor_user_id').references(() => users.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // A granted line is moved back to waiting at most once, whatever the idempotency key.
+    uniqueIndex('wait_ticket_sources_allocation_line_uidx')
+      .on(table.allocationLineId)
+      .where(sql`${table.allocationLineId} IS NOT NULL`),
+    index('wait_ticket_sources_ticket_idx').on(table.waitTicketId, table.createdAt),
+    index('wait_ticket_sources_decision_idx')
+      .on(table.allocationDecisionId)
+      .where(sql`${table.allocationDecisionId} IS NOT NULL`),
+    check('wait_ticket_sources_quantity_positive', sql`${table.quantity} > 0`),
+    check(
+      'wait_ticket_sources_kind_valid',
+      sql`${table.kind} IN ('order_remainder', 'result_waitlisted', 'result_restored')`,
+    ),
+    check(
+      'wait_ticket_sources_result_lineage',
+      sql`${table.kind} NOT IN ('result_waitlisted', 'result_restored') OR (${table.allocationDecisionId} IS NOT NULL AND ${table.allocationLineId} IS NOT NULL AND ${table.actorUserId} IS NOT NULL)`,
+    ),
+    check(
+      'wait_ticket_sources_restore_names_ticket',
+      sql`${table.kind} <> 'result_restored' OR ${table.sourceWaitTicketId} = ${table.waitTicketId}`,
+    ),
   ],
 );
 

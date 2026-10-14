@@ -18,6 +18,7 @@ import {
   stores,
   users,
   waitTickets,
+  waitTicketSources,
   warehouseBalances,
   warehouseLedgerEntries,
   type Database,
@@ -254,6 +255,15 @@ describePostgres('independent allocation sessions on one business date', () => {
         .from(waitTickets)
         .where(and(eq(waitTickets.storeId, storeB.id), eq(waitTickets.productId, z.id)));
       expect(ticket).toMatchObject({ status: 'active', remainingQuantity: 2, originalQuantity: 2 });
+      // 0044 lineage: the run records which session added this waiting demand.
+      expect(
+        await db
+          .select()
+          .from(waitTicketSources)
+          .where(eq(waitTicketSources.waitTicketId, ticket!.id)),
+      ).toEqual([
+        expect.objectContaining({ kind: 'order_remainder', quantity: 2, orderSessionId: s1.id }),
+      ]);
 
       // Two more bags of Z arrive through an audited Admin adjustment before S2's snapshot.
       const [zBalance] = await db

@@ -130,8 +130,8 @@ test('accepting creates one RE order, issues stock at once and shows it in the s
     await signIn(page, storeAccount);
     await page.goto(`/allocations?decision=${resultA.decisionId}`);
     const panel = page.locator('.allocation-decision');
-    await expect(panel.getByRole('button', { name: 'Từ chối' })).toBeVisible();
-    await panel.getByRole('button', { name: 'Chấp nhận' }).click();
+    await expect(panel.getByRole('button', { name: 'Chuyển phiếu chờ' })).toBeVisible();
+    await panel.getByRole('button', { name: 'Xác nhận phân bổ' }).click();
     const tag = panel.getByRole('link', { name: /Đã lập đơn Reshare, mở đơn RE-\d{6}/u });
     await expect(tag).toBeVisible();
     await expect(panel.locator('.inline-notice--success')).toContainText(/tạo đơn RE-\d{6}/u);
@@ -178,14 +178,15 @@ test('accepting creates one RE order, issues stock at once and shows it in the s
     await expect(group).toContainText('Đã đặt Reshare');
     await expect(group).not.toContainText('UI_RE_');
 
-    // 3. The assigned HTKD accepts B for the store: acceptance only, audited as HTKD.
+    // 3. The assigned HTKD confirms B for the store (both answers offered), audited as HTKD.
     await page.context().clearCookies();
     await signIn(page, htkd);
     await page.goto(`/allocations?decision=${resultB.decisionId}`);
     const htkdPanel = page.locator('.allocation-decision');
-    await expect(htkdPanel).toContainText('Bạn chấp nhận thay cửa hàng được phân công.');
+    await expect(htkdPanel).toContainText('Bạn thao tác thay cửa hàng được phân công.');
+    await expect(htkdPanel.getByRole('button', { name: 'Chuyển phiếu chờ' })).toBeVisible();
     await expect(htkdPanel.getByRole('button', { name: 'Từ chối' })).toHaveCount(0);
-    await htkdPanel.getByRole('button', { name: 'Chấp nhận' }).click();
+    await htkdPanel.getByRole('button', { name: 'Xác nhận phân bổ' }).click();
     await expect(
       htkdPanel.getByRole('link', { name: /Đã lập đơn Reshare, mở đơn RE-\d{6}/u }),
     ).toBeVisible();

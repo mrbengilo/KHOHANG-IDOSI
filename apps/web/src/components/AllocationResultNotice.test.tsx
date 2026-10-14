@@ -57,23 +57,25 @@ function render(role: Session['principal']['role'], total = 1) {
 }
 
 describe('allocation result notice', () => {
-  it.each(['STORE', 'WHOLESALE'] as const)(
-    'tells %s which result to confirm and links it',
+  it.each(['STORE', 'WHOLESALE', 'HTKD'] as const)(
+    'shows %s a blue box with both actions for each pending result, paged on the server',
     (role) => {
       const html = render(role, 7);
-      expect(html).toContain('Có kết quả phân bổ cần xác nhận (7)');
+      expect(html).toContain('allocation-decision-notice--info');
+      expect(html).toContain('Có kết quả phân bổ cần xử lý (7)');
       expect(html).toContain('Phiếu KQ-PDH-000042-A1B2C3D4');
+      expect(html).toContain('Cửa hàng thử');
       expect(html).toContain('Áo nữ: 3 bao');
+      expect(html).toContain('Xác nhận phân bổ');
+      expect(html).toContain('Chuyển phiếu chờ');
       expect(html).toContain(`/allocations?decision=${testDecision().id}`);
-      expect(html).toContain('Còn 6 phiếu khác');
-      expect(html).toContain('/allocations?decisionStatus=PENDING');
+      expect(html).toContain('Trang 1/2 · 7 kết quả đang chờ xử lý.');
+      // No dismissal: the box stays until the server says the result is handled.
+      expect(html).not.toMatch(/Bỏ qua|Đã đọc|Ẩn thông báo/u);
     },
   );
 
-  it.each(['ADMIN', 'HTKD'] as const)(
-    'stays silent for %s, who never answers for a store',
-    (role) => {
-      expect(render(role)).toBe('');
-    },
-  );
+  it('stays silent for Admin, who never answers for a store', () => {
+    expect(render('ADMIN')).toBe('');
+  });
 });

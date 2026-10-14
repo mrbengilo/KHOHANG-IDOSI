@@ -89,8 +89,8 @@ describePostgres('09:00 shipments and store decisions (worker + PostgreSQL)', ()
     await expectReservedMatchesActive(productId);
   });
 
-  it('serializes a rejection with a concurrent 09:00 run: nothing is shipped or released twice', async () => {
-    for (const action of ['REJECT', 'ACCEPT'] as const) {
+  it('serializes a move to waiting with a concurrent 09:00 run: nothing is shipped or released twice', async () => {
+    for (const action of ['WAITLIST', 'ACCEPT'] as const) {
       const { storeId, storeUserId, productId } = await createStoreAndProduct(30);
       const earlier = await createCycle({ storeId, productId, grants: [4], ordinary: false });
       const earlierDecision = await publish(earlier);
@@ -111,7 +111,7 @@ describePostgres('09:00 shipments and store decisions (worker + PostgreSQL)', ()
         .select()
         .from(reservations)
         .where(inArray(reservations.allocationLineId, earlier.lineIds));
-      if (action === 'REJECT') {
+      if (action === 'WAITLIST') {
         expect(sourceRuns).toEqual([next.runId]);
         expect(earlierReservations.map((row) => row.status)).toEqual(['released']);
         expect(await balance(productId)).toEqual({ onHand: 30, reserved: 5 });
@@ -133,7 +133,7 @@ describePostgres('09:00 shipments and store decisions (worker + PostgreSQL)', ()
 
   // ------------------------------------------------------------------------------------------
 
-  async function respond(decisionId: string, actorUserId: string, action: 'ACCEPT' | 'REJECT') {
+  async function respond(decisionId: string, actorUserId: string, action: 'ACCEPT' | 'WAITLIST') {
     return respondAllocationDecision(db, {
       decisionId,
       action,

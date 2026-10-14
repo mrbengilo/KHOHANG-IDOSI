@@ -30,8 +30,9 @@ describe('allocation decision API client', () => {
     vi.stubGlobal('fetch', fetch);
     const page = await listAllocationDecisions({ status: 'PENDING', pageSize: 5 });
     expect(String(fetch.mock.calls[0]?.[0])).toContain(
-      '/allocation-decisions?page=1&pageSize=5&includeReshare=true&status=PENDING',
+      '/allocation-decisions?page=1&pageSize=5&includeReshare=true&includeWaitlist=true&status=PENDING',
     );
+    expect(String(fetch.mock.calls[0]?.[0])).not.toContain('REJECT');
     expect(page.pagination.totalItems).toBe(7);
     expect(page.data[0]?.status).toBe('PENDING');
   });
@@ -80,5 +81,8 @@ describe('allocation decision API client', () => {
       'giao chung',
     );
     expect(shipmentProgressLabel(testDecision({ status: 'REJECTED' }))).toContain('từ chối');
+    expect(shipmentProgressLabel(testDecision({ status: 'WAITLISTED' }))).toContain('phiếu chờ');
+    expect(shipmentProgressLabel(testDecision({ status: 'CANCELLED' }))).toContain('thu hồi');
+    expect(decisionStatusLabel.WAITLISTED).toBe('Đã chuyển phiếu chờ');
   });
 });

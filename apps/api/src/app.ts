@@ -151,6 +151,7 @@ import {
   StoreGroupParamsSchema,
   StoreParamsSchema,
   StoreOutboundParamsSchema,
+  WaitTicketCancelPreviewResponseSchema,
   WaitTicketHistoryQuerySchema,
   WaitTicketParamsSchema,
   WarehouseOutboundRequestParamsSchema,
@@ -402,7 +403,10 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
             'INVALID_STATE_TRANSITION',
             error instanceof AllocationDecisionRequiredError && error.reason === 'DECISION_REJECTED'
               ? 'Cửa hàng đã từ chối nhận kết quả phân bổ này nên không thể giao hoặc nhận hàng.'
-              : 'Cửa hàng chưa chấp nhận kết quả phân bổ nên chưa thể giao hoặc nhận hàng.',
+              : error instanceof AllocationDecisionRequiredError &&
+                  error.reason === 'DECISION_CLOSED'
+                ? 'Kết quả phân bổ này đã chuyển về phiếu chờ hoặc bị thu hồi nên không thể giao hoặc nhận hàng.'
+                : 'Cửa hàng chưa xác nhận kết quả phân bổ nên chưa thể giao hoặc nhận hàng.',
             request.id,
           ),
         );
@@ -840,6 +844,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return AllocationDecisionResponseSchema.parse({
       data: await repository.getAllocationDecision(session.principal, decisionId, {
         includeReshare: view.includeReshare === true,
+        includeWaitlist: view.includeWaitlist === true,
       }),
     });
   });
@@ -860,7 +865,10 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
       headers['idempotency-key'],
       hashCanonicalRequest({ operation: 'RESPOND_ALLOCATION_DECISION', decisionId, ...input }),
       requestContext(request),
-      { includeReshare: view.includeReshare === true },
+      {
+        includeReshare: view.includeReshare === true,
+        includeWaitlist: view.includeWaitlist === true,
+      },
     );
     reply.header('idempotency-replayed', String(result.replayed));
     return reply.send(AllocationDecisionResponseSchema.parse({ data: result.data }));
@@ -2174,6 +2182,16 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return {
       data: await repository.getWaitTicketHistory(session.principal, waitTicketId, limit),
     };
+  });
+
+  app.get('/api/v1/wait-tickets/:waitTicketId/cancel-preview', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE', 'WHOLESALE', 'ADMIN', 'HTKD']);
+    const { waitTicketId } = WaitTicketParamsSchema.parse(request.params);
+    reply.header('cache-control', 'no-store');
+    return WaitTicketCancelPreviewResponseSchema.parse({
+      data: await repository.previewWaitTicketCancellation(session.principal, waitTicketId),
+    });
   });
 
   app.post('/api/v1/wait-tickets/:waitTicketId/cancel', async (request, reply) => {
@@ -3604,11 +3622,22 @@ function openApiDocument(): Record<string, unknown> {
           responses: { '200': { description: 'Ticket, offer and audit history' } },
         },
       },
+      '/api/v1/wait-tickets/{waitTicketId}/cancel-preview': {
+        get: {
+          security: cookieSecurity,
+          summary:
+            'Read-only scope of a cancellation: waiting demand, live offers and holds, goods of the ticket in PENDING results that would be revoked, and goods protected by an RE order, a shipment or the old rules, with a fingerprint to confirm.',
+          responses: {
+            '200': { description: 'Cancellation preview' },
+            '404': { description: 'Unknown ticket or outside the cancel scope' },
+          },
+        },
+      },
       '/api/v1/wait-tickets/{waitTicketId}/cancel': {
         post: {
           security: cookieSecurity,
           summary:
-            'Cancel the unallocated demand of an active wait ticket (store/wholesale: own store; HTKD: assigned active stores; Admin: any store). Allocated quantity stays held for combined shipping.',
+            'Cancel a wait ticket (store/wholesale: own store; HTKD: assigned active stores; Admin: any store): its waiting demand, its live offers (holds returned) and its goods still in PENDING results (no RE order, not shipped), which are revoked from those results. Goods with an RE order, shipped or received are never touched. Body { reason, expectedFingerprint? }; the fingerprint of the confirmed preview is required when goods are revoked.',
           parameters: [
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
@@ -3618,7 +3647,10 @@ function openApiDocument(): Record<string, unknown> {
               description:
                 'Actor may not cancel this store wait under current assignment/account/store status',
             },
-            '409': { description: 'Ticket is no longer active' },
+            '409': {
+              description:
+                'Nothing left to cancel, already cancelled, preview stale (WAIT_TICKET_PREVIEW_STALE) or required (WAIT_TICKET_PREVIEW_REQUIRED)',
+            },
           },
         },
       },
@@ -3696,7 +3728,7 @@ function openApiDocument(): Record<string, unknown> {
         post: {
           security: cookieSecurity,
           summary:
-            'Accept or reject a PENDING allocation result once, for the whole result. ACCEPT creates its internal Reshare order (RE-000001…), issues the granted goods out of the central warehouse (on-hand and reserved drop together; the store stock grows only at the finalized receipt) and releases its shipment, atomically. REJECT releases its reservations and keeps goods carried from earlier accepted results held. An assigned HTKD may ACCEPT, never REJECT. Body: { action, expectedVersion, reason? }; query includeReshare=true adds allowedActions and reshareOrder.',
+            'Answer a PENDING allocation result once. ACCEPT ("Xác nhận phân bổ") creates its internal Reshare order (RE-000001…) for the actionable goods (granted minus goods revoked by wait-ticket cancellations), issues them out of the central warehouse and releases its shipment, atomically. WAITLIST ("Chuyển phiếu chờ") releases its holds (reserved only; on-hand unchanged), requeues the granted bags onto the store x product active wait ticket (or a new one) and keeps goods carried from earlier results held. REJECT was retired by 0044 (409 ALLOCATION_DECISION_ACTION_RETIRED). The receiving side and an assigned HTKD may answer. Body: { action, expectedVersion }; includeReshare=true adds allowedActions and reshareOrder; includeWaitlist=true adds WAITLIST, WAITLISTED/CANCELLED and revocation details (required to answer a result with revoked goods: 409 CLIENT_UPGRADE_REQUIRED otherwise).',
           parameters: [
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
@@ -3704,7 +3736,7 @@ function openApiDocument(): Record<string, unknown> {
             '200': { description: 'Answered (or replayed) allocation result decision' },
             '400': { description: 'Invalid body' },
             '401': { description: 'Unauthenticated' },
-            '403': { description: 'Not the receiving side or an assigned HTKD (accept only)' },
+            '403': { description: 'Not the receiving side or an assigned HTKD' },
             '404': { description: 'Unknown result or outside the caller scope' },
             '409': {
               description:

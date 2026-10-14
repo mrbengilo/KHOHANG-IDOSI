@@ -173,6 +173,8 @@ async function listReservedAllocationOutbounds(
     else if (decisionStatus === null)
       blockedReason = 'no store decision record for this allocation result (integrity error)';
     else if (decisionStatus === 'rejected') blockedReason = 'the store rejected this result';
+    else if (decisionStatus === 'waitlisted' || decisionStatus === 'cancelled')
+      blockedReason = 'the result was moved back to waiting or cancelled';
     else if (own.some((line) => blockedLineIds.has(line.id)))
       blockedReason = 'carries goods of an unanswered or rejected allocation result';
     return {

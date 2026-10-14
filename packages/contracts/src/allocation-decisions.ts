@@ -14,19 +14,31 @@ import { ReshareOrderSummarySchema } from './reshare-orders.js';
 
 /**
  * A store's answer to one published allocation result (one run for one store). Independent of
- * the allocation algorithm status and of shipping/receipt progress.
+ * the allocation algorithm status and of shipping/receipt progress. WAITLISTED and CANCELLED are
+ * returned only to clients that ask with includeWaitlist=true; older bundles read them as
+ * REJECTED (final, goods back in the warehouse), the closest status they know.
  */
 export const AllocationDecisionStatusSchema = z.enum([
   'PENDING',
   'ACCEPTED',
   'REJECTED',
+  'WAITLISTED',
+  'CANCELLED',
   'NOT_REQUIRED',
   'LEGACY',
 ]);
 export type AllocationDecisionStatus = z.infer<typeof AllocationDecisionStatusSchema>;
 
-export const AllocationDecisionActionSchema = z.enum(['ACCEPT', 'REJECT']);
+/** "Xác nhận phân bổ" (ACCEPT) and "Chuyển phiếu chờ" (WAITLIST). */
+export const AllocationDecisionActionSchema = z.enum(['ACCEPT', 'WAITLIST']);
 export type AllocationDecisionAction = z.infer<typeof AllocationDecisionActionSchema>;
+
+/**
+ * REJECT ("Từ chối") was retired by migration 0044: it dropped the demand. It is still parsed so
+ * an older bundle gets a structured 409 ALLOCATION_DECISION_ACTION_RETIRED instead of a 400.
+ */
+export const RespondAllocationDecisionActionSchema = z.enum(['ACCEPT', 'WAITLIST', 'REJECT']);
+export type RespondAllocationDecisionAction = z.infer<typeof RespondAllocationDecisionActionSchema>;
 
 export const ReservationStatusSchema = z.enum([
   'ACTIVE',
@@ -80,6 +92,48 @@ export const AllocationDecisionShipmentSchema = z
   .strict();
 export type AllocationDecisionShipment = z.infer<typeof AllocationDecisionShipmentSchema>;
 
+/** Per product: the immutable grant snapshot and what is still answerable. */
+export const AllocationDecisionActionableLineSchema = z
+  .object({
+    productId: EntityIdSchema,
+    grantedQuantity: QuantitySchema,
+    revokedQuantity: QuantitySchema,
+    actionableQuantity: QuantitySchema,
+  })
+  .strict();
+export type AllocationDecisionActionableLine = z.infer<
+  typeof AllocationDecisionActionableLineSchema
+>;
+
+/** A granted source taken out of the result: by a wait-ticket cancellation or by the move. */
+export const AllocationDecisionRevocationSchema = z
+  .object({
+    allocationLineId: EntityIdSchema,
+    productId: EntityIdSchema,
+    quantity: z.number().int().positive().safe(),
+    kind: z.enum(['WAIT_TICKET_CANCELLED', 'WAITLISTED']),
+    waitTicketId: EntityIdSchema.nullable(),
+    waitTicketCode: z.string().nullable(),
+    actorName: z.string().nullable(),
+    actorRole: z.enum(['STORE', 'WHOLESALE', 'HTKD', 'ADMIN']).nullable(),
+    createdAt: IsoDateTimeSchema,
+  })
+  .strict();
+export type AllocationDecisionRevocation = z.infer<typeof AllocationDecisionRevocationSchema>;
+
+/** Wait tickets that received the bags of a waitlisted result (created or merged into). */
+export const AllocationDecisionRequeueSchema = z
+  .object({
+    waitTicketId: EntityIdSchema,
+    waitTicketCode: z.string(),
+    productId: EntityIdSchema,
+    quantity: z.number().int().positive().safe(),
+    mode: z.enum(['RESTORE_SOURCE', 'ADD_DEMAND']),
+    createdTicket: z.boolean(),
+  })
+  .strict();
+export type AllocationDecisionRequeue = z.infer<typeof AllocationDecisionRequeueSchema>;
+
 export const AllocationDecisionSchema = z
   .object({
     id: EntityIdSchema,
@@ -102,6 +156,12 @@ export const AllocationDecisionSchema = z
      * Present only when requested with includeReshare=true, so older bundles keep parsing.
      */
     allowedActions: z.array(AllocationDecisionActionSchema).optional(),
+    /** Only with includeWaitlist=true: granted minus revoked bags, still answerable or confirmed. */
+    actionableQuantity: QuantitySchema.optional(),
+    revokedQuantity: QuantitySchema.optional(),
+    actionableLines: z.array(AllocationDecisionActionableLineSchema).optional(),
+    revocations: z.array(AllocationDecisionRevocationSchema).optional(),
+    requeued: z.array(AllocationDecisionRequeueSchema).optional(),
     /** The RE order created by the acceptance (null when none); only with includeReshare=true. */
     reshareOrder: ReshareOrderSummarySchema.nullable().optional(),
     respondedAt: IsoDateTimeSchema.nullable(),
@@ -149,6 +209,11 @@ export const ListAllocationDecisionsQuerySchema = PaginationQuerySchema.extend({
     .enum(['true', 'false'])
     .transform((value) => value === 'true')
     .optional(),
+  /** Opt-in for WAITLISTED/CANCELLED, WAITLIST actions and revocation details (0044). */
+  includeWaitlist: z
+    .enum(['true', 'false'])
+    .transform((value) => value === 'true')
+    .optional(),
 }).strict();
 export type ListAllocationDecisionsQuery = z.infer<typeof ListAllocationDecisionsQuerySchema>;
 
@@ -163,6 +228,10 @@ export const AllocationDecisionParamsSchema = z.object({ decisionId: EntityIdSch
 export const AllocationDecisionViewQuerySchema = z
   .object({
     includeReshare: z
+      .enum(['true', 'false'])
+      .transform((value) => value === 'true')
+      .optional(),
+    includeWaitlist: z
       .enum(['true', 'false'])
       .transform((value) => value === 'true')
       .optional(),
@@ -182,17 +251,17 @@ export type AllocationDecisionResponse = z.infer<typeof AllocationDecisionRespon
  */
 export const RespondAllocationDecisionRequestSchema = z
   .object({
-    action: AllocationDecisionActionSchema,
+    action: RespondAllocationDecisionActionSchema,
     expectedVersion: z.number().int().positive().safe(),
     reason: z.string().trim().max(500).optional(),
   })
   .strict()
   .superRefine((input, context) => {
-    if (input.action === 'ACCEPT' && input.reason !== undefined && input.reason.length > 0) {
+    if (input.action !== 'REJECT' && input.reason !== undefined && input.reason.length > 0) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['reason'],
-        message: 'Only a rejection can carry a reason',
+        message: 'Only the retired rejection could carry a reason',
       });
     }
   });

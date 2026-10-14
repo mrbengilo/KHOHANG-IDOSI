@@ -62,7 +62,7 @@ describePostgres('allocation result decisions through the API on PostgreSQL', ()
       const respond = (token, decisionId, payload, key = randomUUID()) =>
         app.inject({
           method: 'POST',
-          url: `/api/v1/allocation-decisions/${decisionId}/respond`,
+          url: `/api/v1/allocation-decisions/${decisionId}/respond?includeWaitlist=true`,
           headers: { cookie: `idosi_session=${token}`, 'idempotency-key': key },
           payload,
         });
@@ -130,9 +130,17 @@ describePostgres('allocation result decisions through the API on PostgreSQL', ()
       assert.equal(detail.json().data.version, 1);
       assert.equal(detail.json().data.runVersion, 1);
 
-      // The receiving side answers, an assigned HTKD may only accept; nobody outside scope.
+      // The receiving side and an assigned HTKD answer (both actions); nobody outside scope.
       assert.equal((await respond(fx.tokens.admin, resultA.decisionId, accept())).statusCode, 403);
-      assert.equal((await respond(fx.tokens.htkd, resultA.decisionId, reject())).statusCode, 403);
+      assert.deepEqual(
+        (
+          await get(
+            fx.tokens.htkd,
+            `/api/v1/allocation-decisions/${resultA.decisionId}?includeReshare=true&includeWaitlist=true`,
+          )
+        ).json().data.allowedActions,
+        ['ACCEPT', 'WAITLIST'],
+      );
       assert.equal((await respond(fx.tokens.storeB, resultA.decisionId, accept())).statusCode, 404);
       assert.equal(
         (await respond(fx.tokens.wholesale, resultA.decisionId, accept())).statusCode,
@@ -242,24 +250,72 @@ describePostgres('allocation result decisions through the API on PostgreSQL', ()
       assert.equal(replay.statusCode, 200);
       assert.equal(replay.headers['idempotency-replayed'], 'true');
       assert.equal(replay.json().data.status, 'ACCEPTED');
-      const reused = await respond(fx.tokens.storeA, resultA.decisionId, reject(), key);
+      const reused = await respond(fx.tokens.storeA, resultA.decisionId, waitlist(), key);
       assert.equal(reused.statusCode, 409);
       assert.equal(reused.json().error.code, 'IDEMPOTENCY_CONFLICT');
-      const flip = await respond(fx.tokens.storeA, resultA.decisionId, reject(2));
+      const flip = await respond(fx.tokens.storeA, resultA.decisionId, waitlist(2));
       assert.equal(flip.statusCode, 409);
       assert.equal(flip.json().error.code, 'INVALID_STATE_TRANSITION');
       assert.equal(flip.json().error.details.currentStatus, 'ACCEPTED');
-
-      // The wholesale desk answers for wholesale stores; a rejection releases the goods.
-      const rejected = await respond(fx.tokens.wholesale, resultW.decisionId, {
-        ...reject(),
-        reason: 'Kho sỉ đã đủ hàng',
+      // The retired rejection is a structured refusal, never an alias of the move to waiting.
+      const retired = await respond(fx.tokens.wholesale, resultW.decisionId, {
+        action: 'REJECT',
+        expectedVersion: 1,
       });
-      assert.equal(rejected.statusCode, 200);
-      assert.equal(rejected.json().data.status, 'REJECTED');
-      assert.equal(rejected.json().data.reason, 'Kho sỉ đã đủ hàng');
-      assert.equal(rejected.json().data.releasedQuantity, 2);
+      assert.equal(retired.statusCode, 409);
+      assert.equal(retired.json().error.code, 'ALLOCATION_DECISION_ACTION_RETIRED');
+      // A bundle without the 0044 opt-in cannot move a result to waiting.
+      const oldBundle = await app.inject({
+        method: 'POST',
+        url: `/api/v1/allocation-decisions/${resultW.decisionId}/respond`,
+        headers: {
+          cookie: `idosi_session=${fx.tokens.wholesale}`,
+          'idempotency-key': randomUUID(),
+        },
+        payload: waitlist(),
+      });
+      assert.equal(oldBundle.statusCode, 409);
+      assert.equal(oldBundle.json().error.code, 'CLIENT_UPGRADE_REQUIRED');
+
+      // The wholesale desk answers for wholesale stores; the move to waiting releases the goods
+      // and the 2 bags wait again on a ticket.
+      const moved = await respond(fx.tokens.wholesale, resultW.decisionId, waitlist());
+      assert.equal(moved.statusCode, 200);
+      assert.equal(moved.json().data.status, 'WAITLISTED');
+      assert.equal(moved.json().data.reason, null);
+      assert.equal(moved.json().data.releasedQuantity, 2);
+      assert.deepEqual(
+        moved.json().data.requeued.map((row) => [row.quantity, row.mode]),
+        [[2, 'ADD_DEMAND']],
+      );
       assert.deepEqual(await balance(fx.productId), { onHand: 97, reserved: 1 });
+      // Older bundles read the new terminal status as the closest one they know.
+      const oldView = await get(
+        fx.tokens.wholesale,
+        `/api/v1/allocation-decisions/${resultW.decisionId}?includeReshare=true`,
+      );
+      assert.equal(oldView.json().data.status, 'REJECTED');
+      assert.equal('requeued' in oldView.json().data, false);
+      // ...and its REJECTED filter finds that same row; an opted-in client filters exactly.
+      const listIds = async (query) =>
+        (
+          await get(
+            fx.tokens.wholesale,
+            `/api/v1/allocation-decisions?sessionId=${resultW.sessionId}&${query}`,
+          )
+        )
+          .json()
+          .data.map((row) => row.id);
+      assert.deepEqual(await listIds('status=REJECTED'), [resultW.decisionId]);
+      assert.deepEqual(await listIds('status=REJECTED&includeWaitlist=true'), []);
+      assert.deepEqual(await listIds('status=WAITLISTED&includeWaitlist=true'), [
+        resultW.decisionId,
+      ]);
+      const rejectedDocuments = await get(
+        fx.tokens.wholesale,
+        `/api/v1/session-documents?sessionId=${resultW.sessionId}&includeDecision=true&decisionStatus=REJECTED`,
+      );
+      assert.equal(rejectedDocuments.json().data[0].decision.status, 'REJECTED');
       const stale = await respond(fx.tokens.storeB, resultB.decisionId, accept(9));
       assert.equal(stale.statusCode, 409);
       assert.equal(stale.json().error.code, 'VERSION_CONFLICT');
@@ -553,8 +609,8 @@ describePostgres('Reshare acknowledgement API and status history', () => {
     }
   });
 });
-function reject(expectedVersion = 1) {
-  return { action: 'REJECT', expectedVersion };
+function waitlist(expectedVersion = 1) {
+  return { action: 'WAITLIST', expectedVersion };
 }
 
 async function receiptSourceCount(app, token) {

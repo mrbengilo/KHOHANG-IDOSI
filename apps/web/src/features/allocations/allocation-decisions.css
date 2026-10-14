@@ -231,3 +231,32 @@
   font-size: 13px;
   line-height: 1.45;
 }
+
+/* 0044: the result notice is the blue "needs handling" box for store, wholesale and HTKD. */
+.allocation-decision-notice--info {
+  border-color: var(--info-border);
+  background: var(--info-soft);
+}
+.allocation-decision-notice--info h2 {
+  color: var(--info);
+}
+.allocation-decision-notice--info li {
+  border-color: var(--info-border);
+}
+.allocation-decision-notice__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.allocation-decision-notice__actions .button {
+  min-height: 44px;
+  white-space: normal;
+}
+@media (max-width: 480px) {
+  .allocation-decision-notice__actions {
+    display: grid;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

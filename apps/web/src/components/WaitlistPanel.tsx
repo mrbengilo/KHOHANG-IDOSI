@@ -4,6 +4,7 @@ import type {
   RespondPriorityOfferRequest,
   WaitTicket,
   WaitTicketAuditEvent,
+  WaitTicketCancelPreview,
 } from '@idosi/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ban, Clock3, History, RotateCcw, X } from 'lucide-react';
@@ -19,6 +20,7 @@ import {
 } from '../lib/api';
 import { useSession } from '../lib/auth';
 import { amountLabel, CancellationNote, ticketStatusLabel } from './WaitTicketPresentation';
+import { CancelWaitTicketDialog } from './CancelWaitTicketDialog';
 export { amountLabel, CancellationNote, ticketStatusLabel } from './WaitTicketPresentation';
 import { useDialogAccessibility } from '../lib/use-dialog-accessibility';
 import { retainIdempotencyForExactRetry, type RetryAttempt } from '../lib/idempotency-retry';
@@ -38,6 +40,8 @@ interface WaitlistPanelProps {
   readonly title?: string;
   readonly pageFilters?: ListWaitTicketsQuery;
   readonly onPageChange?: (page: number) => void;
+  /** 'scoped': the HTKD/store/wholesale "Phiếu chờ ưu tiên" table; 'admin' keeps the 9 columns. */
+  readonly variant?: 'admin' | 'scoped';
 }
 
 const cancellableStatuses = new Set<WaitTicket['status']>([
@@ -72,6 +76,8 @@ const auditActionLabel: Readonly<Record<string, string>> = {
   WAIT_TICKET_FULFILLED: 'Cấp đủ phiếu chờ',
   WAIT_TICKET_UPDATED: 'Cập nhật phiếu chờ',
   STORE_RECEIPT_SHORTAGE_PRIORITIZED: 'Tự duyệt ưu tiên khi cửa hàng nhận thiếu',
+  WAIT_TICKET_REQUEUED_FROM_RESULT: 'Cộng nhu cầu từ kết quả chuyển phiếu chờ',
+  WAIT_TICKET_CREATED_FROM_RESULT: 'Tạo phiếu chờ từ kết quả chuyển phiếu chờ',
 };
 
 function messageOf(cause: unknown, fallback: string): string {
@@ -86,6 +92,7 @@ export function WaitlistPanel({
   title = 'Phiếu chờ và lượt ưu tiên',
   pageFilters,
   onPageChange,
+  variant = 'admin',
 }: WaitlistPanelProps) {
   const queryClient = useQueryClient();
   const [urlParams, setUrlParams] = useSearchParams();
@@ -189,8 +196,13 @@ export function WaitlistPanel({
         'priority-offers',
         'priority-offer-notices',
         'wait-ticket-history',
+        'wait-ticket-cancel-preview',
         'warehouse-inventory',
         'warehouse-balances',
+        // Cancelling revokes unconfirmed goods from pending results and their notice.
+        'allocation-decisions',
+        'session-documents',
+        'held-allocations',
       ].map((key) => queryClient.invalidateQueries({ queryKey: [key] })),
     );
     if (historyTicketId) await historyQuery.refetch();
@@ -243,7 +255,7 @@ export function WaitlistPanel({
     }
   };
 
-  const cancel = async () => {
+  const cancel = async (preview: WaitTicketCancelPreview) => {
     if (
       !canCancelTicket ||
       !cancelTarget ||
@@ -254,7 +266,8 @@ export function WaitlistPanel({
       return;
     }
     cancelInFlight.current = true;
-    const fingerprint = `${cancelTarget.id}:${trimmedCancelReason}`;
+    // The key is kept only for an exact retry of the same reason and the same confirmed scope.
+    const fingerprint = `${cancelTarget.id}:${trimmedCancelReason}:${preview.fingerprint}`;
     const attempt = retainIdempotencyForExactRetry(cancelAttempt.current, fingerprint);
     cancelAttempt.current = attempt;
     setCancellingTicketId(cancelTarget.id);
@@ -263,7 +276,7 @@ export function WaitlistPanel({
     try {
       const updated = await cancelWaitTicket(
         cancelTarget.id,
-        { reason: trimmedCancelReason },
+        { reason: trimmedCancelReason, expectedFingerprint: preview.fingerprint },
         attempt.key,
       );
       queryClient.setQueryData<WaitTicket[]>(ticketQueryKey, (current) =>
@@ -277,11 +290,16 @@ export function WaitlistPanel({
       cancelAttempt.current = null;
       setCancelTarget(null);
       setCancelReason('');
+      const revoked = preview.revocable.reduce((total, row) => total + row.quantity, 0);
       setNotice(
-        'Đã hủy phần nhu cầu còn chờ của phiếu. Hàng đã được cấp (nếu có) vẫn giữ để giao chung; lý do đã lưu vào lịch sử.',
+        `Đã hủy phiếu ${updated.code ?? ''}: ${preview.cancelledQuantity} bao${
+          revoked > 0 ? `, trong đó ${revoked} bao thu hồi khỏi kết quả chưa xác nhận` : ''
+        }. Hàng đã có đơn Reshare hoặc đã xuất được giữ nguyên; lý do đã lưu vào lịch sử.`,
       );
       await refetchWaitState();
     } catch (cause) {
+      const uncertain = !(cause instanceof ApiClientError) || cause.status === 0;
+      if (!uncertain) cancelAttempt.current = null;
       if (cause instanceof ApiClientError && [401, 403, 409].includes(cause.status)) {
         await refetchWaitState();
       }
@@ -333,7 +351,7 @@ export function WaitlistPanel({
               {canRespond
                 ? 'Nhận toàn bộ số lượng được đề nghị trong phiên. Hàng được cấp sẽ giữ lại để giao chung với đơn thường kế tiếp, không chiếm lượt đặt thường.'
                 : canCancelTicket
-                  ? 'Admin có thể hủy phiếu chờ còn hiệu lực của mọi cửa hàng; phần đã được cấp vẫn giữ để giao chung.'
+                  ? 'Hủy phiếu chờ hủy phần còn chờ và thu hồi hàng phân bổ chưa xác nhận; hàng đã có đơn Reshare hoặc đã xuất được giữ nguyên.'
                   : 'Chế độ giám sát chỉ đọc.'}
             </p>
           </div>
@@ -362,6 +380,8 @@ export function WaitlistPanel({
         ) : null}
         {pageFilters && !loading && !loadError ? (
           <WaitTicketTable
+            variant={variant}
+            showStore={variant === 'admin' || role !== 'STORE'}
             tickets={tickets}
             offset={(pageFilters.page - 1) * pageFilters.pageSize}
             onHistory={setHistoryTicketId}
@@ -396,7 +416,11 @@ export function WaitlistPanel({
         ) : null}
         {!pageFilters && !loading && !loadError
           ? tickets.map((ticket) => {
-              const canCancel = canCancelTicket && cancellableStatuses.has(ticket.status);
+              const canCancel =
+                canCancelTicket &&
+                (ticket.lineage
+                  ? ticket.lineage.canCancel
+                  : cancellableStatuses.has(ticket.status));
               return (
                 <article key={ticket.id}>
                   <div>
@@ -465,25 +489,24 @@ export function WaitlistPanel({
       ) : null}
 
       {cancelTarget ? (
-        <CancelDialog
+        <CancelWaitTicketDialog
+          accountId={viewerAccountId}
           busy={cancellingTicketId === cancelTarget.id}
           error={cancelError}
-          invalid={cancelReasonInvalid}
           onCancel={() => setCancelTarget(null)}
-          onConfirm={() => void cancel()}
+          onConfirm={(preview) => void cancel(preview)}
           onReasonChange={(value) => {
             setCancelReason(value);
             setCancelError(null);
           }}
           productName={productNameById.get(cancelTarget.productId) ?? cancelTarget.productId}
           reason={cancelReason}
-          remaining={amountLabel(cancelTarget.remaining)}
           storeName={
             cancelTarget.storeName ??
             storeNameById.get(cancelTarget.storeId) ??
             cancelTarget.storeId
           }
-          ticketCode={cancelTarget.code ?? cancelTarget.id}
+          ticket={cancelTarget}
         />
       ) : null}
     </>
@@ -611,103 +634,5 @@ function AuditRow({ event }: { readonly event: WaitTicketAuditEvent }) {
         {event.actorRole ?? 'Hệ thống'} {event.actorAccountId ?? ''}
       </span>
     </article>
-  );
-}
-
-interface CancelDialogProps {
-  readonly busy: boolean;
-  readonly error: string | null;
-  readonly invalid: boolean;
-  readonly onCancel: () => void;
-  readonly onConfirm: () => void;
-  readonly onReasonChange: (value: string) => void;
-  readonly productName: string;
-  readonly reason: string;
-  readonly remaining: string;
-  readonly storeName: string | null;
-  readonly ticketCode?: string;
-}
-
-export function CancelDialog({
-  busy,
-  error,
-  invalid,
-  onCancel,
-  onConfirm,
-  onReasonChange,
-  productName,
-  reason,
-  remaining,
-  storeName,
-  ticketCode,
-}: CancelDialogProps) {
-  const dialogRef = useDialogAccessibility(busy ? undefined : onCancel);
-  const titleId = 'cancel-wait-ticket-title';
-  const reasonErrorId = 'cancel-wait-ticket-reason-error';
-
-  return (
-    <div className="dialog-backdrop">
-      <section
-        ref={dialogRef}
-        aria-labelledby={titleId}
-        aria-modal="true"
-        className="dialog"
-        role="dialog"
-        tabIndex={-1}
-      >
-        <div className="dialog__header">
-          <div>
-            <h2 id={titleId}>Hủy phiếu chờ</h2>
-            <p>
-              {ticketCode ? `${ticketCode} • ` : ''}
-              {storeName ? `${storeName} • ` : ''}
-              {productName} • hủy {remaining} còn chờ. Hàng đã được cấp vẫn giữ để giao chung; thao
-              tác được ghi vào nhật ký hệ thống.
-            </p>
-          </div>
-          <button
-            aria-label="Đóng hộp thoại hủy phiếu"
-            disabled={busy}
-            onClick={onCancel}
-            type="button"
-          >
-            <X aria-hidden="true" size={20} />
-          </button>
-        </div>
-        <label>
-          <span className="field-label">Lý do hủy</span>
-          <textarea
-            aria-describedby={invalid && reason.length > 0 ? reasonErrorId : undefined}
-            autoFocus
-            disabled={busy}
-            maxLength={500}
-            minLength={3}
-            onChange={(event) => onReasonChange(event.target.value)}
-            placeholder="Nhập ít nhất 3 ký tự"
-            required
-            rows={3}
-            value={reason}
-          />
-        </label>
-        {invalid && reason.length > 0 ? (
-          <div className="form-error" id={reasonErrorId} role="alert">
-            Lý do phải có ít nhất 3 ký tự.
-          </div>
-        ) : null}
-        {error ? (
-          <div className="form-error" role="alert">
-            {error}
-          </div>
-        ) : null}
-        <div className="dialog__actions">
-          <Button disabled={busy} onClick={onCancel} tone="secondary">
-            Giữ phiếu
-          </Button>
-          <Button busy={busy} disabled={invalid} onClick={onConfirm} tone="danger">
-            Hủy phiếu chờ
-          </Button>
-        </div>
-      </section>
-    </div>
   );
 }
