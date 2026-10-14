@@ -371,6 +371,7 @@ describePostgres('store wait documents (phiếu chờ tổng)', () => {
       idempotencyKey: key,
       requestHash: 'doc-cancel',
     });
+    if (cancelled.replayed) throw new Error('The first cancellation must not be a replay.');
     expect(cancelled.value).toMatchObject({ cancelledQuantity: 1, currentDocumentId: null });
     expect(await currentDocumentOrNull(store.id)).toBeNull();
     const done = await getStoreWaitDocument(db, {
