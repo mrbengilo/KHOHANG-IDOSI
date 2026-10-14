@@ -80,10 +80,14 @@ Cùng một luồng, giờ lấy từ chính phiên (`Asia/Ho_Chi_Minh`, không 
 Khi hủy:
 
 - Đề nghị `offered` và `accepted` chưa phân bổ của phiếu → `cancelled`, trả hold nguyên tử.
-- Phần đã phân bổ (reservation) giữ nguyên và vẫn giao chung với đơn thường kế tiếp.
+- Từ 0044: hàng đã phân bổ của phiếu còn nằm trong kết quả `PENDING` (chưa có RE, chưa xuất) bị
+  **thu hồi** (`R −q`, disposition `wait_ticket_cancelled`, kết quả giảm phần có thể xử lý hoặc
+  chuyển `CANCELLED`). Hàng đã có RE, đã xuất/nhận hoặc đã chấp nhận theo quy trình cũ giữ nguyên
+  và vẫn giao như cũ. Phiếu `fulfilled` có hàng thu hồi được cũng hủy được. Có bản xem trước
+  (`GET .../cancel-preview`) và `expectedFingerprint`; xem `allocation-waitlist-workflow.md`.
 - `remaining_quantity` giữ nguyên làm số lượng bị hủy; không cộng vào `fulfilled_quantity`
   (`remaining + fulfilled = original` luôn đúng).
-- Phiếu `fulfilled`/`cancelled` không bị sửa ngược; gọi lại với key khác trả 409, cùng key cùng
+- Phiếu `cancelled` (và `fulfilled` không còn hàng thu hồi được) không bị sửa ngược; gọi lại với key khác trả 409, cùng key cùng
   payload trả replay, cùng key khác payload trả conflict.
 
 ### Phiếu sinh từ nhận thiếu chưa hoàn tất

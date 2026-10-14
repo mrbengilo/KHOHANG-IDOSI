@@ -51,6 +51,12 @@ page shows the decision tag on every document (rejections are tagged “đã t�
 the decision panel for answering or tracing result → reservations → shipment → receipt. See
 [allocation result confirmation](allocation-result-confirmation.md).
 
+From 0044 the statuses also include `WAITLISTED` (“Đã chuyển phiếu chờ”) and `CANCELLED` (“Đã thu
+hồi do hủy phiếu chờ”). They are only returned with `includeWaitlist=true` (together with
+`includeDecision=true`); without it both are reported as `REJECTED` so older bundles keep parsing.
+Historical `REJECTED` rows stay as they are. See
+[allocation waitlist workflow](allocation-waitlist-workflow.md).
+
 ## Receipt navigation
 
 `GET /api/v1/store-receipt-summaries` accepts existing receipt filters and pagination

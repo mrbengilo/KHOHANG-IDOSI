@@ -81,8 +81,12 @@ trước/sau) → dispatch chuyến (nếu có) → audit `ALLOCATION_RESULT_ACC
 - Cùng khóa, cùng nội dung: trả lại kết quả cũ cùng mã RE; khác nội dung: `IDEMPOTENCY_CONFLICT`.
 - Hàng ưu tiên chấp nhận khi chưa có chuyến: vẫn lập RE và xuất ngay; worker 09:00 ghép hold
   `issued` vào chuyến của đơn thường kế tiếp đúng một lần (không xuất lại).
-- Từ chối: không lập RE, không xuất; giải phóng giữ hàng của chính kết quả như cũ. Hàng `issued` của
-  phiên trước đi cùng chuyến bị hủy giữ nguyên hold (chỉ gỡ liên kết chuyến).
+- Chuyển phiếu chờ (thay Từ chối từ 0044): không lập RE, không xuất; giải phóng giữ hàng của chính
+  kết quả và đưa số bao được cấp trở lại phiếu chờ. Hàng `issued` của phiên trước đi cùng chuyến bị
+  hủy giữ nguyên hold (chỉ gỡ liên kết chuyến). Xem `allocation-waitlist-workflow.md`.
+- Từ 0044, RE lập theo phần **có thể xử lý** `granted − revoked` (hàng đã bị thu hồi do hủy phiếu
+  chờ không được xuất); hủy phiếu chờ không bao giờ thu hồi hàng đã có RE (trigger
+  `reshare_order_sources_not_revoked`).
 
 ## 5. Đối chiếu Reshare
 
@@ -97,11 +101,13 @@ trước/sau) → dispatch chuyến (nếu có) → audit `ALLOCATION_RESULT_ACC
 
 ## 6. Giao diện và quyền
 
-| Vai trò          | “Đơn & tồn Reshare”                                                                  | Kết quả phân bổ                             |
-| ---------------- | ------------------------------------------------------------------------------------ | ------------------------------------------- |
-| Admin            | Đơn đặt Reshare (mọi cửa hàng), Cập nhật tồn Reshare, Lịch sử cập nhật tồn, Cấu hình | Chỉ xem                                     |
-| HTKD             | Như Admin, mọi cửa hàng (từ 14/10/2026, không theo phân công)                        | **Chấp nhận** thay cửa hàng (không Từ chối) |
-| Cửa hàng/quầy sỉ | Đơn của phạm vi mình                                                                 | Chấp nhận / Từ chối như cũ                  |
+| Vai trò          | “Đơn & tồn Reshare”                                                                  | Kết quả phân bổ                      |
+| ---------------- | ------------------------------------------------------------------------------------ | ------------------------------------ |
+| Admin            | Đơn đặt Reshare (mọi cửa hàng), Cập nhật tồn Reshare, Lịch sử cập nhật tồn, Cấu hình | Chỉ xem                              |
+| HTKD             | Như Admin, mọi cửa hàng (từ 14/10/2026, không theo phân công)                        | Xác nhận phân bổ / Chuyển phiếu chờ¹ |
+| Cửa hàng/quầy sỉ | Đơn của phạm vi mình                                                                 | Xác nhận phân bổ / Chuyển phiếu chờ  |
+
+¹ Chỉ cửa hàng đang hoạt động được phân công (0044); ngoại lệ Reshare không mở rộng sang kết quả phân bổ.
 
 - Bảng “Lịch sử đặt hàng theo phân bổ”: Mã phiên (mở phiên/hoàn tất phân bổ/xác nhận, giờ Việt Nam
   tới giây), Mã RE (hoặc “—”), Tên cửa hàng, Mặt hàng, Số lượng (bao), Tổng (một lần/đơn), Trạng thái

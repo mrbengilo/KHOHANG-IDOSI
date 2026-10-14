@@ -1,5 +1,12 @@
 # Xác nhận kết quả phân bổ (Chấp nhận / Từ chối)
 
+> **Từ 0044** (`docs/allocation-waitlist-workflow.md`): hai thao tác là **Xác nhận phân bổ**
+> (`ACCEPT`) và **Chuyển phiếu chờ** (`WAITLIST`) cho STORE, quầy sỉ và HTKD được phân công.
+> `REJECT` bị thu hồi (409 `ALLOCATION_DECISION_ACTION_RETIRED`); dòng `rejected` cũ chỉ đọc.
+> Hủy phiếu chờ có thể thu hồi hàng của kết quả `PENDING` (`revoked_quantity`, trạng thái
+> `CANCELLED`). Thông báo là khung xanh có cả hai thao tác. Các mục “Từ chối”, “Ma trận quyền” và
+> “Giao diện” dưới đây mô tả hành vi ≤ 0043.
+
 Khi phiên phân bổ hoàn tất, mỗi cửa hàng được cấp hàng nhận một **phiếu kết quả** cần xác nhận
 trong ứng dụng. Cửa hàng phản hồi **một lần cho toàn phiếu** bằng đúng hai nút **Chấp nhận** hoặc
 **Từ chối**. Chỉ sau khi chấp nhận, hàng mới được xuất kho; chấp nhận không phải là khai nhận thực tế.

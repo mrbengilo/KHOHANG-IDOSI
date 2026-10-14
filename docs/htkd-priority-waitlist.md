@@ -2,15 +2,20 @@
 
 ## Phạm vi và quyền
 
-| Chức năng                                                              | ADMIN                               | HTKD                                            | STORE / WHOLESALE |
-| ---------------------------------------------------------------------- | ----------------------------------- | ----------------------------------------------- | ----------------- |
-| Đọc tồn kho tổng                                                       | Có                                  | Có, số tổng trung tâm                           | Có, chỉ xem¹      |
-| Điều chỉnh kho tổng, lịch sử xuất/điều chỉnh, kiểm thiếu toàn hệ thống | Quyền hiện có                       | Không mở thêm                                   | Không mở thêm     |
-| Đọc/phản hồi ưu tiên                                                   | Đọc, không nhận thay                | Cửa hàng đang hoạt động được phân công hiện tại | Phạm vi hiện có   |
-| Hủy phần còn chờ                                                       | Mọi cửa hàng, kể cả ngừng hoạt động | Cửa hàng đang hoạt động được phân công hiện tại | Phạm vi hiện có   |
-| Tab chính Danh sách phiếu chờ                                          | Có                                  | Không                                           | Không             |
+| Chức năng                                                              | ADMIN                               | HTKD                                            | STORE / WHOLESALE                            |
+| ---------------------------------------------------------------------- | ----------------------------------- | ----------------------------------------------- | -------------------------------------------- |
+| Đọc tồn kho tổng                                                       | Có                                  | Có, số tổng trung tâm                           | Có, chỉ xem¹                                 |
+| Điều chỉnh kho tổng, lịch sử xuất/điều chỉnh, kiểm thiếu toàn hệ thống | Quyền hiện có                       | Không mở thêm                                   | Không mở thêm                                |
+| Đọc/phản hồi ưu tiên                                                   | Đọc, không nhận thay                | Cửa hàng đang hoạt động được phân công hiện tại | Phạm vi hiện có                              |
+| Hủy phần còn chờ                                                       | Mọi cửa hàng, kể cả ngừng hoạt động | Cửa hàng đang hoạt động được phân công hiện tại | Phạm vi hiện có                              |
+| Tab chính Danh sách phiếu chờ                                          | Có                                  | “Phiếu chờ ưu tiên” theo phạm vi (0044)         | “Phiếu chờ ưu tiên” của cửa hàng mình (0044) |
+| Xác nhận phân bổ / Chuyển phiếu chờ kết quả                            | Không (chỉ xem)                     | Cửa hàng đang hoạt động được phân công hiện tại | Phạm vi hiện có                              |
 
 ¹ Mở rộng sau bản này: xem `warehouse-stock-read-access.md`.
+
+Từ 0044: HTKD, cửa hàng và quầy sỉ có tab “Phiếu chờ ưu tiên” (mã PC + “Chờ từ”, phiên, mặt hàng,
+số bao, ba nhãn Chưa xử lý/Đã xử lý/Đã hủy, xem chi tiết, hủy có xem trước). Hủy phiếu còn thu hồi
+hàng chưa xác nhận của phiếu trong kết quả đang chờ; xem `allocation-waitlist-workflow.md`.
 
 Trước thay đổi, notice và phản hồi HTKD đã có nhưng kho tổng và hủy phiếu bị chặn có chủ đích. Bản này dùng lại notice 15 giây, transaction/state machine và dialog chung. HTKD không có phiếu riêng, không giả actor STORE. Nhận ưu tiên không phải thực nhận, không cộng tồn cửa hàng.
 
