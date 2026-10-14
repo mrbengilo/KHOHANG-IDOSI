@@ -9,20 +9,26 @@ import type {
 import type { Role, StatusTone } from '../../lib/types';
 
 /**
- * Tabs of the workspace. Every role starts on its RE orders ("Đơn đặt Reshare"); only Admin
- * updates Reshare stock and configures sources. "legacy" (manual order records from before RE
- * orders) is reachable by link, never part of the main flow.
+ * Tabs of the workspace. Every role starts on its RE orders ("Đơn đặt Reshare"); Admin and HTKD
+ * (Reshare managers, every store) also update Reshare stock and configure sources. "legacy"
+ * (manual order records from before RE orders) is reachable by link, never part of the main flow.
+ * The server enforces the same policy; this only decides what is shown.
  */
 export type SupplierTab = 'orders' | 'reconcile' | 'history' | 'settings' | 'legacy';
 
+/** Mirrors isReshareManager on the API (apps/api/src/repository.ts). */
+export function isReshareManager(role: Role): boolean {
+  return role === 'ADMIN' || role === 'HTKD';
+}
+
 export function supplierTabsFor(role: Role): readonly SupplierTab[] {
-  if (role === 'ADMIN') return ['orders', 'reconcile', 'history', 'settings'];
+  if (isReshareManager(role)) return ['orders', 'reconcile', 'history', 'settings'];
   return ['orders'];
 }
 
 /** Tabs reachable by URL but not shown in the tab bar. */
 function hiddenTabsFor(role: Role): readonly SupplierTab[] {
-  return role === 'ADMIN' || role === 'HTKD' ? ['legacy'] : [];
+  return isReshareManager(role) ? ['legacy'] : [];
 }
 
 export const SUPPLIER_TAB_LABELS: Record<SupplierTab, string> = {
@@ -111,9 +117,9 @@ export function positionSentence(position: SupplierPosition): string {
 }
 
 /** Change of free stock a confirmation would cause, phrased for the success notice. */
-export function freeChangeSentence(sku: string, before: number, after: number): string {
-  if (before === after) return `${sku}: khả dụng giữ nguyên ${after} bao.`;
-  return `${sku}: khả dụng ${before} → ${after} bao (${after > before ? '+' : ''}${after - before}).`;
+export function freeChangeSentence(productName: string, before: number, after: number): string {
+  if (before === after) return `${productName}: khả dụng giữ nguyên ${after} bao.`;
+  return `${productName}: khả dụng ${before} → ${after} bao (${after > before ? '+' : ''}${after - before}).`;
 }
 
 const VN_OFFSET = '+07:00';
@@ -169,12 +175,12 @@ export function buildOrderLines(
     if (quantity === null || quantity < 1) {
       return {
         lines: [],
-        error: `${row.sku} (${row.storeCode}): nhập từ 1 đến ${row.unorderedQuantity} bao Reshare đã nhận.`,
+        error: `${row.productName} (${row.storeName}): nhập từ 1 đến ${row.unorderedQuantity} bao Reshare đã nhận.`,
       };
     }
     const ref = (lineRefs.get(row.id) ?? row.sku).trim();
     if (ref.length < 1 || ref.length > 100) {
-      return { lines: [], error: `${row.sku}: dòng đơn Reshare cần 1–100 ký tự.` };
+      return { lines: [], error: `${row.productName}: dòng đơn Reshare cần 1–100 ký tự.` };
     }
     lines.push({ reservationId: row.id, quantity, externalLineRef: ref });
   }

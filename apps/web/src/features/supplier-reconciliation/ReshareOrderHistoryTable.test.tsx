@@ -1,10 +1,11 @@
-import type { ReshareOrderHistoryRow } from '@idosi/contracts';
+import type { ReshareOrderHistoryRow, ReshareStatusHistoryEvent } from '@idosi/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 
 import { businessDayEnd, businessDayStart } from './ReshareOrdersPanel';
 import { ReshareOrderHistoryTable, reshareStatusNote } from './ReshareOrderHistoryTable';
+import { historyActorName, historyContent } from './ReshareStatusHistory';
 
 const id = (n: number) => `90000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
@@ -107,6 +108,59 @@ describe('RE order history table', () => {
         }),
       ),
     ).toContain('thiếu 1 đang xử lý');
+  });
+
+  it('names the real last editor and role, never a hard-coded Admin, and hides SKUs', () => {
+    const edited = row({
+      statusControl: {
+        version: 2,
+        updatedAt: '2026-10-13T03:00:00.000Z',
+        updatedByName: 'Nguyễn HTKD',
+        updatedByRole: 'HTKD',
+      },
+    });
+    expect(reshareStatusNote(edited)).toContain(
+      'Cập nhật lần cuối bởi Nguyễn HTKD (HTKD) lúc 10:00:00 13/10/2026.',
+    );
+    expect(reshareStatusNote(edited)).not.toContain('Admin Nguyễn');
+    const html = render([edited]);
+    expect(html).not.toContain('QDN');
+    expect(html).not.toContain('>AO<');
+  });
+
+  it('describes history events from what was recorded, without guessing', () => {
+    const base: ReshareStatusHistoryEvent = {
+      id: id(9),
+      occurredAt: '2026-10-13T03:00:00.000Z',
+      kind: 'STATUS_CHANGED',
+      source: 'MANUAL',
+      statusBefore: 'NOT_ORDERED',
+      statusAfter: 'ORDERED',
+      version: 1,
+      orderCode: 'RE-000001',
+      actor: { accountId: id(8), role: 'HTKD', nameAtEvent: 'HTKD lúc đó', currentName: null },
+      requestId: 'req-1',
+    };
+    expect(historyActorName(base)).toBe('HTKD lúc đó');
+    expect(
+      historyActorName({
+        ...base,
+        actor: { ...base.actor, nameAtEvent: null, currentName: 'Tên mới' },
+      }),
+    ).toBe('Tên mới (tên hiện tại)');
+    expect(
+      historyActorName({
+        ...base,
+        actor: { accountId: null, role: null, nameAtEvent: null, currentName: null },
+      }),
+    ).toBe('Hệ thống');
+    expect(historyContent(base)).toBe('Cập nhật trạng thái đặt Reshare (lần 1)');
+    expect(historyContent({ ...base, kind: 'CREATED', source: 'ACCEPTANCE' })).toBe(
+      'Tạo đơn RE-000001 khi chấp nhận kết quả phân bổ',
+    );
+    expect(historyContent({ ...base, kind: 'CREATED', source: 'BACKFILL' })).toBe(
+      'Tạo đơn RE-000001 khi chuyển đổi dữ liệu cũ',
+    );
   });
 
   it('converts business-day filters to Vietnam instants', () => {

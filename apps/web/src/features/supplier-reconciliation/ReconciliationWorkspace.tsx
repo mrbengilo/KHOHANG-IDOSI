@@ -23,7 +23,7 @@ const FILTERS: readonly { id: SupplierReconciliationFilter; label: string }[] = 
   { id: 'NEEDS_RECONCILIATION', label: 'Cần đối chiếu' },
 ];
 
-/** Admin workspace: per-SKU numbers, drill-down to commitments and the observation form. */
+/** Admin/HTKD workspace: per-product numbers, drill-down to holds and the observation form. */
 export function ReconciliationWorkspace({
   accountId,
   onOpenSettings,
@@ -188,17 +188,15 @@ export function ReconciliationWorkspace({
                         <tr>
                           <td data-label="Chọn">
                             <input
-                              aria-label={`Chọn ${row.sku} để đối chiếu`}
+                              aria-label={`Chọn ${row.productName} để đối chiếu`}
                               checked={selected.has(row.productId)}
                               onChange={(event) => toggle(row, event.target.checked)}
                               type="checkbox"
                             />
                           </td>
                           <td data-label="Mặt hàng">
-                            <strong>{row.productName}</strong>
-                            <small>
-                              {row.sku} · nguồn {row.sourceCode}
-                            </small>
+                            <strong className="supplier-product-name">{row.productName}</strong>
+                            <small>Nguồn {row.sourceCode}</small>
                           </td>
                           <td data-label="Reshare cho đặt (S)">
                             {row.baseline ? (
@@ -306,7 +304,6 @@ function targetOf(row: SupplierReconciliationRow): ObservationTarget {
     productId: row.productId,
     sourceId: row.sourceId,
     sourceCode: row.sourceCode,
-    sku: row.sku,
     productName: row.productName,
     baselineQuantity: row.baseline?.observedQuantity ?? null,
   };

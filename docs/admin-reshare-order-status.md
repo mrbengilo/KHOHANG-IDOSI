@@ -1,8 +1,14 @@
-# Admin cập nhật trạng thái đặt Reshare
+# Admin/HTKD cập nhật trạng thái đặt Reshare
 
-Admin mở **Đơn đặt và tồn Reshare → Đơn đặt Reshare**, tại mỗi kết quả phân bổ bấm
+> **Cập nhật 14/10/2026** (`docs/reshare-htkd-ui-status-history.md`): mọi HTKD đang hoạt động có
+> cùng quyền với Admin trên mọi cửa hàng; audit lưu vai trò và tên thật lúc thao tác (trước đây
+> `actorRole` bị gán cố định `admin`); yêu cầu đổi sang chính trạng thái hiện tại trả về phiên bản
+> cũ và không ghi sự kiện X → X; mỗi đơn có **Lịch sử thay đổi** đọc qua
+> `GET /api/v1/reshare-orders/{decisionId}/status-history`.
+
+Admin hoặc HTKD mở **Đơn đặt và tồn Reshare → Đơn đặt Reshare**, tại mỗi kết quả phân bổ bấm
 **Đánh dấu đã đặt** hoặc **Đánh dấu chưa đặt**. Trạng thái được lưu vào PostgreSQL,
-đọc lại sau khi lưu và dùng cho bộ lọc phía server. HTKD, cửa hàng và quầy sỉ chỉ xem.
+đọc lại sau khi lưu và dùng cho bộ lọc phía server. Cửa hàng và quầy sỉ chỉ xem.
 Dòng chưa có mã RE vẫn đổi được; mã RE không được tạo giả.
 
 ## Quy tắc nghiệp vụ
@@ -21,7 +27,7 @@ Dòng chưa có mã RE vẫn đổi được; mã RE không được tạo giả
 
 ## API, lưu trữ và đồng thời
 
-`PUT /api/v1/reshare-orders/{decisionId}/status`, chỉ Admin đang hoạt động:
+`PUT /api/v1/reshare-orders/{decisionId}/status`, Admin hoặc HTKD đang hoạt động:
 
 ```json
 {
@@ -35,7 +41,8 @@ Bắt buộc `Idempotency-Key`. Backend xác thực lại quyền trong transact
 khóa kết quả và chứng từ, kiểm tra trạng thái/phiên bản rồi cập nhật bốn cột
 `reshare_status`, `reshare_status_version`, `reshare_status_updated_at`,
 `reshare_status_updated_by` trên `allocation_result_decisions`. Cùng transaction ghi audit
-`RESHARE_ORDER_STATUS_UPDATED` với giá trị trước/sau, Admin và cửa hàng liên quan.
+`RESHARE_ORDER_STATUS_UPDATED` với giá trị trước/sau, người thao tác (id, vai trò thật, tên lúc
+thao tác trong `metadata.actorName`) và cửa hàng liên quan.
 Hai lệnh cùng phiên bản chỉ một lệnh thành công; lệnh còn lại nhận `VERSION_CONFLICT`.
 Retry cùng khóa/nội dung không ghi thêm audit; dùng lại khóa với nội dung khác bị từ chối.
 

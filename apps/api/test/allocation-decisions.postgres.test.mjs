@@ -293,12 +293,13 @@ function accept(expectedVersion = 1) {
   return { action: 'ACCEPT', expectedVersion };
 }
 
-describePostgres('Admin Reshare acknowledgement API', () => {
-  test('persists, filters, replays and protects both directions independently of allocation acceptance', async () => {
+describePostgres('Reshare acknowledgement API and status history', () => {
+  test('lets Admin and any HTKD change status, records real actors and serves the history', async () => {
     const app = await createApi({ repository: sharedRepository() });
     try {
       const fx = await createFixture();
-      const result = await publishResult(fx, fx.storeA, 3, { shipment: true });
+      // Store B is outside the HTKD's assignments: the Reshare module ignores them.
+      const result = await publishResult(fx, fx.storeB, 3, { shipment: true });
       const url = `/api/v1/reshare-orders/${result.decisionId}/status`;
       const input = { status: 'ORDERED', expectedStatus: 'NOT_ORDERED', expectedVersion: 0 };
       const key = randomUUID();
@@ -309,19 +310,23 @@ describePostgres('Admin Reshare acknowledgement API', () => {
           headers: { cookie: `idosi_session=${token}`, 'idempotency-key': idempotencyKey },
           payload,
         });
-      for (const token of [fx.tokens.htkd, fx.tokens.storeA, fx.tokens.storeB, fx.tokens.wholesale])
+      const get = (token, path) =>
+        app.inject({ method: 'GET', url: path, headers: { cookie: `idosi_session=${token}` } });
+      const historyUrl = `/api/v1/reshare-orders/${result.decisionId}/status-history`;
+      for (const token of [fx.tokens.storeA, fx.tokens.storeB, fx.tokens.wholesale])
         assert.equal((await put(token)).statusCode, 403);
+      assert.equal((await get(fx.tokens.admin, historyUrl)).json().pagination.totalItems, 0);
       const before = await balance(fx.productId);
-      const saved = await put(fx.tokens.admin);
+      const saved = await put(fx.tokens.htkd);
       assert.equal(saved.statusCode, 200, saved.body);
       assert.deepEqual(saved.json().data, {
         decisionId: result.decisionId,
         status: 'ORDERED',
         version: 1,
       });
-      assert.equal((await put(fx.tokens.admin)).headers['idempotency-replayed'], 'true');
+      assert.equal((await put(fx.tokens.htkd)).headers['idempotency-replayed'], 'true');
       assert.equal(
-        (await put(fx.tokens.admin, { ...input, status: 'NOT_ORDERED' })).statusCode,
+        (await put(fx.tokens.htkd, { ...input, status: 'NOT_ORDERED' })).statusCode,
         409,
       );
       assert.equal((await put(fx.tokens.admin, input, randomUUID())).statusCode, 409);
@@ -329,34 +334,220 @@ describePostgres('Admin Reshare acknowledgement API', () => {
         (await put(fx.tokens.admin, { ...input, status: 'CANCELLED' }, randomUUID())).statusCode,
         400,
       );
-      const get = (token, suffix = '') =>
-        app.inject({
-          method: 'GET',
-          url: `/api/v1/reshare-orders?decisionId=${result.decisionId}${suffix}`,
-          headers: { cookie: `idosi_session=${token}` },
-        });
-      const read = await get(fx.tokens.storeA, '&includeStatusControl=true&status=ORDERED');
-      assert.equal(read.statusCode, 200, read.body);
-      assert.equal(read.json().data[0].statusControl.version, 1);
-      assert.equal(read.json().data[0].decisionStatus, 'PENDING');
-      assert.equal(read.json().data[0].order, null);
-      assert.equal(
-        (await get(fx.tokens.admin, '&status=NOT_ORDERED')).json().pagination.totalItems,
-        0,
-      );
-      assert.equal('statusControl' in (await get(fx.tokens.admin)).json().data[0], false);
-      assert.equal((await get(fx.tokens.storeB)).json().pagination.totalItems, 0);
-      const undone = await put(
+      // Asking for the current status changes nothing: same version, no X → X history event.
+      const unchanged = await put(
         fx.tokens.admin,
-        { status: 'NOT_ORDERED', expectedStatus: 'ORDERED', expectedVersion: 1 },
+        { status: 'ORDERED', expectedStatus: 'ORDERED', expectedVersion: 1 },
         randomUUID(),
       );
-      assert.equal(undone.statusCode, 200, undone.body);
+      assert.equal(unchanged.statusCode, 200, unchanged.body);
+      assert.equal(unchanged.json().data.version, 1);
+      assert.equal((await get(fx.tokens.admin, historyUrl)).json().pagination.totalItems, 1);
+
+      const list = (token, suffix = '') =>
+        get(token, `/api/v1/reshare-orders?decisionId=${result.decisionId}${suffix}`);
+      const read = await list(
+        fx.tokens.storeB,
+        '&includeStatusControl=true&includeStatusActor=true&status=ORDERED',
+      );
+      assert.equal(read.statusCode, 200, read.body);
+      assert.deepEqual(read.json().data[0].statusControl, {
+        version: 1,
+        updatedAt: read.json().data[0].statusControl.updatedAt,
+        updatedByName: 'Allocation decision htkd',
+        updatedByRole: 'HTKD',
+      });
+      assert.equal(read.json().data[0].decisionStatus, 'PENDING');
+      assert.equal(read.json().data[0].order, null);
+      // Older bundles that do not ask for the actor keep the strict shape they validate.
       assert.equal(
-        (await get(fx.tokens.admin, '&status=NOT_ORDERED')).json().pagination.totalItems,
+        'updatedByRole' in
+          (await list(fx.tokens.admin, '&includeStatusControl=true')).json().data[0].statusControl,
+        false,
+      );
+      assert.equal(
+        (await list(fx.tokens.admin, '&status=NOT_ORDERED')).json().pagination.totalItems,
+        0,
+      );
+      assert.equal('statusControl' in (await list(fx.tokens.admin)).json().data[0], false);
+      assert.equal((await list(fx.tokens.storeA)).json().pagination.totalItems, 0);
+      const htkdList = await list(fx.tokens.htkd, `&storeId=${fx.storeB}`);
+      assert.equal(htkdList.statusCode, 200);
+      assert.equal(htkdList.json().pagination.totalItems, 1);
+      assert.equal(htkdList.json().scoped, false);
+      assert.equal(
+        (await list(fx.tokens.storeA, `&storeId=${fx.storeB}`)).statusCode,
+        403,
+        'stores stay in their own scope',
+      );
+
+      // Two managers on the same version: exactly one transition, the other a conflict.
+      const racers = await Promise.all([
+        put(
+          fx.tokens.admin,
+          { status: 'NOT_ORDERED', expectedStatus: 'ORDERED', expectedVersion: 1 },
+          randomUUID(),
+        ),
+        put(
+          fx.tokens.unassignedHtkd,
+          { status: 'NOT_ORDERED', expectedStatus: 'ORDERED', expectedVersion: 1 },
+          randomUUID(),
+        ),
+      ]);
+      assert.deepEqual(racers.map((response) => response.statusCode).sort(), [200, 409]);
+      const winner = racers.find((response) => response.statusCode === 200);
+      assert.equal(winner.json().data.version, 2);
+      const winnerIsAdmin = racers[0].statusCode === 200;
+      assert.equal(
+        (await list(fx.tokens.admin, '&status=NOT_ORDERED')).json().pagination.totalItems,
         1,
       );
-      assert.deepEqual(await balance(fx.productId), before);
+
+      // A later rename does not rewrite the name recorded with the HTKD's event.
+      await db
+        .update(users)
+        .set({ displayName: 'Tên mới của HTKD' })
+        .where(eq(users.id, fx.htkdId));
+      const history = await get(fx.tokens.admin, historyUrl);
+      assert.equal(history.statusCode, 200, history.body);
+      assert.equal(history.headers['cache-control'], 'no-store');
+      assert.equal(history.json().pagination.totalItems, 2);
+      assert.deepEqual(
+        history
+          .json()
+          .data.map((event) => [
+            event.kind,
+            event.source,
+            event.statusBefore,
+            event.statusAfter,
+            event.version,
+            event.actor.role,
+            event.actor.nameAtEvent,
+            event.actor.currentName,
+          ]),
+        [
+          [
+            'STATUS_CHANGED',
+            'MANUAL',
+            'ORDERED',
+            'NOT_ORDERED',
+            2,
+            winnerIsAdmin ? 'ADMIN' : 'HTKD',
+            winnerIsAdmin ? fx.adminName : 'Allocation decision htkd-none',
+            null,
+          ],
+          [
+            'STATUS_CHANGED',
+            'MANUAL',
+            'NOT_ORDERED',
+            'ORDERED',
+            1,
+            'HTKD',
+            'Allocation decision htkd',
+            null,
+          ],
+        ],
+      );
+      assert.equal(history.json().data[1].actor.accountId, fx.htkdId);
+      // Stable server paging: page 2 of size 1 is the older event, no duplicates.
+      const second = await get(fx.tokens.htkd, `${historyUrl}?page=2&pageSize=1`);
+      assert.equal(second.json().data.length, 1);
+      assert.equal(second.json().data[0].id, history.json().data[1].id);
+      assert.equal(second.json().pagination.totalPages, 2);
+      // The receiving store reads its own result's history; other stores get 404 (no leak).
+      assert.equal((await get(fx.tokens.storeB, historyUrl)).statusCode, 200);
+      for (const token of [fx.tokens.storeA, fx.tokens.wholesale])
+        assert.equal((await get(token, historyUrl)).statusCode, 404);
+      assert.equal(
+        (await get(fx.tokens.admin, `/api/v1/reshare-orders/${randomUUID()}/status-history`))
+          .statusCode,
+        404,
+      );
+      assert.equal((await get(fx.tokens.admin, `${historyUrl}?pageSize=101`)).statusCode, 400);
+
+      // Other modules keep the assignment scope: the HTKD may not answer for store B (the
+      // result is outside its allocation scope, so it is not even found there).
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/v1/allocation-decisions/${result.decisionId}/respond`,
+            headers: { cookie: `idosi_session=${fx.tokens.htkd}`, 'idempotency-key': randomUUID() },
+            payload: accept(),
+          })
+        ).statusCode,
+        404,
+      );
+      assert.equal(
+        (await get(fx.tokens.htkd, `/api/v1/allocation-decisions?storeId=${fx.storeB}`)).statusCode,
+        403,
+      );
+
+      // Acceptance creates the RE order: a "created" event by the real store account.
+      const accepted = await app.inject({
+        method: 'POST',
+        url: `/api/v1/allocation-decisions/${result.decisionId}/respond`,
+        headers: { cookie: `idosi_session=${fx.tokens.storeB}`, 'idempotency-key': randomUUID() },
+        payload: accept(),
+      });
+      assert.equal(accepted.statusCode, 200, accepted.body);
+      const afterAcceptance = (await get(fx.tokens.admin, historyUrl)).json();
+      assert.equal(afterAcceptance.pagination.totalItems, 3);
+      const created = afterAcceptance.data[0];
+      assert.equal(created.kind, 'CREATED');
+      assert.equal(created.source, 'ACCEPTANCE');
+      assert.match(created.orderCode, /^RE-\d{6}$/u);
+      assert.equal(created.actor.accountId, fx.storeUserB);
+      assert.equal(created.actor.role, 'STORE');
+      assert.equal(created.actor.nameAtEvent, 'Allocation decision store-b');
+      // The stored acknowledgement (not ordered) still wins over the new RE document.
+      assert.equal(created.statusBefore, 'NOT_ORDERED');
+      assert.equal(created.statusAfter, 'NOT_ORDERED');
+      assert.deepEqual(
+        (await balance(fx.productId)).reserved,
+        before.reserved - 3,
+        'only the acceptance moved stock; status changes never did',
+      );
+
+      // The Reshare store filter: every store for HTKD, own store for a store account.
+      const htkdStores = await get(fx.tokens.htkd, '/api/v1/reshare-orders/stores');
+      assert.equal(htkdStores.statusCode, 200);
+      assert.equal(htkdStores.json().scoped, false);
+      const ids = htkdStores.json().data.map((store) => store.id);
+      for (const id of [fx.storeA, fx.storeB, fx.wholesaleStore]) assert.ok(ids.includes(id));
+      assert.deepEqual((await get(fx.tokens.storeA, '/api/v1/reshare-orders/stores')).json(), {
+        data: [
+          { id: fx.storeA, code: fx.storeACode, name: 'Allocation decision A', isActive: true },
+        ],
+        scoped: true,
+      });
+
+      // A locked HTKD is refused at once (session check), and so is a demoted one.
+      await db.update(users).set({ status: 'locked' }).where(eq(users.id, fx.unassignedHtkdId));
+      assert.ok(
+        [401, 403].includes(
+          (
+            await put(
+              fx.tokens.unassignedHtkd,
+              { status: 'ORDERED', expectedStatus: 'NOT_ORDERED', expectedVersion: 2 },
+              randomUUID(),
+            )
+          ).statusCode,
+        ),
+      );
+      await db.update(users).set({ role: 'wholesale' }).where(eq(users.id, fx.htkdId));
+      assert.ok(
+        [401, 403].includes(
+          (
+            await put(
+              fx.tokens.htkd,
+              { status: 'ORDERED', expectedStatus: 'NOT_ORDERED', expectedVersion: 2 },
+              randomUUID(),
+            )
+          ).statusCode,
+        ),
+      );
+      assert.equal((await get(fx.tokens.admin, historyUrl)).json().pagination.totalItems, 3);
     } finally {
       await app.close();
     }
@@ -538,7 +729,7 @@ async function publishResult(fx, storeId, quantity, { shipment }) {
 async function createFixture() {
   const suffix = randomUUID();
   const [administrator] = await db
-    .select({ id: users.id, tokenVersion: users.tokenVersion })
+    .select({ id: users.id, tokenVersion: users.tokenVersion, displayName: users.displayName })
     .from(users)
     .where(and(eq(users.role, 'admin'), eq(users.status, 'active'), isNull(users.deletedAt)))
     .limit(1);
@@ -600,6 +791,7 @@ async function createFixture() {
   const storeUserA = await user('store-a', 'store', storeA.id);
   const storeUserB = await user('store-b', 'store', storeB.id);
   const htkdUser = await user('htkd', 'htkd', null);
+  const unassignedHtkd = await user('htkd-none', 'htkd', null);
   const wholesaleUser = await user('wholesale', 'wholesale', null);
   await db.insert(htkdAssignments).values([
     { userId: htkdUser.id, storeId: storeA.id, assignedByUserId: administrator.id },
@@ -608,6 +800,7 @@ async function createFixture() {
   const tokens = {
     admin: `adec-admin-${suffix}`,
     htkd: `adec-htkd-${suffix}`,
+    unassignedHtkd: `adec-htkd-none-${suffix}`,
     storeA: `adec-store-a-${suffix}`,
     storeB: `adec-store-b-${suffix}`,
     wholesale: `adec-wholesale-${suffix}`,
@@ -617,6 +810,7 @@ async function createFixture() {
     [
       [administrator, tokens.admin],
       [htkdUser, tokens.htkd],
+      [unassignedHtkd, tokens.unassignedHtkd],
       [storeUserA, tokens.storeA],
       [storeUserB, tokens.storeB],
       [wholesaleUser, tokens.wholesale],
@@ -629,10 +823,14 @@ async function createFixture() {
   );
   return {
     adminId: administrator.id,
+    adminName: administrator.displayName,
     productId: product.id,
     storeA: storeA.id,
     storeB: storeB.id,
     wholesaleStore: wholesaleStore.id,
+    storeACode: `ADEC_${suffix.slice(0, 8)}_A`,
+    htkdId: htkdUser.id,
+    unassignedHtkdId: unassignedHtkd.id,
     storeUserA: storeUserA.id,
     storeUserB: storeUserB.id,
     tokens,

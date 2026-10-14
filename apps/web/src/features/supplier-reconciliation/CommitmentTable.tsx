@@ -51,7 +51,7 @@ export function CommitmentTable({
         {multiPage
           ? ` (trang này: ${formatInteger(current.quantity)} giữ / ${formatInteger(current.unorderedQuantity)} chưa đặt)`
           : ''}
-        .{page.scoped ? ' Chỉ gồm cửa hàng thuộc phạm vi tài khoản, không phải toàn hệ thống.' : ''}
+        .{page.scoped ? ' Chỉ gồm cửa hàng của tài khoản, không phải toàn hệ thống.' : ''}
       </p>
       <div className="responsive-table supplier-table-scroll">
         <table className="supplier-table">
@@ -78,7 +78,7 @@ export function CommitmentTable({
                   {selection ? (
                     <td data-label="Chọn">
                       <input
-                        aria-label={`Chọn ${row.sku} của ${row.storeCode}`}
+                        aria-label={`Chọn ${row.productName} của ${row.storeName}`}
                         checked={selected}
                         disabled={selection.disabled || !row.orderable}
                         onChange={(event) => selection.onToggle(row, event.target.checked)}
@@ -96,7 +96,6 @@ export function CommitmentTable({
                   {showProduct ? (
                     <td data-label="Mặt hàng">
                       <strong>{row.productName}</strong>
-                      <small>{row.sku}</small>
                     </td>
                   ) : null}
                   <td data-label="Phiên / kết quả">
@@ -142,7 +141,7 @@ export function CommitmentTable({
                         <div className="supplier-order-inputs">
                           <label className="supplier-order-input">
                             <input
-                              aria-label={`Số bao Reshare đã nhận cho ${row.sku} của ${row.storeCode}`}
+                              aria-label={`Số bao Reshare đã nhận cho ${row.productName} của ${row.storeName}`}
                               disabled={selection.disabled}
                               inputMode="numeric"
                               max={row.unorderedQuantity}
@@ -154,7 +153,7 @@ export function CommitmentTable({
                           </label>
                           <label className="supplier-order-input">
                             <input
-                              aria-label={`Dòng đơn Reshare cho ${row.sku} của ${row.storeCode}`}
+                              aria-label={`Dòng đơn Reshare cho ${row.productName} của ${row.storeName}`}
                               disabled={selection.disabled}
                               maxLength={100}
                               onChange={(event) => selection.onLineRef(row, event.target.value)}

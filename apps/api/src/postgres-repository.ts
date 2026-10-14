@@ -32,6 +32,9 @@ import {
   type ListAllocationDecisionsQuery,
   type ListReshareOrdersQuery,
   type ListReshareOrdersResponse,
+  type ListReshareStoresResponse,
+  type ReshareStatusHistoryQuery,
+  type ReshareStatusHistoryResponse,
   type ListSessionDocumentsQuery,
   type RespondAllocationDecisionRequest,
   type SessionDocument,
@@ -42,6 +45,8 @@ import {
   getPostgresAllocationDecision,
   listPostgresAllocationDecisions,
   listPostgresReshareOrders,
+  listPostgresReshareStatusHistory,
+  listPostgresReshareStores,
   respondPostgresAllocationDecision,
 } from './postgres-allocation-decisions.js';
 import {
@@ -422,6 +427,7 @@ import type {
 import {
   assertActiveRetailStore,
   canAccessStore,
+  isReshareManager,
   pagination,
   slicePage,
   WAREHOUSE_INVENTORY_READ_ROLES,
@@ -1701,7 +1707,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<ReshareOrderStatusUpdate>> {
-    if (actor.role !== 'ADMIN') throw forbidden();
+    if (!isReshareManager(actor)) throw forbidden();
     try {
       const result = await updateDatabaseReshareOrderStatus(db, {
         ...input,
@@ -1733,6 +1739,20 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
     query: ListReshareOrdersQuery,
   ): Promise<ListReshareOrdersResponse> {
     return listPostgresReshareOrders(db, actor, query);
+  }
+
+  public async listReshareStatusHistory(
+    actor: AuthenticatedPrincipal,
+    decisionId: string,
+    query: ReshareStatusHistoryQuery,
+  ): Promise<ReshareStatusHistoryResponse> {
+    return listPostgresReshareStatusHistory(db, actor, decisionId, query);
+  }
+
+  public async listReshareStores(
+    actor: AuthenticatedPrincipal,
+  ): Promise<ListReshareStoresResponse> {
+    return listPostgresReshareStores(db, actor);
   }
 
   public async listSessionDocuments(

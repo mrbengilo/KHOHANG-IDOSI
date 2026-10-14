@@ -11,6 +11,9 @@ import {
   AllocationDecisionViewQuerySchema,
   ListReshareOrdersQuerySchema,
   ListReshareOrdersResponseSchema,
+  ListReshareStoresResponseSchema,
+  ReshareStatusHistoryQuerySchema,
+  ReshareStatusHistoryResponseSchema,
   AllocationDecisionResponseSchema,
   ListAllocationDecisionsQuerySchema,
   ListAllocationDecisionsResponseSchema,
@@ -866,7 +869,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
   // Internal RE documents and independently persisted Admin ordering acknowledgements.
   app.put('/api/v1/reshare-orders/:decisionId/status', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN']);
+    requireRole(session.principal, RESHARE_MANAGER_ROLES);
     const { decisionId } = AllocationDecisionParamsSchema.parse(request.params);
     const headers = IdempotencyHeadersSchema.parse(request.headers);
     const input = UpdateReshareOrderStatusRequestSchema.parse(request.body);
@@ -881,6 +884,22 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     reply.header('idempotency-replayed', String(result.replayed));
     reply.header('cache-control', 'no-store');
     return UpdateReshareOrderStatusResponseSchema.parse({ data: result.data });
+  });
+  app.get('/api/v1/reshare-orders/:decisionId/status-history', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    const { decisionId } = AllocationDecisionParamsSchema.parse(request.params);
+    const query = ReshareStatusHistoryQuerySchema.parse(request.query);
+    reply.header('cache-control', 'no-store');
+    return ReshareStatusHistoryResponseSchema.parse(
+      await repository.listReshareStatusHistory(session.principal, decisionId, query),
+    );
+  });
+  app.get('/api/v1/reshare-orders/stores', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    reply.header('cache-control', 'no-store');
+    return ListReshareStoresResponseSchema.parse(
+      await repository.listReshareStores(session.principal),
+    );
   });
   app.get('/api/v1/reshare-orders', async (request, reply) => {
     const session = await authenticate(request, repository);
@@ -1123,18 +1142,19 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return reply.send({ data: result.data });
   });
 
-  // Reshare supplier reconciliation (docs/supplier-stock-reconciliation.md). Roles are checked
-  // here and again inside each database command, which re-reads the account and its stores.
+  // Reshare supplier reconciliation (docs/supplier-stock-reconciliation.md). Admin and HTKD
+  // manage the module for every store; roles are checked here and again inside each database
+  // command, which re-reads the account (status and role) in its transaction, also on replays.
   app.get('/api/v1/supplier-sources', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN']);
+    requireRole(session.principal, RESHARE_MANAGER_ROLES);
     reply.header('cache-control', 'no-store');
     return { data: await repository.listSupplierSources(session.principal) };
   });
 
   app.post('/api/v1/supplier-sources', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN']);
+    requireRole(session.principal, RESHARE_MANAGER_ROLES);
     const headers = IdempotencyHeadersSchema.parse(request.headers);
     const input = CreateSupplierSourceRequestSchema.parse(request.body);
     const result = await repository.createSupplierSource(
@@ -1150,7 +1170,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.post('/api/v1/supplier-sources/:sourceId/products', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN']);
+    requireRole(session.principal, RESHARE_MANAGER_ROLES);
     const headers = IdempotencyHeadersSchema.parse(request.headers);
     const { sourceId } = SupplierSourceParamsSchema.parse(request.params);
     const input = AddSupplierSourceProductsRequestSchema.parse(request.body);
@@ -1168,7 +1188,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.get('/api/v1/supplier-reconciliation', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN']);
+    requireRole(session.principal, RESHARE_MANAGER_ROLES);
     reply.header('cache-control', 'no-store');
     return SupplierReconciliationResponseSchema.parse(
       await repository.getSupplierReconciliation(
@@ -1180,7 +1200,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.get('/api/v1/supplier-reconciliation/history', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN']);
+    requireRole(session.principal, RESHARE_MANAGER_ROLES);
     reply.header('cache-control', 'no-store');
     return repository.listSupplierObservationHistory(
       session.principal,
@@ -1190,7 +1210,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.post('/api/v1/supplier-stock-observations/preview', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN']);
+    requireRole(session.principal, RESHARE_MANAGER_ROLES);
     const input = SupplierObservationRequestSchema.parse(request.body);
     reply.header('cache-control', 'no-store');
     return { data: await repository.previewSupplierObservation(session.principal, input) };
@@ -1198,7 +1218,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.post('/api/v1/supplier-stock-observations', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN']);
+    requireRole(session.principal, RESHARE_MANAGER_ROLES);
     const headers = IdempotencyHeadersSchema.parse(request.headers);
     const input = ConfirmSupplierObservationRequestSchema.parse(request.body);
     const result = await repository.confirmSupplierObservation(
@@ -1234,7 +1254,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.post('/api/v1/supplier-orders', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    requireRole(session.principal, RESHARE_MANAGER_ROLES);
     const headers = IdempotencyHeadersSchema.parse(request.headers);
     const input = RecordSupplierOrderRequestSchema.parse(request.body);
     const result = await repository.recordSupplierOrder(
@@ -1250,7 +1270,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.post('/api/v1/supplier-orders/:eventId/cancellations', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    requireRole(session.principal, RESHARE_MANAGER_ROLES);
     const headers = IdempotencyHeadersSchema.parse(request.headers);
     const { eventId } = SupplierOrderEventParamsSchema.parse(request.params);
     const input = CancelSupplierOrderRequestSchema.parse(request.body);
@@ -1268,7 +1288,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.post('/api/v1/supplier-source-returns', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN']);
+    requireRole(session.principal, RESHARE_MANAGER_ROLES);
     const headers = IdempotencyHeadersSchema.parse(request.headers);
     const input = RecordSupplierSourceReturnRequestSchema.parse(request.body);
     const result = await repository.recordSupplierSourceReturn(
@@ -2258,6 +2278,12 @@ function assertActiveAccount(account: AccountCredentials): void {
     throw new ApiError('ACCOUNT_INACTIVE', 'Tài khoản đã bị khóa hoặc vô hiệu hóa', 403);
   }
 }
+
+/** "Đơn & tồn Reshare" managers: every store, see isReshareManager in repository.ts. */
+const RESHARE_MANAGER_ROLES = [
+  'ADMIN',
+  'HTKD',
+] as const satisfies readonly AuthenticatedPrincipal['role'][];
 
 function requireRole(
   principal: AuthenticatedPrincipal,
@@ -3360,14 +3386,14 @@ function openApiDocument(): Record<string, unknown> {
       '/api/v1/supplier-sources': {
         get: {
           security: cookieSecurity,
-          responses: { '200': { description: 'ADMIN Reshare supplier sources' } },
+          responses: { '200': { description: 'ADMIN/HTKD Reshare supplier sources' } },
         },
         post: {
           security: cookieSecurity,
           parameters: [
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
-          responses: { '201': { description: 'ADMIN created a supplier source' } },
+          responses: { '201': { description: 'ADMIN/HTKD created a supplier source' } },
         },
       },
       '/api/v1/supplier-sources/{sourceId}/products': {
@@ -3379,7 +3405,7 @@ function openApiDocument(): Record<string, unknown> {
           responses: {
             '200': {
               description:
-                'ADMIN puts SKUs under Reshare reconciliation (legacy inbound/adjustment refused)',
+                'ADMIN/HTKD puts SKUs under Reshare reconciliation (legacy inbound/adjustment refused)',
             },
           },
         },
@@ -3390,7 +3416,7 @@ function openApiDocument(): Record<string, unknown> {
           responses: {
             '200': {
               description:
-                'ADMIN per-SKU S, B_eff, U, F, D and ledger position with a stale-check revision',
+                'ADMIN/HTKD per-SKU S, B_eff, U, F, D and ledger position with a stale-check revision',
             },
           },
         },
@@ -3398,14 +3424,16 @@ function openApiDocument(): Record<string, unknown> {
       '/api/v1/supplier-reconciliation/history': {
         get: {
           security: cookieSecurity,
-          responses: { '200': { description: 'ADMIN immutable observation history' } },
+          responses: { '200': { description: 'ADMIN/HTKD immutable observation history' } },
         },
       },
       '/api/v1/supplier-stock-observations/preview': {
         post: {
           security: cookieSecurity,
           responses: {
-            '200': { description: 'ADMIN read-only preview of an observation (coverage, F, D)' },
+            '200': {
+              description: 'ADMIN/HTKD read-only preview of an observation (coverage, F, D)',
+            },
           },
         },
       },
@@ -3416,7 +3444,7 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: {
-            '201': { description: 'ADMIN confirmed observation; on-hand projected to R + F' },
+            '201': { description: 'ADMIN/HTKD confirmed observation; on-hand projected to R + F' },
             '409': {
               description:
                 'VERSION_CONFLICT, EXTERNAL_EVENT_COVERAGE_AMBIGUOUS, OBSERVATION_OUT_OF_ORDER, LEGACY_ATTESTATION_REQUIRED or IDEMPOTENCY_CONFLICT',
@@ -3446,7 +3474,7 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: {
-            '201': { description: 'HTKD/ADMIN recorded what Reshare accepted' },
+            '201': { description: 'ADMIN/HTKD recorded what Reshare accepted' },
             '409': {
               description:
                 'ORDER_SOURCE_NOT_ELIGIBLE, QUANTITY_EXCEEDED, DUPLICATE_EXTERNAL_EVENT or IDEMPOTENCY_CONFLICT',
@@ -3470,7 +3498,7 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: {
-            '201': { description: 'ADMIN recorded bags Reshare made orderable again' },
+            '201': { description: 'ADMIN/HTKD recorded bags Reshare made orderable again' },
           },
         },
       },
@@ -3604,7 +3632,7 @@ function openApiDocument(): Record<string, unknown> {
         get: {
           security: cookieSecurity,
           summary:
-            'History of internal Reshare orders by allocation result: ordered (RE committed and issued), not ordered (waiting for acceptance) or cancelled. Paged by result (lines of one order never split), filtered server-side by session, time range, store in scope, product, status and RE code.',
+            'History of internal Reshare orders by allocation result: ordered (RE committed and issued), not ordered (waiting for acceptance) or cancelled. Paged by result (lines of one order never split), filtered server-side by session, time range, store in scope, product, status and RE code. Admin and HTKD read every store; store and wholesale accounts their own stores. includeStatusControl=true adds the acknowledgement version and last editor; includeStatusActor=true also adds the role recorded with that edit.',
           responses: {
             '200': { description: 'Page of RE order history rows' },
             '403': { description: 'Store outside the caller scope' },
@@ -3615,12 +3643,34 @@ function openApiDocument(): Record<string, unknown> {
         put: {
           security: cookieSecurity,
           summary:
-            'Admin changes persisted Reshare ordering acknowledgement, including legacy results without RE. Requires Idempotency-Key, expectedStatus and expectedVersion; audits changes without issuing, receiving or returning stock.',
+            'Admin or HTKD (every store) changes persisted Reshare ordering acknowledgement, including legacy results without RE. Requires Idempotency-Key, expectedStatus and expectedVersion; the status and an immutable history event (real actor, role and name snapshot) are written atomically without issuing, receiving or returning stock. Asking for the current status returns the unchanged version and records no transition.',
           responses: {
-            '200': { description: 'Saved acknowledgement and new version' },
-            '403': { description: 'Admin only' },
+            '200': {
+              description:
+                'Saved acknowledgement and new version (version unchanged when nothing changed)',
+            },
+            '403': { description: 'Admin or HTKD only (active account)' },
             '409': { description: 'Stale state, ineligible result or reused idempotency key' },
           },
+        },
+      },
+      '/api/v1/reshare-orders/{decisionId}/status-history': {
+        get: {
+          security: cookieSecurity,
+          summary:
+            'Status history of one allocation result: RE creation and each Admin/HTKD acknowledgement change, newest first, paged on the server (time, id). Built from immutable audit rows; legacy events without status or name snapshots return null for them. Admin/HTKD: any result; store/wholesale: results of their own stores shown in the order list.',
+          responses: {
+            '200': { description: 'Page of status history events' },
+            '404': { description: 'Unknown result or outside the caller scope' },
+          },
+        },
+      },
+      '/api/v1/reshare-orders/stores': {
+        get: {
+          security: cookieSecurity,
+          summary:
+            'Store filter options of the Reshare module: every store for Admin and HTKD, own stores for store and wholesale accounts. Does not widen /stores or any other module.',
+          responses: { '200': { description: 'Stores in the Reshare scope' } },
         },
       },
       '/api/v1/allocation-decisions': {

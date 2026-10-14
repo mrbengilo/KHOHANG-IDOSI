@@ -3,7 +3,7 @@ import { and, asc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import { withIdempotency } from './idempotency.js';
-import { loadSupplierActor } from './supplier-reconciliation.js';
+import { loadReshareManager, type SupplierActor } from './supplier-reconciliation.js';
 import { SupplierReconciliationError } from './supplier-errors.js';
 import {
   allocationLines,
@@ -37,6 +37,8 @@ import { applyWarehouseMovement, WarehouseBalanceViolationError } from './wareho
  */
 
 export const RESHARE_ORDER_LEDGER_SOURCE = 'reshare_order';
+export const RESHARE_ORDER_CREATED_ACTION = 'RESHARE_ORDER_CREATED';
+export const RESHARE_ORDER_STATUS_UPDATED_ACTION = 'RESHARE_ORDER_STATUS_UPDATED';
 
 export type ReshareActorRole = 'store' | 'wholesale' | 'htkd';
 
@@ -275,12 +277,17 @@ export async function issueReshareOrderInTransaction(
     });
   }
 
+  const [actor] = await tx
+    .select({ displayName: users.displayName })
+    .from(users)
+    .where(eq(users.id, input.actorUserId))
+    .limit(1);
   await tx.insert(auditLogs).values({
     requestId: input.requestId,
     actorUserId: input.actorUserId,
     actorRole: input.actorRole,
     actorStoreId: decision.storeId,
-    action: 'RESHARE_ORDER_CREATED',
+    action: RESHARE_ORDER_CREATED_ACTION,
     entityType: 'reshare_order',
     entityId: order.id,
     before: null,
@@ -312,6 +319,11 @@ export async function issueReshareOrderInTransaction(
     } satisfies JsonObject,
     metadata: {
       trigger: origin === 'backfill' ? 'reshare-cutover-backfill' : 'allocation-result-accepted',
+      // Snapshots for the per-order status history: who (as named then) and the status the
+      // order list showed before/after (a stored Admin/HTKD acknowledgement still wins).
+      actorName: actor?.displayName ?? null,
+      reshareStatusBefore: effectiveReshareStatus(decision.reshareStatus, null),
+      reshareStatusAfter: effectiveReshareStatus(decision.reshareStatus, 'ordered'),
     },
     createdAt: input.occurredAt,
   });
@@ -347,6 +359,8 @@ export interface ReshareHistoryRow {
     readonly version: number;
     readonly updatedAt: Date | null;
     readonly updatedByName: string | null;
+    /** Role recorded with the latest acknowledgement (null before one exists). */
+    readonly updatedByRole: string | null;
   };
   readonly decisionId: string;
   readonly decisionStatus: (typeof allocationResultDecisions.$inferSelect)['status'];
@@ -614,6 +628,29 @@ async function assembleHistoryRows(
           )
           .orderBy(asc(products.name), asc(allocationLines.productId));
   const actorName = new Map(orderActors.map((row) => [row.id, row.name]));
+  const acknowledged = headers
+    .filter((header) => header.decision.reshareStatusUpdatedBy !== null)
+    .map((header) => header.decision.id);
+  // Latest acknowledgement event per result: its role and name as recorded at that time.
+  const latestAcknowledgements =
+    acknowledged.length === 0
+      ? []
+      : await reader
+          .selectDistinctOn([auditLogs.entityId], {
+            decisionId: auditLogs.entityId,
+            role: auditLogs.actorRole,
+            name: sql<string | null>`${auditLogs.metadata} ->> 'actorName'`,
+          })
+          .from(auditLogs)
+          .where(
+            and(
+              eq(auditLogs.entityType, 'allocation_result_decision'),
+              inArray(auditLogs.entityId, acknowledged),
+              eq(auditLogs.action, RESHARE_ORDER_STATUS_UPDATED_ACTION),
+            ),
+          )
+          .orderBy(auditLogs.entityId, sql`${auditLogs.createdAt} desc`, sql`${auditLogs.id} desc`);
+  const acknowledgementBy = new Map(latestAcknowledgements.map((row) => [row.decisionId, row]));
 
   return headers.map((header): ReshareHistoryRow => {
     const { decision, order } = header;
@@ -659,7 +696,12 @@ async function assembleHistoryRows(
         version: decision.reshareStatusVersion,
         updatedAt: decision.reshareStatusUpdatedAt,
         updatedByName: decision.reshareStatusUpdatedBy
-          ? (actorName.get(decision.reshareStatusUpdatedBy) ?? null)
+          ? (acknowledgementBy.get(decision.id)?.name ??
+            actorName.get(decision.reshareStatusUpdatedBy) ??
+            null)
+          : null,
+        updatedByRole: decision.reshareStatusUpdatedBy
+          ? (acknowledgementBy.get(decision.id)?.role ?? null)
           : null,
       },
       order: order
@@ -743,7 +785,19 @@ function effectiveReshareStatus(
   return manual === 'ordered' || manual === 'not_ordered' ? manual : (order ?? 'not_ordered');
 }
 
-/** Admin acknowledgement only. No RE creation, warehouse movement or supplier coverage change. */
+export interface ReshareOrderStatusChange {
+  readonly decisionId: string;
+  readonly status: 'ORDERED' | 'NOT_ORDERED';
+  /** Unchanged (equal to the expected version) when the result already had this status. */
+  readonly version: number;
+}
+
+/**
+ * Admin/HTKD ordering acknowledgement only: no RE creation, warehouse movement or supplier
+ * coverage change. The status, its version and the immutable history event (audit row with the
+ * actor's real role and name snapshot) are written in one transaction. Asking for the status the
+ * result already has is answered without a new version or a fake X → X history event.
+ */
 export async function updateReshareOrderStatus(
   database: Database,
   input: {
@@ -765,6 +819,7 @@ export async function updateReshareOrderStatus(
   ) {
     throw new SupplierReconciliationError('VALIDATION', 'Trạng thái hoặc phiên bản không hợp lệ.');
   }
+  let actor: SupplierActor | null = null;
   return withIdempotency(
     database,
     {
@@ -773,6 +828,7 @@ export async function updateReshareOrderStatus(
       requestHash: input.requestHash,
     },
     async (tx) => {
+      if (!actor) throw new Error('Reshare status actor was not authorized.');
       const [decision] = await tx
         .select()
         .from(allocationResultDecisions)
@@ -781,7 +837,7 @@ export async function updateReshareOrderStatus(
       if (!decision)
         throw new SupplierReconciliationError('NOT_FOUND', 'Không tìm thấy kết quả phân bổ.');
       const [order] = await tx
-        .select({ status: reshareOrders.status })
+        .select({ id: reshareOrders.id, code: reshareOrders.code, status: reshareOrders.status })
         .from(reshareOrders)
         .where(eq(reshareOrders.allocationDecisionId, decision.id))
         .for('update');
@@ -806,38 +862,225 @@ export async function updateReshareOrderStatus(
         );
       }
       const status = input.status === 'ORDERED' ? 'ordered' : 'not_ordered';
+      if (status === before) {
+        const unchanged: ReshareOrderStatusChange = {
+          decisionId: decision.id,
+          status: input.status,
+          version: decision.reshareStatusVersion,
+        };
+        return {
+          value: unchanged,
+          responseBody: { ...unchanged },
+          responseStatus: 200,
+          resourceType: 'allocation_result_decision',
+          resourceId: decision.id,
+        };
+      }
       const version = decision.reshareStatusVersion + 1;
+      // Taken after the row lock, so events of one result are stored in commit order.
+      const occurredAt = new Date();
       await tx
         .update(allocationResultDecisions)
         .set({
           reshareStatus: status,
           reshareStatusVersion: version,
-          reshareStatusUpdatedAt: new Date(),
-          reshareStatusUpdatedBy: input.actorUserId,
+          reshareStatusUpdatedAt: occurredAt,
+          reshareStatusUpdatedBy: actor.id,
         })
         .where(eq(allocationResultDecisions.id, decision.id));
       await tx.insert(auditLogs).values({
-        actorUserId: input.actorUserId,
-        actorRole: 'admin',
+        actorUserId: actor.id,
+        actorRole: actor.role,
         actorStoreId: decision.storeId,
         requestId: input.requestId,
-        action: 'RESHARE_ORDER_STATUS_UPDATED',
+        action: RESHARE_ORDER_STATUS_UPDATED_ACTION,
         entityType: 'allocation_result_decision',
         entityId: decision.id,
         before: { status: before, version: decision.reshareStatusVersion },
         after: { status, version },
+        metadata: {
+          actorName: actor.displayName,
+          idempotencyKey: input.idempotencyKey,
+          reshareOrderId: order?.id ?? null,
+          reshareOrderCode: order?.code ?? null,
+        },
+        createdAt: occurredAt,
       });
-      const value = { decisionId: decision.id, status: input.status, version };
+      const value: ReshareOrderStatusChange = {
+        decisionId: decision.id,
+        status: input.status,
+        version,
+      };
       return {
         value,
-        responseBody: value,
+        responseBody: { ...value },
         responseStatus: 200,
         resourceType: 'allocation_result_decision',
         resourceId: decision.id,
       };
     },
     async (tx) => {
-      await loadSupplierActor(tx, input.actorUserId, ['admin']);
+      actor = await loadReshareManager(tx, input.actorUserId);
     },
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Per-order status history (read model over the immutable audit rows written above)
+// ---------------------------------------------------------------------------------------------
+
+export interface ReshareStatusHistoryEvent {
+  readonly id: string;
+  readonly occurredAt: Date;
+  readonly kind: 'created' | 'status_changed';
+  /** acceptance / backfill create the RE document; manual is an Admin/HTKD acknowledgement. */
+  readonly source: 'acceptance' | 'backfill' | 'manual';
+  /** null when the event did not record it (RE created before snapshots existed). */
+  readonly statusBefore: ReshareHistoryStatus | null;
+  readonly statusAfter: ReshareHistoryStatus | null;
+  readonly version: number | null;
+  readonly orderCode: string | null;
+  readonly actorUserId: string | null;
+  readonly actorRole: string | null;
+  /** Name stored with the event; null for events recorded before name snapshots. */
+  readonly actorNameSnapshot: string | null;
+  /** Current account name, only a fallback for events without a snapshot. */
+  readonly actorCurrentName: string | null;
+  readonly requestId: string | null;
+}
+
+export interface ReshareStatusHistoryPage {
+  readonly decision: {
+    readonly id: string;
+    readonly storeId: string;
+    readonly status: (typeof allocationResultDecisions.$inferSelect)['status'];
+    readonly publishedAt: Date;
+  };
+  readonly data: readonly ReshareStatusHistoryEvent[];
+  readonly totalItems: number;
+}
+
+function historyStatusOf(value: unknown): ReshareHistoryStatus | null {
+  return typeof value === 'string' &&
+    (RESHARE_HISTORY_STATUSES as readonly string[]).includes(value)
+    ? (value as ReshareHistoryStatus)
+    : null;
+}
+
+function jsonField(value: unknown, key: string): unknown {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)[key]
+    : undefined;
+}
+
+function textField(value: unknown, key: string): string | null {
+  const field = jsonField(value, key);
+  return typeof field === 'string' ? field : null;
+}
+
+/**
+ * Status history of one allocation result (with or without its RE): every RE creation and every
+ * acknowledgement change, newest first, paged on the server with a stable (time, id) order.
+ * Returns null when the result does not exist; the caller checks the reader's scope.
+ */
+export async function listReshareStatusHistory(
+  database: Database,
+  input: { readonly decisionId: string; readonly page: number; readonly pageSize: number },
+): Promise<ReshareStatusHistoryPage | null> {
+  if (
+    !Number.isSafeInteger(input.page) ||
+    input.page < 1 ||
+    !Number.isSafeInteger(input.pageSize) ||
+    input.pageSize < 1 ||
+    input.pageSize > 100
+  ) {
+    throw new RangeError('Invalid Reshare status history pagination.');
+  }
+  return withTransaction(
+    database,
+    async (tx) => {
+      const [decision] = await tx
+        .select({
+          id: allocationResultDecisions.id,
+          storeId: allocationResultDecisions.storeId,
+          status: allocationResultDecisions.status,
+          publishedAt: allocationResultDecisions.createdAt,
+        })
+        .from(allocationResultDecisions)
+        .where(eq(allocationResultDecisions.id, input.decisionId))
+        .limit(1);
+      if (!decision) return null;
+      // Both branches use audit_logs_entity_created_idx (entity_type, entity_id, created_at).
+      const belongs = sql`(
+        (${auditLogs.entityType} = 'allocation_result_decision'
+          and ${auditLogs.entityId} = ${decision.id}
+          and ${auditLogs.action} = ${RESHARE_ORDER_STATUS_UPDATED_ACTION})
+        or (${auditLogs.entityType} = 'reshare_order'
+          and ${auditLogs.entityId} in (
+            select ro.id from ${reshareOrders} ro where ro.allocation_decision_id = ${decision.id})
+          and ${auditLogs.action} = ${RESHARE_ORDER_CREATED_ACTION})
+      )`;
+      const [total] = await tx
+        .select({ value: sql<number>`count(*)`.mapWith(Number) })
+        .from(auditLogs)
+        .where(belongs);
+      const rows = await tx
+        .select({
+          id: auditLogs.id,
+          action: auditLogs.action,
+          createdAt: auditLogs.createdAt,
+          actorUserId: auditLogs.actorUserId,
+          actorRole: auditLogs.actorRole,
+          requestId: auditLogs.requestId,
+          before: auditLogs.before,
+          after: auditLogs.after,
+          metadata: auditLogs.metadata,
+          currentName: users.displayName,
+        })
+        .from(auditLogs)
+        .leftJoin(users, eq(users.id, auditLogs.actorUserId))
+        .where(belongs)
+        .orderBy(sql`${auditLogs.createdAt} desc`, sql`${auditLogs.id} desc`)
+        .limit(input.pageSize)
+        .offset((input.page - 1) * input.pageSize);
+      return {
+        decision,
+        totalItems: total?.value ?? 0,
+        data: rows.map((row): ReshareStatusHistoryEvent => {
+          const created = row.action === RESHARE_ORDER_CREATED_ACTION;
+          const version = jsonField(row.after, 'version');
+          return {
+            id: row.id,
+            occurredAt: row.createdAt,
+            kind: created ? 'created' : 'status_changed',
+            source: created
+              ? textField(row.metadata, 'trigger') === 'reshare-cutover-backfill'
+                ? 'backfill'
+                : 'acceptance'
+              : 'manual',
+            statusBefore: historyStatusOf(
+              created
+                ? jsonField(row.metadata, 'reshareStatusBefore')
+                : jsonField(row.before, 'status'),
+            ),
+            statusAfter: historyStatusOf(
+              created
+                ? (jsonField(row.metadata, 'reshareStatusAfter') ?? jsonField(row.after, 'status'))
+                : jsonField(row.after, 'status'),
+            ),
+            version: typeof version === 'number' ? version : null,
+            orderCode: created
+              ? textField(row.after, 'code')
+              : textField(row.metadata, 'reshareOrderCode'),
+            actorUserId: row.actorUserId,
+            actorRole: row.actorRole,
+            actorNameSnapshot: textField(row.metadata, 'actorName'),
+            actorCurrentName: row.currentName,
+            requestId: row.requestId,
+          };
+        }),
+      };
+    },
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
   );
 }

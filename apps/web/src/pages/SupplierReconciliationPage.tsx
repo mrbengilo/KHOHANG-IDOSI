@@ -9,6 +9,7 @@ import { mockModeEnabled } from '../lib/api';
 import { useSession } from '../lib/auth';
 import {
   SUPPLIER_TAB_LABELS,
+  isReshareManager,
   readSupplierTab,
   supplierTabsFor,
   type SupplierTab,
@@ -25,8 +26,8 @@ const DESCRIPTION =
 
 const ROLE_HINT: Record<AppOutletContext['role'], string> = {
   ADMIN:
-    'Admin xem đơn của mọi cửa hàng, cập nhật tổng tồn Reshare đang cho đặt và cấu hình nguồn.',
-  HTKD: 'Đơn của các cửa hàng được phân công. Xác nhận kết quả phân bổ ở trang Phân bổ hàng hóa.',
+    'Admin xem đơn của mọi cửa hàng, cập nhật trạng thái đặt, tổng tồn Reshare đang cho đặt và cấu hình nguồn.',
+  HTKD: 'HTKD quản lý toàn bộ mục Reshare của mọi cửa hàng: cập nhật trạng thái đặt, tổng tồn Reshare đang cho đặt và cấu hình nguồn. Xác nhận kết quả phân bổ vẫn theo cửa hàng được phân công ở trang Phân bổ hàng hóa.',
   STORE: 'Đơn của cửa hàng. Xác nhận kết quả phân bổ ở trang Phân bổ hàng hóa.',
   WHOLESALE: 'Đơn của cửa hàng sỉ trong phạm vi. Xác nhận kết quả ở trang Phân bổ hàng hóa.',
 };
@@ -68,11 +69,12 @@ export function SupplierReconciliationPage() {
         {tab === 'orders' ? (
           <>
             <ReshareOrdersPanel
-              canEdit={role === 'ADMIN'}
+              canEdit={isReshareManager(role)}
+              role={role}
               accountId={accountId}
               initialCode={params.get('code')?.slice(0, 20) ?? ''}
             />
-            {role === 'ADMIN' || role === 'HTKD' ? (
+            {isReshareManager(role) ? (
               <div className="supplier-legacy-link">
                 <p className="supplier-hint">
                   Đơn Reshare ghi nhận thủ công cho hàng giữ trước khi có đơn RE vẫn được lưu để tra
@@ -86,7 +88,7 @@ export function SupplierReconciliationPage() {
           </>
         ) : tab === 'reconcile' ? (
           <ReconciliationWorkspace
-            accountId={accountId}
+            accountId={`${role}:${accountId}`}
             onOpenSettings={() => setTab('settings')}
           />
         ) : tab === 'legacy' ? (
@@ -100,12 +102,12 @@ export function SupplierReconciliationPage() {
                 Quay lại Đơn đặt Reshare
               </Button>
             </div>
-            <SupplierOrdersPanel accountId={accountId} />
+            <SupplierOrdersPanel accountId={`${role}:${accountId}`} />
           </>
         ) : tab === 'history' ? (
-          <ObservationHistory accountId={accountId} />
+          <ObservationHistory accountId={`${role}:${accountId}`} />
         ) : (
-          <SourceSettings accountId={accountId} />
+          <SourceSettings accountId={`${role}:${accountId}`} />
         )}
       </TabPanel>
     </>

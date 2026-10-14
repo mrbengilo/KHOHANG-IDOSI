@@ -55,9 +55,20 @@ export interface SupplierActor {
   readonly id: string;
   readonly role: DatabaseUserRole;
   readonly storeId: string | null;
-  /** Active stores an HTKD may act for; null means every store (Admin). */
+  /** Name at the time of the command, snapshotted into audit metadata. */
+  readonly displayName: string;
+  /** Stores the actor may act for; null means every store (Reshare managers). */
   readonly storeIds: readonly string[] | null;
 }
+
+/**
+ * Roles that manage the whole Reshare module ("Đơn & tồn Reshare") for every store. HTKD is
+ * not limited by its store assignments in this module; every other HTKD permission keeps them.
+ */
+export const RESHARE_MANAGER_ROLES = [
+  'admin',
+  'htkd',
+] as const satisfies readonly DatabaseUserRole[];
 
 /** Re-reads the account inside the command's transaction, so a lock or revoked store is final. */
 export async function loadSupplierActor(
@@ -66,7 +77,13 @@ export async function loadSupplierActor(
   allowed: readonly DatabaseUserRole[],
 ): Promise<SupplierActor> {
   const [actor] = await tx
-    .select({ id: users.id, role: users.role, status: users.status, storeId: users.storeId })
+    .select({
+      id: users.id,
+      role: users.role,
+      status: users.status,
+      storeId: users.storeId,
+      displayName: users.displayName,
+    })
     .from(users)
     .where(and(eq(users.id, userId), isNull(users.deletedAt)))
     .limit(1);
@@ -101,6 +118,19 @@ export async function loadSupplierActor(
   return { ...actor, storeIds: actor.storeId ? [actor.storeId] : [] };
 }
 
+/**
+ * Re-reads a Reshare manager (active Admin or HTKD) inside the command's transaction, also on
+ * replays: a locked account or a role change is refused at once. Store assignments do not
+ * narrow the Reshare module, so the scope is every store for both roles.
+ */
+export async function loadReshareManager(
+  tx: Transaction | Database,
+  userId: string,
+): Promise<SupplierActor> {
+  const actor = await loadSupplierActor(tx, userId, RESHARE_MANAGER_ROLES);
+  return { ...actor, storeIds: null };
+}
+
 export function actorMayAccessStore(actor: SupplierActor, storeId: string): boolean {
   return actor.storeIds === null || actor.storeIds.includes(storeId);
 }
@@ -129,7 +159,7 @@ async function audit(
     entityId: input.entityId,
     before: input.before ?? null,
     after: input.after ?? null,
-    metadata: input.metadata ?? {},
+    metadata: { actorName: input.actor.displayName, ...input.metadata },
   });
 }
 
@@ -191,7 +221,7 @@ export async function createSupplierSource(
       requestHash: input.requestHash,
     },
     async (tx) => {
-      const actor = await loadSupplierActor(tx, input.actorUserId, ['admin']);
+      const actor = await loadReshareManager(tx, input.actorUserId);
       const [existing] = await tx
         .select({ id: supplierSources.id })
         .from(supplierSources)
@@ -221,7 +251,7 @@ export async function createSupplierSource(
       };
     },
     async (tx) => {
-      await loadSupplierActor(tx, input.actorUserId, ['admin']);
+      await loadReshareManager(tx, input.actorUserId);
     },
   );
 }
@@ -253,7 +283,7 @@ export async function addSupplierSourceProducts(
       requestHash: input.requestHash,
     },
     async (tx) => {
-      const actor = await loadSupplierActor(tx, input.actorUserId, ['admin']);
+      const actor = await loadReshareManager(tx, input.actorUserId);
       const [source] = await tx
         .select()
         .from(supplierSources)
@@ -308,7 +338,7 @@ export async function addSupplierSourceProducts(
       };
     },
     async (tx) => {
-      await loadSupplierActor(tx, input.actorUserId, ['admin']);
+      await loadReshareManager(tx, input.actorUserId);
     },
   );
 }
@@ -649,7 +679,7 @@ export async function previewSupplierStockObservation(
   return withSerializableTransaction(
     database,
     async (tx) => {
-      await loadSupplierActor(tx, input.actorUserId, ['admin']);
+      await loadReshareManager(tx, input.actorUserId);
       return (await planObservation(tx, input, now)).plan;
     },
     { accessMode: 'read only' },
@@ -696,7 +726,7 @@ export async function confirmSupplierStockObservation(
       'supplier-observation-key',
       `${input.actorUserId}:${input.idempotencyKey}`,
       async () => {
-        const actor = await loadSupplierActor(tx, input.actorUserId, ['admin']);
+        const actor = await loadReshareManager(tx, input.actorUserId);
         const [previous] = await tx
           .select({
             id: supplierStockObservations.id,

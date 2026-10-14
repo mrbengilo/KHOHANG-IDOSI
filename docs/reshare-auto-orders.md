@@ -100,7 +100,7 @@ trước/sau) → dispatch chuyến (nếu có) → audit `ALLOCATION_RESULT_ACC
 | Vai trò          | “Đơn & tồn Reshare”                                                                  | Kết quả phân bổ                             |
 | ---------------- | ------------------------------------------------------------------------------------ | ------------------------------------------- |
 | Admin            | Đơn đặt Reshare (mọi cửa hàng), Cập nhật tồn Reshare, Lịch sử cập nhật tồn, Cấu hình | Chỉ xem                                     |
-| HTKD             | Đơn của cửa hàng được phân công                                                      | **Chấp nhận** thay cửa hàng (không Từ chối) |
+| HTKD             | Như Admin, mọi cửa hàng (từ 14/10/2026, không theo phân công)                        | **Chấp nhận** thay cửa hàng (không Từ chối) |
 | Cửa hàng/quầy sỉ | Đơn của phạm vi mình                                                                 | Chấp nhận / Từ chối như cũ                  |
 
 - Bảng “Lịch sử đặt hàng theo phân bổ”: Mã phiên (mở phiên/hoàn tất phân bổ/xác nhận, giờ Việt Nam

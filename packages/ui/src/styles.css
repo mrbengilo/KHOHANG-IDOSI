@@ -514,10 +514,10 @@ a {
   padding: 10px 12px;
   color: var(--idosi-color-text-secondary);
   border-bottom: 1px solid var(--idosi-color-border-default);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: normal;
+  text-transform: none;
 }
 
 .idosi-table td {

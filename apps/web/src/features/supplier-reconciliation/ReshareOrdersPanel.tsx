@@ -8,21 +8,19 @@ import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { Button } from '../../components/Button';
-import {
-  ApiClientError,
-  listAccessibleStores,
-  listCatalog,
-  listOrderSessions,
-} from '../../lib/api';
+import { ApiClientError, listCatalog, listOrderSessions } from '../../lib/api';
 import { businessDate } from '../../lib/business-time';
 import { formatInteger } from '../../lib/format';
 import { Pager } from './ReconciliationWorkspace';
 import { RESHARE_STATUS_LABEL, ReshareOrderHistoryTable } from './ReshareOrderHistoryTable';
+import { ReshareStatusHistoryDialog } from './ReshareStatusHistory';
 import {
   loadReshareOrders,
+  loadReshareStores,
   updateReshareOrderStatus,
   type ReshareOrderFilters,
 } from './supplierApi';
+import type { Role } from '../../lib/types';
 import { retainIdempotencyForExactRetry, type RetryAttempt } from '../../lib/idempotency-retry';
 
 const STATUSES: readonly ReshareOrderHistoryStatus[] = ['ORDERED', 'NOT_ORDERED', 'CANCELLED'];
@@ -45,18 +43,24 @@ function errorText(error: unknown): string {
 }
 
 /**
- * "Đơn đặt Reshare": every role sees the RE orders of its own scope (Admin: all stores). Filters,
- * sorting and paging are done by the server; the store list only offers stores in scope.
+ * "Đơn đặt Reshare": every role sees the RE orders of its own Reshare scope (Admin and HTKD: all
+ * stores). Filters, sorting and paging are done by the server; the store list comes from the
+ * Reshare-only store projection, so no other module's store scope is widened.
  */
 export function ReshareOrdersPanel({
-  accountId,
+  accountId: account,
+  role,
   initialCode = '',
   canEdit = false,
 }: {
   readonly accountId: string;
+  readonly role: Role;
   readonly initialCode?: string;
   readonly canEdit?: boolean;
 }) {
+  // Every cached Reshare read is keyed by role and account (a role change must not reuse it).
+  const accountId = `${role}:${account}`;
+  const [historyRow, setHistoryRow] = useState<ReshareOrderHistoryRow | null>(null);
   const client = useQueryClient();
   const [busyDecisionId, setBusyDecisionId] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState('');
@@ -82,8 +86,8 @@ export function ReshareOrdersPanel({
     retry: false,
   });
   const stores = useQuery({
-    queryKey: ['stores', 'accessible', accountId],
-    queryFn: listAccessibleStores,
+    queryKey: ['reshare-stores', accountId],
+    queryFn: ({ signal }) => loadReshareStores(signal),
     retry: false,
   });
   const catalog = useQuery({ queryKey: ['catalog'], queryFn: listCatalog, retry: false });
@@ -133,9 +137,14 @@ export function ReshareOrdersPanel({
       const saved = await updateReshareOrderStatus(row.decisionId, input, attempt.current.key);
       attempt.current = null;
       setNotice(
-        `${row.sessionCode} · ${row.storeName}: đã lưu “${RESHARE_STATUS_LABEL[saved.status]}”.`,
+        saved.version === input.expectedVersion
+          ? `${row.sessionCode} · ${row.storeName}: trạng thái đã là “${RESHARE_STATUS_LABEL[saved.status]}”, không có thay đổi.`
+          : `${row.sessionCode} · ${row.storeName}: đã lưu “${RESHARE_STATUS_LABEL[saved.status]}” và ghi vào lịch sử thay đổi.`,
       );
-      await client.invalidateQueries({ queryKey: ['reshare-orders'] });
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ['reshare-orders'] }),
+        client.invalidateQueries({ queryKey: ['reshare-status-history'] }),
+      ]);
     } catch (error) {
       setMutationError(
         error instanceof ApiClientError && error.status < 500 && error.code !== 'NETWORK_ERROR'
@@ -160,8 +169,9 @@ export function ReshareOrdersPanel({
       <h2 id="reshare-orders-title">Lịch sử đặt hàng theo phân bổ</h2>
       <p className="supplier-hint">
         Mỗi kết quả phân bổ được chấp nhận tạo một đơn mã RE và xuất hàng khỏi kho tổng IDOSI. Dùng
-        mã đơn và số bao dưới đây để đặt hàng trên Reshare. Admin có thể cập nhật xác nhận đã đặt
-        hoặc chưa đặt; thao tác được lưu vào lịch sử và không làm thay đổi số lượng kho.
+        mã đơn và số bao dưới đây để đặt hàng trên Reshare. Admin và HTKD cập nhật xác nhận đã đặt
+        hoặc chưa đặt; mỗi lần đổi được lưu vào “Lịch sử thay đổi” cùng người thực hiện và không làm
+        thay đổi số lượng kho.
       </p>
       <form
         className="supplier-filters reshare-orders__filters"
@@ -182,14 +192,17 @@ export function ReshareOrdersPanel({
             ))}
           </select>
         </label>
-        {(stores.data?.length ?? 0) > 1 ? (
+        {(stores.data?.data.length ?? 0) > 1 ? (
           <label>
             Cửa hàng
             <select onChange={(event) => reset(setStoreId)(event.target.value)} value={storeId}>
-              <option value="">Tất cả cửa hàng trong phạm vi</option>
-              {(stores.data ?? []).map((store) => (
+              <option value="">
+                {stores.data?.scoped ? 'Tất cả cửa hàng trong phạm vi' : 'Tất cả cửa hàng'}
+              </option>
+              {(stores.data?.data ?? []).map((store) => (
                 <option key={store.id} value={store.id}>
                   {store.name}
+                  {store.isActive ? '' : ' (ngừng hoạt động)'}
                 </option>
               ))}
             </select>
@@ -312,6 +325,7 @@ export function ReshareOrdersPanel({
               {...(canEdit
                 ? { onChangeStatus: (row: ReshareOrderHistoryRow) => void changeStatus(row) }
                 : {})}
+              onShowHistory={setHistoryRow}
               busyDecisionId={busyDecisionId}
               disabled={orders.isFetching || orders.isError}
             />
@@ -323,6 +337,13 @@ export function ReshareOrdersPanel({
             totalPages={data.pagination.totalPages}
           />
         </>
+      ) : null}
+      {historyRow ? (
+        <ReshareStatusHistoryDialog
+          accountId={accountId}
+          onClose={() => setHistoryRow(null)}
+          row={historyRow}
+        />
       ) : null}
     </section>
   );

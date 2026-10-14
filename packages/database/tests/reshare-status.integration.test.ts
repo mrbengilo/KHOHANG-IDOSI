@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   auditLogs,
   closeDatabase,
+  htkdAssignments,
   db,
   listReshareOrderHistory,
+  listReshareStatusHistory,
   reshareOrders,
   updateReshareOrderStatus,
   users,
@@ -21,7 +23,7 @@ import {
 import { createSupplierFixture, type SupplierFixture } from './fixtures/supplier.js';
 
 const postgres = process.env.RUN_POSTGRES_TESTS === '1' ? describe : describe.skip;
-postgres('Admin Reshare status persistence and inventory invariants', () => {
+postgres('Admin/HTKD Reshare status persistence, history and inventory invariants', () => {
   let fx: SupplierFixture;
   beforeAll(async () => {
     fx = await createSupplierFixture();
@@ -146,33 +148,159 @@ postgres('Admin Reshare status persistence and inventory invariants', () => {
     expect((await read(result.decisionId, 'ordered')).pagination.totalItems).toBe(1);
   });
 
-  it('rejects HTKD/store and a revoked Admin even on replay', async () => {
+  it('lets any active HTKD act on every store with its real role; refuses stores, locked or demoted accounts even on replay', async () => {
     const result = await fixture();
-    for (const actorUserId of [fx.htkdId, fx.otherHtkdId, fx.storeUserA]) {
-      await expect(
-        updateReshareOrderStatus(db, command(result.decisionId, { actorUserId })),
-      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    }
+    // fx.otherHtkdId is assigned to store B only: the result of store A is still in scope.
+    const byOther = command(result.decisionId, { actorUserId: fx.otherHtkdId });
+    expect((await updateReshareOrderStatus(db, byOther)).replayed).toBe(false);
+    await expect(
+      updateReshareOrderStatus(db, command(result.decisionId, { actorUserId: fx.storeUserA })),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const [event] = await db
+      .select()
+      .from(auditLogs)
+      .where(
+        and(
+          eq(auditLogs.entityId, result.decisionId),
+          eq(auditLogs.action, 'RESHARE_ORDER_STATUS_UPDATED'),
+        ),
+      );
+    expect(event).toMatchObject({
+      actorUserId: fx.otherHtkdId,
+      actorRole: 'htkd',
+      metadata: { actorName: 'Supplier htkd-other', reshareOrderCode: null },
+    });
+    // Removing every assignment keeps the module-wide right; a role change or lock ends it.
     const other = await createSupplierFixture();
-    const input = command(result.decisionId, { actorUserId: other.adminId });
+    await db
+      .update(htkdAssignments)
+      .set({ revokedAt: new Date() })
+      .where(eq(htkdAssignments.userId, other.htkdId));
+    const unassigned = command(result.decisionId, {
+      actorUserId: other.htkdId,
+      status: 'NOT_ORDERED',
+      expectedStatus: 'ORDERED',
+      expectedVersion: 1,
+    });
+    expect((await updateReshareOrderStatus(db, unassigned)).replayed).toBe(false);
+    await db.update(users).set({ role: 'wholesale' }).where(eq(users.id, other.htkdId));
+    await expect(updateReshareOrderStatus(db, unassigned)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    await db.update(users).set({ status: 'locked' }).where(eq(users.id, fx.otherHtkdId));
+    await expect(updateReshareOrderStatus(db, byOther)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    const input = command(result.decisionId, {
+      actorUserId: other.adminId,
+      expectedVersion: 2,
+    });
     await updateReshareOrderStatus(db, input);
     await db.update(users).set({ status: 'locked' }).where(eq(users.id, other.adminId));
     await expect(updateReshareOrderStatus(db, input)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await db.update(users).set({ status: 'active' }).where(eq(users.id, fx.otherHtkdId));
   });
 
-  it('serializes concurrent admins and rejects stale state after automatic RE creation', async () => {
+  it('keeps an append-only history with real actors, name snapshots and a stable order', async () => {
     const result = await fixture();
-    const other = await createSupplierFixture();
+    const history = async (page = 1, pageSize = 20) => {
+      const found = await listReshareStatusHistory(db, {
+        decisionId: result.decisionId,
+        page,
+        pageSize,
+      });
+      if (!found) throw new Error('The result exists, so its history must too.');
+      return found;
+    };
+    expect(await history()).toMatchObject({ totalItems: 0, data: [] });
+    await updateReshareOrderStatus(db, command(result.decisionId, { actorUserId: fx.htkdId }));
+    // Asking for the current status: no new version, no X → X event.
+    const same = await updateReshareOrderStatus(
+      db,
+      command(result.decisionId, { expectedStatus: 'ORDERED', expectedVersion: 1 }),
+    );
+    expect(same.replayed ? null : same.value).toMatchObject({ version: 1, status: 'ORDERED' });
+    // Stale version and validation errors leave no event.
+    await expect(updateReshareOrderStatus(db, command(result.decisionId))).rejects.toMatchObject({
+      code: 'VERSION_CONFLICT',
+    });
+    await updateReshareOrderStatus(
+      db,
+      command(result.decisionId, {
+        status: 'NOT_ORDERED',
+        expectedStatus: 'ORDERED',
+        expectedVersion: 1,
+      }),
+    );
+    await db.update(users).set({ displayName: 'Renamed HTKD' }).where(eq(users.id, fx.htkdId));
+    await respond(result.decisionId, fx.storeUserA, 'ACCEPT');
+    const page = await history();
+    expect(page.totalItems).toBe(3);
+    expect(
+      page.data.map((event) => [
+        event.kind,
+        event.source,
+        event.statusBefore,
+        event.statusAfter,
+        event.actorRole,
+        event.actorNameSnapshot,
+      ]),
+    ).toEqual([
+      ['created', 'acceptance', 'not_ordered', 'not_ordered', 'store', 'Supplier store-a'],
+      ['status_changed', 'manual', 'ordered', 'not_ordered', 'admin', 'Supplier admin'],
+      ['status_changed', 'manual', 'not_ordered', 'ordered', 'htkd', 'Supplier htkd'],
+    ]);
+    expect(page.data[0]!.orderCode).toMatch(/^RE-\d{6}$/u);
+    expect(page.data[2]!.actorCurrentName).toBe('Renamed HTKD');
+    // Pages never overlap or skip, even for events written in the same millisecond.
+    const seen: Awaited<ReturnType<typeof history>>['data'][number][] = [];
+    for (let index = 1; index <= 3; index += 1) seen.push(...(await history(index, 1)).data);
+    expect(seen.map((event) => event.id)).toEqual(page.data.map((event) => event.id));
+    expect(
+      await listReshareStatusHistory(db, { decisionId: randomUUID(), page: 1, pageSize: 5 }),
+    ).toBeNull();
+  });
+
+  it('rolls the status back when its history event cannot be written', async () => {
+    const result = await fixture();
+    const trigger = `reshare_history_fail_${result.decisionId.replaceAll('-', '')}`;
+    await db.execute(
+      sql.raw(`create function ${trigger}() returns trigger language plpgsql as $$
+        begin
+          if new.entity_id = '${result.decisionId}' then raise exception 'history write failed'; end if;
+          return new;
+        end $$;
+        create trigger ${trigger} before insert on audit_logs
+          for each row execute function ${trigger}();`),
+    );
+    try {
+      await expect(updateReshareOrderStatus(db, command(result.decisionId))).rejects.toThrow();
+    } finally {
+      await db.execute(
+        sql.raw(`drop trigger ${trigger} on audit_logs; drop function ${trigger}();`),
+      );
+    }
+    expect((await read(result.decisionId)).data[0]).toMatchObject({
+      status: 'not_ordered',
+      statusControl: { version: 0, updatedAt: null },
+    });
+    // The same command succeeds once the history can be written again.
+    expect((await updateReshareOrderStatus(db, command(result.decisionId))).replayed).toBe(false);
+  });
+
+  it('serializes a concurrent Admin and HTKD and rejects stale state after automatic RE creation', async () => {
+    const result = await fixture();
     const results = await Promise.allSettled([
       updateReshareOrderStatus(db, command(result.decisionId)),
-      updateReshareOrderStatus(
-        db,
-        command(result.decisionId, { actorUserId: other.adminId, status: 'NOT_ORDERED' }),
-      ),
+      updateReshareOrderStatus(db, command(result.decisionId, { actorUserId: fx.htkdId })),
     ]);
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     const rejected = results.find((result) => result.status === 'rejected');
     expect(rejected?.reason).toMatchObject({ code: 'VERSION_CONFLICT' });
+    expect(
+      (await listReshareStatusHistory(db, { decisionId: result.decisionId, page: 1, pageSize: 10 }))
+        ?.totalItems,
+    ).toBe(1);
     const next = await fixture();
     await respond(next.decisionId, fx.storeUserA, 'ACCEPT');
     await expect(updateReshareOrderStatus(db, command(next.decisionId))).rejects.toMatchObject({

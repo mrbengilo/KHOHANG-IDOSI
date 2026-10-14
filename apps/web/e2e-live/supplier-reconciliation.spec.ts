@@ -223,9 +223,9 @@ test('AC01: Reshare shows 3, A granted 3, C re-observes 3 → nothing more is al
       const summary = page.getByRole('region', { name: 'Cập nhật tồn Reshare theo mặt hàng' });
       await summary.getByLabel('Tìm mặt hàng').fill(product!.sku);
       await summary.getByRole('button', { name: 'Tìm', exact: true }).click();
-      const row = summary.getByRole('row').filter({ hasText: product!.sku }).first();
+      const row = summary.getByRole('row').filter({ hasText: name }).first();
       await row.getByRole('button', { name: 'Đối chiếu', exact: true }).click();
-      await page.getByLabel(`Tổng số bao Reshare đang cho đặt của ${product!.sku}`).fill(quantity);
+      await page.getByLabel(`Tổng số bao Reshare đang cho đặt của ${name}`).fill(quantity);
       await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
       await expect(page.getByRole('region', { name: 'Xem trước đối chiếu' })).toBeVisible();
       const attest = page.getByLabel(/Tôi xác nhận các lượng giữ trước khi bật đối chiếu/u);
@@ -240,20 +240,24 @@ test('AC01: Reshare shows 3, A granted 3, C re-observes 3 → nothing more is al
     };
 
     // Day 1: C sees 3 at Reshare; all 3 are free.
-    await reconcile('3', `${product!.sku}: khả dụng 0 → 3 bao (+3).`);
+    await reconcile('3', `${name}: khả dụng 0 → 3 bao (+3).`);
     // The 09:00 run grants all 3 and the store accepts; HTKD has not ordered at Reshare yet.
     const sessionCode = await acceptedGrant(client, store!.id, product!.id, 3);
     // Day 2: Reshare still shows 3. Re-observing never adds them again.
-    await reconcile('3', `${product!.sku}: khả dụng giữ nguyên 0 bao.`);
+    await reconcile('3', `${name}: khả dụng giữ nguyên 0 bao.`);
     const [balance] = await db
       .select()
       .from(warehouseBalances)
       .where(eq(warehouseBalances.productId, product!.id));
     expect(balance).toMatchObject({ onHandQuantity: 3, reservedQuantity: 3 });
 
+    // Names only: the SKU is used to search, never shown next to the product name.
+    await expect(
+      page.getByRole('region', { name: 'Cập nhật tồn Reshare theo mặt hàng' }),
+    ).not.toContainText(product!.sku);
     // The drill-down names the store, session and the bags still to order at Reshare.
     const summary = page.getByRole('region', { name: 'Cập nhật tồn Reshare theo mặt hàng' });
-    const row = summary.getByRole('row').filter({ hasText: product!.sku }).first();
+    const row = summary.getByRole('row').filter({ hasText: name }).first();
     await row.getByRole('button', { name: 'Xem giữ hàng' }).click();
     await expect(row.getByRole('button', { name: 'Thu gọn' })).toHaveAttribute(
       'aria-expanded',
@@ -275,10 +279,8 @@ test('AC01: Reshare shows 3, A granted 3, C re-observes 3 → nothing more is al
     await page.goto('/supplier-reconciliation?tab=legacy');
     const queue = page.getByRole('region', { name: 'Hàng giữ trước khi có đơn RE' });
     await queue.getByLabel('Mặt hàng').selectOption(product!.id);
-    await queue.getByRole('checkbox', { name: `Chọn ${product!.sku} của ${store!.code}` }).check();
-    await queue
-      .getByLabel(`Số bao Reshare đã nhận cho ${product!.sku} của ${store!.code}`)
-      .fill('3');
+    await queue.getByRole('checkbox', { name: `Chọn ${name} của ${store!.name}` }).check();
+    await queue.getByLabel(`Số bao Reshare đã nhận cho ${name} của ${store!.name}`).fill('3');
     await queue.getByLabel('Mã đơn Reshare').fill(`RS-ORDER-${token}`);
     await queue.getByRole('button', { name: 'Ghi nhận đơn Reshare' }).click();
     await expect(

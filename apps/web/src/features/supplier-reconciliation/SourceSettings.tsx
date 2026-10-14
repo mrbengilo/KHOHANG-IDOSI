@@ -20,8 +20,9 @@ function errorText(error: unknown): string {
 }
 
 /**
- * Admin configuration: one Reshare source and the SKUs it supplies. A SKU put here stops
- * accepting cumulative inbound slips and manual adjustments, and waits for its first count.
+ * Admin/HTKD configuration: one Reshare source and the products it supplies (identified by id,
+ * shown by name only). A product put here stops accepting cumulative inbound slips and manual
+ * adjustments, and waits for its first count.
  */
 export function SourceSettings({ accountId }: { readonly accountId: string }) {
   const client = useQueryClient();
@@ -224,7 +225,7 @@ export function SourceSettings({ accountId }: { readonly accountId: string }) {
                         <span>
                           {product.name}
                           <small>
-                            {already ? `Đang đối chiếu · nguồn ${mappedTo}` : product.sku}
+                            {already ? `Đang đối chiếu · nguồn ${mappedTo}` : 'Chưa đối chiếu'}
                           </small>
                         </span>
                       </label>

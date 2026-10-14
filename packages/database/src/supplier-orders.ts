@@ -37,7 +37,7 @@ import {
 } from './supplier-commitments.js';
 import {
   actorMayAccessStore,
-  loadSupplierActor,
+  loadReshareManager,
   SupplierReconciliationError,
   type SupplierActor,
 } from './supplier-reconciliation.js';
@@ -108,9 +108,9 @@ export interface RecordSupplierOrderInput extends CommandMeta {
 }
 
 /**
- * HTKD (assigned, active store) or Admin records what B actually accepted, linked to the A
- * commitments it fulfils. B's orderable stock and U drop by the same q, so free stock F does
- * not move; reserved stock stays held until the existing receipt lifecycle consumes it.
+ * A Reshare manager (Admin or any active HTKD, every active store) records what B actually
+ * accepted, linked to the A commitments it fulfils. B's orderable stock and U drop by the same q,
+ * so free stock F does not move; reserved stock stays held until the receipt lifecycle consumes it.
  */
 export async function recordSupplierOrder(
   database: Database,
@@ -144,7 +144,7 @@ export async function recordSupplierOrder(
       'supplier-batch-key',
       `${input.actorUserId}:${input.idempotencyKey}`,
       async () => {
-        const actor = await loadSupplierActor(tx, input.actorUserId, ['admin', 'htkd']);
+        const actor = await loadReshareManager(tx, input.actorUserId);
         const replay = await findReplay(tx, actor, input);
         if (replay) return { batch: replay, replayed: true };
 
@@ -373,7 +373,7 @@ export async function cancelSupplierOrder(
       'supplier-batch-key',
       `${input.actorUserId}:${input.idempotencyKey}`,
       async () => {
-        const actor = await loadSupplierActor(tx, input.actorUserId, ['admin', 'htkd']);
+        const actor = await loadReshareManager(tx, input.actorUserId);
         const replay = await findReplay(tx, actor, input);
         if (replay) return { batch: replay, replayed: true };
 
@@ -604,7 +604,7 @@ export async function recordSupplierSourceReturn(
       'supplier-batch-key',
       `${input.actorUserId}:${input.idempotencyKey}`,
       async () => {
-        const actor = await loadSupplierActor(tx, input.actorUserId, ['admin']);
+        const actor = await loadReshareManager(tx, input.actorUserId);
         const replay = await findReplay(tx, actor, input);
         if (replay) return { batch: replay, replayed: true };
         await lockWarehouseBalances(tx, [input.productId]);
@@ -713,6 +713,7 @@ async function finishBatch(
     action: input.action,
     entityType: 'supplier_event_batch',
     entityId: input.batchId,
+    metadata: { actorName: input.actor.displayName },
     after: {
       ...input.after,
       projection: [...projection.values()].map((result) => ({
@@ -816,7 +817,8 @@ async function findReplay(
       'Khóa thao tác đã dùng cho một ghi nhận Reshare khác.',
     );
   }
-  // A replay re-checks today's scope: a revoked HTKD no longer reads the stored result.
+  // A replay re-checks the actor (re-read above: locked or demoted accounts are refused) and its
+  // scope; Reshare managers cover every store, so only the role and status can revoke it.
   if (previous.storeId !== null && !actorMayAccessStore(actor, previous.storeId)) {
     throw new SupplierReconciliationError(
       'FORBIDDEN',

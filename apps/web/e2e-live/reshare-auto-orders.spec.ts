@@ -98,6 +98,8 @@ test('accepting creates one RE order, issues stock at once and shows it in the s
     };
     const storeAccount = await account('STORE', 'store');
     const htkd = await account('HTKD', 'htkd');
+    // No store assignment at all: still manages the Reshare module (step 5).
+    const freeHtkd = await account('HTKD', 'htkd-free');
     const assigned = await page.request.put(`${api}/admin/accounts/${htkd.id}/assignments`, {
       data: { expectedSessionVersion: 0, storeIds: [store.id], reason: 'Phạm vi kiểm thử đơn RE' },
     });
@@ -195,7 +197,7 @@ test('accepting creates one RE order, issues stock at once and shows it in the s
     expect(orderB!.code).not.toBe(orderA!.code);
     expect(await balance(db, pants!.id)).toEqual({ onHand: 7, reserved: 0 });
 
-    // 4. HTKD history: only its stores, both orders, filtered on the server by product.
+    // 4. HTKD history (every store in the Reshare module), filtered on the server by product.
     await page.goto('/supplier-reconciliation');
     await page.getByLabel('Mặt hàng').selectOption(shirt!.id);
     const htkdHistory = page.locator('.reshare-history');
@@ -274,6 +276,51 @@ test('accepting creates one RE order, issues stock at once and shows it in the s
           fullPage: true,
         });
     }
+
+    // 5. An HTKD with no store assignment manages the Reshare status too (module-wide right);
+    // every change keeps its real actor and stays readable in "Lịch sử thay đổi" after reload.
+    await page.context().clearCookies();
+    await signIn(page, freeHtkd);
+    await page.goto(`/supplier-reconciliation?code=${orderA!.code}`);
+    await expect(page.getByRole('tab')).toHaveCount(4);
+    const htkdGroup = page.locator('.reshare-history tbody').filter({ hasText: orderA!.code });
+    await htkdGroup.getByRole('button', { name: 'Đánh dấu chưa đặt', exact: true }).click();
+    await expect(htkdGroup.getByText('Chưa đặt Reshare', { exact: true })).toBeVisible();
+    await expect(htkdGroup).toContainText('Cập nhật lần cuối bởi RE htkd-free (HTKD)');
+    await page.reload();
+    await htkdGroup.getByRole('button', { name: /^Lịch sử thay đổi/u }).click();
+    const dialog = page.getByRole('dialog', { name: 'Lịch sử thay đổi trạng thái' });
+    const events = dialog.locator('tbody tr');
+    await expect(events).toHaveCount(4);
+    await expect(events.nth(0)).toContainText('RE htkd-free');
+    await expect(events.nth(0).locator('td').nth(4)).toHaveText('HTKD');
+    await expect(events.nth(0).locator('td').nth(2)).toHaveText('Chưa đặt Reshare');
+    await expect(events.nth(1).locator('td').nth(4)).toHaveText('Admin');
+    await expect(events.nth(3)).toContainText(`Tạo đơn ${orderA!.code}`);
+    await expect(events.nth(3).locator('td').nth(4)).toHaveText('Cửa hàng');
+    for (const width of [360, 390, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await noPageOverflow(page);
+      if (width === 390 || width === 1440)
+        await page.screenshot({
+          path: testInfo.outputPath(`reshare-status-history-live-${width}.png`),
+          fullPage: true,
+        });
+    }
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    const [latest] = await db
+      .select()
+      .from(auditLogs)
+      .where(
+        and(
+          eq(auditLogs.entityId, resultA.decisionId),
+          eq(auditLogs.action, 'RESHARE_ORDER_STATUS_UPDATED'),
+          eq(auditLogs.actorUserId, freeHtkd.id),
+        ),
+      );
+    expect(latest).toMatchObject({ actorRole: 'htkd', metadata: { actorName: 'RE htkd-free' } });
+    expect(await balance(db, pants!.id)).toEqual(beforeStatusChange);
   } finally {
     await client.close();
   }

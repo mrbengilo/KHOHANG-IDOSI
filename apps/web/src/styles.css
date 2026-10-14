@@ -1159,16 +1159,25 @@ table {
   border-collapse: collapse;
   font-size: 13px;
 }
-/* Tiêu đề bảng in đậm và đủ lớn để đọc được với font serif. */
+/*
+ * Tiêu đề bảng/cột: chữ đầu câu, in đậm, đủ lớn để đọc. Nhãn được viết đúng chính tả ngay tại
+ * nguồn (giữ Reshare, IDOSI, HTKD, SKU, VAT, RE); CSS không đổi hoa/thường để không làm hỏng
+ * các viết tắt đó.
+ */
 th {
   background: var(--brand-soft);
   color: var(--brand-dark);
   border-bottom: 2px solid var(--brand);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: normal;
   text-align: left;
-  text-transform: uppercase;
+  text-transform: none;
+}
+/* Nội dung con của tiêu đề (biểu tượng, liên kết, nút sắp xếp) giữ độ đậm và kiểu chữ. */
+thead th :where(a, button, span, abbr) {
+  font-weight: inherit;
+  text-transform: inherit;
 }
 /* Tên mặt hàng, tên danh mục trong ô đầu mỗi dòng in đậm. */
 tbody th,
@@ -3860,10 +3869,11 @@ label:has(:required) > .field-label::after {
   td::before {
     content: attr(data-label);
     color: var(--text-secondary);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 700;
+    letter-spacing: normal;
     text-align: left;
-    text-transform: uppercase;
+    text-transform: none;
   }
   /*
    * Ô tiêu đề dòng (tên mặt hàng, tên cửa hàng) nằm trong tbody: trên mobile

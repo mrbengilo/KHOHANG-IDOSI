@@ -27,16 +27,32 @@
   min-width: 0;
   max-width: 100%;
 }
+/*
+ * Thang chữ của mục Reshare (đo tại zoom 100%): tiêu đề khối 21px/700, tiêu đề mặt hàng 19px/700,
+ * nội dung thao tác và ô nhập 16px, nhãn/giải thích ≥ 14px, giá trị chỉ số 24px/700 số tabular.
+ * Nền sáng, chữ chính --text (#0f172a), chữ phụ --text-secondary (#475569, tương phản ≥ 7:1).
+ */
+.supplier-summary h2,
+.supplier-orders h2,
+.supplier-history h2,
+.supplier-settings h2,
+.supplier-observation h2,
+.supplier-empty-state h2 {
+  color: var(--text);
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1.3;
+}
 .supplier-hint {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 15px;
+  line-height: 1.55;
 }
 .supplier-totals {
   margin: 0;
   color: var(--text);
-  font-size: 14px;
+  font-size: 15px;
 }
 .supplier-totals strong {
   display: inline;
@@ -45,8 +61,9 @@
   border: 1px solid var(--success-border);
   border-radius: 10px;
   background: var(--success-soft);
-  padding: 10px 14px;
+  padding: 12px 16px;
   color: var(--success);
+  font-size: 15px;
   font-weight: 600;
 }
 .supplier-table th {
@@ -88,20 +105,40 @@
 }
 .supplier-filters label {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   flex: 1 1 200px;
   min-width: 0;
-  font-size: 13px;
+  color: var(--text);
+  font-size: 14px;
   font-weight: 600;
+}
+/* Ô nhập và lựa chọn trong mục Reshare: chữ 16px, cao ≥ 44px để bấm/đọc dễ trên mobile. */
+:is(
+    .supplier-filters,
+    .reshare-orders__filters,
+    .supplier-observation,
+    .supplier-order-form,
+    .supplier-cancel-form,
+    .supplier-settings__create
+  )
+  :is(input:not([type='checkbox'], [type='radio']), select) {
+  min-height: 44px;
+  font-size: 16px;
 }
 .supplier-filters .button {
   flex: 0 0 auto;
   min-height: 44px;
   white-space: nowrap;
 }
+.supplier-table {
+  font-size: 15px;
+}
+.supplier-table th {
+  font-size: 14px;
+}
 .supplier-table td,
 .supplier-table th {
-  padding: 9px 12px;
+  padding: 10px 12px;
 }
 .supplier-table .table-number,
 .supplier-figures dd {
@@ -112,15 +149,22 @@
   white-space: nowrap;
 }
 .supplier-table td small {
-  font-size: 12px;
-  color: var(--muted);
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+/* Tên mặt hàng: chỉ tên (không kèm SKU), đậm, tự xuống dòng khi dài. */
+.supplier-product-name {
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
 }
 .supplier-table tr.is-selected {
   background: var(--brand-soft);
 }
 .supplier-free strong {
   color: var(--success);
-  font-size: 15px;
+  font-size: 17px;
 }
 .supplier-shortfall {
   color: var(--danger);
@@ -131,7 +175,7 @@
   gap: 6px;
 }
 .supplier-row-actions .button {
-  min-height: 40px;
+  min-height: 44px;
   white-space: nowrap;
 }
 .supplier-detail-row td {
@@ -141,9 +185,11 @@
   background: var(--surface-muted);
 }
 .supplier-quantity-input {
-  width: 9rem;
+  width: 10rem;
   max-width: 100%;
-  min-height: 44px;
+  min-height: 48px;
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
 }
 .supplier-order-inputs {
   display: grid;
@@ -152,13 +198,14 @@
 }
 .supplier-order-inputs input {
   width: 100%;
-  min-height: 40px;
+  min-height: 44px;
 }
 .supplier-order-input {
   min-width: 0;
 }
 .supplier-actions .button {
-  min-height: 44px;
+  min-height: 48px;
+  font-size: 16px;
 }
 .supplier-observation__meta,
 .supplier-order-form,
@@ -177,9 +224,10 @@
 .supplier-cancel-form label,
 .supplier-settings__create label {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
-  font-size: 13px;
+  color: var(--text);
+  font-size: 14px;
   font-weight: 600;
 }
 .supplier-order-form legend,
@@ -199,11 +247,11 @@
 }
 .supplier-preview__line {
   display: grid;
-  gap: 10px;
+  gap: 14px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
-  padding: 12px;
+  padding: 16px;
 }
 .supplier-preview__line header {
   display: flex;
@@ -214,36 +262,106 @@
 }
 .supplier-preview__line h3 {
   margin: 0;
-  font-size: 16px;
+  color: var(--text);
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
-.supplier-preview__line h3 small {
-  color: var(--muted);
-  font-weight: 500;
-}
+/*
+ * Bảy ô chỉ số: lưới tự xuống hàng (không thu nhỏ chữ để nhét đủ một hàng). Mỗi ô nền sáng,
+ * nhãn 15px/600 phía trên, giá trị 24px/700 số tabular phía dưới.
+ */
 .supplier-figures {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 176px), 1fr));
+  gap: 10px;
   margin: 0;
 }
 .supplier-figures div {
+  display: grid;
+  align-content: space-between;
+  gap: 6px;
   min-width: 0;
-  border-radius: 9px;
-  background: var(--surface-muted);
-  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 12px 14px;
 }
 .supplier-figures div.is-danger {
+  border-color: var(--danger-border);
   background: var(--danger-soft);
-  color: var(--danger);
 }
 .supplier-figures dt {
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
 }
 .supplier-figures dd {
-  margin: 2px 0 0;
-  font-size: 17px;
+  margin: 0;
+  color: var(--text);
+  font-size: 24px;
   font-weight: 700;
+  line-height: 1.2;
+}
+.supplier-figures div.is-danger :is(dt, dd) {
+  color: var(--danger);
+}
+/* Khả dụng hiện tại → sau: ô nổi bật, số trước nhạt và nhỏ hơn, số sau lớn và đậm màu. */
+.supplier-figures div.supplier-figure--change {
+  border: 2px solid var(--brand);
+  background: var(--brand-soft);
+}
+.supplier-figure--change dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+.supplier-figure__before {
+  color: var(--text-secondary);
+  font-size: 20px;
+  font-weight: 600;
+}
+.supplier-figure__arrow {
+  color: var(--brand-dark);
+  font-size: 20px;
+}
+.supplier-figure__after {
+  color: var(--brand-dark);
+  font-size: 26px;
+  font-weight: 800;
+}
+.supplier-figure__warning {
+  display: block;
+  margin-top: 4px;
+  color: var(--danger);
+  font-size: 14px;
+  font-weight: 700;
+}
+/*
+ * Bảng nhập tổng tồn: chiếm hết chiều rộng khối, nhãn/giá trị/ô nhập thẳng hàng theo cột.
+ * Ngoại lệ có chủ đích với quy tắc chung "vùng cuộn rộng theo nội dung" (styles.css), chỉ áp
+ * dụng cho bảng này nên không đổi bố cục bảng nào khác.
+ */
+.app-main .responsive-table.supplier-observation-table-wrap {
+  width: 100%;
+}
+.app-main .supplier-observation-table-wrap > table.supplier-observation-table {
+  width: 100%;
+}
+.supplier-observation-table {
+  font-size: 16px;
+}
+.supplier-observation-table th:first-child {
+  width: 46%;
+}
+.supplier-observation-table td {
+  vertical-align: middle;
+}
+.supplier-observation-table .supplier-product-name {
+  font-size: 18px;
 }
 .supplier-coverage {
   border: 1px solid var(--warning-border);
@@ -253,6 +371,9 @@
   padding: 10px 12px;
 }
 .supplier-coverage legend {
+  padding: 0 4px;
+  color: var(--text);
+  font-size: 17px;
   font-weight: 700;
 }
 .supplier-coverage ul,
@@ -277,10 +398,14 @@
   display: grid;
   min-width: 0;
 }
+.supplier-coverage li strong {
+  color: var(--text);
+  font-size: 16px;
+}
 .supplier-coverage small,
 .supplier-batch small {
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: 14px;
 }
 .supplier-coverage__choice {
   display: flex;
@@ -292,17 +417,27 @@
 .supplier-settings__products label {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-height: 44px;
-  font-size: 14px;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
 }
 .supplier-coverage__choice input:is([type='checkbox'], [type='radio']),
 .supplier-attest input,
 .supplier-settings__products input {
-  width: 20px;
-  height: 20px;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
   margin: 0;
   accent-color: var(--brand);
+}
+.supplier-coverage__choice input:focus-visible,
+.supplier-attest input:focus-visible,
+.supplier-settings__products input:focus-visible {
+  outline: 3px solid var(--brand);
+  outline-offset: 2px;
 }
 .supplier-coverage__choice .supplier-coverage__quantity {
   display: grid;
@@ -313,12 +448,25 @@
   width: 9rem;
   min-height: 44px;
 }
+.supplier-coverage__quantity {
+  font-size: 15px;
+  font-weight: 600;
+}
+.supplier-attest {
+  border: 1px solid var(--warning-border);
+  border-radius: 10px;
+  background: var(--warning-soft);
+  padding: 8px 12px;
+}
 .supplier-save-help {
   margin: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
   background: var(--surface-muted);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
 }
 .supplier-preview > .supplier-actions {
   display: flex;
@@ -360,8 +508,9 @@
   min-width: 0;
 }
 .supplier-settings__products small {
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
 }
 .supplier-empty-state {
   display: grid;
@@ -397,6 +546,7 @@
 /* Đơn đặt Reshare: nhóm theo đơn (một mã RE), mỗi mặt hàng một dòng, tổng một lần. */
 .supplier-role-hint {
   margin-top: -4px;
+  color: var(--text);
 }
 .reshare-orders__filters {
   display: grid;
@@ -406,8 +556,10 @@
 }
 .reshare-orders__filters label {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
+  color: var(--text);
+  font-size: 14px;
   font-weight: 600;
 }
 .reshare-orders__filters :is(select, input) {
@@ -453,6 +605,39 @@
 }
 .reshare-history td small {
   max-width: 34ch;
+}
+.reshare-history__history-button {
+  margin-top: 0.5rem;
+  min-height: 44px;
+  max-width: 100%;
+  white-space: normal;
+}
+/* Hộp thoại lịch sử thay đổi: rộng đủ cho 6 cột, cuộn nội bộ, không tràn màn hình. */
+.dialog.reshare-status-history {
+  width: min(100%, 980px);
+  max-height: calc(100dvh - 36px);
+  overflow-y: auto;
+}
+.reshare-status-history .dialog__header .reshare-status-history__subject {
+  color: var(--text-secondary);
+  font-size: 15px;
+  font-weight: 600;
+  margin-top: 6px;
+}
+.reshare-status-history h2 {
+  font-size: 21px;
+}
+.reshare-status-history__table table {
+  width: 100%;
+  font-size: 15px;
+}
+.reshare-status-history__missing {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+.reshare-status-history__origin {
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
 }
 /*
  * Màn hình hẹp: cùng bảng hiển thị mỗi đơn (tbody) là một thẻ. Dòng con không tạo thẻ riêng
@@ -506,4 +691,34 @@
   gap: 8px;
   justify-items: start;
   min-width: 0;
+}
+
+/*
+ * Trạng thái và thông báo lỗi trong mục Reshare đủ lớn để đọc (badge/lỗi dùng chung mặc định
+ * 11px); chỉ áp dụng trong các khối của mục này.
+ */
+:is(
+    .supplier-summary,
+    .supplier-orders,
+    .supplier-history,
+    .supplier-settings,
+    .supplier-observation,
+    .reshare-status-history
+  )
+  .badge {
+  font-size: 13px;
+  padding: 5px 10px;
+}
+:is(
+    .supplier-summary,
+    .supplier-orders,
+    .supplier-history,
+    .supplier-settings,
+    .supplier-observation,
+    .reshare-status-history
+  )
+  .form-error,
+.supplier-error {
+  font-size: 15px;
+  font-weight: 600;
 }
