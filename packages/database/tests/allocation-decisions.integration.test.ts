@@ -14,7 +14,9 @@ import {
   auditLogs,
   closeDatabase,
   db,
+  dailyPriorityOffers,
   getAllocationDecision,
+  htkdAssignments,
   IdempotencyConflictError,
   inventorySnapshots,
   listAllocationDecisions,
@@ -38,6 +40,13 @@ import {
   storeReceipts,
   stores,
   users,
+  cancelWaitTicket,
+  previewWaitTicketCancellation,
+  WaitTicketPreviewRequiredError,
+  WaitTicketPreviewStaleError,
+  allocationLineDispositions,
+  reshareOrders,
+  waitTicketSources,
   waitTickets,
   warehouseBalances,
   warehouseLedgerEntries,
@@ -171,7 +180,11 @@ describePostgres('store decisions on published allocation results', () => {
         ),
       );
     expect(ledger).toEqual([
-      expect.objectContaining({ eventType: 'reservation_release', onHandDelta: 0, reservedDelta: -10 }),
+      expect.objectContaining({
+        eventType: 'reservation_release',
+        onHandDelta: 0,
+        reservedDelta: -10,
+      }),
     ]);
     // The 10 bags wait again for store A on one active ticket, with the result as its source.
     const tickets = await db
@@ -670,6 +683,348 @@ describePostgres('store decisions on published allocation results', () => {
     expect(legacySources.data.map((row) => row.id)).toContain(shipment!.id);
   });
 
+  it('requested 10, granted 6, worker queued 4: moving to waiting leaves 10 waiting, not 14', async () => {
+    const product = await createProduct();
+    await openingStock(product, 50);
+    const result = await publishResult({
+      storeId: fx.storeB.id,
+      grants: [{ productId: product, quantity: 6 }],
+      shipment: false,
+    });
+    // The worker queued the unallocated 4 on the store's active ticket in the run itself.
+    const ticket = await createTicket(fx.storeB.id, product, 4);
+    const moved = await respond(result.decisionId, fx.storeB.userId, 'WAITLIST');
+    expect(moved.replayed ? null : moved.value.requeued).toEqual([
+      {
+        waitTicketId: ticket.id,
+        productId: product,
+        quantity: 6,
+        mode: 'ADD_DEMAND',
+        createdTicket: false,
+      },
+    ]);
+    expect(await ticketRow(ticket.id)).toMatchObject({
+      status: 'active',
+      originalQuantity: 10,
+      remainingQuantity: 10,
+      fulfilledQuantity: 0,
+    });
+    expect(await activeTickets(fx.storeB.id, product)).toHaveLength(1);
+    expect(await balanceOf(product)).toEqual({ onHand: 50, reserved: 0 });
+    const sources = await db
+      .select()
+      .from(waitTicketSources)
+      .where(eq(waitTicketSources.waitTicketId, ticket.id));
+    expect(sources).toEqual([
+      expect.objectContaining({
+        kind: 'result_waitlisted',
+        quantity: 6,
+        allocationDecisionId: result.decisionId,
+        orderSessionId: result.sessionId,
+        actorUserId: fx.storeB.userId,
+      }),
+    ]);
+    // A replay with a new key is refused; the same line can never be requeued twice.
+    await expect(
+      respond(result.decisionId, fx.storeB.userId, 'WAITLIST', { expectedVersion: 2 }),
+    ).rejects.toMatchObject({ reason: 'ALREADY_ANSWERED' });
+    expect((await ticketRow(ticket.id)).remainingQuantity).toBe(10);
+  });
+
+  it('merges X into the existing ticket (3 + 2 = 5), creates one ticket for Y (4), and is retry safe', async () => {
+    const productX = await createProduct();
+    const productY = await createProduct();
+    await openingStock(productX, 20);
+    await openingStock(productY, 20);
+    const result = await publishResult({
+      storeId: fx.storeA.id,
+      grants: [
+        { productId: productX, quantity: 2 },
+        { productId: productY, quantity: 4 },
+      ],
+    });
+    const ticketX = await createTicket(fx.storeA.id, productX, 3);
+    const key = randomUUID();
+    await respond(result.decisionId, fx.storeA.userId, 'WAITLIST', { key });
+    await respond(result.decisionId, fx.storeA.userId, 'WAITLIST', { key });
+    expect(await ticketRow(ticketX.id)).toMatchObject({
+      remainingQuantity: 5,
+      originalQuantity: 5,
+    });
+    const ticketsY = await activeTickets(fx.storeA.id, productY);
+    expect(ticketsY).toEqual([
+      expect.objectContaining({ remainingQuantity: 4, originalQuantity: 4, fulfilledQuantity: 0 }),
+    ]);
+    expect(ticketsY[0]!.code).toMatch(/^PC-\d{7}$/u);
+    expect(await balanceOf(productX)).toEqual({ onHand: 20, reserved: 0 });
+    expect(await balanceOf(productY)).toEqual({ onHand: 20, reserved: 0 });
+    const detail = await getAllocationDecision(db, result.decisionId);
+    expect(detail).toMatchObject({ status: 'waitlisted', revokedQuantity: 6 });
+    expect(detail.requeued).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ waitTicketId: ticketX.id, quantity: 2, createdTicket: false }),
+        expect.objectContaining({ productId: productY, quantity: 4, createdTicket: true }),
+      ]),
+    );
+    await expectBalanceMatchesLedger(productX);
+    await expectReservedMatchesActiveReservations(productY);
+  });
+
+  it('restores bags granted from the active ticket instead of adding the demand twice', async () => {
+    const product = await createProduct();
+    await openingStock(product, 20);
+    const ticket = await createTicket(fx.storeA.id, product, 5);
+    const result = await publishResult({
+      storeId: fx.storeA.id,
+      grants: [{ productId: product, quantity: 2, waitTicketId: ticket.id }],
+      shipment: false,
+    });
+    expect(await ticketRow(ticket.id)).toMatchObject({
+      remainingQuantity: 3,
+      fulfilledQuantity: 2,
+    });
+    await respond(result.decisionId, fx.storeA.userId, 'WAITLIST');
+    // Back to 5 waiting, original unchanged: the 2 bags moved from fulfilled to remaining.
+    expect(await ticketRow(ticket.id)).toMatchObject({
+      status: 'active',
+      originalQuantity: 5,
+      remainingQuantity: 5,
+      fulfilledQuantity: 0,
+    });
+    const [source] = await db
+      .select()
+      .from(waitTicketSources)
+      .where(eq(waitTicketSources.waitTicketId, ticket.id));
+    expect(source).toMatchObject({
+      kind: 'result_restored',
+      quantity: 2,
+      sourceWaitTicketId: ticket.id,
+    });
+  });
+
+  it('cancelling ticket A revokes only A from a result shared with ticket B and an ordinary order', async () => {
+    const product = await createProduct();
+    const productB = await createProduct();
+    await openingStock(product, 40);
+    await openingStock(productB, 40);
+    const ticketA = await createTicket(fx.storeA.id, product, 3);
+    const ticketB = await createTicket(fx.storeA.id, productB, 2);
+    const orderProduct = await createProduct();
+    await openingStock(orderProduct, 40);
+    const result = await publishResult({
+      storeId: fx.storeA.id,
+      grants: [
+        { productId: orderProduct, quantity: 4 },
+        { productId: product, quantity: 3, waitTicketId: ticketA.id },
+        { productId: productB, quantity: 2, waitTicketId: ticketB.id },
+      ],
+    });
+    expect(await ticketRow(ticketA.id)).toMatchObject({ status: 'fulfilled' });
+    // A fulfilled ticket whose grant has no RE yet is still "not processed" and cancellable.
+    const preview = await previewWaitTicketCancellation(db, {
+      actorUserId: fx.storeA.userId,
+      waitTicketId: ticketA.id,
+    });
+    expect(preview.scope.plan).toMatchObject({ ok: true, cancelledQuantity: 3 });
+    expect(preview.scope.lines).toEqual([
+      expect.objectContaining({
+        kind: 'REVOCABLE',
+        quantity: 3,
+        allocationDecisionId: result.decisionId,
+      }),
+    ]);
+    // Revoking goods needs the confirmed preview.
+    await expect(
+      cancel(ticketA.id, fx.storeA.userId, { fingerprint: null }),
+    ).rejects.toBeInstanceOf(WaitTicketPreviewRequiredError);
+    await expect(
+      cancel(ticketA.id, fx.storeA.userId, { fingerprint: 'f'.repeat(64) }),
+    ).rejects.toBeInstanceOf(WaitTicketPreviewStaleError);
+    await cancel(ticketA.id, fx.storeA.userId);
+
+    expect(await ticketRow(ticketA.id)).toMatchObject({
+      status: 'cancelled',
+      remainingQuantity: 3,
+      fulfilledQuantity: 0,
+      cancellationKind: 'store_cancelled',
+    });
+    expect(await ticketRow(ticketB.id)).toMatchObject({
+      status: 'fulfilled',
+      fulfilledQuantity: 2,
+    });
+    expect(await balanceOf(product)).toEqual({ onHand: 40, reserved: 0 });
+    expect(await balanceOf(productB)).toEqual({ onHand: 40, reserved: 2 });
+    const [decision] = await db
+      .select()
+      .from(allocationResultDecisions)
+      .where(eq(allocationResultDecisions.id, result.decisionId));
+    expect(decision).toMatchObject({
+      status: 'pending',
+      version: 2,
+      grantedQuantity: 9,
+      revokedQuantity: 3,
+    });
+    // The shipment lost exactly the revoked line; the others still ship.
+    const lines = await db
+      .select()
+      .from(outboundRequestLines)
+      .where(eq(outboundRequestLines.outboundRequestId, result.outboundId!));
+    expect(lines.map((line) => [line.productId, line.approvedQuantity]).sort()).toEqual(
+      [
+        [orderProduct, 4],
+        [productB, 2],
+      ].sort(),
+    );
+    // The old version is refused; the actionable rest is confirmed with one RE of 6 bags.
+    await expect(respond(result.decisionId, fx.storeA.userId, 'ACCEPT')).rejects.toMatchObject({
+      reason: 'STALE_VERSION',
+    });
+    const accepted = await respond(result.decisionId, fx.storeA.userId, 'ACCEPT', {
+      expectedVersion: 2,
+    });
+    expect(accepted).toMatchObject({
+      value: { status: 'accepted', dispatchedOutboundRequestId: result.outboundId },
+    });
+    const [order] = await db
+      .select()
+      .from(reshareOrders)
+      .where(eq(reshareOrders.allocationDecisionId, result.decisionId));
+    expect(order).toMatchObject({ totalQuantity: 6 });
+    expect(await balanceOf(product)).toEqual({ onHand: 40, reserved: 0 });
+    expect(await balanceOf(productB)).toEqual({ onHand: 38, reserved: 0 });
+    expect(await balanceOf(orderProduct)).toEqual({ onHand: 36, reserved: 0 });
+    for (const id of [product, productB, orderProduct]) {
+      await expectBalanceMatchesLedger(id);
+      await expectReservedMatchesActiveReservations(id);
+    }
+    // After the RE, B's goods are protected: B can no longer be cancelled.
+    const previewB = await previewWaitTicketCancellation(db, {
+      actorUserId: fx.storeA.userId,
+      waitTicketId: ticketB.id,
+    });
+    expect(previewB.scope.plan).toEqual({ ok: false, reason: 'NOTHING_CANCELLABLE' });
+    expect(previewB.scope.lines).toEqual([
+      expect.objectContaining({ kind: 'RESHARE_ORDER', reshareOrderCode: order!.code }),
+    ]);
+    // The database refuses an RE source for the revoked line whatever code tries.
+    const [disposition] = await db
+      .select()
+      .from(allocationLineDispositions)
+      .where(eq(allocationLineDispositions.allocationDecisionId, result.decisionId));
+    expect(disposition).toMatchObject({
+      kind: 'wait_ticket_cancelled',
+      quantity: 3,
+      waitTicketId: ticketA.id,
+    });
+  });
+
+  it('closes a result whose every bag is cancelled and keeps carried goods for the store', async () => {
+    const product = await createProduct();
+    await openingStock(product, 30);
+    const ticket = await createTicket(fx.storeB.id, product, 4);
+    const result = await publishResult({
+      storeId: fx.storeB.id,
+      grants: [{ productId: product, quantity: 4, waitTicketId: ticket.id }],
+    });
+    await cancel(ticket.id, fx.storeB.userId);
+    const detail = await getAllocationDecision(db, result.decisionId);
+    expect(detail).toMatchObject({
+      status: 'cancelled',
+      revokedQuantity: 4,
+      shipment: { status: 'cancelled' },
+      revocations: [expect.objectContaining({ kind: 'wait_ticket_cancelled', quantity: 4 })],
+    });
+    expect(await balanceOf(product)).toEqual({ onHand: 30, reserved: 0 });
+    await expect(
+      respond(result.decisionId, fx.storeB.userId, 'ACCEPT', { expectedVersion: 2 }),
+    ).rejects.toMatchObject({ reason: 'NOT_ANSWERABLE' });
+    // Not in the pending notice any more; nothing is issued for it.
+    const pending = await listAllocationDecisions(db, {
+      page: 1,
+      pageSize: 100,
+      storeIds: [fx.storeB.id],
+      status: 'pending',
+    });
+    expect(pending.data.map((row) => row.id)).not.toContain(result.decisionId);
+    // A cancelled ticket is final: a new key is refused, nothing changes.
+    await expect(cancel(ticket.id, fx.storeB.userId, { fingerprint: null })).rejects.toThrow();
+  });
+
+  it('serializes cancellation and acceptance: exactly one consistent outcome', async () => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const product = await createProduct();
+      await openingStock(product, 10);
+      const ticket = await createTicket(fx.storeA.id, product, 2);
+      const result = await publishResult({
+        storeId: fx.storeA.id,
+        grants: [{ productId: product, quantity: 2, waitTicketId: ticket.id }],
+        shipment: false,
+      });
+      const preview = await previewWaitTicketCancellation(db, {
+        actorUserId: fx.storeA.userId,
+        waitTicketId: ticket.id,
+      });
+      const outcomes = await Promise.allSettled([
+        respond(result.decisionId, fx.storeA.userId, 'ACCEPT'),
+        cancel(ticket.id, fx.storeA.userId, { fingerprint: preview.scope.fingerprint }),
+      ]);
+      expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
+      const [decision] = await db
+        .select()
+        .from(allocationResultDecisions)
+        .where(eq(allocationResultDecisions.id, result.decisionId));
+      if (decision!.status === 'accepted') {
+        // ACCEPT won: the RE protects the goods; the stale preview was refused.
+        expect(await balanceOf(product)).toEqual({ onHand: 8, reserved: 0 });
+        expect((await ticketRow(ticket.id)).status).toBe('fulfilled');
+      } else {
+        expect(decision!.status).toBe('cancelled');
+        expect(await balanceOf(product)).toEqual({ onHand: 10, reserved: 0 });
+        expect(
+          await db
+            .select()
+            .from(reshareOrders)
+            .where(eq(reshareOrders.allocationDecisionId, result.decisionId)),
+        ).toEqual([]);
+      }
+      await expectBalanceMatchesLedger(product);
+      await expectReservedMatchesActiveReservations(product);
+    }
+  });
+
+  it('lets an assigned HTKD move a result to waiting, never an unassigned one', async () => {
+    const product = await createProduct();
+    await openingStock(product, 10);
+    const result = await publishResult({
+      storeId: fx.storeA.id,
+      grants: [{ productId: product, quantity: 1 }],
+      shipment: false,
+    });
+    await expect(respond(result.decisionId, fx.htkdId, 'WAITLIST')).rejects.toBeInstanceOf(
+      AllocationDecisionForbiddenError,
+    );
+    await db.insert(htkdAssignments).values({ userId: fx.htkdId, storeId: fx.storeA.id });
+    try {
+      const moved = await respond(result.decisionId, fx.htkdId, 'WAITLIST');
+      expect(moved).toMatchObject({ value: { status: 'waitlisted' } });
+      const [audit] = await db
+        .select()
+        .from(auditLogs)
+        .where(
+          and(
+            eq(auditLogs.entityId, result.decisionId),
+            eq(auditLogs.action, 'ALLOCATION_RESULT_WAITLISTED'),
+          ),
+        );
+      expect(audit).toMatchObject({ actorUserId: fx.htkdId, actorRole: 'htkd' });
+    } finally {
+      await db
+        .update(htkdAssignments)
+        .set({ revokedAt: new Date() })
+        .where(eq(htkdAssignments.userId, fx.htkdId));
+    }
+  });
+
   // ------------------------------------------------------------------------------------------
   // Fixture helpers: build exactly what the 09:00 worker persists.
   // ------------------------------------------------------------------------------------------
@@ -693,7 +1048,7 @@ describePostgres('store decisions on published allocation results', () => {
 
   async function publishResult(input: {
     readonly storeId: string;
-    readonly grants: readonly { productId: string; quantity: number }[];
+    readonly grants: readonly { productId: string; quantity: number; waitTicketId?: string }[];
     readonly waitlistedStores?: readonly string[];
     readonly shipment?: boolean;
     readonly carry?: readonly string[];
@@ -706,11 +1061,13 @@ describePostgres('store decisions on published allocation results', () => {
     let sequence = 0;
     for (const grant of input.grants) {
       sequence += 1;
-      const lineId = await insertOrderLine(sessionId, runId, input.storeId, grant.productId, {
-        allocated: grant.quantity,
-        waitlisted: 0,
-        sequence,
-      });
+      const lineId = grant.waitTicketId
+        ? await insertTicketLine(sessionId, runId, input.storeId, grant, sequence)
+        : await insertOrderLine(sessionId, runId, input.storeId, grant.productId, {
+            allocated: grant.quantity,
+            waitlisted: 0,
+            sequence,
+          });
       lineIds.push(lineId);
       const [reservation] = await db
         .insert(reservations)
@@ -897,6 +1254,139 @@ describePostgres('store decisions on published allocation results', () => {
       sequence: 1,
     });
     return { sessionId, runId };
+  }
+
+  /** A priority (P0A) line granted from a wait ticket, as the worker writes it. */
+  async function insertTicketLine(
+    sessionId: string,
+    runId: string,
+    storeId: string,
+    grant: { productId: string; quantity: number; waitTicketId?: string },
+    sequence: number,
+  ) {
+    const [ticket] = await db
+      .select()
+      .from(waitTickets)
+      .where(eq(waitTickets.id, grant.waitTicketId!));
+    // The store accepted the priority offer for these bags before the run allocated them.
+    const [offer] = await db
+      .insert(dailyPriorityOffers)
+      .values({
+        businessDate: '2026-10-05',
+        orderSessionId: sessionId,
+        storeId,
+        productId: grant.productId,
+        waitTicketId: grant.waitTicketId!,
+        priorityLevel: 'P0A',
+        offeredQuantity: grant.quantity,
+        eligibleQuantityAtOffer: ticket!.remainingQuantity,
+        acceptedQuantity: grant.quantity,
+        status: 'accepted',
+        responseDeadlineAt: new Date('2026-10-05T02:00:00Z'),
+        respondedAt: new Date('2026-10-05T01:30:00Z'),
+        createdAt: new Date('2026-10-05T01:00:00Z'),
+      })
+      .returning({ id: dailyPriorityOffers.id });
+    const [line] = await db
+      .insert(allocationLines)
+      .values({
+        allocationRunId: runId,
+        storeId,
+        productId: grant.productId,
+        waitTicketId: grant.waitTicketId!,
+        priorityOfferId: offer!.id,
+        priorityLevel: 'P0A',
+        roundNumber: 1,
+        sequenceInRound: sequence,
+        requestedQuantity: grant.quantity,
+        allocatedQuantity: grant.quantity,
+        waitlistedQuantity: 0,
+        status: 'allocated',
+        reasonCode: 'TEST_DECISION',
+      })
+      .returning({ id: allocationLines.id });
+    const remaining = ticket!.remainingQuantity - grant.quantity;
+    await db
+      .update(waitTickets)
+      .set({
+        remainingQuantity: remaining,
+        fulfilledQuantity: ticket!.fulfilledQuantity + grant.quantity,
+        status: remaining === 0 ? 'fulfilled' : 'active',
+        resolvedAt: remaining === 0 ? new Date() : null,
+      })
+      .where(eq(waitTickets.id, ticket!.id));
+    return line!.id;
+  }
+
+  /** An active wait ticket of `quantity` bags, opened by an order of its own session. */
+  async function createTicket(storeId: string, productId: string, quantity: number) {
+    const { sessionId } = await createRun('completed');
+    const [order] = await db
+      .insert(orderRequests)
+      .values({
+        orderSessionId: sessionId,
+        storeId,
+        requestNumber: 1,
+        status: 'waitlisted',
+        submittedAt: new Date(),
+        requestedByUserId: fx.adminId,
+      })
+      .returning();
+    const [item] = await db
+      .insert(orderRequestItems)
+      .values({ orderRequestId: order!.id, productId, requestedQuantity: quantity })
+      .returning();
+    const [ticket] = await db
+      .insert(waitTickets)
+      .values({
+        storeId,
+        productId,
+        sourceOrderRequestItemId: item!.id,
+        status: 'active',
+        priorityLevel: 'P0B',
+        originalQuantity: quantity,
+        remainingQuantity: quantity,
+        fulfilledQuantity: 0,
+      })
+      .returning();
+    return ticket!;
+  }
+
+  async function ticketRow(id: string) {
+    const [row] = await db.select().from(waitTickets).where(eq(waitTickets.id, id));
+    return row!;
+  }
+
+  async function activeTickets(storeId: string, productId: string) {
+    return db
+      .select()
+      .from(waitTickets)
+      .where(
+        and(
+          eq(waitTickets.storeId, storeId),
+          eq(waitTickets.productId, productId),
+          eq(waitTickets.status, 'active'),
+        ),
+      );
+  }
+
+  async function cancel(
+    waitTicketId: string,
+    actorUserId: string,
+    options: { fingerprint?: string | null; key?: string } = {},
+  ) {
+    const fingerprint =
+      options.fingerprint === undefined
+        ? (await previewWaitTicketCancellation(db, { actorUserId, waitTicketId })).scope.fingerprint
+        : (options.fingerprint ?? undefined);
+    return cancelWaitTicket(db, {
+      waitTicketId,
+      actorUserId,
+      reason: 'Không cần nữa',
+      ...(fingerprint ? { expectedFingerprint: fingerprint } : {}),
+      idempotencyKey: options.key ?? randomUUID(),
+      requestHash: `cancel:${waitTicketId}:${fingerprint ?? ''}`,
+    });
   }
 
   async function insertOrderLine(

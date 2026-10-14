@@ -347,7 +347,9 @@ export async function revokeResultHoldsInTransaction(
       shipmentLines,
       auditActor,
       trigger:
-        input.kind === 'waitlisted' ? 'allocation-result-waitlisted' : 'allocation-result-cancelled',
+        input.kind === 'waitlisted'
+          ? 'allocation-result-waitlisted'
+          : 'allocation-result-cancelled',
     });
     keptHeldQuantity = closed.keptHeldQuantity;
     cancelledOutboundRequestId = shipment.id;
@@ -704,175 +706,191 @@ export async function requeueWaitlistedDispositionsInTransaction(
   const requeued: RequeuedTicket[] = [];
   for (const productId of productIds) {
     const group = input.dispositions.filter((row) => row.productId === productId);
-    await withAdvisoryLock(tx, 'store-product-wait', `${decision.storeId}:${productId}`, async () => {
-      const [active] = await tx
-        .select()
-        .from(waitTickets)
-        .where(
-          and(
-            eq(waitTickets.storeId, decision.storeId),
-            eq(waitTickets.productId, productId),
-            eq(waitTickets.status, 'active'),
-            isNull(waitTickets.deletedAt),
-          ),
-        )
-        .for('update')
-        .limit(1);
-      const lines: WaitlistLine[] = group.map((row) => {
-        const source = row.waitTicketId ? sourceTicketById.get(row.waitTicketId) : undefined;
-        if (row.waitTicketId && !source) {
-          throw new AllocationRevocationIntegrityError(`Wait ticket ${row.waitTicketId} is missing.`);
-        }
-        return {
-          allocationLineId: row.allocationLineId,
-          storeId: decision.storeId,
-          productId,
-          quantity: row.quantity,
-          sourceWaitTicket: source ? { id: source.id, status: source.status } : null,
-        };
-      });
-      const activeTicket = active ?? null;
-      const [plan] = planWaitlistRequeue(
-        lines,
-        new Map(activeTicket ? [[waitTicketGroupKey(decision.storeId, productId), activeTicket.id]] : []),
-      );
-      if (!plan) return;
-      let ticketId = activeTicket?.id ?? null;
-      let createdTicket = false;
-      const waitingQuantity = plan.restoreQuantity + plan.addQuantity;
-      if (waitingQuantity === 0) {
-        await tx.insert(auditLogs).values({
-          requestId: input.requestId,
-          actorUserId: input.actorUserId,
-          actorStoreId: decision.storeId,
-          action: 'WAIT_TICKET_REQUEUE_SKIPPED_CANCELLED_SOURCE',
-          entityType: 'allocation_result_decision',
-          entityId: decision.id,
-          metadata: {
-            productId,
-            skippedQuantity: plan.skippedQuantity,
-            allocationLineIds: plan.lines.map((line) => line.allocationLineId),
-          },
-          createdAt: occurredAt,
-        });
-        return;
-      }
-      if (activeTicket) {
-        if (activeTicket.fulfilledQuantity < plan.restoreQuantity) {
-          throw new AllocationRevocationIntegrityError(
-            `Wait ticket ${activeTicket.id} cannot restore ${plan.restoreQuantity} granted bags.`,
-          );
-        }
-        const [updated] = await tx
-          .update(waitTickets)
-          .set({
-            originalQuantity: activeTicket.originalQuantity + plan.addQuantity,
-            remainingQuantity: activeTicket.remainingQuantity + waitingQuantity,
-            fulfilledQuantity: activeTicket.fulfilledQuantity - plan.restoreQuantity,
-            updatedAt: occurredAt,
-          })
-          .where(and(eq(waitTickets.id, activeTicket.id), eq(waitTickets.status, 'active')))
-          .returning();
-        if (!updated) throw new AllocationRevocationIntegrityError('The wait ticket changed.');
-        await tx.insert(auditLogs).values({
-          requestId: input.requestId,
-          actorUserId: input.actorUserId,
-          actorStoreId: decision.storeId,
-          action: 'WAIT_TICKET_REQUEUED_FROM_RESULT',
-          entityType: 'wait_ticket',
-          entityId: activeTicket.id,
-          before: ticketSnapshot(activeTicket),
-          after: ticketSnapshot(updated),
-          metadata: {
-            allocationDecisionId: decision.id,
-            restoredQuantity: plan.restoreQuantity,
-            addedQuantity: plan.addQuantity,
-            skippedQuantity: plan.skippedQuantity,
-          },
-          createdAt: occurredAt,
-        });
-      } else {
-        const first = plan.lines.find((line) => line.mode === 'ADD_DEMAND')!;
-        const firstDisposition = group.find(
-          (row) => row.allocationLineId === first.allocationLineId,
-        )!;
-        const sourceItemId =
-          firstDisposition.orderRequestItemId ??
-          (firstDisposition.waitTicketId
-            ? sourceTicketById.get(firstDisposition.waitTicketId)?.sourceOrderRequestItemId
-            : undefined);
-        if (!sourceItemId) {
-          throw new AllocationRevocationIntegrityError('A requeued line has no order provenance.');
-        }
-        ticketId = randomUUID();
-        createdTicket = true;
-        const [created] = await tx
-          .insert(waitTickets)
-          .values({
-            id: ticketId,
+    await withAdvisoryLock(
+      tx,
+      'store-product-wait',
+      `${decision.storeId}:${productId}`,
+      async () => {
+        const [active] = await tx
+          .select()
+          .from(waitTickets)
+          .where(
+            and(
+              eq(waitTickets.storeId, decision.storeId),
+              eq(waitTickets.productId, productId),
+              eq(waitTickets.status, 'active'),
+              isNull(waitTickets.deletedAt),
+            ),
+          )
+          .for('update')
+          .limit(1);
+        const lines: WaitlistLine[] = group.map((row) => {
+          const source = row.waitTicketId ? sourceTicketById.get(row.waitTicketId) : undefined;
+          if (row.waitTicketId && !source) {
+            throw new AllocationRevocationIntegrityError(
+              `Wait ticket ${row.waitTicketId} is missing.`,
+            );
+          }
+          return {
+            allocationLineId: row.allocationLineId,
             storeId: decision.storeId,
             productId,
-            sourceOrderRequestItemId: sourceItemId,
-            status: 'active',
-            priorityLevel: 'P0B',
-            originalQuantity: plan.addQuantity,
-            remainingQuantity: plan.addQuantity,
-            fulfilledQuantity: 0,
-            queuedAt: occurredAt,
+            quantity: row.quantity,
+            sourceWaitTicket: source ? { id: source.id, status: source.status } : null,
+          };
+        });
+        const activeTicket = active ?? null;
+        const [plan] = planWaitlistRequeue(
+          lines,
+          new Map(
+            activeTicket
+              ? [[waitTicketGroupKey(decision.storeId, productId), activeTicket.id]]
+              : [],
+          ),
+        );
+        if (!plan) return;
+        let ticketId = activeTicket?.id ?? null;
+        let createdTicket = false;
+        const waitingQuantity = plan.restoreQuantity + plan.addQuantity;
+        if (waitingQuantity === 0) {
+          await tx.insert(auditLogs).values({
+            requestId: input.requestId,
+            actorUserId: input.actorUserId,
+            actorStoreId: decision.storeId,
+            action: 'WAIT_TICKET_REQUEUE_SKIPPED_CANCELLED_SOURCE',
+            entityType: 'allocation_result_decision',
+            entityId: decision.id,
+            metadata: {
+              productId,
+              skippedQuantity: plan.skippedQuantity,
+              allocationLineIds: plan.lines.map((line) => line.allocationLineId),
+            },
             createdAt: occurredAt,
-            updatedAt: occurredAt,
-          })
-          .returning();
-        await tx.insert(auditLogs).values({
-          requestId: input.requestId,
-          actorUserId: input.actorUserId,
-          actorStoreId: decision.storeId,
-          action: 'WAIT_TICKET_CREATED_FROM_RESULT',
-          entityType: 'wait_ticket',
-          entityId: ticketId,
-          after: created ? ticketSnapshot(created) : null,
-          metadata: { allocationDecisionId: decision.id, addedQuantity: plan.addQuantity },
-          createdAt: occurredAt,
-        });
-      }
-      const targetId = ticketId!;
-      const sourceRows = plan.lines
-        .filter((line) => line.mode !== 'SKIP_CANCELLED_SOURCE')
-        .map((line) => ({
-          waitTicketId: targetId,
-          kind: line.mode === 'RESTORE_SOURCE' ? ('result_restored' as const) : ('result_waitlisted' as const),
-          quantity: line.quantity,
-          orderSessionId: decision.orderSessionId,
-          allocationRunId: decision.allocationRunId,
-          allocationDecisionId: decision.id,
-          allocationLineId: line.allocationLineId,
-          sourceWaitTicketId: line.sourceWaitTicket?.id ?? null,
-          orderRequestItemId:
-            group.find((row) => row.allocationLineId === line.allocationLineId)
-              ?.orderRequestItemId ?? null,
-          actorUserId: input.actorUserId,
-          createdAt: occurredAt,
-        }));
-      await tx.insert(waitTicketSources).values(sourceRows);
-      if (plan.restoreQuantity > 0) {
-        requeued.push({
-          waitTicketId: targetId,
-          productId,
-          quantity: plan.restoreQuantity,
-          mode: 'RESTORE_SOURCE',
-          createdTicket: false,
-        });
-      }
-      if (plan.addQuantity > 0) {
-        requeued.push({
-          waitTicketId: targetId,
-          productId,
-          quantity: plan.addQuantity,
-          mode: 'ADD_DEMAND',
-          createdTicket,
-        });
-      }
-    });
+          });
+          return;
+        }
+        if (activeTicket) {
+          if (activeTicket.fulfilledQuantity < plan.restoreQuantity) {
+            throw new AllocationRevocationIntegrityError(
+              `Wait ticket ${activeTicket.id} cannot restore ${plan.restoreQuantity} granted bags.`,
+            );
+          }
+          const [updated] = await tx
+            .update(waitTickets)
+            .set({
+              originalQuantity: activeTicket.originalQuantity + plan.addQuantity,
+              remainingQuantity: activeTicket.remainingQuantity + waitingQuantity,
+              fulfilledQuantity: activeTicket.fulfilledQuantity - plan.restoreQuantity,
+              updatedAt: occurredAt,
+            })
+            .where(and(eq(waitTickets.id, activeTicket.id), eq(waitTickets.status, 'active')))
+            .returning();
+          if (!updated) throw new AllocationRevocationIntegrityError('The wait ticket changed.');
+          await tx.insert(auditLogs).values({
+            requestId: input.requestId,
+            actorUserId: input.actorUserId,
+            actorStoreId: decision.storeId,
+            action: 'WAIT_TICKET_REQUEUED_FROM_RESULT',
+            entityType: 'wait_ticket',
+            entityId: activeTicket.id,
+            before: ticketSnapshot(activeTicket),
+            after: ticketSnapshot(updated),
+            metadata: {
+              allocationDecisionId: decision.id,
+              restoredQuantity: plan.restoreQuantity,
+              addedQuantity: plan.addQuantity,
+              skippedQuantity: plan.skippedQuantity,
+            },
+            createdAt: occurredAt,
+          });
+        } else {
+          const first = plan.lines.find((line) => line.mode === 'ADD_DEMAND')!;
+          const firstDisposition = group.find(
+            (row) => row.allocationLineId === first.allocationLineId,
+          )!;
+          const sourceItemId =
+            firstDisposition.orderRequestItemId ??
+            (firstDisposition.waitTicketId
+              ? sourceTicketById.get(firstDisposition.waitTicketId)?.sourceOrderRequestItemId
+              : undefined);
+          if (!sourceItemId) {
+            throw new AllocationRevocationIntegrityError(
+              'A requeued line has no order provenance.',
+            );
+          }
+          ticketId = randomUUID();
+          createdTicket = true;
+          const [created] = await tx
+            .insert(waitTickets)
+            .values({
+              id: ticketId,
+              storeId: decision.storeId,
+              productId,
+              sourceOrderRequestItemId: sourceItemId,
+              status: 'active',
+              priorityLevel: 'P0B',
+              originalQuantity: plan.addQuantity,
+              remainingQuantity: plan.addQuantity,
+              fulfilledQuantity: 0,
+              queuedAt: occurredAt,
+              createdAt: occurredAt,
+              updatedAt: occurredAt,
+            })
+            .returning();
+          await tx.insert(auditLogs).values({
+            requestId: input.requestId,
+            actorUserId: input.actorUserId,
+            actorStoreId: decision.storeId,
+            action: 'WAIT_TICKET_CREATED_FROM_RESULT',
+            entityType: 'wait_ticket',
+            entityId: ticketId,
+            after: created ? ticketSnapshot(created) : null,
+            metadata: { allocationDecisionId: decision.id, addedQuantity: plan.addQuantity },
+            createdAt: occurredAt,
+          });
+        }
+        const targetId = ticketId!;
+        const sourceRows = plan.lines
+          .filter((line) => line.mode !== 'SKIP_CANCELLED_SOURCE')
+          .map((line) => ({
+            waitTicketId: targetId,
+            kind:
+              line.mode === 'RESTORE_SOURCE'
+                ? ('result_restored' as const)
+                : ('result_waitlisted' as const),
+            quantity: line.quantity,
+            orderSessionId: decision.orderSessionId,
+            allocationRunId: decision.allocationRunId,
+            allocationDecisionId: decision.id,
+            allocationLineId: line.allocationLineId,
+            sourceWaitTicketId: line.sourceWaitTicket?.id ?? null,
+            orderRequestItemId:
+              group.find((row) => row.allocationLineId === line.allocationLineId)
+                ?.orderRequestItemId ?? null,
+            actorUserId: input.actorUserId,
+            createdAt: occurredAt,
+          }));
+        await tx.insert(waitTicketSources).values(sourceRows);
+        if (plan.restoreQuantity > 0) {
+          requeued.push({
+            waitTicketId: targetId,
+            productId,
+            quantity: plan.restoreQuantity,
+            mode: 'RESTORE_SOURCE',
+            createdTicket: false,
+          });
+        }
+        if (plan.addQuantity > 0) {
+          requeued.push({
+            waitTicketId: targetId,
+            productId,
+            quantity: plan.addQuantity,
+            mode: 'ADD_DEMAND',
+            createdTicket,
+          });
+        }
+      },
+    );
   }
   return requeued;
 }
@@ -940,4 +958,3 @@ export async function findRevocableTicketHolds(
     .orderBy(asc(allocationResultDecisions.id));
   return rows;
 }
-

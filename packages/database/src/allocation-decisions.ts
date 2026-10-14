@@ -131,10 +131,7 @@ export class AllocationDecisionActionRetiredError extends Error {
 }
 
 export type AllocationDecisionConflictReason =
-  | 'ALREADY_ANSWERED'
-  | 'NOT_ANSWERABLE'
-  | 'STALE_VERSION'
-  | 'NOTHING_ACTIONABLE';
+  'ALREADY_ANSWERED' | 'NOT_ANSWERABLE' | 'STALE_VERSION' | 'NOTHING_ACTIONABLE';
 
 export class AllocationDecisionConflictError extends Error {
   public readonly code = 'ALLOCATION_DECISION_CONFLICT';
@@ -780,7 +777,8 @@ async function assembleDecisionRecords(
           waitTicketCode: row.waitTicketCode,
           productId: row.productId,
           quantity: row.quantity,
-          mode: row.kind === 'result_restored' ? ('RESTORE_SOURCE' as const) : ('ADD_DEMAND' as const),
+          mode:
+            row.kind === 'result_restored' ? ('RESTORE_SOURCE' as const) : ('ADD_DEMAND' as const),
           createdTicket: row.createdTicket === true,
         })),
       carried: shipment

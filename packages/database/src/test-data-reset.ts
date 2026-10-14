@@ -5,9 +5,9 @@ import { idosiProductSaleGrams, idosiItemsForProduct } from './store-sale-sync.j
 import { idosiNormalSaleGrams } from './store-normal-sale-sync.js';
 import { resetLinkSignature } from './reset-sale-boundary.js';
 
-/** Reviewed PostgreSQL 17 catalog built by migrations 0000..0043 in the isolated fixture. */
+/** Reviewed PostgreSQL 17 catalog built by migrations 0000..0044 in the isolated fixture. */
 export const EXPECTED_RESET_SCHEMA_HASH =
-  'f17472be9bf34326b79988a3b48e6334c1ba9b578932afaf90d7bd82b787c14b';
+  'cea2431a57b4adc177ba8da62a2c7c4236773934bce654e0889f3e04c1144b85';
 
 /** Only this reviewed set can ever be passed to TRUNCATE. No SQL comes from a manifest. */
 export const RESET_PURGE_TABLES = [
@@ -70,6 +70,9 @@ export const RESET_PURGE_TABLES = [
   'reshare_order_lines',
   'reshare_order_sources',
   'supplier_observation_reshare_coverage',
+  // 0044: result revocations and wait-ticket lineage go with the results and tickets they describe.
+  'allocation_line_dispositions',
+  'wait_ticket_sources',
 ] as const;
 export const RESET_KEEP_TABLES = [
   'users',

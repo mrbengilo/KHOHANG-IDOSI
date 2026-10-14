@@ -1083,6 +1083,8 @@ export interface WarehouseRepository extends SupplierReconciliationRepository {
 /** Opt-in response fields of allocation decisions (older bundles validate the strict shape). */
 export interface AllocationDecisionView {
   readonly includeReshare?: boolean;
+  /** 0044: WAITLISTED/CANCELLED statuses, WAITLIST action and revocation details. */
+  readonly includeWaitlist?: boolean;
 }
 
 export function mayAnswerAllocationDecision(
@@ -1093,25 +1095,26 @@ export function mayAnswerAllocationDecision(
 }
 
 /**
- * Actions the account may take on a pending result of this store: the receiving side accepts or
- * rejects; an HTKD assigned to the active store may accept on its behalf (never reject). The
+ * Actions the account may take on a pending result of this store: "Xác nhận phân bổ" (ACCEPT)
+ * and "Chuyển phiếu chờ" (WAITLIST), for the receiving side and for an HTKD assigned to the
+ * active store. Uses the allocation scope (assignments), never the Reshare-wide HTKD scope. The
  * database re-checks the live account, store and assignment inside the command transaction.
  */
 export function allocationDecisionActionsFor(
   principal: AuthenticatedPrincipal,
   store: { readonly id: string; readonly kind: 'RETAIL' | 'WHOLESALE'; readonly active: boolean },
-): readonly ('ACCEPT' | 'REJECT')[] {
+): readonly ('ACCEPT' | 'WAITLIST')[] {
   if (!store.active) return [];
   if (principal.role === 'STORE') {
-    return principal.storeId === store.id && store.kind === 'RETAIL' ? ['ACCEPT', 'REJECT'] : [];
+    return principal.storeId === store.id && store.kind === 'RETAIL' ? ['ACCEPT', 'WAITLIST'] : [];
   }
   if (principal.role === 'WHOLESALE') {
     return principal.assignedStoreIds.includes(store.id) && store.kind === 'WHOLESALE'
-      ? ['ACCEPT', 'REJECT']
+      ? ['ACCEPT', 'WAITLIST']
       : [];
   }
   if (principal.role === 'HTKD') {
-    return principal.assignedStoreIds.includes(store.id) ? ['ACCEPT'] : [];
+    return principal.assignedStoreIds.includes(store.id) ? ['ACCEPT', 'WAITLIST'] : [];
   }
   return [];
 }

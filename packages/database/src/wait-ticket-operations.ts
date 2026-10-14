@@ -1288,7 +1288,8 @@ export async function previewWaitTicketCancellation(
         scope,
       };
     },
-    { isolationLevel: 'repeatable read', accessMode: 'read only' },
+    // No writes; not read-only only because authorization takes FOR SHARE row locks.
+    { isolationLevel: 'repeatable read' },
   );
 }
 
@@ -1423,7 +1424,9 @@ export async function cancelWaitTicketInTransaction(
               const holdIds = holds.map((hold) => hold.reservation.id).sort();
               const expectedIds = expected.map((line) => line.reservationId).sort();
               if (JSON.stringify(holdIds) !== JSON.stringify(expectedIds)) {
-                throw new WaitTicketConflictError('Holds of the ticket changed during cancellation.');
+                throw new WaitTicketConflictError(
+                  'Holds of the ticket changed during cancellation.',
+                );
               }
               const revoked = await revokeResultHoldsInTransaction(tx, {
                 decision,
@@ -1469,7 +1472,12 @@ export async function cancelWaitTicketInTransaction(
               cancellationKind,
               updatedAt: now,
             })
-            .where(and(eq(waitTickets.id, ticket.id), inArray(waitTickets.status, ['active', 'fulfilled'])))
+            .where(
+              and(
+                eq(waitTickets.id, ticket.id),
+                inArray(waitTickets.status, ['active', 'fulfilled']),
+              ),
+            )
             .returning({ id: waitTickets.id });
           if (!updated) {
             throw new WaitTicketConflictError('The wait ticket changed during cancellation.');

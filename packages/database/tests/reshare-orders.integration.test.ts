@@ -3,6 +3,9 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
+  AllocationDecisionActionRetiredError,
+  cancelWaitTicket,
+  waitTickets,
   AllocationDecisionConflictError,
   AllocationDecisionForbiddenError,
   allocationResultDecisions,
@@ -322,7 +325,7 @@ describePostgres('RE orders issue accepted goods out of the central warehouse', 
     expect(otherScope.data).toEqual([]);
   });
 
-  it('an assigned HTKD may accept (audited as HTKD) but never reject; unassigned, revoked or locked HTKD cannot', async () => {
+  it('an assigned HTKD may accept (audited as HTKD); nobody may use the retired reject; unassigned, revoked or locked HTKD cannot', async () => {
     const product = await createProduct('HTKD');
     await openingStock(product, 30);
     const forReject = await publishPendingResult(fx, {
@@ -330,7 +333,7 @@ describePostgres('RE orders issue accepted goods out of the central warehouse', 
       grants: [{ productId: product, quantity: 1 }],
     });
     await expect(respond(forReject.decisionId, fx.htkdId, 'REJECT')).rejects.toBeInstanceOf(
-      AllocationDecisionForbiddenError,
+      AllocationDecisionActionRetiredError,
     );
     await expect(respond(forReject.decisionId, fx.otherHtkdId, 'ACCEPT')).rejects.toBeInstanceOf(
       AllocationDecisionForbiddenError,
@@ -408,7 +411,7 @@ describePostgres('RE orders issue accepted goods out of the central warehouse', 
       const outcomes = await Promise.allSettled([
         respond(result.decisionId, fx.storeUserA, 'ACCEPT'),
         respond(result.decisionId, fx.htkdId, 'ACCEPT'),
-        respond(result.decisionId, fx.storeUserA, 'REJECT'),
+        respond(result.decisionId, fx.storeUserA, 'WAITLIST'),
       ]);
       expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
       for (const outcome of outcomes.filter((row) => row.status === 'rejected')) {
@@ -682,7 +685,7 @@ describePostgres('RE orders issue accepted goods out of the central warehouse', 
     expect(await balanceOf(product)).toEqual(await ledgerTotals(product));
   });
 
-  it('receipt sources and REJECT never pick up an issued hold twice', async () => {
+  it('receipt sources and the move to waiting never pick up an issued hold twice', async () => {
     const product = await createProduct('Ưu tiên');
     await openingStock(product, 20);
     // Priority-only result accepted without a shipment: issued now, waits for the next order.
@@ -698,7 +701,7 @@ describePostgres('RE orders issue accepted goods out of the central warehouse', 
       grants: [{ productId: product, quantity: 3 }],
       carry: priority.reservationIds,
     });
-    await respond(next.decisionId, fx.storeUserA, 'REJECT');
+    await respond(next.decisionId, fx.storeUserA, 'WAITLIST');
     // Only the new grant went back; the issued 2 stay issued and unlinked for the next order.
     expect(await balanceOf(product)).toEqual({ onHand: 18, reserved: 0 });
     const rows = await db
@@ -709,6 +712,26 @@ describePostgres('RE orders issue accepted goods out of the central warehouse', 
       true,
     );
     expect(await orderOf(next.decisionId)).toBeNull();
+    // The 3 bags wait again on a ticket; the store drops that demand before ordering anew
+    // (a new order item is refused while an active ticket waits for the same product).
+    const [waiting] = await db
+      .select({ id: waitTickets.id })
+      .from(waitTickets)
+      .where(
+        and(
+          eq(waitTickets.storeId, fx.storeA),
+          eq(waitTickets.productId, product),
+          eq(waitTickets.status, 'active'),
+        ),
+      );
+    expect(waiting).toBeDefined();
+    await cancelWaitTicket(db, {
+      waitTicketId: waiting!.id,
+      actorUserId: fx.storeUserA,
+      reason: 'Đặt lại bằng đơn mới',
+      idempotencyKey: randomUUID(),
+      requestHash: 'cancel-requeued',
+    });
     const third = await publishPendingResult(fx, {
       storeId: fx.storeA,
       grants: [{ productId: product, quantity: 1 }],
