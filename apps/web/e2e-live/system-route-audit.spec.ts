@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page, type Response } from '@playwright/test';
 import { routeAccessPolicies, canAccessRoute } from '../src/lib/access';
+import { tableHeadingIssues } from './table-heading-typography';
 
 const api = 'http://127.0.0.1:3100/api/v1';
 const admin = {
@@ -178,6 +179,15 @@ test('all registered route guards and reachable table layouts across four roles'
             ),
           );
         }
+        // Sentence-case bold headers on desktop, sentence-case bold card labels on mobile.
+        await page.setViewportSize({ width: 1440, height: 900 });
+        const desktopHeadings = await tableHeadingIssues(page);
+        await page.setViewportSize({ width: 390, height: 900 });
+        const mobileHeadings = await tableHeadingIssues(page);
+        expect
+          .soft([...desktopHeadings, ...mobileHeadings], `${role} ${route} table headings`)
+          .toEqual([]);
+        await page.setViewportSize({ width: 2560, height: 900 });
         const alerts = await page.getByRole('alert').allTextContents();
         // Toggle only the new density classes on the same DOM/data to avoid comparing
         // different fixtures after live workflow tests have added stores and documents.
@@ -289,6 +299,14 @@ test('all registered route guards and reachable table layouts across four roles'
                 `${role} ${route} tab ${name} ${width}`,
               )
               .toBeLessThanOrEqual(width + 1);
+            if (width === 360 || width === 1440) {
+              expect
+                .soft(
+                  await tableHeadingIssues(page),
+                  `${role} ${route} tab ${name} ${width} table headings`,
+                )
+                .toEqual([]);
+            }
           }
           expect
             .soft(await page.getByRole('alert').allTextContents(), `${role} ${route} tab ${name}`)

@@ -329,10 +329,11 @@
 
 .admin-table th {
   background: var(--surface-muted);
-  color: var(--muted);
-  font-size: 11px;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: normal;
+  text-transform: none;
 }
 
 .admin-table tbody tr:last-child td {
@@ -783,12 +784,12 @@
   }
 
   .admin-table td::before {
-    color: var(--muted);
+    color: var(--text-secondary);
     content: attr(data-label);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    letter-spacing: normal;
+    text-transform: none;
   }
 
   /* Nút thao tác trong thẻ nằm cạnh nhau theo bề rộng nhãn, không kéo dài hết thẻ. */
