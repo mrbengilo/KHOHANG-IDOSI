@@ -213,8 +213,10 @@ test('HTKD sees all assigned priority offers, reads central stock and cancels th
     const row = htkdPage!.locator('.waitlist-panel article').filter({ hasText: tickets[1]!.code });
     await row.getByRole('button', { name: 'Hủy phiếu chờ', exact: true }).click();
     const dialog = htkdPage!.getByRole('dialog');
+    // The dialog shows the server's cancellation scope before anything can be confirmed.
+    await expect(dialog).toContainText('Nhu cầu còn chờ bị hủy');
     await dialog.getByLabel('Lý do hủy').fill('HTKD hủy theo yêu cầu cửa hàng');
-    await dialog.getByRole('button', { name: 'Hủy phiếu chờ', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Xác nhận hủy phiếu chờ', exact: true }).click();
     await expect(dialog).toHaveCount(0);
     await expect(row).toContainText('Đã bị hủy');
     const history = await tabApi(htkdPage!).get(`${api}/wait-tickets/${tickets[1]!.id}/history`);

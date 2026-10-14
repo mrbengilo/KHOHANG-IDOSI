@@ -22,6 +22,8 @@ const ALLOCATION_LABELS = [
   'Danh sách phiếu chờ',
   'Tạo phiên mới',
 ];
+/** HTKD, store and wholesale read their own scope of wait tickets under this tab. */
+const SCOPED_WAIT_TICKETS_LABEL = 'Phiếu chờ ưu tiên';
 const INVENTORY_LABELS = ['Kho tổng', 'Kho cửa hàng', 'Phiếu sai lệch'];
 const WAREHOUSE_LABELS = ['Tồn hiện tại', 'Kiểm hàng thiếu', 'Lịch sử xuất', 'Lịch sử điều chỉnh'];
 const STORE_LABELS = ['Tồn cửa hàng', 'Sổ phát sinh'];
@@ -379,13 +381,18 @@ test('HTKD allocation tabs are prominent and the create tab stays Admin-only', a
   const log = await mockApi(page, 'HTKD');
   await page.goto('/allocations?tab=create');
   const tablist = allocationBar(page);
-  await expect(tablist.getByRole('tab')).toHaveCount(2);
+  await expect(tablist.getByRole('tab')).toHaveCount(3);
   await expect(tablist.getByRole('tab', { name: 'Tạo phiên mới' })).toHaveCount(0);
   // A deep link to the Admin-only tab falls back to the sessions tab with no create content.
   await expectSelected(page, tablist, 'Phiên và kết quả');
   await expect(page.getByRole('heading', { name: 'Tạo phiên bổ sung' })).toHaveCount(0);
   const metrics = await measureBar(tablist);
-  expectProminent(metrics, 'primary', ALLOCATION_LABELS.slice(0, 2), viewportWidth(page));
+  expectProminent(
+    metrics,
+    'primary',
+    [...ALLOCATION_LABELS.slice(0, 2), SCOPED_WAIT_TICKETS_LABEL],
+    viewportWidth(page),
+  );
   await page.goto('/allocations?tab=history');
   await expectSelected(page, tablist, 'Lịch sử đặt hàng');
   await tablist.getByRole('tab', { name: 'Phiên và kết quả', exact: true }).click();
@@ -534,7 +541,10 @@ test('store accounts keep their stock by default and read the warehouse without 
   ).toBe(false);
 
   await page.goto('/allocations');
-  await expect(allocationBar(page).getByRole('tab')).toHaveCount(1);
+  await expect(allocationBar(page).getByRole('tab')).toHaveCount(2);
+  await expect(
+    allocationBar(page).getByRole('tab', { name: SCOPED_WAIT_TICKETS_LABEL, exact: true }),
+  ).toHaveCount(1);
   measured['STORE:allocations'] = await measureBar(allocationBar(page));
   expectDefault(measured['STORE:allocations'], 'primary');
   expect(log.mutations).toEqual([]);
@@ -983,6 +993,27 @@ test('Admin wait list has nine columns, server pages, cancellation history and U
       },
     });
   });
+  // Cancelling starts from the server's read-only preview; nothing here is revocable.
+  await page.route('**/api/v1/wait-tickets/*/cancel-preview', (route) =>
+    route.fulfill({
+      json: {
+        data: {
+          waitTicketId: ticket.id,
+          code: ticket.code,
+          storeId: ticket.storeId,
+          productId: ticket.productId,
+          cancellable: true,
+          refusal: null,
+          waitingQuantity: 3,
+          offers: [],
+          revocable: [],
+          protected: [],
+          cancelledQuantity: 3,
+          fingerprint: 'a'.repeat(64),
+        },
+      },
+    }),
+  );
   await page.route('**/api/v1/wait-tickets/*/cancel', async (route) => {
     ticket.status = 'CANCELLED';
     ticket.resolutionReason = route.request().postDataJSON().reason;
@@ -1015,8 +1046,9 @@ test('Admin wait list has nine columns, server pages, cancellation history and U
   await table.getByRole('button', { name: 'Hủy phiếu chờ', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toContainText('PC-0000800');
+  await expect(dialog).toContainText('Nhu cầu còn chờ bị hủy');
   await dialog.getByLabel('Lý do hủy').fill('Không còn nhu cầu sau đối soát');
-  await dialog.getByRole('button', { name: 'Hủy phiếu chờ', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Xác nhận hủy phiếu chờ', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(table).toContainText('Đã bị hủy');
   await expect(table).toContainText('Không còn nhu cầu sau đối soát');
