@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildOrderLines,
   freeChangeSentence,
+  isReshareManager,
   fromBusinessLocalInput,
   pageTotals,
   parseBags,
@@ -68,11 +69,17 @@ const commitment = (overrides: Partial<SupplierCommitment>): SupplierCommitment 
 
 describe('supplier reconciliation UI model', () => {
   it('gives each role only its tabs and falls back safely on deep links', () => {
-    // Every role starts on its RE orders; only Admin updates stock and configures sources.
+    // Every role starts on its RE orders; Admin and HTKD (Reshare managers) get every tab.
     expect(supplierTabsFor('ADMIN')).toEqual(['orders', 'reconcile', 'history', 'settings']);
-    expect(supplierTabsFor('HTKD')).toEqual(['orders']);
+    expect(supplierTabsFor('HTKD')).toEqual(['orders', 'reconcile', 'history', 'settings']);
     expect(supplierTabsFor('STORE')).toEqual(['orders']);
-    expect(readSupplierTab('settings', 'HTKD')).toBe('orders');
+    expect(supplierTabsFor('WHOLESALE')).toEqual(['orders']);
+    expect(readSupplierTab('settings', 'HTKD')).toBe('settings');
+    expect(readSupplierTab('reconcile', 'HTKD')).toBe('reconcile');
+    expect(readSupplierTab('settings', 'STORE')).toBe('orders');
+    expect(readSupplierTab('reconcile', 'WHOLESALE')).toBe('orders');
+    expect(isReshareManager('HTKD')).toBe(true);
+    expect(isReshareManager('WHOLESALE')).toBe(false);
     expect(readSupplierTab('history', 'ADMIN')).toBe('history');
     expect(readSupplierTab(null, 'WHOLESALE')).toBe('orders');
     // The old "status" deep link opens the order history; manual records stay reachable.
@@ -112,8 +119,9 @@ describe('supplier reconciliation UI model', () => {
       ),
     ).toContain('thiếu nguồn 2 bao');
     expect(positionSentence(position({ state: 'NO_BASELINE' }))).toContain('chưa cấp mới');
-    expect(freeChangeSentence('NAM-01', 0, 0)).toBe('NAM-01: khả dụng giữ nguyên 0 bao.');
-    expect(freeChangeSentence('NAM-01', 0, 4)).toBe('NAM-01: khả dụng 0 → 4 bao (+4).');
+    // Notices name the product only, never its SKU.
+    expect(freeChangeSentence('Đồ nam', 0, 0)).toBe('Đồ nam: khả dụng giữ nguyên 0 bao.');
+    expect(freeChangeSentence('Đồ nam', 0, 4)).toBe('Đồ nam: khả dụng 0 → 4 bao (+4).');
   });
 
   it('converts business time (UTC+7) both ways', () => {
@@ -141,7 +149,9 @@ describe('supplier reconciliation UI model', () => {
       lines: [{ reservationId: a.id, quantity: 2, externalLineRef: 'NAM-01' }],
       error: null,
     });
-    expect(buildOrderLines([a], new Map([[a.id, '3']]), new Map()).error).toContain('từ 1 đến 2');
+    const tooMany = buildOrderLines([a], new Map([[a.id, '3']]), new Map()).error;
+    expect(tooMany).toBe('Đồ nam (Cửa hàng 1): nhập từ 1 đến 2 bao Reshare đã nhận.');
+    expect(tooMany).not.toContain('NAM-01');
     expect(
       buildOrderLines(
         [a, b],

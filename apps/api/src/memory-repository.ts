@@ -39,6 +39,9 @@ import type {
   ListAllocationDecisionsQuery,
   ListReshareOrdersQuery,
   ListReshareOrdersResponse,
+  ListReshareStoresResponse,
+  ReshareStatusHistoryQuery,
+  ReshareStatusHistoryResponse,
   RespondAllocationDecisionRequest,
 } from '@idosi/contracts';
 import type { ListStoreBagOpeningsQuery, StoreBagOpening } from '@idosi/contracts';
@@ -218,6 +221,9 @@ import {
   assertActiveRetailStore,
   allocationDecisionActionsFor,
   canAccessStore,
+  isReshareManager,
+  RESHARE_MANAGER_FORBIDDEN_MESSAGE,
+  reshareStoreScope,
   pagination,
   slicePage,
   WAREHOUSE_INVENTORY_READ_ROLES,
@@ -378,8 +384,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   // so reads are empty and commands fail exactly as a fresh PostgreSQL system would.
 
   public async listSupplierSources(actor: AuthenticatedPrincipal): Promise<SupplierSource[]> {
-    if (actor.role !== 'ADMIN')
-      throw forbidden('Chỉ Admin được đối chiếu và cấu hình nguồn Reshare.');
+    if (!isReshareManager(actor)) throw forbidden(RESHARE_MANAGER_FORBIDDEN_MESSAGE);
     return [];
   }
 
@@ -387,8 +392,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     actor: AuthenticatedPrincipal,
     _input: CreateSupplierSourceRequest,
   ): Promise<IdempotentResource<{ id: string }>> {
-    if (actor.role !== 'ADMIN')
-      throw forbidden('Chỉ Admin được đối chiếu và cấu hình nguồn Reshare.');
+    if (!isReshareManager(actor)) throw forbidden(RESHARE_MANAGER_FORBIDDEN_MESSAGE);
     throw new ApiError(
       'INTEGRATION_NOT_CONFIGURED',
       'Cấu hình nguồn Reshare cần cơ sở dữ liệu PostgreSQL.',
@@ -399,8 +403,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   public async addSupplierSourceProducts(
     actor: AuthenticatedPrincipal,
   ): Promise<IdempotentResource<{ added: string[] }>> {
-    if (actor.role !== 'ADMIN')
-      throw forbidden('Chỉ Admin được đối chiếu và cấu hình nguồn Reshare.');
+    if (!isReshareManager(actor)) throw forbidden(RESHARE_MANAGER_FORBIDDEN_MESSAGE);
     throw notFound('Không tìm thấy nguồn Reshare.');
   }
 
@@ -408,8 +411,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     actor: AuthenticatedPrincipal,
     query: SupplierReconciliationQuery,
   ): Promise<SupplierReconciliationResponse> {
-    if (actor.role !== 'ADMIN')
-      throw forbidden('Chỉ Admin được đối chiếu và cấu hình nguồn Reshare.');
+    if (!isReshareManager(actor)) throw forbidden(RESHARE_MANAGER_FORBIDDEN_MESSAGE);
     return {
       data: [],
       pagination: pagination(query.page, query.pageSize, 0),
@@ -421,16 +423,14 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   public async previewSupplierObservation(
     actor: AuthenticatedPrincipal,
   ): Promise<SupplierObservationPreview> {
-    if (actor.role !== 'ADMIN')
-      throw forbidden('Chỉ Admin được đối chiếu và cấu hình nguồn Reshare.');
+    if (!isReshareManager(actor)) throw forbidden(RESHARE_MANAGER_FORBIDDEN_MESSAGE);
     throw notFound('Không tìm thấy nguồn Reshare.');
   }
 
   public async confirmSupplierObservation(
     actor: AuthenticatedPrincipal,
   ): Promise<IdempotentResource<SupplierObservation>> {
-    if (actor.role !== 'ADMIN')
-      throw forbidden('Chỉ Admin được đối chiếu và cấu hình nguồn Reshare.');
+    if (!isReshareManager(actor)) throw forbidden(RESHARE_MANAGER_FORBIDDEN_MESSAGE);
     throw notFound('Không tìm thấy nguồn Reshare.');
   }
 
@@ -438,8 +438,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     actor: AuthenticatedPrincipal,
     query: SupplierObservationHistoryQuery,
   ): Promise<Page<SupplierObservationHistoryRow>> {
-    if (actor.role !== 'ADMIN')
-      throw forbidden('Chỉ Admin được đối chiếu và cấu hình nguồn Reshare.');
+    if (!isReshareManager(actor)) throw forbidden(RESHARE_MANAGER_FORBIDDEN_MESSAGE);
     return { data: [], pagination: pagination(query.page, query.pageSize, 0) };
   }
 
@@ -447,12 +446,12 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     actor: AuthenticatedPrincipal,
     query: SupplierCommitmentsQuery,
   ): Promise<SupplierCommitmentsResponse> {
-    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    reshareStoreScope(actor, query.storeId);
     return {
       data: [],
       pagination: pagination(query.page, query.pageSize, 0),
       totals: { quantity: 0, orderedQuantity: 0, unorderedQuantity: 0 },
-      scoped: actor.role !== 'ADMIN',
+      scoped: !isReshareManager(actor),
     };
   }
 
@@ -460,7 +459,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     actor: AuthenticatedPrincipal,
     query: ListSupplierOrdersQuery,
   ): Promise<Page<SupplierBatch>> {
-    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    reshareStoreScope(actor, query.storeId);
     return { data: [], pagination: pagination(query.page, query.pageSize, 0) };
   }
 
@@ -468,7 +467,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     actor: AuthenticatedPrincipal,
     _input: RecordSupplierOrderRequest,
   ): Promise<IdempotentResource<SupplierBatch>> {
-    if (actor.role !== 'ADMIN' && actor.role !== 'HTKD') throw forbidden();
+    if (!isReshareManager(actor)) throw forbidden();
     throw new ApiError('SOURCE_NOT_RECONCILED', 'Mặt hàng chưa thuộc nguồn Reshare.', 409);
   }
 
@@ -477,7 +476,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     _eventId: string,
     _input: CancelSupplierOrderRequest,
   ): Promise<IdempotentResource<SupplierBatch>> {
-    if (actor.role !== 'ADMIN' && actor.role !== 'HTKD') throw forbidden();
+    if (!isReshareManager(actor)) throw forbidden();
     throw notFound('Không tìm thấy dòng đơn Reshare.');
   }
 
@@ -485,8 +484,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     actor: AuthenticatedPrincipal,
     _input: RecordSupplierSourceReturnRequest,
   ): Promise<IdempotentResource<SupplierBatch>> {
-    if (actor.role !== 'ADMIN')
-      throw forbidden('Chỉ Admin được đối chiếu và cấu hình nguồn Reshare.');
+    if (!isReshareManager(actor)) throw forbidden(RESHARE_MANAGER_FORBIDDEN_MESSAGE);
     throw new ApiError('SOURCE_NOT_RECONCILED', 'Mặt hàng chưa thuộc nguồn Reshare.', 409);
   }
 
@@ -782,7 +780,11 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly reshareOrders = new Map<string, MemoryReshareOrder>();
   private readonly reshareStatuses = new Map<
     string,
-    ReshareOrderStatusUpdate & { updatedAt: string; updatedByName: string | null }
+    ReshareOrderStatusUpdate & {
+      updatedAt: string;
+      updatedByName: string | null;
+      updatedByRole: AuthenticatedPrincipal['role'];
+    }
   >();
   private readonly reshareStatusMutations = new Map<
     string,
@@ -1799,7 +1801,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     context: RequestContext,
   ): Promise<IdempotentResource<ReshareOrderStatusUpdate>> {
     const account = this.accounts.get(actor.accountId);
-    if (actor.role !== 'ADMIN' || account?.role !== 'ADMIN' || account.status !== 'ACTIVE')
+    if (!isReshareManager(actor) || account?.role !== actor.role || account.status !== 'ACTIVE')
       throw forbidden();
     const scope = `${actor.accountId}:${decisionId}:${key}`;
     const replay = this.reshareStatusMutations.get(scope);
@@ -1821,6 +1823,16 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       previous?.status ?? (this.reshareOrders.has(decisionId) ? 'ORDERED' : 'NOT_ORDERED');
     if ((previous?.version ?? 0) !== input.expectedVersion || before !== input.expectedStatus)
       throw new ApiError('VERSION_CONFLICT', 'Trạng thái đã thay đổi. Hãy tải lại danh sách.', 409);
+    if (input.status === before) {
+      // Already in this status: no new version and no X → X history event (same as PostgreSQL).
+      const unchanged: ReshareOrderStatusUpdate = {
+        decisionId,
+        status: input.status,
+        version: input.expectedVersion,
+      };
+      this.reshareStatusMutations.set(scope, { requestHash, data: unchanged });
+      return { data: unchanged, replayed: false };
+    }
     const data: ReshareOrderStatusUpdate = {
       decisionId,
       status: input.status,
@@ -1830,6 +1842,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       ...data,
       updatedAt: new Date().toISOString(),
       updatedByName: account.displayName,
+      updatedByRole: actor.role,
     });
     this.reshareStatusMutations.set(scope, { requestHash, data });
     this.appendAudit(
@@ -1840,18 +1853,114 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       decisionId,
       { status: before, version: input.expectedVersion },
       data,
+      {
+        actorName: account.displayName,
+        reshareOrderCode: this.reshareOrders.get(decisionId)?.code ?? null,
+      },
     );
     return { data, replayed: false };
+  }
+
+  public async listReshareStatusHistory(
+    actor: AuthenticatedPrincipal,
+    decisionId: string,
+    query: ReshareStatusHistoryQuery,
+  ): Promise<ReshareStatusHistoryResponse> {
+    const decision = this.allocationDecisions.get(decisionId);
+    const visible =
+      decision !== undefined &&
+      (isReshareManager(actor) ||
+        (canAccessStore(actor, decision.storeId) &&
+          (decision.status === 'PENDING' || decision.status === 'ACCEPTED')));
+    if (!decision || !visible) throw notFound('Không tìm thấy kết quả phân bổ.');
+    const orderId = this.reshareOrders.get(decisionId)?.id;
+    const status = (value: unknown) =>
+      value === 'ordered' || value === 'ORDERED'
+        ? ('ORDERED' as const)
+        : value === 'not_ordered' || value === 'NOT_ORDERED'
+          ? ('NOT_ORDERED' as const)
+          : null;
+    const field = (value: unknown, key: string): unknown =>
+      value !== null && typeof value === 'object'
+        ? (value as Record<string, unknown>)[key]
+        : undefined;
+    const events = this.audit
+      .filter(
+        (entry) =>
+          (entry.action === 'RESHARE_ORDER_STATUS_UPDATED' && entry.entityId === decisionId) ||
+          (entry.action === 'RESHARE_ORDER_CREATED' && entry.entityId === orderId),
+      )
+      .sort(
+        (left, right) =>
+          right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
+      );
+    return {
+      data: slicePage(events, query.page, query.pageSize).map((entry) => {
+        const created = entry.action === 'RESHARE_ORDER_CREATED';
+        const name = field(entry.metadata, 'actorName');
+        const version = field(entry.after, 'version');
+        const code = created
+          ? field(entry.after, 'code')
+          : field(entry.metadata, 'reshareOrderCode');
+        return {
+          id: entry.id,
+          occurredAt: entry.createdAt,
+          kind: created ? ('CREATED' as const) : ('STATUS_CHANGED' as const),
+          source: created ? ('ACCEPTANCE' as const) : ('MANUAL' as const),
+          statusBefore: status(
+            created ? field(entry.metadata, 'reshareStatusBefore') : field(entry.before, 'status'),
+          ),
+          statusAfter: status(
+            created ? field(entry.metadata, 'reshareStatusAfter') : field(entry.after, 'status'),
+          ),
+          version: typeof version === 'number' ? version : null,
+          orderCode: typeof code === 'string' ? code : null,
+          actor: {
+            accountId: entry.actorAccountId,
+            role: entry.actorRole,
+            nameAtEvent: typeof name === 'string' ? name : null,
+            currentName:
+              typeof name === 'string'
+                ? null
+                : (this.accounts.get(entry.actorAccountId)?.displayName ?? null),
+          },
+          requestId: entry.requestId,
+        };
+      }),
+      pagination: pagination(query.page, query.pageSize, events.length),
+      decision: { id: decision.id, storeId: decision.storeId, publishedAt: decision.createdAt },
+    };
+  }
+
+  public async listReshareStores(
+    actor: AuthenticatedPrincipal,
+  ): Promise<ListReshareStoresResponse> {
+    const scope = reshareStoreScope(actor, undefined);
+    return {
+      data: [...this.stores.values()]
+        .filter((store) => scope === undefined || scope.includes(store.id))
+        .sort(
+          (left, right) =>
+            left.name.localeCompare(right.name, 'vi') || left.id.localeCompare(right.id),
+        )
+        .map((store) => ({
+          id: store.id,
+          code: store.code,
+          name: store.name,
+          isActive: store.status === 'ACTIVE',
+        })),
+      scoped: scope !== undefined,
+    };
   }
 
   public async listReshareOrders(
     actor: AuthenticatedPrincipal,
     query: ListReshareOrdersQuery,
   ): Promise<ListReshareOrdersResponse> {
-    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const scope = reshareStoreScope(actor, query.storeId);
     const rows = [...this.allocationDecisions.values()]
       .filter((decision) => decision.status === 'PENDING' || decision.status === 'ACCEPTED')
-      .filter((decision) => canAccessStore(actor, decision.storeId))
+      .filter((decision) => scope === undefined || scope.includes(decision.storeId))
       .filter((decision) => query.storeId === undefined || decision.storeId === query.storeId)
       .filter((decision) => query.sessionId === undefined || decision.sessionId === query.sessionId)
       .filter((decision) => query.decisionId === undefined || decision.id === query.decisionId)
@@ -1905,6 +2014,9 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
                     version: manual?.version ?? 0,
                     updatedAt: manual?.updatedAt ?? null,
                     updatedByName: manual?.updatedByName ?? null,
+                    ...(query.includeStatusActor
+                      ? { updatedByRole: manual?.updatedByRole ?? null }
+                      : {}),
                   },
                 }
               : {}),
@@ -1940,7 +2052,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         },
       ),
       pagination: pagination(query.page, query.pageSize, rows.length),
-      scoped: actor.role !== 'ADMIN',
+      scoped: !isReshareManager(actor),
     };
   }
 
@@ -2057,7 +2169,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         if (balance) balance.onHandQuantity = Math.max(0, balance.onHandQuantity - line.quantity);
       }
       this.reshareOrderSequence += 1;
-      this.reshareOrders.set(decisionId, {
+      const order: MemoryReshareOrder = {
         id: randomUUID(),
         code: formatReshareOrderCode(this.reshareOrderSequence),
         orderedAt: now,
@@ -2065,7 +2177,24 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         actorRole: actor.role,
         totalQuantity: lines.reduce((total, line) => total + line.quantity, 0),
         lines,
-      });
+      };
+      this.reshareOrders.set(decisionId, order);
+      const manual = this.reshareStatuses.get(decisionId)?.status;
+      this.appendAudit(
+        actor,
+        context,
+        'RESHARE_ORDER_CREATED',
+        'reshare_order',
+        order.id,
+        null,
+        { code: order.code, status: 'ordered', allocationDecisionId: decisionId },
+        {
+          trigger: 'allocation-result-accepted',
+          actorName: this.accounts.get(actor.accountId)?.displayName ?? null,
+          reshareStatusBefore: manual === 'ORDERED' ? 'ordered' : 'not_ordered',
+          reshareStatusAfter: manual === 'NOT_ORDERED' ? 'not_ordered' : 'ordered',
+        },
+      );
     }
     const updated: AllocationDecisionDetail = {
       ...current,
@@ -2145,7 +2274,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     query: ListSessionDocumentsQuery,
   ): Promise<Page<SessionDocument>> {
     // Official documents require the persisted worker snapshot; memory mode has none.
-    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    reshareStoreScope(actor, query.storeId);
     return { data: [], pagination: pagination(query.page, query.pageSize, 0) };
   }
 

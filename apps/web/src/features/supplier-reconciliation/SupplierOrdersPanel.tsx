@@ -3,7 +3,7 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useRef, useState, type FormEvent } from 'react';
 
 import { Button } from '../../components/Button';
-import { ApiClientError, listAccessibleStores, listCatalog } from '../../lib/api';
+import { ApiClientError, listCatalog } from '../../lib/api';
 import { formatDocumentTime } from '../../lib/business-time';
 import { formatInteger } from '../../lib/format';
 import { retainIdempotencyForExactRetry, type RetryAttempt } from '../../lib/idempotency-retry';
@@ -13,6 +13,7 @@ import { Pager } from './ReconciliationWorkspace';
 import {
   SUPPLIER_QUERY_ROOTS,
   cancelSupplierOrder,
+  loadReshareStores,
   loadSupplierCommitments,
   loadSupplierOrders,
   recordSupplierOrder,
@@ -26,7 +27,7 @@ function errorText(error: unknown): string {
 }
 
 /**
- * HTKD (assigned stores) and Admin record what Reshare actually accepted, after ordering there.
+ * Admin and HTKD (every store) record what Reshare actually accepted, after ordering there.
  * Recording an order never changes availability and never confirms a receipt.
  */
 export function SupplierOrdersPanel({
@@ -51,8 +52,8 @@ export function SupplierOrdersPanel({
   const [storeId, setStoreId] = useState('');
   const catalog = useQuery({ queryKey: ['catalog'], queryFn: listCatalog, retry: false });
   const stores = useQuery({
-    queryKey: ['stores', 'accessible'],
-    queryFn: listAccessibleStores,
+    queryKey: ['reshare-stores', accountId],
+    queryFn: ({ signal }) => loadReshareStores(signal),
     retry: false,
   });
   const filter = readOnly ? 'ALL' : 'ORDERABLE';
@@ -107,7 +108,7 @@ export function SupplierOrdersPanel({
       setNote('');
       setNotice(
         `Đã ghi nhận đơn Reshare ${batch.externalRef}: ${batch.events
-          .map((item) => `${item.sku} ${formatInteger(item.quantity)} bao`)
+          .map((item) => `${item.productName} ${formatInteger(item.quantity)} bao`)
           .join(', ')}. Khả dụng không đổi; hàng vẫn giữ tới khi cửa hàng nhận.`,
       );
       await Promise.all(
@@ -162,7 +163,7 @@ export function SupplierOrdersPanel({
               ))}
             </select>
           </label>
-          {(stores.data?.length ?? 0) > 1 ? (
+          {(stores.data?.data.length ?? 0) > 1 ? (
             <label>
               Cửa hàng
               <select
@@ -174,9 +175,10 @@ export function SupplierOrdersPanel({
                 value={storeId}
               >
                 <option value="">Tất cả cửa hàng trong phạm vi</option>
-                {(stores.data ?? []).map((store) => (
+                {(stores.data?.data ?? []).map((store) => (
                   <option key={store.id} value={store.id}>
                     {store.code} — {store.name}
+                    {store.isActive ? '' : ' (ngừng hoạt động)'}
                   </option>
                 ))}
               </select>
@@ -357,7 +359,7 @@ function BatchItem({
         {batch.events.map((event) => (
           <li key={event.id}>
             <span>
-              {event.productName} ({event.sku}) · dòng {event.externalLineRef}:{' '}
+              {event.productName} · dòng {event.externalLineRef}:{' '}
               <strong>{formatInteger(event.quantity)} bao</strong>
             </span>
             {!readOnly && event.kind === 'ORDER' ? (

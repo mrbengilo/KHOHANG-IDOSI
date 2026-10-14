@@ -67,8 +67,16 @@ export function reshareStatusNote(row: ReshareOrderHistoryRow): string {
   return parts.join(' · ');
 }
 
+/** Last acknowledgement: the person and the role recorded with it (never assumed Admin). */
 function adminStatusNote(row: ReshareOrderHistoryRow): string {
-  return `Admin ${row.statusControl?.updatedByName ?? ''} cập nhật lúc ${formatDocumentTime(row.statusControl?.updatedAt ?? null)}.${row.order ? '' : ' Chưa có chứng từ RE.'}${row.decisionStatus === 'PENDING' ? ' Cửa hàng/HTKD chưa xác nhận kết quả phân bổ.' : ''}`;
+  const role = row.statusControl?.updatedByRole;
+  const who = [
+    row.statusControl?.updatedByName ?? 'Chưa ghi nhận tên',
+    role ? `(${ROLE_LABEL[role]})` : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  return `Cập nhật lần cuối bởi ${who} lúc ${formatDocumentTime(row.statusControl?.updatedAt ?? null)}.${row.order ? '' : ' Chưa có chứng từ RE.'}${row.decisionStatus === 'PENDING' ? ' Cửa hàng/HTKD chưa xác nhận kết quả phân bổ.' : ''}`;
 }
 
 function SessionCell({ row }: { readonly row: ReshareOrderHistoryRow }) {
@@ -114,12 +122,15 @@ export function ReshareOrderHistoryTable({
   rows,
   caption,
   onChangeStatus,
+  onShowHistory,
   busyDecisionId,
   disabled = false,
 }: {
   readonly rows: readonly ReshareOrderHistoryRow[];
   readonly caption: string;
   readonly onChangeStatus?: (row: ReshareOrderHistoryRow) => void;
+  /** Opens "Lịch sử thay đổi" of the row; its data loads only then. */
+  readonly onShowHistory?: (row: ReshareOrderHistoryRow) => void;
   readonly busyDecisionId?: string | null;
   readonly disabled?: boolean;
 }) {
@@ -180,6 +191,16 @@ export function ReshareOrderHistoryTable({
                       onClick={() => onChangeStatus(row)}
                     >
                       {row.status === 'ORDERED' ? 'Đánh dấu chưa đặt' : 'Đánh dấu đã đặt'}
+                    </Button>
+                  ) : null}
+                  {onShowHistory ? (
+                    <Button
+                      aria-label={`Lịch sử thay đổi của ${row.order?.code ?? row.sessionCode} · ${row.storeName}`}
+                      className="reshare-history__history-button"
+                      onClick={() => onShowHistory(row)}
+                      tone="secondary"
+                    >
+                      Lịch sử thay đổi
                     </Button>
                   ) : null}
                 </td>

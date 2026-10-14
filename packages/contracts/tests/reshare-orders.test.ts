@@ -5,7 +5,11 @@ import {
   ListAllocationDecisionsQuerySchema,
   ListReshareOrdersQuerySchema,
   ListReshareOrdersResponseSchema,
+  ListReshareStoresResponseSchema,
   ReshareOrderSummarySchema,
+  ReshareStatusControlSchema,
+  ReshareStatusHistoryQuerySchema,
+  ReshareStatusHistoryResponseSchema,
   UpdateReshareOrderStatusRequestSchema,
   SupplierObservationRequestSchema,
   SupplierPositionSchema,
@@ -130,5 +134,69 @@ describe('RE order contracts', () => {
         reshareCoverage: [{ reshareOrderLineId: id(3), quantity: 0 }],
       }),
     ).toThrow();
+  });
+
+  it('keeps the status actor opt-in so older strict bundles keep parsing', () => {
+    expect(ReshareStatusControlSchema.shape.updatedByRole.isOptional()).toBe(true);
+    expect(
+      ListReshareOrdersQuerySchema.parse({ includeStatusActor: 'true' }).includeStatusActor,
+    ).toBe(true);
+    expect(
+      ReshareStatusControlSchema.parse({
+        version: 1,
+        updatedAt: '2026-10-13T03:00:00.000Z',
+        updatedByName: 'HTKD',
+        updatedByRole: 'HTKD',
+      }).updatedByRole,
+    ).toBe('HTKD');
+  });
+
+  it('validates the status history page strictly, including legacy nulls', () => {
+    const event = {
+      id: id(1),
+      occurredAt: '2026-10-13T03:00:00.000Z',
+      kind: 'STATUS_CHANGED',
+      source: 'MANUAL',
+      statusBefore: 'NOT_ORDERED',
+      statusAfter: 'ORDERED',
+      version: 1,
+      orderCode: null,
+      actor: { accountId: id(2), role: 'HTKD', nameAtEvent: 'HTKD A', currentName: null },
+      requestId: 'req-1',
+    };
+    const legacy = {
+      ...event,
+      id: id(3),
+      kind: 'CREATED',
+      source: 'ACCEPTANCE',
+      statusBefore: null,
+      version: null,
+      orderCode: 'RE-000001',
+      actor: { accountId: id(4), role: 'STORE', nameAtEvent: null, currentName: 'Cửa hàng A' },
+    };
+    const page = {
+      data: [event, legacy],
+      pagination: { page: 1, pageSize: 10, totalItems: 2, totalPages: 1 },
+      decision: { id: id(5), storeId: id(6), publishedAt: '2026-10-13T02:00:00.000Z' },
+    };
+    expect(ReshareStatusHistoryResponseSchema.parse(page).data).toHaveLength(2);
+    expect(() =>
+      ReshareStatusHistoryResponseSchema.parse({ ...page, data: [{ ...event, extra: 1 }] }),
+    ).toThrow();
+    expect(() =>
+      ReshareStatusHistoryResponseSchema.parse({
+        ...page,
+        data: [{ ...event, orderCode: 'RE-1' }],
+      }),
+    ).toThrow();
+    expect(ReshareStatusHistoryQuerySchema.parse({ page: '2' })).toEqual({ page: 2, pageSize: 20 });
+    expect(() => ReshareStatusHistoryQuerySchema.parse({ pageSize: '101' })).toThrow();
+    expect(() => ReshareStatusHistoryQuerySchema.parse({ storeId: id(1) })).toThrow();
+    expect(
+      ListReshareStoresResponseSchema.parse({
+        data: [{ id: id(1), code: 'CH01', name: 'Cửa hàng 1', isActive: false }],
+        scoped: false,
+      }).data[0]!.isActive,
+    ).toBe(false);
   });
 });

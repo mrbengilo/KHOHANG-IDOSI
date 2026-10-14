@@ -5,6 +5,8 @@ import {
   CreateSupplierSourceRequestSchema,
   CreateSupplierSourceResponseSchema,
   ListReshareOrdersResponseSchema,
+  ListReshareStoresResponseSchema,
+  ReshareStatusHistoryResponseSchema,
   UpdateReshareOrderStatusRequestSchema,
   UpdateReshareOrderStatusResponseSchema,
   type UpdateReshareOrderStatusRequest,
@@ -30,7 +32,10 @@ import {
 
 import { request } from '../../lib/api';
 
-/** Query-key roots; every key also carries the account and role (see useSupplierScope). */
+/**
+ * Query-key roots; every key also carries the role and account (`${role}:${accountId}`), so a
+ * cache filled under one account or role is never shown to another one.
+ */
 export const SUPPLIER_QUERY_ROOTS = [
   'supplier-reconciliation',
   'supplier-commitments',
@@ -39,6 +44,7 @@ export const SUPPLIER_QUERY_ROOTS = [
   'supplier-sources',
   'warehouse-inventory',
   'reshare-orders',
+  'reshare-status-history',
 ] as const;
 
 function query(values: Record<string, string | number | undefined>): string {
@@ -115,11 +121,37 @@ export interface ReshareOrderFilters {
 export async function loadReshareOrders(filters: ReshareOrderFilters, signal?: AbortSignal) {
   return ListReshareOrdersResponseSchema.parse(
     await request(
-      `/reshare-orders?${query({ pageSize: 20, includeStatusControl: 'true', ...filters })}`,
+      `/reshare-orders?${query({
+        pageSize: 20,
+        includeStatusControl: 'true',
+        includeStatusActor: 'true',
+        ...filters,
+      })}`,
       {
         signal: signal ?? null,
       },
     ),
+  );
+}
+
+/** "Lịch sử thay đổi" of one result, newest first; only fetched when the dialog is open. */
+export async function loadReshareStatusHistory(
+  decisionId: string,
+  page: number,
+  signal?: AbortSignal,
+) {
+  return ReshareStatusHistoryResponseSchema.parse(
+    await request(
+      `/reshare-orders/${encodeURIComponent(decisionId)}/status-history?${query({ page, pageSize: 10 })}`,
+      { signal: signal ?? null },
+    ),
+  );
+}
+
+/** Store filter of the Reshare module (every store for Admin/HTKD, own stores otherwise). */
+export async function loadReshareStores(signal?: AbortSignal) {
+  return ListReshareStoresResponseSchema.parse(
+    await request('/reshare-orders/stores', { signal: signal ?? null }),
   );
 }
 

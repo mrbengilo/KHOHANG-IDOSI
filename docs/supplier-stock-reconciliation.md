@@ -51,18 +51,18 @@ Hàm thuần: `packages/domain/src/supplier-reconciliation.ts` (`computeSupplier
 
 ## 3. Luồng nghiệp vụ
 
-1. **Cấu hình** (Admin, tab "Cấu hình nguồn"): tạo nguồn (mã như `RESHARE`) và chọn SKU. SKU ở trạng
+1. **Cấu hình** (Admin/HTKD, tab "Cấu hình nguồn"): tạo nguồn (mã như `RESHARE`) và chọn SKU. SKU ở trạng
    thái `pending_baseline`: phiếu nhập cộng dồn, hủy phiếu nhập cũ và điều chỉnh tồn thủ công bị từ
    chối (`SOURCE_RECONCILED`); worker không tạo đề nghị ưu tiên và không cấp mới (vẫn chuyển hàng đã
    giữ của đề nghị đã chấp nhận).
-2. **Đối chiếu** (Admin/C, tab "Đối chiếu tồn"): chọn SKU → nhập **tổng** số B đang cho đặt, thời
+2. **Đối chiếu** (Admin/HTKD, tab "Cập nhật tồn Reshare"): chọn SKU → nhập **tổng** số B đang cho đặt, thời
    điểm xem (giờ Việt Nam, tới giây), chứng từ → **Xem trước** (read-only) → trả lời từng sự kiện B
    xảy ra trước thời điểm xem: "đã gồm trong số vừa nhập" hay "chưa gồm" (không đoán theo
    `createdAt`) → **Lưu đối chiếu**. Server tính lại toàn bộ, so `expectedRevision`, ghi coverage,
    bút toán `H := R + F`, dòng observation bất biến, audit.
 3. **Đặt Reshare** — từ 0042 thay bằng đơn RE tự động khi chấp nhận kết quả (`docs/reshare-auto-orders.md`);
    luồng ghi nhận thủ công dưới đây chỉ còn cho hàng giữ trước khi có RE (mục "Đơn ghi nhận thủ công").
-   (HTKD cửa hàng được giao đang hoạt động, hoặc Admin): chỉ
+   (Admin hoặc HTKD đang hoạt động, mọi cửa hàng đang hoạt động): chỉ
    các reservation có kết quả phân bổ `accepted`/`not_required`/`legacy`. Đặt ở B trước, rồi ghi đúng
    số bao B đã nhận (từng phần, nhiều đơn cho một phân bổ, nhiều dòng một đơn). U và B_eff cùng giảm
    q ⇒ F không đổi; R không giải phóng.
@@ -135,9 +135,11 @@ Mã lỗi: `VERSION_CONFLICT`, `SOURCE_NOT_RECONCILED`, `SOURCE_RECONCILED`,
 `IDEMPOTENCY_CONFLICT`, `FORBIDDEN`. `SOURCE_SHORTFALL` được khai báo cho contract; thiếu nguồn hiện
 được thể hiện bằng D và trạng thái `SHORTFALL`, không chặn lệnh ghi.
 
-Quyền: đối chiếu, cấu hình, hoàn nguồn, lịch sử = Admin. Ghi/hủy đơn B = HTKD (cửa hàng được giao
-đang hoạt động) hoặc Admin. Đọc cam kết/đơn B = Admin (mọi cửa hàng, có tên HTKD phụ trách); HTKD,
-cửa hàng, quầy sỉ chỉ cửa hàng trong phạm vi (`scoped: true`, tổng chỉ của phạm vi đó).
+Quyền (cập nhật 14/10/2026, `docs/reshare-htkd-ui-status-history.md`): đối chiếu, cấu hình, hoàn
+nguồn, lịch sử, ghi/hủy đơn B = Admin **hoặc mọi HTKD đang hoạt động**, trên mọi cửa hàng (không
+phụ thuộc phân công; `loadReshareManager` đọc lại tài khoản trong transaction, kể cả replay). Đọc cam
+kết/đơn B = Admin/HTKD mọi cửa hàng (có tên HTKD phụ trách, `scoped: false`); cửa hàng, quầy sỉ chỉ
+cửa hàng của mình (`scoped: true`, tổng chỉ của phạm vi đó).
 `/warehouse-inventory` giữ nguyên contract (strict) để không phá bundle cũ.
 
 ## 8. Cutover theo SKU

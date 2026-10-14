@@ -7,6 +7,7 @@ import {
   allocationResultDecisions,
   allocationRuns,
   applyWarehouseMovement,
+  auditLogs,
   db,
   htkdAssignments,
   inventorySnapshots,
@@ -34,7 +35,7 @@ import { hashSessionToken } from '../dist/security.js';
 const describePostgres = process.env.RUN_POSTGRES_TESTS === '1' ? describe : describe.skip;
 
 describePostgres('Reshare supplier reconciliation through the API on PostgreSQL', () => {
-  test('authorizes every role server-side, replays exactly and scopes reads', async () => {
+  test('lets Admin and every HTKD manage Reshare, refuses stores, replays exactly', async () => {
     const repository = new PostgresWarehouseRepository();
     const app = await createApi({ repository });
     try {
@@ -50,8 +51,8 @@ describePostgres('Reshare supplier reconciliation through the API on PostgreSQL'
           ...(payload === undefined ? {} : { payload }),
         });
 
-      // Only Admin configures and reads the reconciliation.
-      for (const token of [fx.tokens.htkd, fx.tokens.storeA, fx.tokens.wholesale]) {
+      // Admin and any active HTKD (assigned or not) manage the module; stores never do.
+      for (const token of [fx.tokens.storeA, fx.tokens.wholesale]) {
         assert.equal((await call(token, 'GET', '/api/v1/supplier-reconciliation')).statusCode, 403);
         assert.equal((await call(token, 'GET', '/api/v1/supplier-sources')).statusCode, 403);
         assert.equal(
@@ -66,9 +67,37 @@ describePostgres('Reshare supplier reconciliation through the API on PostgreSQL'
           ).statusCode,
           403,
         );
+        assert.equal(
+          (
+            await call(
+              token,
+              'POST',
+              '/api/v1/supplier-source-returns',
+              {
+                sourceId: randomUUID(),
+                productId: fx.productId,
+                quantity: 1,
+                externalRef: `RET-${fx.token}`,
+                occurredAt: new Date().toISOString(),
+                note: 'không được phép',
+              },
+              randomUUID(),
+            )
+          ).statusCode,
+          403,
+        );
       }
+      for (const token of [fx.tokens.htkd, fx.tokens.unassignedHtkd]) {
+        assert.equal((await call(token, 'GET', '/api/v1/supplier-reconciliation')).statusCode, 200);
+        assert.equal((await call(token, 'GET', '/api/v1/supplier-sources')).statusCode, 200);
+        assert.equal(
+          (await call(token, 'GET', '/api/v1/supplier-reconciliation/history')).statusCode,
+          200,
+        );
+      }
+      // An HTKD without any store assignment configures the source; the audit keeps its role.
       const created = await call(
-        fx.tokens.admin,
+        fx.tokens.unassignedHtkd,
         'POST',
         '/api/v1/supplier-sources',
         { code: `rs-${fx.token}`, name: 'Reshare API test' },
@@ -76,8 +105,22 @@ describePostgres('Reshare supplier reconciliation through the API on PostgreSQL'
       );
       assert.equal(created.statusCode, 201);
       const sourceId = created.json().data.id;
+      const [sourceAudit] = await db
+        .select({
+          role: auditLogs.actorRole,
+          actor: auditLogs.actorUserId,
+          metadata: auditLogs.metadata,
+        })
+        .from(auditLogs)
+        .where(
+          and(eq(auditLogs.entityId, sourceId), eq(auditLogs.action, 'SUPPLIER_SOURCE_CREATED')),
+        );
+      assert.deepEqual(
+        [sourceAudit.role, sourceAudit.actor, sourceAudit.metadata.actorName],
+        ['htkd', fx.unassignedHtkdId, 'Supplier API htkd-none'],
+      );
       const mapped = await call(
-        fx.tokens.admin,
+        fx.tokens.otherHtkd,
         'POST',
         `/api/v1/supplier-sources/${sourceId}/products`,
         { productIds: [fx.productId] },
@@ -125,7 +168,7 @@ describePostgres('Reshare supplier reconciliation through the API on PostgreSQL'
         attestUnlinkedAsNotOrdered: true,
       };
       const preview = await call(
-        fx.tokens.admin,
+        fx.tokens.unassignedHtkd,
         'POST',
         '/api/v1/supplier-stock-observations/preview',
         observation,
@@ -136,7 +179,7 @@ describePostgres('Reshare supplier reconciliation through the API on PostgreSQL'
       const key = randomUUID();
       const body = { ...observation, expectedRevision: preview.json().data.revision };
       const confirmed = await call(
-        fx.tokens.admin,
+        fx.tokens.unassignedHtkd,
         'POST',
         '/api/v1/supplier-stock-observations',
         body,
@@ -144,8 +187,9 @@ describePostgres('Reshare supplier reconciliation through the API on PostgreSQL'
       );
       assert.equal(confirmed.statusCode, 201);
       assert.equal(confirmed.json().data.lines[0].onHandAfter, 3);
+      assert.equal(confirmed.json().data.createdBy.accountId, fx.unassignedHtkdId);
       const replay = await call(
-        fx.tokens.admin,
+        fx.tokens.unassignedHtkd,
         'POST',
         '/api/v1/supplier-stock-observations',
         body,
@@ -155,7 +199,7 @@ describePostgres('Reshare supplier reconciliation through the API on PostgreSQL'
       assert.equal(replay.headers['idempotency-replayed'], 'true');
       assert.equal(replay.json().data.id, confirmed.json().data.id);
       const changed = await call(
-        fx.tokens.admin,
+        fx.tokens.unassignedHtkd,
         'POST',
         '/api/v1/supplier-stock-observations',
         { ...body, lines: [{ productId: fx.productId, observedQuantity: 4 }] },
@@ -174,40 +218,39 @@ describePostgres('Reshare supplier reconciliation through the API on PostgreSQL'
       assert.equal(stale.json().error.code, 'VERSION_CONFLICT');
       assert.deepEqual(await stock(fx.productId), { onHand: 3, reserved: 0 });
 
-      // A store accepted a grant of 2; HTKD of that store sees and orders it, others do not.
+      // A store accepted a grant of 2; every HTKD sees it (all stores), stores only their own.
       const granted = await grant(fx, 2);
-      const orderable = await call(
-        fx.tokens.htkd,
-        'GET',
-        `/api/v1/supplier-commitments?filter=ORDERABLE&productId=${fx.productId}`,
+      for (const token of [fx.tokens.htkd, fx.tokens.otherHtkd, fx.tokens.unassignedHtkd]) {
+        const orderable = await call(
+          token,
+          'GET',
+          `/api/v1/supplier-commitments?filter=ORDERABLE&productId=${fx.productId}`,
+        );
+        assert.equal(orderable.statusCode, 200);
+        assert.equal(orderable.json().scoped, false);
+        assert.deepEqual(
+          orderable.json().data.map((row) => [row.id, row.unorderedQuantity]),
+          [[granted.reservationId, 2]],
+        );
+        assert.ok(orderable.json().data[0].htkdNames.length >= 1);
+        assert.equal(
+          (await call(token, 'GET', `/api/v1/supplier-commitments?storeId=${fx.storeA}`))
+            .statusCode,
+          200,
+        );
+      }
+      assert.equal(
+        (await call(fx.tokens.storeA, 'GET', `/api/v1/supplier-commitments?storeId=${fx.storeB}`))
+          .statusCode,
+        403,
       );
-      assert.equal(orderable.statusCode, 200);
-      assert.equal(orderable.json().scoped, true);
-      assert.deepEqual(
-        orderable.json().data.map((row) => [row.id, row.unorderedQuantity, row.htkdNames.length]),
-        [[granted.reservationId, 2, 0]],
-      );
-      const otherHtkd = await call(
-        fx.tokens.otherHtkd,
+      const wholesaleView = await call(
+        fx.tokens.wholesale,
         'GET',
         `/api/v1/supplier-commitments?productId=${fx.productId}`,
       );
-      assert.deepEqual(otherHtkd.json(), {
-        data: [],
-        pagination: { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 },
-        totals: { quantity: 0, orderedQuantity: 0, unorderedQuantity: 0 },
-        scoped: true,
-      });
-      assert.equal(
-        (
-          await call(
-            fx.tokens.otherHtkd,
-            'GET',
-            `/api/v1/supplier-commitments?storeId=${fx.storeA}`,
-          )
-        ).statusCode,
-        403,
-      );
+      assert.equal(wholesaleView.json().data.length, 0);
+      assert.equal(wholesaleView.json().scoped, true);
       const storeView = await call(
         fx.tokens.storeA,
         'GET',
@@ -235,23 +278,17 @@ describePostgres('Reshare supplier reconciliation through the API on PostgreSQL'
           403,
         );
       }
-      const outsider = await call(
-        fx.tokens.otherHtkd,
-        'POST',
-        '/api/v1/supplier-orders',
-        orderBody,
-        randomUUID(),
-      );
-      assert.equal(outsider.statusCode, 403);
+      // The HTKD of another store records it: Reshare is not narrowed by assignments.
       const orderKey = randomUUID();
       const recorded = await call(
-        fx.tokens.htkd,
+        fx.tokens.otherHtkd,
         'POST',
         '/api/v1/supplier-orders',
         orderBody,
         orderKey,
       );
       assert.equal(recorded.statusCode, 201);
+      assert.equal(recorded.json().data.createdBy.accountId, fx.otherHtkdId);
       assert.equal(recorded.json().data.events[0].quantity, 2);
       const duplicate = await call(
         fx.tokens.admin,
@@ -288,23 +325,56 @@ describePostgres('Reshare supplier reconciliation through the API on PostgreSQL'
       );
       const orders = await call(fx.tokens.storeA, 'GET', '/api/v1/supplier-orders');
       assert.equal(orders.json().data.length, 1);
-      const foreignOrders = await call(fx.tokens.otherHtkd, 'GET', '/api/v1/supplier-orders');
-      assert.equal(foreignOrders.json().data.length, 0);
+      const htkdOrders = await call(
+        fx.tokens.htkd,
+        'GET',
+        `/api/v1/supplier-orders?productId=${fx.productId}`,
+      );
+      assert.equal(htkdOrders.json().data.length, 1);
+      assert.equal(
+        (await call(fx.tokens.wholesale, 'GET', '/api/v1/supplier-orders')).json().data.length,
+        0,
+      );
 
-      // T30/T31 a revoked HTKD can neither replay its own order nor act again.
+      // Removing a store assignment revokes the HTKD's sessions (existing policy), but after
+      // signing in again the module-wide Reshare right of an active HTKD remains.
       await db
         .update(htkdAssignments)
         .set({ revokedAt: new Date() })
-        .where(and(eq(htkdAssignments.userId, fx.htkdId), isNull(htkdAssignments.revokedAt)));
-      const revokedReplay = await call(
-        fx.tokens.htkd,
+        .where(and(eq(htkdAssignments.userId, fx.otherHtkdId), isNull(htkdAssignments.revokedAt)));
+      const freshToken = await signIn(fx.otherHtkdId);
+      const unassignedReplay = await call(
+        freshToken,
         'POST',
         '/api/v1/supplier-orders',
         orderBody,
         orderKey,
       );
-      // Revoking the store ends the session (401) or, if it survives, the replay is refused (403).
-      assert.ok([401, 403].includes(revokedReplay.statusCode));
+      assert.equal(unassignedReplay.statusCode, 200);
+      assert.equal(unassignedReplay.headers['idempotency-replayed'], 'true');
+
+      // A role change or a lock ends it at once, replays included.
+      await db
+        .update(users)
+        .set({ role: 'store', storeId: fx.storeB })
+        .where(eq(users.id, fx.otherHtkdId));
+      const demotedReplay = await call(
+        freshToken,
+        'POST',
+        '/api/v1/supplier-orders',
+        orderBody,
+        orderKey,
+      );
+      assert.ok([401, 403].includes(demotedReplay.statusCode));
+      await db.update(users).set({ status: 'locked' }).where(eq(users.id, fx.unassignedHtkdId));
+      const lockedReplay = await call(
+        fx.tokens.unassignedHtkd,
+        'POST',
+        '/api/v1/supplier-stock-observations',
+        body,
+        key,
+      );
+      assert.ok([401, 403].includes(lockedReplay.statusCode));
 
       const specification = await app.inject({ method: 'GET', url: '/openapi.json' });
       for (const path of [
@@ -324,6 +394,21 @@ describePostgres('Reshare supplier reconciliation through the API on PostgreSQL'
     }
   });
 });
+
+async function signIn(userId) {
+  const [account] = await db
+    .select({ tokenVersion: users.tokenVersion })
+    .from(users)
+    .where(eq(users.id, userId));
+  const token = randomUUID();
+  await db.insert(sessions).values({
+    userId,
+    tokenHash: hashSessionToken(token),
+    userTokenVersion: account.tokenVersion,
+    expiresAt: new Date(Date.now() + 3_600_000),
+  });
+  return token;
+}
 
 async function balance(productId) {
   const [row] = await db
@@ -502,6 +587,7 @@ async function createFixture() {
   };
   const htkd = await createUser('htkd', 'htkd');
   const otherHtkd = await createUser('htkd-other', 'htkd');
+  const unassignedHtkd = await createUser('htkd-none', 'htkd');
   const storeUserA = await createUser('store-a', 'store', storeA.id);
   const wholesale = await createUser('wholesale', 'wholesale');
   await db.insert(htkdAssignments).values([
@@ -530,6 +616,7 @@ async function createFixture() {
     admin: randomUUID(),
     htkd: randomUUID(),
     otherHtkd: randomUUID(),
+    unassignedHtkd: randomUUID(),
     storeA: randomUUID(),
     wholesale: randomUUID(),
   };
@@ -539,6 +626,7 @@ async function createFixture() {
       [administrator, tokens.admin],
       [htkd, tokens.htkd],
       [otherHtkd, tokens.otherHtkd],
+      [unassignedHtkd, tokens.unassignedHtkd],
       [storeUserA, tokens.storeA],
       [wholesale, tokens.wholesale],
     ].map(([account, sessionToken]) => ({
@@ -552,6 +640,8 @@ async function createFixture() {
     token,
     adminId: administrator.id,
     htkdId: htkd.id,
+    otherHtkdId: otherHtkd.id,
+    unassignedHtkdId: unassignedHtkd.id,
     storeUserA: storeUserA.id,
     storeA: storeA.id,
     storeB: storeB.id,

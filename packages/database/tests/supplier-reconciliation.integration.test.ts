@@ -244,15 +244,7 @@ describePostgres('Reshare supplier reconciliation (PostgreSQL)', () => {
       quantity: 2,
       decision: 'pending',
     });
-    // HTKD of another store and a store account may not record B orders.
-    await rejected(
-      order(fx, {
-        reservationId: accepted.reservationId,
-        quantity: 1,
-        actorUserId: fx.otherHtkdId,
-      }),
-      'FORBIDDEN',
-    );
+    // A store account may not record B orders (any active HTKD may: see T31).
     await rejected(
       order(fx, { reservationId: accepted.reservationId, quantity: 1, actorUserId: fx.storeUserA }),
       'FORBIDDEN',
@@ -351,11 +343,11 @@ describePostgres('Reshare supplier reconciliation (PostgreSQL)', () => {
     expect(await balanceOf(product)).toMatchObject({ available: 3 });
     expect(await recordSupplierSourceReturn(db, returnInput)).toMatchObject({ replayed: true });
     expect(await balanceOf(product)).toMatchObject({ available: 3 });
-    // Only an Admin may record a source return.
+    // Only a Reshare manager (Admin or HTKD) may record a source return.
     await rejected(
       recordSupplierSourceReturn(db, {
         ...returnInput,
-        actorUserId: fx.htkdId,
+        actorUserId: fx.storeUserA,
         idempotencyKey: randomUUID(),
         externalRef: 'R-T19b',
       }),
@@ -566,9 +558,9 @@ describePostgres('Reshare supplier reconciliation (PostgreSQL)', () => {
       observe(fx, [{ productId: unmapped, observedQuantity: 1 }]),
       'SOURCE_NOT_RECONCILED',
     );
-    // A non-Admin cannot observe; a locked Admin cannot replay.
+    // A store account cannot observe (Admin and HTKD can); a locked Admin cannot replay.
     await rejected(
-      observe(fx, [{ productId: zero, observedQuantity: 1 }], { actorUserId: fx.htkdId }),
+      observe(fx, [{ productId: zero, observedQuantity: 1 }], { actorUserId: fx.storeUserA }),
       'FORBIDDEN',
     );
   });
@@ -775,7 +767,7 @@ describePostgres('Reshare supplier reconciliation (PostgreSQL)', () => {
     }
     expect(SupplierReconciliationError).toBeDefined();
   });
-  it("T31: an exact replay re-checks today's scope before returning the stored order", async () => {
+  it('T31: an exact replay re-checks the account; HTKD manages every store regardless of assignments', async () => {
     const local = await createSupplierFixture();
     const product = await createMappedProduct(local);
     await observe(local, [{ productId: product, observedQuantity: 4 }], {
@@ -805,18 +797,47 @@ describePostgres('Reshare supplier reconciliation (PostgreSQL)', () => {
       }),
       'IDEMPOTENCY_CONFLICT',
     );
+    // An HTKD of another store records the rest of store A's hold and is audited as HTKD.
+    const foreign = await order(local, {
+      reservationId: granted.reservationId,
+      quantity: 1,
+      externalRef: 'B-FOREIGN-HTKD',
+      actorUserId: local.otherHtkdId,
+    });
+    expect(foreign).toMatchObject({
+      replayed: false,
+      batch: { createdByUserId: local.otherHtkdId },
+    });
+    const [foreignAudit] = await db
+      .select({ role: auditLogs.actorRole, metadata: auditLogs.metadata })
+      .from(auditLogs)
+      .where(eq(auditLogs.entityId, foreign.batch.id));
+    expect(foreignAudit).toMatchObject({
+      role: 'htkd',
+      metadata: { actorName: 'Supplier htkd-other' },
+    });
+    // Revoking the store assignment keeps the module-wide right: the replay still answers.
     await db
       .update(htkdAssignments)
       .set({ revokedAt: new Date() })
       .where(eq(htkdAssignments.userId, local.htkdId));
-    await rejected(
-      order(local, {
-        reservationId: granted.reservationId,
-        quantity: 1,
-        key,
-        externalRef: 'B-REPLAY',
-      }),
-      'FORBIDDEN',
-    );
+    const replay = {
+      reservationId: granted.reservationId,
+      quantity: 1,
+      key,
+      externalRef: 'B-REPLAY',
+    };
+    expect(await order(local, replay)).toMatchObject({
+      replayed: true,
+      batch: { id: first.batch.id },
+    });
+    // A demoted or locked account is refused at once, replays included.
+    await db.update(users).set({ role: 'wholesale' }).where(eq(users.id, local.htkdId));
+    await rejected(order(local, replay), 'FORBIDDEN');
+    await db
+      .update(users)
+      .set({ role: 'htkd', status: 'locked' })
+      .where(eq(users.id, local.htkdId));
+    await rejected(order(local, replay), 'FORBIDDEN');
   });
 });

@@ -5,6 +5,9 @@ import type {
   ListAllocationDecisionsQuery,
   ListReshareOrdersQuery,
   ListReshareOrdersResponse,
+  ListReshareStoresResponse,
+  ReshareStatusHistoryQuery,
+  ReshareStatusHistoryResponse,
   RespondAllocationDecisionRequest,
 } from '@idosi/contracts';
 import {
@@ -21,6 +24,7 @@ import {
   IdempotencyInProgressError,
   listAllocationDecisions,
   listReshareOrderHistory,
+  listReshareStatusHistory,
   loadReshareOrderSummaries,
   ReshareOrderIntegrityError,
   ReshareOrderStockError,
@@ -32,7 +36,7 @@ import {
   type AllocationDecisionRecord,
   type Database,
 } from '@idosi/database';
-import { eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 
 import { ApiError, conflict, forbidden, notFound } from './errors.js';
 import type {
@@ -41,7 +45,13 @@ import type {
   Page,
   RequestContext,
 } from './repository.js';
-import { allocationDecisionActionsFor, canAccessStore, pagination } from './repository.js';
+import {
+  allocationDecisionActionsFor,
+  canAccessStore,
+  isReshareManager,
+  pagination,
+  reshareStoreScope,
+} from './repository.js';
 
 const NOT_FOUND_MESSAGE = 'Không tìm thấy phiếu kết quả phân bổ';
 
@@ -417,13 +427,14 @@ function reshareHistoryDto(row: ReshareHistoryRow): ListReshareOrdersResponse['d
   };
 }
 
-/** Admin sees every store; HTKD, store and wholesale desk only their stores (server scope). */
+/** Admin and HTKD see every store; store and wholesale desk only their stores (server scope). */
 export async function listPostgresReshareOrders(
   database: Database,
   actor: AuthenticatedPrincipal,
   query: ListReshareOrdersQuery,
 ): Promise<ListReshareOrdersResponse> {
-  const storeIds = decisionStoreScope(actor, query.storeId);
+  // Reshare-only scope: the allocation decision screens keep decisionStoreScope.
+  const storeIds = reshareStoreScope(actor, query.storeId);
   const result = await listReshareOrderHistory(database, {
     page: query.page,
     pageSize: query.pageSize,
@@ -451,13 +462,104 @@ export async function listPostgresReshareOrders(
       ...(query.includeStatusControl
         ? {
             statusControl: {
-              ...row.statusControl,
+              version: row.statusControl.version,
               updatedAt: row.statusControl.updatedAt?.toISOString() ?? null,
+              updatedByName: row.statusControl.updatedByName,
+              ...(query.includeStatusActor
+                ? { updatedByRole: roleDto(row.statusControl.updatedByRole) }
+                : {}),
             },
           }
         : {}),
     })),
     pagination: pagination(query.page, query.pageSize, result.pagination.totalItems),
-    scoped: actor.role !== 'ADMIN',
+    scoped: !isReshareManager(actor),
   };
+}
+
+function roleDto(role: string | null): (typeof ROLE_DTO)[keyof typeof ROLE_DTO] | null {
+  return role === null ? null : (ROLE_DTO[role as keyof typeof ROLE_DTO] ?? null);
+}
+
+const HISTORY_STATUS_DTO = {
+  ordered: 'ORDERED',
+  not_ordered: 'NOT_ORDERED',
+  cancelled: 'CANCELLED',
+} as const;
+
+/**
+ * "Lịch sử thay đổi" of one result. Reshare managers read any result; store and wholesale
+ * accounts only results of their own stores that the order list shows them. Anything else is
+ * 404, so the existence of other stores' results and their event counts never leaks.
+ */
+export async function listPostgresReshareStatusHistory(
+  database: Database,
+  actor: AuthenticatedPrincipal,
+  decisionId: string,
+  query: ReshareStatusHistoryQuery,
+): Promise<ReshareStatusHistoryResponse> {
+  const result = await listReshareStatusHistory(database, {
+    decisionId,
+    page: query.page,
+    pageSize: query.pageSize,
+  });
+  const visible =
+    result !== null &&
+    (isReshareManager(actor) ||
+      (canAccessStore(actor, result.decision.storeId) &&
+        (result.decision.status === 'pending' || result.decision.status === 'accepted')));
+  if (!result || !visible) throw notFound('Không tìm thấy kết quả phân bổ.');
+  return {
+    data: result.data.map((event) => ({
+      id: event.id,
+      occurredAt: event.occurredAt.toISOString(),
+      kind: event.kind === 'created' ? 'CREATED' : 'STATUS_CHANGED',
+      source:
+        event.source === 'manual'
+          ? 'MANUAL'
+          : event.source === 'backfill'
+            ? 'BACKFILL'
+            : 'ACCEPTANCE',
+      statusBefore: event.statusBefore ? HISTORY_STATUS_DTO[event.statusBefore] : null,
+      statusAfter: event.statusAfter ? HISTORY_STATUS_DTO[event.statusAfter] : null,
+      version: event.version,
+      orderCode: event.orderCode,
+      actor: {
+        accountId: event.actorUserId,
+        role: roleDto(event.actorRole),
+        nameAtEvent: event.actorNameSnapshot,
+        currentName: event.actorNameSnapshot === null ? event.actorCurrentName : null,
+      },
+      requestId: event.requestId,
+    })),
+    pagination: pagination(query.page, query.pageSize, result.totalItems),
+    decision: {
+      id: result.decision.id,
+      storeId: result.decision.storeId,
+      publishedAt: result.decision.publishedAt.toISOString(),
+    },
+  };
+}
+
+/**
+ * Store filter of the Reshare module. Reshare managers get every store (also inactive ones,
+ * whose past results stay listed); other roles their own stores. Not the global /stores list,
+ * so HTKD gains no store visibility in any other module.
+ */
+export async function listPostgresReshareStores(
+  database: Database,
+  actor: AuthenticatedPrincipal,
+): Promise<ListReshareStoresResponse> {
+  const scope = reshareStoreScope(actor, undefined);
+  if (scope?.length === 0) return { data: [], scoped: true };
+  const rows = await database
+    .select({ id: stores.id, code: stores.code, name: stores.name, isActive: stores.isActive })
+    .from(stores)
+    .where(
+      scope === undefined
+        ? isNull(stores.deletedAt)
+        : and(isNull(stores.deletedAt), inArray(stores.id, [...scope])),
+    )
+    .orderBy(asc(stores.name), asc(stores.id));
+  return { data: rows, scoped: scope !== undefined };
 }

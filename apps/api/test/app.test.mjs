@@ -4235,6 +4235,62 @@ describe('KHOHANG-IDOSI API', () => {
     );
   });
 
+  test('memory adapter mirrors the Reshare manager policy and status history', async () => {
+    const storeCookie = cookieOf(await login('ds_nvt'));
+    const htkdCookie = cookieOf(await login('htkd'));
+    const productId = await firstProductId(storeCookie);
+    const published = repository.publishAllocationDecision({
+      storeId: MEMORY_SEED_IDS.nvtStore,
+      lines: [{ productId, allocated: 2 }],
+    });
+    const get = (cookie, url) => app.inject({ method: 'GET', url, headers: { cookie } });
+    const put = (cookie, payload, key) =>
+      app.inject({
+        method: 'PUT',
+        url: `/api/v1/reshare-orders/${published.id}/status`,
+        headers: { cookie, 'idempotency-key': key },
+        payload,
+      });
+    const toOrdered = { status: 'ORDERED', expectedStatus: 'NOT_ORDERED', expectedVersion: 0 };
+    assert.equal((await put(storeCookie, toOrdered, 'memory-reshare-store')).statusCode, 403);
+    const saved = await put(htkdCookie, toOrdered, 'memory-reshare-htkd');
+    assert.equal(saved.statusCode, 200, saved.body);
+    assert.equal(saved.json().data.version, 1);
+    const same = await put(
+      htkdCookie,
+      { status: 'ORDERED', expectedStatus: 'ORDERED', expectedVersion: 1 },
+      'memory-reshare-same',
+    );
+    assert.equal(same.json().data.version, 1, 'no new version for an unchanged status');
+    const history = await get(htkdCookie, `/api/v1/reshare-orders/${published.id}/status-history`);
+    assert.equal(history.statusCode, 200, history.body);
+    assert.deepEqual(
+      history
+        .json()
+        .data.map((event) => [event.kind, event.statusBefore, event.statusAfter, event.actor.role]),
+      [['STATUS_CHANGED', 'NOT_ORDERED', 'ORDERED', 'HTKD']],
+    );
+    assert.equal(
+      (await get(storeCookie, `/api/v1/reshare-orders/${published.id}/status-history`)).statusCode,
+      200,
+    );
+    const list = await get(
+      htkdCookie,
+      `/api/v1/reshare-orders?decisionId=${published.id}&includeStatusControl=true&includeStatusActor=true`,
+    );
+    assert.equal(list.json().data[0].statusControl.updatedByRole, 'HTKD');
+    assert.equal(list.json().scoped, false);
+    const stores = await get(htkdCookie, '/api/v1/reshare-orders/stores');
+    assert.equal(stores.json().scoped, false);
+    const storeOptions = await get(storeCookie, '/api/v1/reshare-orders/stores');
+    assert.deepEqual(
+      storeOptions.json().data.map((store) => store.id),
+      [MEMORY_SEED_IDS.nvtStore],
+    );
+    assert.equal((await get(htkdCookie, '/api/v1/supplier-sources')).statusCode, 200);
+    assert.equal((await get(storeCookie, '/api/v1/supplier-sources')).statusCode, 403);
+  });
+
   async function login(username) {
     return app.inject({
       method: 'POST',

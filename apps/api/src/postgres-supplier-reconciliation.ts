@@ -41,7 +41,12 @@ import type { SupplierPosition as DomainSupplierPosition } from '@idosi/domain';
 
 import { forbidden } from './errors.js';
 import type { IdempotentResource, Page, RequestContext } from './repository.js';
-import { canAccessStore, pagination } from './repository.js';
+import {
+  isReshareManager,
+  pagination,
+  RESHARE_MANAGER_FORBIDDEN_MESSAGE,
+  reshareStoreScope,
+} from './repository.js';
 
 const KIND = {
   order: 'ORDER',
@@ -55,26 +60,18 @@ const COVERAGE = {
   not_applicable: 'NOT_APPLICABLE',
 } as const;
 
-function requireAdmin(actor: AuthenticatedPrincipal): void {
-  if (actor.role !== 'ADMIN') {
-    throw forbidden('Chỉ Admin được đối chiếu và cấu hình nguồn Reshare.');
-  }
+/** Admin or HTKD (every store); the database command re-checks the account in its transaction. */
+function requireReshareManager(actor: AuthenticatedPrincipal): void {
+  if (!isReshareManager(actor)) throw forbidden(RESHARE_MANAGER_FORBIDDEN_MESSAGE);
 }
 
-/** Store scope of a reader; undefined means every store (Admin). */
+/** Store scope of a reader; undefined means every store (Reshare managers). */
 function readerStoreScope(
   actor: AuthenticatedPrincipal,
   storeId: string | undefined,
 ): { readonly storeIds: readonly string[] | undefined; readonly scoped: boolean } {
-  if (storeId !== undefined && !canAccessStore(actor, storeId)) throw forbidden();
-  if (actor.role === 'ADMIN') return { storeIds: storeId ? [storeId] : undefined, scoped: false };
-  const own =
-    actor.role === 'STORE'
-      ? actor.storeId === null
-        ? []
-        : [actor.storeId]
-      : actor.assignedStoreIds;
-  return { storeIds: storeId ? [storeId] : own, scoped: true };
+  const storeIds = reshareStoreScope(actor, storeId);
+  return { storeIds, scoped: !isReshareManager(actor) };
 }
 
 /**
@@ -93,7 +90,7 @@ export async function listPostgresSupplierSources(
   db: Database,
   actor: AuthenticatedPrincipal,
 ): Promise<SupplierSource[]> {
-  requireAdmin(actor);
+  requireReshareManager(actor);
   const rows = await listSupplierSources(db);
   return rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() }));
 }
@@ -106,7 +103,7 @@ export async function createPostgresSupplierSource(
   requestHash: string,
   context: RequestContext,
 ): Promise<IdempotentResource<{ id: string }>> {
-  requireAdmin(actor);
+  requireReshareManager(actor);
   const result = await createSupplierSource(db, {
     actorUserId: actor.accountId,
     code: input.code,
@@ -128,7 +125,7 @@ export async function addPostgresSupplierSourceProducts(
   requestHash: string,
   context: RequestContext,
 ): Promise<IdempotentResource<{ added: string[] }>> {
-  requireAdmin(actor);
+  requireReshareManager(actor);
   const result = await addSupplierSourceProducts(db, {
     actorUserId: actor.accountId,
     sourceId,
@@ -149,7 +146,7 @@ export async function getPostgresSupplierReconciliation(
   actor: AuthenticatedPrincipal,
   query: SupplierReconciliationQuery,
 ): Promise<SupplierReconciliationResponse> {
-  requireAdmin(actor);
+  requireReshareManager(actor);
   const result = await listSupplierReconciliationSummary(db, {
     ...(query.sourceId ? { sourceId: query.sourceId } : {}),
     ...(query.search ? { search: query.search } : {}),
@@ -201,7 +198,7 @@ export async function previewPostgresSupplierObservation(
   actor: AuthenticatedPrincipal,
   input: SupplierObservationRequest,
 ): Promise<SupplierObservationPreview> {
-  requireAdmin(actor);
+  requireReshareManager(actor);
   const plan = await previewSupplierStockObservation(db, observationInput(actor, input));
   const includeIssued = input.reshareCoverage !== undefined;
   return {
@@ -311,7 +308,7 @@ export async function confirmPostgresSupplierObservation(
   requestHash: string,
   context: RequestContext,
 ): Promise<IdempotentResource<SupplierObservation>> {
-  requireAdmin(actor);
+  requireReshareManager(actor);
   const result = await confirmSupplierStockObservation(db, {
     ...observationInput(actor, input),
     expectedRevision: input.expectedRevision,
@@ -327,7 +324,7 @@ export async function listPostgresSupplierObservationHistory(
   actor: AuthenticatedPrincipal,
   query: SupplierObservationHistoryQuery,
 ): Promise<Page<SupplierObservationHistoryRow>> {
-  requireAdmin(actor);
+  requireReshareManager(actor);
   const result = await listSupplierObservationHistory(db, {
     ...(query.productId ? { productId: query.productId } : {}),
     ...(query.sourceId ? { sourceId: query.sourceId } : {}),
@@ -363,8 +360,8 @@ export async function listPostgresSupplierCommitments(
       ...row,
       heldSince: row.heldSince.toISOString(),
       deadlineAt: row.deadlineAt?.toISOString() ?? null,
-      // HTKD names are an Admin coordination aid; other readers see only their own store.
-      htkdNames: actor.role === 'ADMIN' ? [...row.htkdNames] : [],
+      // HTKD names are a coordination aid for Reshare managers; stores see only their own rows.
+      htkdNames: isReshareManager(actor) ? [...row.htkdNames] : [],
     })),
     pagination: pagination(query.page, query.pageSize, result.totalItems),
     totals: result.totals,
@@ -426,8 +423,8 @@ export async function recordPostgresSupplierOrder(
   requestHash: string,
   context: RequestContext,
 ): Promise<IdempotentResource<SupplierBatch>> {
-  if (actor.role !== 'ADMIN' && actor.role !== 'HTKD') {
-    throw forbidden('Chỉ HTKD được phân công hoặc Admin ghi nhận đơn đã đặt Reshare.');
+  if (!isReshareManager(actor)) {
+    throw forbidden('Chỉ Admin hoặc HTKD ghi nhận đơn đã đặt Reshare.');
   }
   const result = await recordSupplierOrder(db, {
     actorUserId: actor.accountId,
@@ -452,8 +449,8 @@ export async function cancelPostgresSupplierOrder(
   requestHash: string,
   context: RequestContext,
 ): Promise<IdempotentResource<SupplierBatch>> {
-  if (actor.role !== 'ADMIN' && actor.role !== 'HTKD') {
-    throw forbidden('Chỉ HTKD được phân công hoặc Admin ghi nhận hủy đơn Reshare.');
+  if (!isReshareManager(actor)) {
+    throw forbidden('Chỉ Admin hoặc HTKD ghi nhận hủy đơn Reshare.');
   }
   const result = await cancelSupplierOrder(db, {
     actorUserId: actor.accountId,
@@ -478,7 +475,7 @@ export async function recordPostgresSupplierSourceReturn(
   requestHash: string,
   context: RequestContext,
 ): Promise<IdempotentResource<SupplierBatch>> {
-  requireAdmin(actor);
+  requireReshareManager(actor);
   const result = await recordSupplierSourceReturn(db, {
     actorUserId: actor.accountId,
     sourceId: input.sourceId,

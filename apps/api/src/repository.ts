@@ -26,6 +26,9 @@ import type {
   AllocationDecisionDetail,
   ListReshareOrdersQuery,
   ListReshareOrdersResponse,
+  ListReshareStoresResponse,
+  ReshareStatusHistoryQuery,
+  ReshareStatusHistoryResponse,
   ListAllocationDecisionsQuery,
   RespondAllocationDecisionRequest,
 } from '@idosi/contracts';
@@ -302,9 +305,9 @@ export interface SessionActivity {
 }
 
 /**
- * Reshare supplier reconciliation (docs/supplier-stock-reconciliation.md). Observation and
- * source configuration are Admin-only; B orders are HTKD (assigned, active stores) or Admin;
- * commitment and order reads are scoped to the reader's stores.
+ * Reshare supplier reconciliation (docs/supplier-stock-reconciliation.md). Admin and every active
+ * HTKD manage the whole module for all stores (observation, sources, B orders, source returns);
+ * store and wholesale reads of commitments and orders are scoped to their own stores.
  */
 export interface SupplierReconciliationRepository {
   listSupplierSources(actor: AuthenticatedPrincipal): Promise<SupplierSource[]>;
@@ -536,6 +539,14 @@ export interface WarehouseRepository extends SupplierReconciliationRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<ReshareOrderStatusUpdate>>;
+  /** Status history of one result; 404 outside the reader's Reshare scope. */
+  listReshareStatusHistory(
+    actor: AuthenticatedPrincipal,
+    decisionId: string,
+    query: ReshareStatusHistoryQuery,
+  ): Promise<ReshareStatusHistoryResponse>;
+  /** Store filter options of the Reshare module (its own scope, not the global store list). */
+  listReshareStores(actor: AuthenticatedPrincipal): Promise<ListReshareStoresResponse>;
   listAllocations(
     actor: AuthenticatedPrincipal,
     query: ListAllocationsQuery,
@@ -1103,6 +1114,32 @@ export function allocationDecisionActionsFor(
     return principal.assignedStoreIds.includes(store.id) ? ['ACCEPT'] : [];
   }
   return [];
+}
+
+/**
+ * "Đơn & tồn Reshare" is managed by Admin and every active HTKD for all stores; the HTKD store
+ * assignments narrow every other module but not this one. Store and wholesale accounts keep
+ * reading their own stores only. Never use this outside the Reshare module.
+ */
+export const RESHARE_MANAGER_FORBIDDEN_MESSAGE =
+  'Chỉ Admin hoặc HTKD được đối chiếu và cấu hình nguồn Reshare.';
+
+export function isReshareManager(principal: AuthenticatedPrincipal): boolean {
+  return principal.role === 'ADMIN' || principal.role === 'HTKD';
+}
+
+/** Reshare read scope; undefined means every store (Reshare managers). */
+export function reshareStoreScope(
+  principal: AuthenticatedPrincipal,
+  storeId: string | undefined,
+): readonly string[] | undefined {
+  if (isReshareManager(principal)) return storeId === undefined ? undefined : [storeId];
+  if (storeId !== undefined) {
+    if (!canAccessStore(principal, storeId)) throw forbidden();
+    return [storeId];
+  }
+  if (principal.role === 'STORE') return principal.storeId === null ? [] : [principal.storeId];
+  return principal.assignedStoreIds;
 }
 
 export function canAccessStore(principal: AuthenticatedPrincipal, storeId: string): boolean {
