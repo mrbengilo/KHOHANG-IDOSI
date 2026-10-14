@@ -45,6 +45,14 @@ import type {
 } from '@idosi/contracts';
 import type { ListStoreBagOpeningsQuery, StoreBagOpening } from '@idosi/contracts';
 import { createHash, randomUUID } from 'node:crypto';
+import type {
+  CancelledStoreWaitDocument,
+  CancelStoreWaitDocumentRequest,
+  ListStoreWaitDocumentsQuery,
+  ListStoreWaitDocumentsResponse,
+  StoreWaitDocumentCancelPreview,
+  StoreWaitDocumentDetail,
+} from '@idosi/contracts';
 import { nextOrderingWindow, type OrderingContext } from '@idosi/contracts';
 
 import type {
@@ -527,7 +535,6 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     actor: AuthenticatedPrincipal,
     query: ListOrderHistoryQuery,
   ): Promise<Page<OrderHistoryEntry>> {
-    if (actor.role !== 'ADMIN' && actor.role !== 'HTKD') throw forbidden();
     if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
     const from = query.submittedFrom
       ? Date.parse(`${query.submittedFrom}T00:00:00+07:00`)
@@ -5904,6 +5911,240 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     };
   }
 
+  /**
+   * Memory mode projects one current document per store from its open tickets, with the same
+   * contract as PostgreSQL. It keeps no document history: a processed document disappears and
+   * the history view is empty (docs/store-active-wait-document.md).
+   */
+  private memoryWaitDocuments(actor: AuthenticatedPrincipal): StoreWaitDocumentDetail[] {
+    const open = [...this.waitTickets.values()]
+      .map((ticket) => this.effectiveWaitTicket(ticket))
+      .filter(
+        (ticket) =>
+          ['WAITING', 'OFFERED', 'PARTIALLY_FULFILLED'].includes(ticket.status) &&
+          ticket.remaining.kind === 'UNIT' &&
+          ticket.remaining.quantity > 0 &&
+          canAccessStore(actor, ticket.storeId),
+      );
+    const storeIds = [...new Set(open.map((ticket) => ticket.storeId))].sort();
+    return storeIds.map((storeId) => {
+      const tickets = open
+        .filter((ticket) => ticket.storeId === storeId)
+        .sort((left, right) => left.id.localeCompare(right.id));
+      const store = this.stores.get(storeId);
+      const signature = JSON.stringify(
+        tickets.map((ticket) => [ticket.id, ticket.remaining, ticket.status]),
+      );
+      const id = memoryUuid(`memory-wait-document:${storeId}:${signature}`);
+      const productIds = [...new Set(tickets.map((ticket) => ticket.productId))].sort();
+      const waitingSince = tickets
+        .map((ticket) => ticket.createdAt)
+        .sort((left, right) => left.localeCompare(right))[0]!;
+      const event = {
+        id: memoryUuid(`memory-wait-document-event:${id}`),
+        kind: 'SYSTEM_SYNC' as const,
+        occurredAt: waitingSince,
+        actor: null,
+        reason: null,
+        session: null,
+        allocationRunId: null,
+        allocationDecisionId: null,
+        reshareOrderCode: null,
+        waitTicket: null,
+        priorityOffer: null,
+        storeReceipt: null,
+      };
+      const code = `PCT-${(parseInt(id.slice(0, 8), 16) % 1_000_000).toString().padStart(6, '0')}`;
+      return {
+        id,
+        code,
+        storeId,
+        storeCode: store?.code ?? storeId,
+        storeName: store?.name ?? storeId,
+        status: 'CURRENT' as const,
+        version: 1,
+        chainId: id,
+        chainSequence: 1,
+        openedAt: waitingSince,
+        closedAt: null,
+        waitingSince,
+        predecessor: null,
+        successor: null,
+        openedEvent: event,
+        closedEvent: null,
+        lines: productIds.map((productId) => {
+          const product = this.products.get(productId);
+          const quantity = tickets
+            .filter((ticket) => ticket.productId === productId)
+            .reduce(
+              (total, ticket) =>
+                total + (ticket.remaining.kind === 'UNIT' ? ticket.remaining.quantity : 0),
+              0,
+            );
+          return {
+            productId,
+            sku: product?.sku ?? productId,
+            productName: product?.name ?? productId,
+            unit: 'BAG' as const,
+            carriedInQuantity: 0,
+            addedQuantity: quantity,
+            openingRemainingQuantity: quantity,
+            openingPendingQuantity: 0,
+            confirmedQuantity: null,
+            cancelledQuantity: null,
+            adjustedQuantity: null,
+            carriedOutQuantity: null,
+            remainingQuantity: quantity,
+            pendingQuantity: 0,
+          };
+        }),
+        members: tickets.map((ticket) => ({
+          waitTicketId: ticket.id,
+          code: ticket.code ?? '',
+          productId: ticket.productId,
+          status: 'ACTIVE' as const,
+          originalQuantity: ticket.requested.kind === 'UNIT' ? ticket.requested.quantity : 0,
+          remainingQuantity: ticket.remaining.kind === 'UNIT' ? ticket.remaining.quantity : 0,
+          fulfilledQuantity: ticket.fulfilled.kind === 'UNIT' ? ticket.fulfilled.quantity : 0,
+          queuedAt: ticket.createdAt,
+        })),
+        pendingResults: [],
+        chain: [
+          {
+            id,
+            code,
+            status: 'CURRENT' as const,
+            chainSequence: 1,
+            openedAt: waitingSince,
+            closedAt: null,
+            openedEventKind: 'SYSTEM_SYNC' as const,
+            closedEventKind: null,
+          },
+        ],
+        currentDocument: { id, code },
+      };
+    });
+  }
+
+  public async listStoreWaitDocuments(
+    actor: AuthenticatedPrincipal,
+    query: ListStoreWaitDocumentsQuery,
+  ): Promise<ListStoreWaitDocumentsResponse> {
+    if (query.storeId !== undefined && !canAccessStore(actor, query.storeId)) throw forbidden();
+    const needle = query.q?.toLowerCase();
+    const values =
+      query.view === 'HISTORY' || (query.status !== undefined && query.status !== 'CURRENT')
+        ? []
+        : this.memoryWaitDocuments(actor)
+            .filter((document) => query.storeId === undefined || document.storeId === query.storeId)
+            .filter(
+              (document) =>
+                query.productId === undefined ||
+                document.lines.some((line) => line.productId === query.productId),
+            )
+            .filter(
+              (document) =>
+                !needle ||
+                document.code.toLowerCase().includes(needle) ||
+                document.members.some((member) => member.code.toLowerCase().includes(needle)) ||
+                document.lines.some(
+                  (line) =>
+                    line.productName.toLowerCase().includes(needle) ||
+                    line.sku.toLowerCase().includes(needle),
+                ),
+            )
+            .sort(
+              (left, right) =>
+                left.storeCode.localeCompare(right.storeCode) || left.id.localeCompare(right.id),
+            );
+    return {
+      data: slicePage(values, query.page, query.pageSize).map(
+        ({
+          members: _members,
+          pendingResults: _pending,
+          chain: _chain,
+          currentDocument: _current,
+          ...document
+        }) => document,
+      ),
+      pagination: pagination(query.page, query.pageSize, values.length),
+    };
+  }
+
+  public async getStoreWaitDocument(
+    actor: AuthenticatedPrincipal,
+    documentId: string,
+  ): Promise<StoreWaitDocumentDetail> {
+    const document = this.memoryWaitDocuments(actor).find((row) => row.id === documentId);
+    if (!document) throw notFound('Không tìm thấy phiếu chờ');
+    return document;
+  }
+
+  public async previewStoreWaitDocumentCancellation(
+    actor: AuthenticatedPrincipal,
+    documentId: string,
+  ): Promise<StoreWaitDocumentCancelPreview> {
+    const document = await this.getStoreWaitDocument(actor, documentId);
+    const tickets = await Promise.all(
+      document.members.map((member) =>
+        this.previewWaitTicketCancellation(actor, member.waitTicketId),
+      ),
+    );
+    return {
+      documentId: document.id,
+      code: document.code,
+      storeId: document.storeId,
+      version: document.version,
+      tickets,
+      awaitingAnswer: [],
+      fingerprint: createHash('sha256')
+        .update(JSON.stringify([document.id, tickets.map((ticket) => ticket.fingerprint)]))
+        .digest('hex'),
+    };
+  }
+
+  public async cancelStoreWaitDocument(
+    actor: AuthenticatedPrincipal,
+    documentId: string,
+    input: CancelStoreWaitDocumentRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<CancelledStoreWaitDocument>> {
+    const preview = await this.previewStoreWaitDocumentCancellation(actor, documentId);
+    if (preview.fingerprint !== input.expectedFingerprint) {
+      throw new ApiError(
+        'WAIT_TICKET_PREVIEW_STALE',
+        'Phạm vi hủy đã thay đổi. Vui lòng xem lại trước khi hủy.',
+        409,
+      );
+    }
+    let cancelledQuantity = 0;
+    for (const ticket of preview.tickets) {
+      await this.cancelWaitTicket(
+        actor,
+        ticket.waitTicketId,
+        { reason: input.reason, expectedFingerprint: ticket.fingerprint },
+        `${idempotencyKey}:${ticket.waitTicketId}`,
+        `${requestHash}:${ticket.waitTicketId}`,
+        context,
+      );
+      cancelledQuantity += ticket.cancelledQuantity;
+    }
+    const remaining = this.memoryWaitDocuments(actor).find(
+      (document) => document.storeId === preview.storeId,
+    );
+    return {
+      data: {
+        documentId,
+        cancelledQuantity,
+        revokedQuantity: 0,
+        currentDocumentId: remaining?.id ?? null,
+      },
+      replayed: false,
+    };
+  }
+
   public async previewWaitTicketCancellation(
     actor: AuthenticatedPrincipal,
     waitTicketId: string,
@@ -7396,6 +7637,15 @@ function memoryWaitTicketDisplay(ticket: WaitTicket): {
     case 'EXPIRED':
       return { displayStatus: 'CANCELLED', displayDetail: 'EXPIRED_LEGACY' };
   }
+}
+
+/** A stable UUID (v5 layout) derived from a name, for projections memory mode does not store. */
+function memoryUuid(name: string): string {
+  const bytes = createHash('sha256').update(name).digest().subarray(0, 16);
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = Buffer.from(bytes).toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function memoryWaitFingerprint(ticket: WaitTicket): string {

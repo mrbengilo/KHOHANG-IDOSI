@@ -32,3 +32,4 @@ export * from './order-history.js';
 export * from './warehouse-adjustments.js';
 export * from './supplier-reconciliation.js';
 export * from './reshare-orders.js';
+export * from './store-wait-documents.js';

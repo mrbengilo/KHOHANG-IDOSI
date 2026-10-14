@@ -1,4 +1,13 @@
 import { InboundStatisticsQuerySchema } from '@idosi/contracts';
+import {
+  CancelStoreWaitDocumentRequestSchema,
+  CancelStoreWaitDocumentResponseSchema,
+  ListStoreWaitDocumentsQuerySchema,
+  ListStoreWaitDocumentsResponseSchema,
+  StoreWaitDocumentCancelPreviewResponseSchema,
+  StoreWaitDocumentDetailResponseSchema,
+  StoreWaitDocumentParamsSchema,
+} from '@idosi/contracts';
 import { ListReceiptSummariesResponseSchema } from '@idosi/contracts';
 import {
   ListSessionDocumentsQuerySchema,
@@ -798,7 +807,9 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   app.get('/api/v1/order-history', async (request, reply) => {
     const session = await authenticate(request, repository);
-    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    // Stores and the wholesale desk read the history of their own store(s) only; the repository
+    // narrows the scope from the live principal, whatever storeId the query names.
+    requireRole(session.principal, ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE']);
     const query = ListOrderHistoryQuerySchema.parse(request.query);
     reply.header('cache-control', 'no-store');
     return ListOrderHistoryResponseSchema.parse(
@@ -2212,6 +2223,54 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return reply.send({ data: result.data });
   });
 
+  // Store wait documents ("phiếu chờ", docs/store-active-wait-document.md): one current
+  // document per store; scope is resolved from the database on every request.
+  app.get('/api/v1/wait-documents', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    const query = ListStoreWaitDocumentsQuerySchema.parse(request.query);
+    reply.header('cache-control', 'no-store');
+    return ListStoreWaitDocumentsResponseSchema.parse(
+      await repository.listStoreWaitDocuments(session.principal, query),
+    );
+  });
+
+  app.get('/api/v1/wait-documents/:documentId', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    const { documentId } = StoreWaitDocumentParamsSchema.parse(request.params);
+    reply.header('cache-control', 'no-store');
+    return StoreWaitDocumentDetailResponseSchema.parse({
+      data: await repository.getStoreWaitDocument(session.principal, documentId),
+    });
+  });
+
+  app.get('/api/v1/wait-documents/:documentId/cancel-preview', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE', 'WHOLESALE', 'ADMIN', 'HTKD']);
+    const { documentId } = StoreWaitDocumentParamsSchema.parse(request.params);
+    reply.header('cache-control', 'no-store');
+    return StoreWaitDocumentCancelPreviewResponseSchema.parse({
+      data: await repository.previewStoreWaitDocumentCancellation(session.principal, documentId),
+    });
+  });
+
+  app.post('/api/v1/wait-documents/:documentId/cancel', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE', 'WHOLESALE', 'ADMIN', 'HTKD']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const { documentId } = StoreWaitDocumentParamsSchema.parse(request.params);
+    const input = CancelStoreWaitDocumentRequestSchema.parse(request.body);
+    const result = await repository.cancelStoreWaitDocument(
+      session.principal,
+      documentId,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'CANCEL_STORE_WAIT_DOCUMENT', documentId, ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send(CancelStoreWaitDocumentResponseSchema.parse({ data: result.data }));
+  });
+
   app.get('/api/v1/priority-offers', async (request) => {
     const session = await authenticate(request, repository);
     const query = ListPriorityOffersQuerySchema.parse(request.query);
@@ -2813,7 +2872,7 @@ function openApiDocument(): Record<string, unknown> {
           responses: {
             '200': {
               description:
-                'ADMIN all stores, HTKD assigned stores: original order requests with every line, newest first, server-side paging and filters',
+                'ADMIN all stores, HTKD assigned stores, STORE its own store, WHOLESALE the wholesale stores: original order requests with every line, newest first, server-side paging and filters',
             },
           },
         },
@@ -3650,6 +3709,70 @@ function openApiDocument(): Record<string, unknown> {
             '409': {
               description:
                 'Nothing left to cancel, already cancelled, preview stale (WAIT_TICKET_PREVIEW_STALE) or required (WAIT_TICKET_PREVIEW_REQUIRED)',
+            },
+          },
+        },
+      },
+      '/api/v1/wait-documents': {
+        get: {
+          security: cookieSecurity,
+          parameters: [
+            ...['page', 'pageSize'].map((name) => ({
+              name,
+              in: 'query',
+              schema: { type: 'integer', minimum: 1 },
+            })),
+            ...['view', 'status', 'storeId', 'productId', 'q', 'openedFrom', 'openedTo'].map(
+              (name) => ({ name, in: 'query', schema: { type: 'string' } }),
+            ),
+          ],
+          responses: {
+            '200': {
+              description:
+                'Store wait documents in scope (ADMIN all stores, HTKD assigned active stores, STORE its own store, WHOLESALE the wholesale stores). view=ACTIVE (default) lists the one current document per store by store code; HISTORY lists processed ones newest first. q searches PCT, PC and PUT codes, product and SKU; productId selects documents but every line is returned.',
+            },
+          },
+        },
+      },
+      '/api/v1/wait-documents/{documentId}': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': {
+              description:
+                'One document with its opening/closing snapshots, line tickets, PENDING results still holding its goods, the whole B → C → D chain and the store current document',
+            },
+            '404': { description: 'Unknown document or outside the actor scope' },
+          },
+        },
+      },
+      '/api/v1/wait-documents/{documentId}/cancel-preview': {
+        get: {
+          security: cookieSecurity,
+          summary:
+            'Read-only scope of cancelling the whole current document: every ticket line with what it cancels, revokes and protects, goods that only await an answer, and a fingerprint to confirm.',
+          responses: {
+            '200': { description: 'Document cancellation preview' },
+            '404': { description: 'Unknown document or outside the cancel scope' },
+            '409': {
+              description: 'The document was already processed (WAIT_DOCUMENT_SUPERSEDED)',
+            },
+          },
+        },
+      },
+      '/api/v1/wait-documents/{documentId}/cancel': {
+        post: {
+          security: cookieSecurity,
+          summary:
+            'Cancel every cancellable line of the current document with the wait-ticket rules, then close it once. Body { reason, expectedFingerprint } (always required). A processed document is refused (409 WAIT_DOCUMENT_SUPERSEDED); the target is never switched to its successor.',
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Cancelled document' },
+            '409': {
+              description:
+                'Preview stale (WAIT_TICKET_PREVIEW_STALE), superseded (WAIT_DOCUMENT_SUPERSEDED) or nothing cancellable',
             },
           },
         },
