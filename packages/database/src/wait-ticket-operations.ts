@@ -519,6 +519,18 @@ export async function listWaitTickets(
     conditions.push(
       or(
         ilike(waitTickets.code, search),
+        // Product name or SKU: the scoped lists search "mã phiếu / tên mặt hàng".
+        exists(
+          database
+            .select({ id: products.id })
+            .from(products)
+            .where(
+              and(
+                eq(products.id, waitTickets.productId),
+                or(ilike(products.name, search), ilike(products.sku, search)),
+              ),
+            ),
+        ),
         exists(
           database
             .select({ id: dailyPriorityOffers.id })

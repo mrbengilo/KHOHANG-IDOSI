@@ -1,6 +1,15 @@
 import { ListWaitTicketsQuerySchema, type ListWaitTicketsQuery } from '@idosi/contracts';
 
-const keys = ['q', 'status', 'storeId', 'productId', 'createdFrom', 'createdTo', 'page'] as const;
+const keys = [
+  'q',
+  'status',
+  'displayStatus',
+  'storeId',
+  'productId',
+  'createdFrom',
+  'createdTo',
+  'page',
+] as const;
 export function readWaitTicketListNavigation(params: URLSearchParams): ListWaitTicketsQuery {
   const raw: Record<string, unknown> = { pageSize: 20, projection: 'TABLE' };
   for (const key of keys) {

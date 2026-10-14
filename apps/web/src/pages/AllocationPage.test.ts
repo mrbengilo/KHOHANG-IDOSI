@@ -219,13 +219,19 @@ describe('allocation worker notice', () => {
     expect(workerStatusNotice({ ...base, status: 'STALE' })).toContain('không phản hồi từ 09:29');
   });
 
-  it('shows order history to ADMIN and HTKD and the create tab to ADMIN only', () => {
+  it('shows order history to ADMIN and HTKD, the create tab to ADMIN only and wait tickets to all', () => {
     const ids = (role: Parameters<typeof allocationTabs>[0]) =>
       allocationTabs(role).map((tab) => tab.id);
     expect(ids('ADMIN')).toEqual(['sessions', 'history', 'wait-tickets', 'create']);
-    expect(ids('HTKD')).toEqual(['sessions', 'history']);
-    expect(ids('STORE')).toEqual(['sessions']);
-    expect(ids('WHOLESALE')).toEqual(['sessions']);
+    expect(ids('HTKD')).toEqual(['sessions', 'history', 'wait-tickets']);
+    expect(ids('STORE')).toEqual(['sessions', 'wait-tickets']);
+    expect(ids('WHOLESALE')).toEqual(['sessions', 'wait-tickets']);
+    expect(allocationTabs('STORE').find((tab) => tab.id === 'wait-tickets')?.label).toBe(
+      'Phiếu chờ ưu tiên',
+    );
+    expect(readAllocationTab(new URLSearchParams('tab=wait-tickets'), 'STORE')).toBe(
+      'wait-tickets',
+    );
     // A tab outside the role falls back to the shared one instead of rendering it.
     expect(readAllocationTab(new URLSearchParams('tab=create'), 'HTKD')).toBe('sessions');
     expect(readAllocationTab(new URLSearchParams('tab=history'), 'STORE')).toBe('sessions');

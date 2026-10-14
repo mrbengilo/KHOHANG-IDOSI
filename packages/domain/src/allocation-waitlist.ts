@@ -82,7 +82,9 @@ export function planWaitlistRequeue(
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, group]) => {
       const sum = (mode: WaitlistLineMode) =>
-        group.filter((line) => line.mode === mode).reduce((total, line) => total + line.quantity, 0);
+        group
+          .filter((line) => line.mode === mode)
+          .reduce((total, line) => total + line.quantity, 0);
       return {
         storeId: group[0]!.storeId,
         productId: group[0]!.productId,

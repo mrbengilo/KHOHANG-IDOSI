@@ -95,7 +95,10 @@ describe('order display status and answer rights', () => {
 
   it('lets the receiving side and an assigned HTKD accept or move to waiting, Admin nothing', () => {
     expect(allowedAllocationDecisionActions('STORE', 'PENDING')).toEqual(['ACCEPT', 'WAITLIST']);
-    expect(allowedAllocationDecisionActions('WHOLESALE', 'PENDING')).toEqual(['ACCEPT', 'WAITLIST']);
+    expect(allowedAllocationDecisionActions('WHOLESALE', 'PENDING')).toEqual([
+      'ACCEPT',
+      'WAITLIST',
+    ]);
     expect(allowedAllocationDecisionActions('HTKD', 'PENDING')).toEqual(['ACCEPT', 'WAITLIST']);
     expect(allowedAllocationDecisionActions('STORE', 'WAITLISTED')).toEqual([]);
     expect(allowedAllocationDecisionActions('ADMIN', 'PENDING')).toEqual([]);

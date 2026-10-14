@@ -63,7 +63,8 @@ export type AllocationDecisionTransition =
   | { readonly ok: true; readonly next: 'ACCEPTED' | 'WAITLISTED' }
   | {
       readonly ok: false;
-      readonly reason: 'ALREADY_ANSWERED' | 'NOT_ANSWERABLE' | 'STALE_VERSION' | 'NOTHING_ACTIONABLE';
+      readonly reason:
+        'ALREADY_ANSWERED' | 'NOT_ANSWERABLE' | 'STALE_VERSION' | 'NOTHING_ACTIONABLE';
     };
 
 /**
@@ -127,7 +128,10 @@ export function revokeFromPendingDecision(input: {
     throw new RangeError('Cannot revoke more than the actionable goods of the result.');
   }
   const revokedQuantity = input.revokedQuantity + input.revoke;
-  return { next: revokedQuantity === input.grantedQuantity ? 'CANCELLED' : 'PENDING', revokedQuantity };
+  return {
+    next: revokedQuantity === input.grantedQuantity ? 'CANCELLED' : 'PENDING',
+    revokedQuantity,
+  };
 }
 
 export const ALLOCATION_DECISION_REASON_MAX_LENGTH = 500;

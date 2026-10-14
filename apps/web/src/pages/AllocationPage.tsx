@@ -40,6 +40,7 @@ import { PriorityOffer } from '../components/PriorityOffer';
 import { StatCard } from '../components/StatCard';
 import { TabPanel, Tabs, type TabItem } from '../components/Tabs';
 import { StoreOrderHistory } from '../features/orders/StoreOrderHistory';
+import { ScopedWaitTicketList } from '../features/allocations/ScopedWaitTicketList';
 import { WaitTicketList } from '../features/allocations/WaitTicketList';
 import { WaitlistPanel } from '../components/WaitlistPanel';
 import { getAdminOperationalSettings, getAllocationWorkerStatus } from '../features/admin/adminApi';
@@ -570,7 +571,10 @@ function sessionErrorMessage(error: unknown): string {
 
 export type AllocationTab = 'sessions' | 'history' | 'create' | 'wait-tickets';
 
-/** Order history is for ADMIN and HTKD; only ADMIN schedules extra sessions. */
+/**
+ * Order history is for ADMIN and HTKD; only ADMIN schedules extra sessions. Every role has a
+ * wait-ticket list: Admin's 9-column table, and "Phiếu chờ ưu tiên" for HTKD/store/wholesale.
+ */
 export function allocationTabs(role: AppOutletContext['role']): readonly TabItem<AllocationTab>[] {
   return [
     { id: 'sessions', label: 'Phiên và kết quả' },
@@ -582,7 +586,7 @@ export function allocationTabs(role: AppOutletContext['role']): readonly TabItem
           { id: 'wait-tickets' as const, label: 'Danh sách phiếu chờ' },
           { id: 'create' as const, label: 'Tạo phiên mới' },
         ]
-      : []),
+      : [{ id: 'wait-tickets' as const, label: 'Phiếu chờ ưu tiên' }]),
   ];
 }
 
@@ -991,6 +995,15 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
       {activeTab === 'wait-tickets' && role === 'ADMIN' ? (
         <TabPanel idPrefix="allocation" tab="wait-tickets">
           <WaitTicketList stores={storesQuery.data ?? []} products={catalogQuery.data ?? []} />
+        </TabPanel>
+      ) : null}
+      {activeTab === 'wait-tickets' && role !== 'ADMIN' ? (
+        <TabPanel idPrefix="allocation" tab="wait-tickets">
+          <ScopedWaitTicketList
+            products={catalogQuery.data ?? []}
+            role={role}
+            stores={storesQuery.data ?? []}
+          />
         </TabPanel>
       ) : null}
       {activeTab === 'history' ? (

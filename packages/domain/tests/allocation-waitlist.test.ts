@@ -211,7 +211,12 @@ describe('three display labels', () => {
       'OFFERED',
     );
     expect(
-      waitTicketDisplay({ ...base, status: 'fulfilled', fulfilledQuantity: 3, pendingDecisionQuantity: 3 }),
+      waitTicketDisplay({
+        ...base,
+        status: 'fulfilled',
+        fulfilledQuantity: 3,
+        pendingDecisionQuantity: 3,
+      }),
     ).toEqual({ status: 'UNPROCESSED', detail: 'PENDING_DECISION' });
     expect(waitTicketDisplay({ ...base, status: 'fulfilled', fulfilledQuantity: 3 })).toEqual({
       status: 'PROCESSED',
