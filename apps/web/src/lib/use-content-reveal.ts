@@ -9,7 +9,13 @@ export function useContentReveal<T extends HTMLElement>(identity = '', focus = t
     const trigger = document.activeElement;
     revealContent(target, focus);
     return () => {
-      if (trigger instanceof HTMLElement && trigger.isConnected) {
+      // Parent filtering/navigation can unmount this detail after another control takes focus.
+      // Do not undo that input; explicit collapse already focuses the original trigger.
+      if (
+        trigger instanceof HTMLElement &&
+        trigger.isConnected &&
+        (document.activeElement === target || document.activeElement === trigger)
+      ) {
         revealContent(trigger);
       }
     };

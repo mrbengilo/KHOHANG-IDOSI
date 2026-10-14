@@ -68,6 +68,7 @@ export function ObservationForm({
   onDone,
   headingRef,
   navigationState,
+  onConfirmingChange,
 }: {
   readonly sourceId: string;
   readonly targets: readonly ObservationTarget[];
@@ -75,6 +76,7 @@ export function ObservationForm({
   readonly onDone: (message: string) => void;
   readonly headingRef: RefObject<HTMLHeadingElement | null>;
   readonly navigationState: RefObject<{ dirty: boolean; confirming: boolean }>;
+  readonly onConfirmingChange: (confirming: boolean) => void;
 }) {
   const client = useQueryClient();
   const [dirty, setDirty] = useState(false);
@@ -204,6 +206,7 @@ export function ObservationForm({
     }
     const payload = { ...input, expectedRevision: preview.revision };
     navigationState.current.confirming = true;
+    onConfirmingChange(true);
     feedbackOwner.current = document.activeElement;
     attempt.current = retainIdempotencyForExactRetry(attempt.current, JSON.stringify(payload));
     setBusy('confirm');
@@ -235,6 +238,7 @@ export function ObservationForm({
       setFeedback((value) => value + 1);
     } finally {
       navigationState.current.confirming = false;
+      onConfirmingChange(false);
       if (mounted.current) setBusy(null);
     }
   };

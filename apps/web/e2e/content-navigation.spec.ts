@@ -123,6 +123,32 @@ test('hash link reaches and focuses its heading', async ({ page }) => {
   await expect(page.locator('#catalog-table-title')).toBeFocused();
 });
 
+test('filter changes preserve control focus when the same discrepancy detail remains open', async ({
+  page,
+}) => {
+  await fixtures(page);
+  const id = '00000000-0000-4000-8000-000000009997';
+  await page.route(`**/api/v1/receipt-adjustments/${id}`, (route) =>
+    route.fulfill({
+      status: 404,
+      json: {
+        error: { code: 'NOT_FOUND', message: 'Không tìm thấy hồ sơ', requestId: 'filter-detail' },
+      },
+    }),
+  );
+  await page.goto(`/inventory?tab=adjustments&psl.open=${id}`);
+  await expect(page.getByRole('region', { name: 'Chi tiết hồ sơ sai lệch' })).toBeFocused();
+  const status = page
+    .getByRole('region', { name: 'Lọc phiếu sai lệch' })
+    .getByRole('combobox', { name: 'Trạng thái', exact: true });
+  await status.focus();
+  await status.selectOption('ALL');
+  await expect(page).toHaveURL(/psl.status=ALL/);
+  expect(new URL(page.url()).searchParams.get('psl.open')).toBe(id);
+  await expect(status).toBeFocused();
+  await expect(status).toBeInViewport();
+});
+
 test('leaving a pending detail cancels its late focus intent', async ({ page }) => {
   await fixtures(page);
   let release!: () => void;

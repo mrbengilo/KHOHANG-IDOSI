@@ -2,6 +2,72 @@ import { expect, test, type Page, type Request } from '@playwright/test';
 
 import { layoutAdminSession } from './layout-fixtures';
 
+for (const outcome of ['success', 'error'] as const) {
+  test(`pending observation blocks tab changes until ${outcome} feedback`, async ({ page }) => {
+    await mockApi(page, 'ADMIN', 0, true);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let requests = 0;
+    let dialogs = 0;
+    page.on('dialog', async (dialog) => {
+      dialogs += 1;
+      await dialog.accept();
+    });
+    await page.route('**/supplier-stock-observations', async (route) => {
+      requests += 1;
+      await gate;
+      if (outcome === 'error')
+        await route.fulfill({
+          status: 500,
+          json: {
+            error: {
+              code: 'SAVE_FAILED',
+              message: 'Không thể lưu kiểm thử',
+              requestId: 'pending-save',
+            },
+          },
+        });
+      else await route.fulfill({ status: 201, json: { data: observation } });
+    });
+    await page.goto('/supplier-reconciliation?tab=reconcile');
+    await page
+      .locator('.supplier-summary tbody tr')
+      .first()
+      .getByRole('button', { name: 'Đối chiếu', exact: true })
+      .click();
+    await page
+      .getByLabel('Tổng số bao Reshare đang cho đặt của Mặt hàng 1', { exact: true })
+      .fill('3');
+    await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
+    await page.getByRole('button', { name: 'Lưu cập nhật tồn', exact: true }).click();
+    await expect.poll(() => requests).toBe(1);
+    await page.getByRole('tab', { name: 'Lịch sử cập nhật tồn', exact: true }).click();
+    await expect(page).toHaveURL(/tab=reconcile/);
+    await expect(
+      page.getByRole('tab', { name: 'Cập nhật tồn Reshare', exact: true }),
+    ).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('heading', { name: 'Cập nhật tổng tồn Reshare' })).toBeVisible();
+    await expect(
+      page.getByRole('status').filter({ hasText: 'Vui lòng chờ kết quả' }),
+    ).toBeVisible();
+    expect(dialogs).toBe(0);
+    release();
+    if (outcome === 'success')
+      await expect(
+        page.getByRole('status').filter({ hasText: 'Đã lưu cập nhật tồn' }),
+      ).toBeVisible();
+    else await expect(page.getByRole('alert')).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: 'Vui lòng chờ kết quả' })).toHaveCount(
+      0,
+    );
+    await page.getByRole('tab', { name: 'Lịch sử cập nhật tồn', exact: true }).click();
+    await expect(page).toHaveURL(/tab=history/);
+    expect(requests).toBe(1);
+  });
+}
+
 /*
  * Đơn đặt và tồn Reshare trên production bundle với API giả lập theo đúng contract: mọi vai trò
  * mở vào "Đơn đặt Reshare" (lịch sử RE nhóm theo đơn, lọc phía server), Admin và HTKD quản lý

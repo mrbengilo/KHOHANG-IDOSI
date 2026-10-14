@@ -42,8 +42,9 @@ export function SupplierReconciliationPage() {
   const tabs = supplierTabsFor(role);
   const accountId = session.data?.principal.accountId ?? 'demo';
   const [dirty, setDirty] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const setTab = (next: SupplierTab) => {
-    if (next === tab) return;
+    if (next === tab || confirming) return;
     if (dirty && !window.confirm('Bỏ bản nháp đối chiếu để chuyển mục? Chọn Hủy để giữ bản nháp.'))
       return;
     setDirty(false);
@@ -73,6 +74,9 @@ export function SupplierReconciliationPage() {
           onChange={setTab}
         />
       ) : null}
+      {confirming ? (
+        <p role="status">Đang lưu cập nhật tồn. Vui lòng chờ kết quả trước khi chuyển mục.</p>
+      ) : null}
       <TabPanel idPrefix="supplier-reconciliation" tab={tabs.includes(tab) ? tab : tabs[0]!}>
         {tab === 'orders' ? (
           <>
@@ -98,6 +102,7 @@ export function SupplierReconciliationPage() {
           <DraftScope onDirtyChange={setDirty}>
             <ReconciliationWorkspace
               accountId={`${role}:${accountId}`}
+              onConfirmingChange={setConfirming}
               onOpenSettings={() => setTab('settings')}
             />
           </DraftScope>

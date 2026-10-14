@@ -29,9 +29,11 @@ const FILTERS: readonly { id: SupplierReconciliationFilter; label: string }[] = 
 export function ReconciliationWorkspace({
   accountId,
   onOpenSettings,
+  onConfirmingChange,
 }: {
   readonly accountId: string;
   readonly onOpenSettings: () => void;
+  readonly onConfirmingChange: (confirming: boolean) => void;
 }) {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
@@ -142,6 +144,7 @@ export function ReconciliationWorkspace({
           key={targetSetKey(formTargets)}
           headingRef={formHeading}
           navigationState={formState}
+          onConfirmingChange={onConfirmingChange}
           onCancel={closeForm}
           onDone={(message) => {
             setFormTargets(null);
