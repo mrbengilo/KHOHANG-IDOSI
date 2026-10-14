@@ -113,6 +113,11 @@ export const ApiErrorCodeSchema = z.enum([
   'DUPLICATE_EXTERNAL_EVENT',
   'OBSERVATION_OUT_OF_ORDER',
   'LEGACY_ATTESTATION_REQUIRED',
+  // Allocation result answers and wait-ticket cancellation (docs/allocation-waitlist-workflow.md).
+  'ALLOCATION_DECISION_ACTION_RETIRED',
+  'CLIENT_UPGRADE_REQUIRED',
+  'WAIT_TICKET_PREVIEW_REQUIRED',
+  'WAIT_TICKET_PREVIEW_STALE',
 ]);
 export type ApiErrorCode = z.infer<typeof ApiErrorCodeSchema>;
 

@@ -11,11 +11,13 @@ import type {
   RespondAllocationDecisionRequest,
 } from '@idosi/contracts';
 import {
+  AllocationDecisionActionRetiredError,
   AllocationDecisionConflictError,
   AllocationDecisionForbiddenError,
   AllocationDecisionIntegrityError,
   AllocationDecisionNotFoundError,
   AllocationDecisionValidationError,
+  AllocationRevocationIntegrityError,
   allocationResultDecisions,
   databaseDecisionStatus,
   domainDecisionStatus,
@@ -102,14 +104,39 @@ async function loadStoreFacts(
   );
 }
 
-type AnswerActions = readonly ('ACCEPT' | 'REJECT')[];
+type AnswerActions = readonly ('ACCEPT' | 'WAITLIST')[];
+
+/**
+ * Bundles from before 0044 do not opt in with includeWaitlist. They never see WAITLIST or the
+ * new statuses (WAITLISTED/CANCELLED read as REJECTED: final, goods back in the warehouse), and
+ * they may not answer a result that lost part of its goods, whose lines they would misread.
+ */
+function compatibleView(
+  record: AllocationDecisionRecord,
+  actions: AnswerActions,
+  includeWaitlist: boolean,
+): {
+  status: AllocationDecision['status'];
+  allowedActions: AllocationDecision['allowedActions'] & object;
+} {
+  const status = domainDecisionStatus(record.status);
+  const pendingActions = record.status === 'pending' ? [...actions] : [];
+  if (includeWaitlist) return { status, allowedActions: pendingActions };
+  return {
+    status: status === 'WAITLISTED' || status === 'CANCELLED' ? 'REJECTED' : status,
+    allowedActions:
+      record.revokedQuantity > 0 ? [] : pendingActions.filter((action) => action === 'ACCEPT'),
+  };
+}
 
 export function allocationDecisionDto(
   record: AllocationDecisionRecord,
   actions: AnswerActions,
   reshare?: { readonly order: ReshareOrderSummary | null },
+  includeWaitlist = false,
 ): AllocationDecision {
-  const allowedActions = record.status === 'pending' ? [...actions] : [];
+  const compatible = compatibleView(record, actions, includeWaitlist);
+  const allowedActions = compatible.allowedActions;
   const includeReshare = reshare !== undefined;
   return {
     id: record.id,
@@ -119,7 +146,7 @@ export function allocationDecisionDto(
     sessionCode: record.sessionCode,
     businessDate: record.businessDate,
     storeId: record.storeId,
-    status: domainDecisionStatus(record.status),
+    status: compatible.status,
     version: record.version,
     grantedQuantity: record.grantedQuantity,
     origin: record.origin === 'legacy_backfill' ? 'LEGACY_BACKFILL' : 'ALLOCATION_RUN',
@@ -136,6 +163,28 @@ export function allocationDecisionDto(
                 totalQuantity: reshare.order.totalQuantity,
               }
             : null,
+        }
+      : {}),
+    ...(includeWaitlist
+      ? {
+          actionableQuantity: record.grantedQuantity - record.revokedQuantity,
+          revokedQuantity: record.revokedQuantity,
+          actionableLines: record.actionableLines.map((line) => ({ ...line })),
+          revocations: record.revocations.map((row) => ({
+            allocationLineId: row.allocationLineId,
+            productId: row.productId,
+            quantity: row.quantity,
+            kind:
+              row.kind === 'waitlisted'
+                ? ('WAITLISTED' as const)
+                : ('WAIT_TICKET_CANCELLED' as const),
+            waitTicketId: row.waitTicketId,
+            waitTicketCode: row.waitTicketCode,
+            actorName: row.actorName,
+            actorRole: ROLE_DTO[row.actorRole],
+            createdAt: row.createdAt.toISOString(),
+          })),
+          requeued: record.requeued.map((row) => ({ ...row })),
         }
       : {}),
     respondedAt: record.respondedAt?.toISOString() ?? null,
@@ -158,7 +207,9 @@ export function allocationDecisionDto(
         : row.reservationStatus.toUpperCase()) as AllocationDecision['carried'][number]['reservationStatus'],
       waitTicketId: row.waitTicketId,
       sourceDecisionStatus:
-        row.sourceDecisionStatus === null ? null : domainDecisionStatus(row.sourceDecisionStatus),
+        row.sourceDecisionStatus === null
+          ? null
+          : compatibleStatus(domainDecisionStatus(row.sourceDecisionStatus), includeWaitlist),
     })),
     heldQuantity: record.heldQuantity,
     releasedQuantity: record.releasedQuantity,
@@ -183,13 +234,23 @@ export function allocationDecisionDto(
   };
 }
 
+function compatibleStatus(
+  status: AllocationDecision['status'],
+  includeWaitlist: boolean,
+): AllocationDecision['status'] {
+  return !includeWaitlist && (status === 'WAITLISTED' || status === 'CANCELLED')
+    ? 'REJECTED'
+    : status;
+}
+
 function detailDto(
   record: AllocationDecisionDetailRecord,
   actions: AnswerActions,
-  reshare?: { readonly order: ReshareOrderSummary | null },
+  reshare: { readonly order: ReshareOrderSummary | null } | undefined,
+  includeWaitlist: boolean,
 ): AllocationDecisionDetail {
   return {
-    ...allocationDecisionDto(record, actions, reshare),
+    ...allocationDecisionDto(record, actions, reshare, includeWaitlist),
     sources: record.sources.map((source) => ({
       allocationLineId: source.allocationLineId,
       productId: source.productId,
@@ -228,6 +289,7 @@ export async function decisionDtosFor(
       record,
       store ? allocationDecisionActionsFor(actor, store) : [],
       orders ? { order: orders.get(record.id) ?? null } : undefined,
+      view.includeWaitlist === true,
     );
   });
 }
@@ -251,6 +313,7 @@ export async function listPostgresAllocationDecisions(
   return {
     data: await decisionDtosFor(database, actor, result.data, {
       includeReshare: query.includeReshare === true,
+      includeWaitlist: query.includeWaitlist === true,
     }),
     pagination: result.pagination,
   };
@@ -280,6 +343,7 @@ export async function getPostgresAllocationDecision(
     record,
     store ? allocationDecisionActionsFor(actor, store) : [],
     order === undefined ? undefined : { order },
+    view.includeWaitlist === true,
   );
 }
 
@@ -294,31 +358,42 @@ export async function respondPostgresAllocationDecision(
   authorizeRetailStore: () => Promise<void>,
   view: AllocationDecisionView = {},
 ): Promise<IdempotentResource<AllocationDecisionDetail>> {
-  // An assigned HTKD may accept for the store, never reject; Admin only reads.
+  // The receiving side and an assigned HTKD answer; Admin only reads.
   if (actor.role !== 'STORE' && actor.role !== 'WHOLESALE' && actor.role !== 'HTKD') {
     throw forbidden();
   }
-  if (actor.role === 'HTKD' && input.action !== 'ACCEPT') {
-    throw forbidden('HTKD chỉ được chấp nhận kết quả phân bổ thay cửa hàng, không được từ chối.');
-  }
+  // "Từ chối" was retired by 0044: an older bundle gets a structured refusal, never an alias.
+  if (input.action === 'REJECT')
+    throw allocationDecisionApiError(new AllocationDecisionActionRetiredError());
+  const action = input.action;
   if (actor.role === 'STORE') await authorizeRetailStore();
   const [located] = await database
-    .select({ storeId: allocationResultDecisions.storeId })
+    .select({
+      storeId: allocationResultDecisions.storeId,
+      revokedQuantity: allocationResultDecisions.revokedQuantity,
+    })
     .from(allocationResultDecisions)
     .where(eq(allocationResultDecisions.id, decisionId))
     .limit(1);
   if (!located || !canAccessStore(actor, located.storeId)) throw notFound(NOT_FOUND_MESSAGE);
   const facts = await loadStoreFacts(database, [located.storeId]);
   const store = facts.get(located.storeId);
-  if (!store || !allocationDecisionActionsFor(actor, store).includes(input.action)) {
+  if (!store || !allocationDecisionActionsFor(actor, store).includes(action)) {
     throw forbidden();
+  }
+  if (view.includeWaitlist !== true && (action === 'WAITLIST' || located.revokedQuantity > 0)) {
+    // An older bundle cannot show which goods were revoked: it must reload before answering.
+    throw new ApiError(
+      'CLIENT_UPGRADE_REQUIRED',
+      'Phiếu kết quả đã thay đổi theo quy trình mới. Vui lòng tải lại trang để xem phần hàng còn hiệu lực rồi xác nhận.',
+      409,
+    );
   }
   try {
     const result = await respondAllocationDecision(database, {
       decisionId,
-      action: input.action,
+      action,
       expectedVersion: input.expectedVersion,
-      reason: input.reason ?? null,
       actorUserId: actor.accountId,
       requestId: context.requestId,
       idempotencyKey,
@@ -334,6 +409,13 @@ export async function respondPostgresAllocationDecision(
 }
 
 function allocationDecisionApiError(error: unknown): unknown {
+  if (error instanceof AllocationDecisionActionRetiredError) {
+    return new ApiError(
+      'ALLOCATION_DECISION_ACTION_RETIRED',
+      'Nút "Từ chối" đã được thay bằng "Chuyển phiếu chờ". Vui lòng tải lại trang để dùng giao diện mới.',
+      409,
+    );
+  }
   if (error instanceof AllocationDecisionNotFoundError) return notFound(NOT_FOUND_MESSAGE);
   if (error instanceof AllocationDecisionForbiddenError) return forbidden();
   if (error instanceof AllocationDecisionValidationError) {
@@ -345,9 +427,13 @@ function allocationDecisionApiError(error: unknown): unknown {
         ? 'Phiếu kết quả đã thay đổi. Vui lòng tải lại để xem trạng thái mới nhất.'
         : error.reason === 'ALREADY_ANSWERED'
           ? error.currentStatus === 'ACCEPTED'
-            ? 'Phiếu kết quả này đã được chấp nhận trước đó.'
-            : 'Phiếu kết quả này đã được từ chối nhận trước đó.'
-          : 'Phiếu kết quả này không cần cửa hàng xác nhận.';
+            ? 'Phiếu kết quả này đã được xác nhận phân bổ trước đó.'
+            : error.currentStatus === 'WAITLISTED'
+              ? 'Phiếu kết quả này đã được chuyển về phiếu chờ trước đó.'
+              : 'Phiếu kết quả này đã được từ chối nhận trước đó.'
+          : error.currentStatus === 'CANCELLED'
+            ? 'Toàn bộ hàng của phiếu kết quả này đã bị thu hồi do hủy phiếu chờ.'
+            : 'Phiếu kết quả này không cần cửa hàng xác nhận.';
     return new ApiError(
       error.reason === 'STALE_VERSION' ? 'VERSION_CONFLICT' : 'INVALID_STATE_TRANSITION',
       message,
@@ -369,7 +455,8 @@ function allocationDecisionApiError(error: unknown): unknown {
   }
   if (
     error instanceof AllocationDecisionIntegrityError ||
-    error instanceof ReshareOrderIntegrityError
+    error instanceof ReshareOrderIntegrityError ||
+    error instanceof AllocationRevocationIntegrityError
   ) {
     return conflict('Dữ liệu phân bổ của phiếu không nhất quán; vui lòng báo quản trị viên.');
   }

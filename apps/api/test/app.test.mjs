@@ -4163,8 +4163,8 @@ describe('KHOHANG-IDOSI API', () => {
       notices.json().data.map((row) => [row.id, row.canRespond]),
       [[published.id, true]],
     );
-    // The assigned HTKD may accept for the store but never reject; without the opt-in the
-    // response keeps the older shape (no allowedActions / reshareOrder keys).
+    // Without the opt-ins the response keeps the older shape (no allowedActions / reshareOrder
+    // keys) and never offers the 0044 WAITLIST action to an older bundle.
     const htkdView = await app.inject({
       method: 'GET',
       url: `/api/v1/allocation-decisions/${published.id}`,
@@ -4181,12 +4181,19 @@ describe('KHOHANG-IDOSI API', () => {
     });
     assert.deepEqual(htkdViewV2.json().data.allowedActions, ['ACCEPT']);
     assert.equal(htkdViewV2.json().data.reshareOrder, null);
+    const htkdViewV3 = await app.inject({
+      method: 'GET',
+      url: `/api/v1/allocation-decisions/${published.id}?includeReshare=true&includeWaitlist=true`,
+      headers: { cookie: htkdCookie },
+    });
+    assert.deepEqual(htkdViewV3.json().data.allowedActions, ['ACCEPT', 'WAITLIST']);
     const htkdReject = await respond(
       htkdCookie,
       { action: 'REJECT', expectedVersion: 1 },
       'htkd-answer-0001',
     );
-    assert.equal(htkdReject.statusCode, 403);
+    assert.equal(htkdReject.statusCode, 409);
+    assert.equal(htkdReject.json().error.code, 'ALLOCATION_DECISION_ACTION_RETIRED');
 
     const accepted = await respond(
       storeCookie,
@@ -4213,15 +4220,15 @@ describe('KHOHANG-IDOSI API', () => {
     assert.equal(replay.headers['idempotency-replayed'], 'true');
     const reused = await respond(
       storeCookie,
-      { action: 'REJECT', expectedVersion: 1 },
+      { action: 'ACCEPT', expectedVersion: 2 },
       'store-accept-0001',
     );
     assert.equal(reused.statusCode, 409);
     assert.equal(reused.json().error.code, 'IDEMPOTENCY_CONFLICT');
     const flip = await respond(
       storeCookie,
-      { action: 'REJECT', expectedVersion: 2 },
-      'store-reject-0001',
+      { action: 'ACCEPT', expectedVersion: 2 },
+      'store-accept-0002',
     );
     assert.equal(flip.statusCode, 409);
     assert.equal(flip.json().error.code, 'INVALID_STATE_TRANSITION');

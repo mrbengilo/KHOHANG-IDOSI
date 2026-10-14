@@ -46,6 +46,11 @@ export function useAllocationDecisionResponder() {
           ['supplier-reconciliation'],
           ['supplier-commitments'],
           ['session-documents'],
+          // "Chuyển phiếu chờ" creates or grows wait tickets and releases held goods.
+          ['wait-tickets'],
+          ['wait-ticket-history'],
+          ['priority-offers'],
+          ['warehouse-balances'],
         ].map((queryKey) => queryClient.invalidateQueries({ queryKey })),
       ),
     [queryClient],
@@ -68,7 +73,7 @@ export function useAllocationDecisionResponder() {
           decisionId: decision.id,
           message:
             updated.status === 'ACCEPTED'
-              ? `Đã chấp nhận phiếu ${decisionCode(updated)}${
+              ? `Đã xác nhận phân bổ phiếu ${decisionCode(updated)}${
                   updated.reshareOrder
                     ? `, tạo đơn ${updated.reshareOrder.code} và xuất ${updated.reshareOrder.totalQuantity} bao khỏi kho tổng IDOSI. Dùng mã đơn này để đặt hàng trên Reshare.`
                     : '.'
@@ -77,7 +82,16 @@ export function useAllocationDecisionResponder() {
                     ? 'Cửa hàng khai nhận đủ hoặc thiếu theo thực tế khi hàng đến.'
                     : 'Hàng chờ ghép chuyến với đơn thường kế tiếp.'
                 }`
-              : `Đã ghi nhận từ chối nhận phiếu ${decisionCode(updated)}; ${updated.releasedQuantity} bao đã trả lại kho.`,
+              : updated.status === 'WAITLISTED'
+                ? `Đã chuyển phiếu ${decisionCode(updated)} về phiếu chờ: ${updated.releasedQuantity} bao trả lại kho tổng (không tạo đơn RE). ${
+                    (updated.requeued ?? [])
+                      .map(
+                        (row) =>
+                          `${row.waitTicketCode}: ${row.createdTicket ? 'tạo mới' : 'cộng thêm'} ${row.quantity} bao`,
+                      )
+                      .join('; ') || 'Nguồn đã hủy không được đưa lại vào phiếu chờ.'
+                  }`
+                : `Phiếu ${decisionCode(updated)} đã được cập nhật (${updated.status}).`,
         });
         await refreshDependents();
         return true;

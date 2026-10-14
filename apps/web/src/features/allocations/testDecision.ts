@@ -21,6 +21,7 @@ export function testDecision(
     grantedQuantity: 3,
     origin: 'ALLOCATION_RUN',
     canRespond: true,
+    allowedActions: ['ACCEPT', 'WAITLIST'],
     respondedAt: null,
     respondedByAccountId: null,
     respondedByName: null,

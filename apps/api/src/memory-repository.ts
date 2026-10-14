@@ -21,7 +21,6 @@ import {
   calculateReceiptVat,
   DomainError,
   formatReshareOrderCode,
-  normalizeAllocationDecisionReason,
   transitionAllocationDecision,
 } from '@idosi/domain';
 import type { InboundStatistics, InboundStatisticsQuery } from '@idosi/contracts';
@@ -45,7 +44,7 @@ import type {
   RespondAllocationDecisionRequest,
 } from '@idosi/contracts';
 import type { ListStoreBagOpeningsQuery, StoreBagOpening } from '@idosi/contracts';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { nextOrderingWindow, type OrderingContext } from '@idosi/contracts';
 
 import type {
@@ -162,6 +161,7 @@ import type {
   UpdateStoreRequest,
   DeleteProductConversionRequest,
   WaitTicket,
+  WaitTicketCancelPreview,
   WaitTicketHistory,
   WarehouseOutboundRequest,
   StoreTransfer,
@@ -1760,7 +1760,16 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const values = [...this.allocationDecisions.values()]
       .filter((decision) => canAccessStore(actor, decision.storeId))
       .filter((decision) => query.storeId === undefined || decision.storeId === query.storeId)
-      .filter((decision) => query.status === undefined || decision.status === query.status)
+      .filter(
+        (decision) =>
+          query.status === undefined ||
+          (query.includeWaitlist === true
+            ? decision.status === query.status
+            : // Older bundles read WAITLISTED/CANCELLED as REJECTED; filter the same way.
+              (decision.status === 'WAITLISTED' || decision.status === 'CANCELLED'
+                ? 'REJECTED'
+                : decision.status) === query.status),
+      )
       .filter((decision) => query.sessionId === undefined || decision.sessionId === query.sessionId)
       .filter(
         (decision) =>
@@ -1774,7 +1783,10 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     return {
       data: slicePage(values, query.page, query.pageSize).map(
         ({ sources: _sources, ...decision }) =>
-          this.decisionForActor(actor, decision, { includeReshare: query.includeReshare === true }),
+          this.decisionForActor(actor, decision, {
+            includeReshare: query.includeReshare === true,
+            includeWaitlist: query.includeWaitlist === true,
+          }),
       ),
       pagination: pagination(query.page, query.pageSize, values.length),
     };
@@ -2068,9 +2080,14 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (actor.role !== 'STORE' && actor.role !== 'WHOLESALE' && actor.role !== 'HTKD') {
       throw forbidden();
     }
-    if (actor.role === 'HTKD' && input.action !== 'ACCEPT') {
-      throw forbidden('HTKD chỉ được chấp nhận kết quả phân bổ thay cửa hàng, không được từ chối.');
+    if (input.action === 'REJECT') {
+      throw new ApiError(
+        'ALLOCATION_DECISION_ACTION_RETIRED',
+        'Nút "Từ chối" đã được thay bằng "Chuyển phiếu chờ". Vui lòng tải lại trang để dùng giao diện mới.',
+        409,
+      );
     }
+    const action = input.action;
     if (actor.role === 'STORE') await this.authorizeRetailStoreOperation(actor);
     const current = this.allocationDecisions.get(decisionId);
     if (!current || !canAccessStore(actor, current.storeId)) {
@@ -2083,9 +2100,16 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         id: store.id,
         kind: store.kind,
         active: store.status === 'ACTIVE',
-      }).includes(input.action)
+      }).includes(action)
     ) {
       throw forbidden();
+    }
+    if (view.includeWaitlist !== true && action === 'WAITLIST') {
+      throw new ApiError(
+        'CLIENT_UPGRADE_REQUIRED',
+        'Phiếu kết quả đã thay đổi theo quy trình mới. Vui lòng tải lại trang để xem phần hàng còn hiệu lực rồi xác nhận.',
+        409,
+      );
     }
     const scopedKey = `${actor.accountId}:allocation-decision:${decisionId}:${idempotencyKey}`;
     const previous = this.allocationDecisionMutations.get(scopedKey);
@@ -2102,17 +2126,11 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         replayed: true,
       };
     }
-    let reason: string | null;
-    try {
-      reason = normalizeAllocationDecisionReason(input.action, input.reason);
-    } catch (error) {
-      throw new ApiError('VALIDATION_ERROR', (error as Error).message, 400);
-    }
     const transition = transitionAllocationDecision({
       status: current.status,
       version: current.version,
       expectedVersion: input.expectedVersion,
-      action: input.action,
+      action,
     });
     if (!transition.ok) {
       throw new ApiError(
@@ -2155,9 +2173,15 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         dispatchedAt: released.dispatchedAt,
       };
     }
-    if (transition.next === 'REJECTED') {
+    let requeued: NonNullable<AllocationDecisionDetail['requeued']> = [];
+    if (transition.next === 'WAITLISTED') {
+      // Same rule as PostgreSQL: release the held goods (on-hand unchanged) and add the granted
+      // bags to the store x product active ticket, or one new ticket per product.
       for (const line of current.lines)
         this.adjustMemoryReserved(line.productId, -line.allocatedQuantity);
+      requeued = current.lines
+        .filter((line) => line.allocatedQuantity > 0)
+        .map((line) => this.requeueMemoryDemand(current, line.productId, line.allocatedQuantity));
     } else {
       // Acceptance creates the RE order and issues its goods: on-hand and reserved drop together.
       const lines = current.lines
@@ -2203,23 +2227,27 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       respondedAt: now,
       respondedByAccountId: actor.accountId,
       respondedByName: this.accounts.get(actor.accountId)?.displayName ?? null,
-      reason,
+      reason: null,
       updatedAt: now,
       shipment,
       heldQuantity:
         transition.next === 'ACCEPTED' && current.shipment === null ? current.grantedQuantity : 0,
-      releasedQuantity: transition.next === 'REJECTED' ? current.grantedQuantity : 0,
+      releasedQuantity: transition.next === 'WAITLISTED' ? current.grantedQuantity : 0,
+      revokedQuantity: transition.next === 'WAITLISTED' ? current.grantedQuantity : 0,
+      requeued,
     };
     this.allocationDecisions.set(decisionId, updated);
     this.allocationDecisionMutations.set(scopedKey, { requestHash, decisionId });
     this.appendAudit(
       actor,
       context,
-      transition.next === 'ACCEPTED' ? 'ALLOCATION_RESULT_ACCEPTED' : 'ALLOCATION_RESULT_REJECTED',
+      transition.next === 'ACCEPTED'
+        ? 'ALLOCATION_RESULT_ACCEPTED'
+        : 'ALLOCATION_RESULT_WAITLISTED',
       'allocation_result_decision',
       decisionId,
       { status: current.status, version: current.version },
-      { status: updated.status, version: updated.version, reason },
+      { status: updated.status, version: updated.version },
     );
     return { data: await this.getAllocationDecision(actor, decisionId, view), replayed: false };
   }
@@ -2241,12 +2269,45 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
           ]
         : [];
     const order = this.reshareOrders.get(decision.id);
+    const {
+      revokedQuantity: revoked = 0,
+      requeued = [],
+      actionableQuantity: _actionable,
+      actionableLines: _lines,
+      revocations: _revocations,
+      ...base
+    } = decision;
+    const includeWaitlist = view.includeWaitlist === true;
+    const visibleActions = includeWaitlist
+      ? allowedActions
+      : revoked > 0
+        ? []
+        : allowedActions.filter((action) => action === 'ACCEPT');
+    // The opt-in fields are rebuilt below, so the shape is the caller's type again.
     return structuredClone({
-      ...decision,
-      canRespond: allowedActions.length > 0,
+      ...base,
+      status:
+        !includeWaitlist && (decision.status === 'WAITLISTED' || decision.status === 'CANCELLED')
+          ? 'REJECTED'
+          : decision.status,
+      canRespond: visibleActions.length > 0,
+      ...(includeWaitlist
+        ? {
+            actionableQuantity: decision.grantedQuantity - revoked,
+            revokedQuantity: revoked,
+            actionableLines: decision.lines.map((line) => ({
+              productId: line.productId,
+              grantedQuantity: line.allocatedQuantity,
+              revokedQuantity: revoked === decision.grantedQuantity ? line.allocatedQuantity : 0,
+              actionableQuantity: revoked === decision.grantedQuantity ? 0 : line.allocatedQuantity,
+            })),
+            revocations: [],
+            requeued,
+          }
+        : {}),
       ...(view.includeReshare
         ? {
-            allowedActions,
+            allowedActions: visibleActions,
             reshareOrder: order
               ? {
                   id: order.id,
@@ -2258,7 +2319,62 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
               : null,
           }
         : {}),
+    }) as unknown as T;
+  }
+
+  private requeueMemoryDemand(
+    decision: AllocationDecisionDetail,
+    productId: string,
+    quantity: number,
+  ): NonNullable<AllocationDecisionDetail['requeued']>[number] {
+    const now = this.now().toISOString();
+    const active = [...this.waitTickets.values()].find(
+      (ticket) =>
+        ticket.storeId === decision.storeId &&
+        ticket.productId === productId &&
+        ['WAITING', 'OFFERED', 'PARTIALLY_FULFILLED'].includes(ticket.status),
+    );
+    if (active && active.requested.kind === 'UNIT' && active.remaining.kind === 'UNIT') {
+      this.waitTickets.set(active.id, {
+        ...active,
+        requested: { kind: 'UNIT', quantity: active.requested.quantity + quantity },
+        remaining: { kind: 'UNIT', quantity: active.remaining.quantity + quantity },
+        updatedAt: now,
+      });
+      return {
+        waitTicketId: active.id,
+        waitTicketCode: active.code ?? 'PC-0000000',
+        productId,
+        quantity,
+        mode: 'ADD_DEMAND',
+        createdTicket: false,
+      };
+    }
+    const id = randomUUID();
+    const code = `PC-${String(this.waitTickets.size + 1).padStart(7, '0')}`;
+    this.waitTickets.set(id, {
+      id,
+      code,
+      sessionId: decision.sessionId,
+      mergedOrderId: null,
+      storeId: decision.storeId,
+      productId,
+      priority: 'P0B',
+      requested: { kind: 'UNIT', quantity },
+      fulfilled: { kind: 'UNIT', quantity: 0 },
+      remaining: { kind: 'UNIT', quantity },
+      status: 'WAITING',
+      createdAt: now,
+      updatedAt: now,
     });
+    return {
+      waitTicketId: id,
+      waitTicketCode: code,
+      productId,
+      quantity,
+      mode: 'ADD_DEMAND',
+      createdTicket: true,
+    };
   }
 
   private adjustMemoryReserved(productId: string, delta: number): void {
@@ -5756,13 +5872,75 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
               o.code?.toLowerCase().includes(query.q!.toLowerCase()),
           ),
       )
+      .filter(
+        (ticket) =>
+          query.displayStatus === undefined ||
+          memoryWaitTicketDisplay(ticket).displayStatus === query.displayStatus,
+      )
       .sort(
         (left, right) =>
           right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
       );
     return {
-      data: slicePage(values, query.page, query.pageSize),
+      data: slicePage(values, query.page, query.pageSize).map((ticket) =>
+        query.includeLineage
+          ? {
+              ...ticket,
+              lineage: {
+                ...memoryWaitTicketDisplay(ticket),
+                waitingSince: ticket.createdAt,
+                // Memory mode links no results to tickets: nothing pending or revoked.
+                pendingDecisionQuantity: 0,
+                revokedQuantity: 0,
+                sessions: [],
+                sources: [],
+                legacyUnsourcedQuantity: 0,
+                canCancel: ['WAITING', 'OFFERED', 'PARTIALLY_FULFILLED'].includes(ticket.status),
+              },
+            }
+          : ticket,
+      ),
       pagination: pagination(query.page, query.pageSize, values.length),
+    };
+  }
+
+  public async previewWaitTicketCancellation(
+    actor: AuthenticatedPrincipal,
+    waitTicketId: string,
+  ): Promise<WaitTicketCancelPreview> {
+    const stored = this.waitTickets.get(waitTicketId);
+    if (!stored || !canAccessStore(actor, stored.storeId)) {
+      throw notFound('Không tìm thấy phiếu chờ');
+    }
+    const ticket = this.effectiveWaitTicket(stored);
+    const waiting = ticket.remaining.kind === 'UNIT' ? ticket.remaining.quantity : 0;
+    const open = ['WAITING', 'OFFERED', 'PARTIALLY_FULFILLED'].includes(ticket.status);
+    const offers = [...this.priorityOffers.values()].filter(
+      (offer) =>
+        offer.waitTicketId === waitTicketId && ['PENDING', 'ACCEPTED'].includes(offer.status),
+    );
+    return {
+      waitTicketId,
+      code: ticket.code ?? '',
+      storeId: ticket.storeId,
+      productId: ticket.productId,
+      cancellable: open,
+      refusal: open
+        ? null
+        : ticket.status === 'CANCELLED'
+          ? 'ALREADY_CANCELLED'
+          : 'NOTHING_CANCELLABLE',
+      waitingQuantity: waiting,
+      offers: offers.map((offer) => ({
+        offerId: offer.id,
+        code: offer.code ?? '',
+        status: offer.status,
+        heldQuantity: offer.offered.kind === 'UNIT' ? offer.offered.quantity : 0,
+      })),
+      revocable: [],
+      protected: [],
+      cancelledQuantity: open ? waiting : 0,
+      fingerprint: memoryWaitFingerprint(ticket),
     };
   }
 
@@ -5844,6 +6022,16 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     const effective = this.effectiveWaitTicket(current);
     if (!['WAITING', 'OFFERED', 'PARTIALLY_FULFILLED'].includes(effective.status)) {
       throw conflict('Chỉ có thể hủy phiếu chờ đang hoạt động');
+    }
+    if (
+      input.expectedFingerprint !== undefined &&
+      input.expectedFingerprint !== memoryWaitFingerprint(effective)
+    ) {
+      throw new ApiError(
+        'WAIT_TICKET_PREVIEW_STALE',
+        'Phạm vi hủy đã thay đổi. Vui lòng xem lại trước khi hủy.',
+        409,
+      );
     }
     const relatedOffers = [...this.priorityOffers.values()].filter(
       (offer) => offer.waitTicketId === waitTicketId,
@@ -7189,4 +7377,29 @@ function receiptAdjustmentsUnavailable(): ApiError {
     'Báo sai lệch sau chốt phiếu chỉ hỗ trợ khi máy chủ dùng PostgreSQL.',
     409,
   );
+}
+
+function memoryWaitTicketDisplay(ticket: WaitTicket): {
+  readonly displayStatus: 'UNPROCESSED' | 'PROCESSED' | 'CANCELLED';
+  readonly displayDetail:
+    'WAITING' | 'OFFERED' | 'PARTIALLY_FULFILLED' | 'PROCESSED' | 'CANCELLED' | 'EXPIRED_LEGACY';
+} {
+  switch (ticket.status) {
+    case 'WAITING':
+    case 'OFFERED':
+    case 'PARTIALLY_FULFILLED':
+      return { displayStatus: 'UNPROCESSED', displayDetail: ticket.status };
+    case 'FULFILLED':
+      return { displayStatus: 'PROCESSED', displayDetail: 'PROCESSED' };
+    case 'CANCELLED':
+      return { displayStatus: 'CANCELLED', displayDetail: 'CANCELLED' };
+    case 'EXPIRED':
+      return { displayStatus: 'CANCELLED', displayDetail: 'EXPIRED_LEGACY' };
+  }
+}
+
+function memoryWaitFingerprint(ticket: WaitTicket): string {
+  return createHash('sha256')
+    .update(JSON.stringify([ticket.id, ticket.status, ticket.remaining, ticket.fulfilled]))
+    .digest('hex');
 }

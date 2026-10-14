@@ -199,6 +199,7 @@ import type {
   UpdateStoreRequest,
   DeleteProductConversionRequest,
   WaitTicket,
+  WaitTicketCancelPreview,
   WaitTicketHistory,
   WarehouseOutboundRequest,
   StoreTransfer,
@@ -284,6 +285,11 @@ import {
   listStoreReceiptSources as listDatabaseStoreReceiptSources,
   listHeldAllocationStock as listDatabaseHeldAllocationStock,
   listWaitTickets as listDatabaseWaitTickets,
+  previewWaitTicketCancellation as previewDatabaseWaitTicketCancellation,
+  WaitTicketPreviewRequiredError,
+  WaitTicketPreviewStaleError,
+  AllocationRevocationIntegrityError,
+  type WaitTicketCancelPreview as DatabaseWaitTicketCancelPreview,
   listWarehouseOutboundRequests as listDatabaseWarehouseOutboundRequests,
   loadMonthlyOperationalReport,
   loadIdosiStatisticsState as loadDatabaseIdosiStatisticsState,
@@ -1795,6 +1801,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
           result.data.flatMap((header) =>
             'decision' in header && header.decision ? [header.decision] : [],
           ),
+          { includeWaitlist: query.includeWaitlist === true },
         )
       : [];
     return {
@@ -4348,6 +4355,8 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         ...(query.q === undefined ? {} : { q: query.q }),
         ...(query.createdFrom === undefined ? {} : { createdFrom: query.createdFrom }),
         ...(query.createdTo === undefined ? {} : { createdTo: query.createdTo }),
+        ...(query.displayStatus === undefined ? {} : { displayStatus: query.displayStatus }),
+        ...(query.includeLineage ? { includeLineage: true } : {}),
       });
       return {
         data: result.data.map((ticket) => waitTicketDto(ticket, query.projection === 'TABLE')),
@@ -4418,6 +4427,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         waitTicketId,
         actorUserId: actor.accountId,
         reason: input.reason,
+        ...(input.expectedFingerprint ? { expectedFingerprint: input.expectedFingerprint } : {}),
         requestId: context.requestId,
         idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
         requestHash,
@@ -4430,6 +4440,19 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         limit: 1,
       });
       return { data: waitTicketDto(history.ticket), replayed: result.replayed };
+    });
+  }
+
+  public async previewWaitTicketCancellation(
+    actor: AuthenticatedPrincipal,
+    waitTicketId: string,
+  ): Promise<WaitTicketCancelPreview> {
+    return withWaitErrors(async () => {
+      const preview = await previewDatabaseWaitTicketCancellation(db, {
+        actorUserId: actor.accountId,
+        waitTicketId,
+      });
+      return waitTicketCancelPreviewDto(preview);
     });
   }
 
@@ -6058,6 +6081,83 @@ function waitTicketDto(ticket: WaitTicketRecord, includeSummary = false): WaitTi
     resolvedAt: ticket.resolvedAt?.toISOString() ?? null,
     createdAt: ticket.createdAt.toISOString(),
     updatedAt: ticket.updatedAt.toISOString(),
+    ...(ticket.lineage
+      ? {
+          lineage: {
+            displayStatus: ticket.lineage.displayStatus,
+            displayDetail: ticket.lineage.displayDetail,
+            waitingSince: ticket.queuedAt.toISOString(),
+            pendingDecisionQuantity: ticket.lineage.pendingDecisionQuantity,
+            revokedQuantity: ticket.lineage.revokedQuantity,
+            legacyUnsourcedQuantity: ticket.lineage.legacyUnsourcedQuantity,
+            canCancel: ticket.lineage.canCancel,
+            sessions: ticket.lineage.sessions.map((session) => ({
+              ...session,
+              sessionAt: session.sessionAt?.toISOString() ?? null,
+            })),
+            sources: ticket.lineage.sources.map((source) => ({
+              ...source,
+              kind: source.kind.toUpperCase() as NonNullable<
+                WaitTicket['lineage']
+              >['sources'][number]['kind'],
+              createdAt: source.createdAt.toISOString(),
+            })),
+          },
+        }
+      : {}),
+  };
+}
+
+function waitTicketCancelPreviewDto(
+  preview: DatabaseWaitTicketCancelPreview,
+): WaitTicketCancelPreview {
+  const { scope } = preview;
+  return {
+    waitTicketId: preview.waitTicketId,
+    code: preview.code,
+    storeId: preview.storeId,
+    productId: preview.productId,
+    cancellable: scope.plan.ok,
+    refusal: scope.plan.ok ? null : scope.plan.reason,
+    waitingQuantity: scope.ticket.remainingQuantity,
+    offers: scope.offers.map((offer) => ({
+      offerId: offer.id,
+      code: offer.code,
+      status: contractPriorityOfferStatus(offer.status),
+      heldQuantity: offer.stockHeldQuantity,
+    })),
+    revocable: scope.lines
+      .filter((line) => line.kind === 'REVOCABLE')
+      .map((line) => {
+        const revokedHere = scope.lines
+          .filter(
+            (other) =>
+              other.kind === 'REVOCABLE' &&
+              other.allocationDecisionId === line.allocationDecisionId,
+          )
+          .reduce((total, other) => total + other.quantity, 0);
+        return {
+          allocationDecisionId: line.allocationDecisionId!,
+          allocationLineId: line.allocationLineId,
+          sessionId: line.sessionId,
+          sessionCode: line.sessionCode,
+          productId: line.productId,
+          quantity: line.quantity,
+          shipmentNumber: line.shipmentNumber,
+          closesResult: line.decisionActionable === revokedHere,
+        };
+      }),
+    protected: scope.lines
+      .filter((line) => line.kind !== 'REVOCABLE')
+      .map((line) => ({
+        allocationDecisionId: line.allocationDecisionId,
+        sessionCode: line.sessionCode,
+        quantity: line.quantity,
+        kind: line.kind as 'RESHARE_ORDER' | 'SHIPPED_OR_RECEIVED' | 'ACCEPTED_LEGACY',
+        reshareOrderCode: line.reshareOrderCode,
+      })),
+    cancelledQuantity: scope.plan.ok ? scope.plan.cancelledQuantity : 0,
+    fingerprint: scope.fingerprint,
   };
 }
 
@@ -6268,6 +6368,23 @@ async function withWaitErrors<T>(operation: () => Promise<T>): Promise<T> {
     }
     if (error instanceof WaitTicketValidationError) {
       throw new ApiError('VALIDATION_ERROR', error.message, 400);
+    }
+    if (error instanceof WaitTicketPreviewStaleError) {
+      throw new ApiError(
+        'WAIT_TICKET_PREVIEW_STALE',
+        'Phạm vi hủy đã thay đổi (có thể kết quả vừa được xác nhận hoặc phiếu vừa cập nhật). Vui lòng xem lại trước khi hủy.',
+        409,
+      );
+    }
+    if (error instanceof WaitTicketPreviewRequiredError) {
+      throw new ApiError(
+        'WAIT_TICKET_PREVIEW_REQUIRED',
+        'Hủy phiếu chờ này sẽ thu hồi hàng phân bổ chưa xác nhận. Vui lòng tải lại trang và xem lại phạm vi hủy trước khi xác nhận.',
+        409,
+      );
+    }
+    if (error instanceof AllocationRevocationIntegrityError) {
+      throw conflict('Dữ liệu phân bổ của phiếu chờ không nhất quán; vui lòng báo quản trị viên.');
     }
     if (error instanceof WaitTicketConflictError || error instanceof PriorityOfferConflictError) {
       throw conflict(error.message);

@@ -140,6 +140,7 @@ import type {
   InboundReceipt,
   OperationalSettingsVersion,
   WaitTicket,
+  WaitTicketCancelPreview,
   WaitTicketHistory,
   WarehouseOutboundRequest,
   OpenStoreInventoryBagRequest,
@@ -1036,6 +1037,11 @@ export interface WarehouseRepository extends SupplierReconciliationRepository {
     waitTicketId: string,
     limit: number,
   ): Promise<WaitTicketHistory>;
+  /** Read-only scope of "Hủy phiếu chờ": waiting demand, holds, revocable and protected goods. */
+  previewWaitTicketCancellation(
+    actor: AuthenticatedPrincipal,
+    waitTicketId: string,
+  ): Promise<WaitTicketCancelPreview>;
   cancelWaitTicket(
     actor: AuthenticatedPrincipal,
     waitTicketId: string,

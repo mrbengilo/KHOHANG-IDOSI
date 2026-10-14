@@ -35,8 +35,10 @@ export async function listAllocationDecisions(
   const query = new URLSearchParams({
     page: String(filters.page ?? 1),
     pageSize: String(filters.pageSize ?? 20),
-    // Ask for allowedActions and the RE order (opt-in: older bundles keep the older shape).
+    // Ask for allowedActions, the RE order and the 0044 waitlist model (opt-in: older bundles
+    // keep the older shape).
     includeReshare: 'true',
+    includeWaitlist: 'true',
   });
   if (filters.status) query.set('status', filters.status);
   if (filters.storeId) query.set('storeId', filters.storeId);
@@ -49,7 +51,9 @@ export async function listAllocationDecisions(
 
 export async function getAllocationDecision(decisionId: string): Promise<AllocationDecisionDetail> {
   return AllocationDecisionResponseSchema.parse(
-    await request(`/allocation-decisions/${encodeURIComponent(decisionId)}?includeReshare=true`),
+    await request(
+      `/allocation-decisions/${encodeURIComponent(decisionId)}?includeReshare=true&includeWaitlist=true`,
+    ),
   ).data;
 }
 
@@ -61,7 +65,7 @@ export async function respondAllocationDecision(
   const body = RespondAllocationDecisionRequestSchema.parse(input);
   return AllocationDecisionResponseSchema.parse(
     await request(
-      `/allocation-decisions/${encodeURIComponent(decisionId)}/respond?includeReshare=true`,
+      `/allocation-decisions/${encodeURIComponent(decisionId)}/respond?includeReshare=true&includeWaitlist=true`,
       {
         body: JSON.stringify(body),
         headers: { 'idempotency-key': idempotencyKey },
@@ -97,8 +101,10 @@ export function respondErrorMessage(error: unknown): string {
 
 export const decisionStatusLabel: Record<AllocationDecisionStatus, string> = {
   PENDING: 'Chờ xác nhận',
-  ACCEPTED: 'Đã chấp nhận',
+  ACCEPTED: 'Đã xác nhận phân bổ',
   REJECTED: 'đã từ chối nhận',
+  WAITLISTED: 'Đã chuyển phiếu chờ',
+  CANCELLED: 'Đã thu hồi do hủy phiếu chờ',
   NOT_REQUIRED: 'Không cần xác nhận',
   LEGACY: 'Theo quy trình cũ',
 };
@@ -110,6 +116,8 @@ export const decisionStatusTone: Record<
   PENDING: 'warning',
   ACCEPTED: 'success',
   REJECTED: 'danger',
+  WAITLISTED: 'neutral',
+  CANCELLED: 'neutral',
   NOT_REQUIRED: 'neutral',
   LEGACY: 'neutral',
 };
@@ -119,12 +127,31 @@ export function decisionCode(decision: Pick<AllocationDecision, 'id' | 'sessionC
   return `KQ-${decision.sessionCode}-${decision.id.slice(0, 8).toUpperCase()}`;
 }
 
-/** Actions the current account may take; an assigned HTKD may only accept. */
+/** Actions the current account may take, always computed by the server. */
 export function decisionActions(
-  decision: Pick<AllocationDecision, 'canRespond' | 'allowedActions'>,
-): readonly ('ACCEPT' | 'REJECT')[] {
-  if (decision.allowedActions) return decision.allowedActions;
-  return decision.canRespond ? ['ACCEPT', 'REJECT'] : [];
+  decision: Pick<AllocationDecision, 'allowedActions'>,
+): readonly ('ACCEPT' | 'WAITLIST')[] {
+  return decision.allowedActions ?? [];
+}
+
+/** Bags still answerable per product: granted minus bags revoked by cancellations. */
+export function actionableLines(
+  decision: Pick<AllocationDecision, 'lines' | 'actionableLines'>,
+): readonly {
+  productId: string;
+  grantedQuantity: number;
+  revokedQuantity: number;
+  actionableQuantity: number;
+}[] {
+  return (
+    decision.actionableLines ??
+    decision.lines.map((line) => ({
+      productId: line.productId,
+      grantedQuantity: line.allocatedQuantity,
+      revokedQuantity: 0,
+      actionableQuantity: line.allocatedQuantity,
+    }))
+  );
 }
 
 /** Deep link to the RE order in the history ("Đơn đặt Reshare"). */
@@ -135,6 +162,10 @@ export function reshareOrderLink(code: string): string {
 /** Delivery progress, kept apart from the store's answer: accepted is not received. */
 export function shipmentProgressLabel(decision: AllocationDecision): string {
   if (decision.status === 'REJECTED') return 'Không giao: cửa hàng đã từ chối nhận';
+  if (decision.status === 'WAITLISTED')
+    return 'Không giao: hàng đã trả kho, nhu cầu chuyển về phiếu chờ';
+  if (decision.status === 'CANCELLED')
+    return 'Không giao: toàn bộ hàng đã thu hồi do hủy phiếu chờ';
   if (decision.status === 'PENDING') return 'Chờ cửa hàng xác nhận trước khi giao';
   const shipment = decision.shipment;
   if (!shipment) {

@@ -29,6 +29,7 @@ import {
   ListStoreOrderRequestsResponseSchema,
   ListStoresResponseSchema,
   ListWaitTicketsResponseSchema,
+  WaitTicketCancelPreviewResponseSchema,
   ListWaitTicketsQuerySchema,
   type ListWaitTicketsQuery,
   LoginResponseSchema,
@@ -75,6 +76,7 @@ import {
   type UpdateProductConversionRequest,
   type StoreKind,
   type WaitTicket,
+  type WaitTicketCancelPreview,
   type WaitTicketHistory,
   type WaitTicketStatus,
 } from '@idosi/contracts';
@@ -370,7 +372,10 @@ export async function listSessionDocuments(filters: SessionDocumentFilters = {})
   if (filters.sessionId) query.set('sessionId', filters.sessionId);
   if (filters.status) query.set('status', filters.status);
   if (filters.storeId) query.set('storeId', filters.storeId);
-  if (filters.includeDecision) query.set('includeDecision', 'true');
+  if (filters.includeDecision) {
+    query.set('includeDecision', 'true');
+    query.set('includeWaitlist', 'true');
+  }
   if (filters.decisionStatus) query.set('decisionStatus', filters.decisionStatus);
   return ListSessionDocumentsResponseSchema.parse(await request('/session-documents?' + query));
 }
@@ -546,7 +551,8 @@ export async function cancelStoreOrderRequest(
 }
 
 export async function listWaitTicketsPage(filters: ListWaitTicketsQuery, signal?: AbortSignal) {
-  const validated = ListWaitTicketsQuerySchema.parse(filters);
+  // Lineage (three labels, sessions, sources, server cancel capability) is opt-in (0044).
+  const validated = ListWaitTicketsQuerySchema.parse({ ...filters, includeLineage: 'true' });
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(validated))
     if (value !== undefined) query.set(key, String(value));
@@ -570,6 +576,7 @@ export async function listWaitTickets(filters: WaitTicketFilters = {}): Promise<
   if (filters.sessionId) query.set('sessionId', filters.sessionId);
   if (filters.status) query.set('status', filters.status);
   if (filters.storeId) query.set('storeId', filters.storeId);
+  query.set('includeLineage', 'true');
   return listAllPages('/wait-tickets', query, (payload) =>
     ListWaitTicketsResponseSchema.parse(payload),
   );
@@ -606,6 +613,18 @@ export async function getWaitTicketHistory(
   return includeAllOffers
     ? { ...history, offers: await listPriorityOffers({ waitTicketId }) }
     : history;
+}
+
+/** Read-only scope of "Hủy phiếu chờ"; the fingerprint confirms exactly this scope. */
+export async function previewWaitTicketCancellation(
+  waitTicketId: string,
+  signal?: AbortSignal,
+): Promise<WaitTicketCancelPreview> {
+  const payload = await request(
+    `/wait-tickets/${encodeURIComponent(waitTicketId)}/cancel-preview`,
+    { signal: signal ?? null },
+  );
+  return WaitTicketCancelPreviewResponseSchema.parse(payload).data;
 }
 
 export async function cancelWaitTicket(
