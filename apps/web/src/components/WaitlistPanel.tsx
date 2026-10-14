@@ -193,6 +193,9 @@ export function WaitlistPanel({
     await Promise.all(
       [
         'wait-tickets',
+        'wait-documents',
+        'wait-document',
+        'wait-document-cancel-preview',
         'priority-offers',
         'priority-offer-notices',
         'wait-ticket-history',

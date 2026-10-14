@@ -128,6 +128,8 @@ export const ADJUSTMENT_AFFECTED_QUERY_KEYS = [
   ['receipt-returns'],
   ['store-receipts'],
   ['wait-tickets'],
+  ['wait-documents'],
+  ['wait-document'],
   ['store-inventory-bags'],
   ['store-bag-openings'],
   ['store-normal-sale-pending'],

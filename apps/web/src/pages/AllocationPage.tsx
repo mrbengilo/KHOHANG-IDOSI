@@ -44,6 +44,11 @@ import { TabPanel, Tabs, type TabItem } from '../components/Tabs';
 import { StoreOrderHistory } from '../features/orders/StoreOrderHistory';
 import { ScopedWaitTicketList } from '../features/allocations/ScopedWaitTicketList';
 import { WaitTicketList } from '../features/allocations/WaitTicketList';
+import { WaitDocumentList } from '../features/allocations/WaitDocumentList';
+import {
+  readWaitTicketTabView,
+  withWaitTicketTabView,
+} from '../features/allocations/waitDocumentNavigation';
 import { WaitlistPanel } from '../components/WaitlistPanel';
 import { getAdminOperationalSettings, getAllocationWorkerStatus } from '../features/admin/adminApi';
 import { HeldAllocationsPanel } from '../features/receipts/HeldAllocationsPanel';
@@ -574,21 +579,17 @@ function sessionErrorMessage(error: unknown): string {
 export type AllocationTab = 'sessions' | 'history' | 'create' | 'wait-tickets';
 
 /**
- * Order history is for ADMIN and HTKD; only ADMIN schedules extra sessions. Every role has a
- * wait-ticket list: Admin's 9-column table, and "Phiếu chờ ưu tiên" for HTKD/store/wholesale.
+ * Every role reads its scope's results, order history and store wait documents ("Phiếu chờ");
+ * a store or the wholesale desk sees them as "Kết quả phân bổ", "Lịch sử đặt hàng" and "Phiếu
+ * chờ" of its own store(s). Only ADMIN schedules extra sessions.
  */
 export function allocationTabs(role: AppOutletContext['role']): readonly TabItem<AllocationTab>[] {
+  const storeSide = role === 'STORE' || role === 'WHOLESALE';
   return [
-    { id: 'sessions', label: 'Phiên và kết quả' },
-    ...(role === 'ADMIN' || role === 'HTKD'
-      ? [{ id: 'history' as const, label: 'Lịch sử đặt hàng' }]
-      : []),
-    ...(role === 'ADMIN'
-      ? [
-          { id: 'wait-tickets' as const, label: 'Danh sách phiếu chờ' },
-          { id: 'create' as const, label: 'Tạo phiên mới' },
-        ]
-      : [{ id: 'wait-tickets' as const, label: 'Phiếu chờ ưu tiên' }]),
+    { id: 'sessions', label: storeSide ? 'Kết quả phân bổ' : 'Phiên và kết quả' },
+    { id: 'history' as const, label: 'Lịch sử đặt hàng' },
+    { id: 'wait-tickets' as const, label: 'Phiếu chờ' },
+    ...(role === 'ADMIN' ? [{ id: 'create' as const, label: 'Tạo phiên mới' }] : []),
   ];
 }
 
@@ -800,6 +801,16 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
     ]);
   };
 
+  const waitTicketTabView = readWaitTicketTabView(params);
+  // A wait document links to the PENDING result holding its goods: open it on the results tab.
+  const openDecisionResult = (decisionId: string) =>
+    setParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete('tab');
+      next.set('decision', decisionId);
+      return next;
+    });
+
   const showSessionResults = (sessionId: string, storeId = '') => {
     if (activeTab !== 'sessions') selectTab('sessions');
     setAllocationPage(1);
@@ -992,18 +1003,41 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
         onChange={selectTab}
       />
 
-      {activeTab === 'wait-tickets' && role === 'ADMIN' ? (
+      {activeTab === 'wait-tickets' ? (
         <TabPanel idPrefix="allocation" tab="wait-tickets">
-          <WaitTicketList stores={storesQuery.data ?? []} products={catalogQuery.data ?? []} />
-        </TabPanel>
-      ) : null}
-      {activeTab === 'wait-tickets' && role !== 'ADMIN' ? (
-        <TabPanel idPrefix="allocation" tab="wait-tickets">
-          <ScopedWaitTicketList
-            products={catalogQuery.data ?? []}
-            role={role}
-            stores={storesQuery.data ?? []}
-          />
+          <div className="wait-ticket-tab-views" role="group" aria-label="Cách xem phiếu chờ">
+            <button
+              aria-pressed={waitTicketTabView === 'documents'}
+              onClick={() => setParams((current) => withWaitTicketTabView(current, 'documents'))}
+              type="button"
+            >
+              Phiếu chờ theo cửa hàng
+            </button>
+            <button
+              aria-pressed={waitTicketTabView === 'lines'}
+              onClick={() => setParams((current) => withWaitTicketTabView(current, 'lines'))}
+              type="button"
+            >
+              Dòng theo mặt hàng (mã PC)
+            </button>
+          </div>
+          {waitTicketTabView === 'documents' ? (
+            <WaitDocumentList
+              accountKey={accountKey}
+              onOpenDecision={openDecisionResult}
+              products={catalogQuery.data ?? []}
+              role={role}
+              stores={storesQuery.data ?? []}
+            />
+          ) : role === 'ADMIN' ? (
+            <WaitTicketList stores={storesQuery.data ?? []} products={catalogQuery.data ?? []} />
+          ) : (
+            <ScopedWaitTicketList
+              products={catalogQuery.data ?? []}
+              role={role}
+              stores={storesQuery.data ?? []}
+            />
+          )}
         </TabPanel>
       ) : null}
       {activeTab === 'history' ? (

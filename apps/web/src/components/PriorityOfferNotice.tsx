@@ -66,6 +66,8 @@ export function PriorityOfferNotice({ role }: { readonly role: Role }) {
         queryClient.invalidateQueries({ queryKey: ['priority-offer-notices'] }),
         queryClient.invalidateQueries({ queryKey: ['priority-offers'] }),
         queryClient.invalidateQueries({ queryKey: ['wait-tickets'] }),
+        queryClient.invalidateQueries({ queryKey: ['wait-documents'] }),
+        queryClient.invalidateQueries({ queryKey: ['wait-document'] }),
         queryClient.invalidateQueries({ queryKey: ['wait-ticket-history'] }),
         queryClient.invalidateQueries({ queryKey: ['warehouse-inventory'] }),
       ]);

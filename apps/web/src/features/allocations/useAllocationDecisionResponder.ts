@@ -48,6 +48,9 @@ export function useAllocationDecisionResponder() {
           ['session-documents'],
           // "Chuyển phiếu chờ" creates or grows wait tickets and releases held goods.
           ['wait-tickets'],
+          // The store wait document rolls over when goods of its tickets are confirmed.
+          ['wait-documents'],
+          ['wait-document'],
           ['wait-ticket-history'],
           ['priority-offers'],
           ['warehouse-balances'],
