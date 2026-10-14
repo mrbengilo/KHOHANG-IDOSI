@@ -262,7 +262,12 @@ interface Log {
   failNextStatus?: boolean;
 }
 
-async function mockApi(page: Page, role: Role, unlinkedLegacyQuantity = 0): Promise<Log> {
+async function mockApi(
+  page: Page,
+  role: Role,
+  unlinkedLegacyQuantity = 0,
+  longList = false,
+): Promise<Log> {
   const log: Log = { mutations: [], orderQueries: [], historyQueries: [], failNextConfirm: false };
   const events = new Map<string, Record<string, unknown>[]>();
   let previews = 0;
@@ -396,8 +401,14 @@ async function mockApi(page: Page, role: Role, unlinkedLegacyQuantity = 0): Prom
       });
     if (path === '/supplier-reconciliation')
       return json({
-        data: [summaryRow],
-        pagination: page1(1),
+        data: longList
+          ? Array.from({ length: 20 }, (_, index) => ({
+              ...summaryRow,
+              productId: id(501 + index),
+              productName: `Mặt hàng ${index + 1}`,
+            }))
+          : [summaryRow],
+        pagination: page1(longList ? 20 : 1),
         revision: 'rev-1',
         generatedAt: time,
       });
@@ -415,6 +426,20 @@ async function mockApi(page: Page, role: Role, unlinkedLegacyQuantity = 0): Prom
       const body = request.postDataJSON() as { eventCoverage: { eventId: string }[] };
       const data = preview(body.eventCoverage.length > 0 || previews > 2);
       data.lines[0]!.unlinkedLegacyQuantity = unlinkedLegacyQuantity;
+      if (longList) {
+        const input = request.postDataJSON() as {
+          lines: { productId: string; observedQuantity: number }[];
+        };
+        data.lines = input.lines.map((line) => ({
+          ...data.lines[0]!,
+          ...line,
+          productName: `Mặt hàng ${Number(line.productId.slice(-12)) - 500}`,
+          events: [],
+          undecidedEventCount: 0,
+          issuedOrders: [],
+        }));
+        data.blockingIssues = [];
+      }
       return json({ data });
     }
     if (path === '/supplier-stock-observations') {
@@ -1075,4 +1100,238 @@ test('table headings and mobile card labels are sentence case and bold', async (
       expect(texts).toContain('Mã đặt hàng Reshare');
     }
   }
+});
+
+test('long list reveals the clicked reconciliation target before any form interaction', async ({
+  page,
+}, testInfo) => {
+  const log = await mockApi(page, 'ADMIN', 0, true);
+  await page.goto('/supplier-reconciliation?tab=reconcile');
+  const row = page.locator('.supplier-summary tbody tr').filter({ hasText: 'Mặt hàng 20' });
+  const trigger = row.getByRole('button', { name: 'Đối chiếu', exact: true });
+  await trigger.scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(500);
+  await page.screenshot({ path: testInfo.outputPath('before-click.png') });
+  await trigger.click();
+  const heading = page.getByRole('heading', { name: 'Cập nhật tổng tồn Reshare' });
+  await testInfo.attach('navigation-dom', {
+    body: JSON.stringify(
+      await page.evaluate(() => ({
+        url: location.href,
+        scrollY,
+        activeElement: document.activeElement?.outerHTML,
+        heading: document
+          .querySelector('.supplier-observation h2')
+          ?.getBoundingClientRect()
+          .toJSON(),
+        scrollOwner: document.scrollingElement?.tagName,
+      })),
+    ),
+    contentType: 'application/json',
+  });
+  await page.screenshot({ path: testInfo.outputPath('after-click.png') });
+  await expect(heading).toBeInViewport();
+  await expect(heading).toBeFocused();
+  await expect(page.locator('.supplier-observation tbody tr')).toHaveCount(1);
+  await expect(page.locator('.supplier-observation')).toContainText('Mặt hàng 20');
+  await expect(
+    page.getByLabel('Tổng số bao Reshare đang cho đặt của Mặt hàng 20', { exact: true }),
+  ).toBeInViewport();
+  expect(log.mutations).toHaveLength(0);
+  await page.getByRole('button', { name: 'Đóng', exact: true }).click();
+  await expect(trigger).toBeFocused();
+  await expect(trigger).toBeInViewport();
+});
+
+test('row target ignores selection; same target preserves draft; switching requires discard and clears preview', async ({
+  page,
+}) => {
+  const log = await mockApi(page, 'HTKD', 0, true);
+  await page.goto('/supplier-reconciliation?tab=reconcile');
+  await page.getByLabel('Chọn Mặt hàng 1 để đối chiếu', { exact: true }).check();
+  const open = (n: number) =>
+    page
+      .locator('.supplier-summary tbody tr')
+      .filter({ has: page.getByText(`Mặt hàng ${n}`, { exact: true }) })
+      .getByRole('button', { name: 'Đối chiếu', exact: true });
+  await open(20).click();
+  const input = page.getByLabel('Tổng số bao Reshare đang cho đặt của Mặt hàng 20', {
+    exact: true,
+  });
+  await expect(page.getByRole('heading', { name: 'Cập nhật tổng tồn Reshare' })).toBeInViewport();
+  await expect(page.locator('.supplier-observation tbody tr')).toHaveCount(1);
+  await input.fill('8');
+  await open(20).click();
+  await expect(input).toHaveValue('8');
+  await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Xem trước đối chiếu' })).toBeInViewport();
+  await open(20).click();
+  await expect(input).toHaveValue('8');
+  await expect(page.getByRole('region', { name: 'Xem trước đối chiếu' })).toHaveCount(1);
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await open(19).click();
+  await expect(input).toHaveValue('8');
+  await expect(page.getByRole('heading', { name: 'Cập nhật tổng tồn Reshare' })).toBeInViewport();
+  page.once('dialog', (dialog) => dialog.accept());
+  await open(19).click();
+  await expect(page.getByRole('heading', { name: 'Cập nhật tổng tồn Reshare' })).toBeInViewport();
+  await expect(
+    page.getByLabel('Tổng số bao Reshare đang cho đặt của Mặt hàng 19', { exact: true }),
+  ).toHaveValue('');
+  await expect(page.getByRole('region', { name: 'Xem trước đối chiếu' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Đóng', exact: true }).click();
+  await expect(open(19)).toBeFocused();
+  await page.getByLabel('Chọn Mặt hàng 2 để đối chiếu', { exact: true }).check();
+  await page.getByRole('button', { name: 'Đối chiếu 2 mặt hàng', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Cập nhật tổng tồn Reshare' })).toBeInViewport();
+  await expect(page.locator('.supplier-observation tbody tr')).toHaveCount(2);
+  await expect(page.locator('.supplier-observation')).toContainText('Mặt hàng 1');
+  await expect(page.locator('.supplier-observation')).toContainText('Mặt hàng 2');
+  expect(log.mutations.filter((request) => request.url().endsWith('/preview'))).toHaveLength(1);
+  expect(log.mutations.filter((request) => !request.url().endsWith('/preview'))).toHaveLength(0);
+});
+
+test('delayed preview cannot reveal a replaced target or steal focus from another input', async ({
+  page,
+}) => {
+  await mockApi(page, 'ADMIN', 0, true);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let arrived!: () => void;
+  const requestArrived = new Promise<void>((resolve) => {
+    arrived = resolve;
+  });
+  await page.route('**/supplier-stock-observations/preview', async (route) => {
+    arrived();
+    await gate;
+    await route.fulfill({ json: { data: preview(false) } }).catch(() => undefined);
+  });
+  await page.goto('/supplier-reconciliation?tab=reconcile');
+  const open = (n: number) =>
+    page
+      .locator('.supplier-summary tbody tr')
+      .filter({ has: page.getByText(`Mặt hàng ${n}`, { exact: true }) })
+      .getByRole('button', { name: 'Đối chiếu', exact: true });
+  await open(1).click();
+  await page
+    .getByLabel('Tổng số bao Reshare đang cho đặt của Mặt hàng 1', { exact: true })
+    .fill('3');
+  await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
+  await requestArrived;
+  page.once('dialog', (dialog) => dialog.accept());
+  await open(2).click();
+  const heading = page.getByRole('heading', { name: 'Cập nhật tổng tồn Reshare' });
+  await expect(heading).toBeFocused();
+  release();
+  await expect(
+    page.getByLabel('Tổng số bao Reshare đang cho đặt của Mặt hàng 2', { exact: true }),
+  ).toHaveValue('');
+  await expect(page.getByRole('region', { name: 'Xem trước đối chiếu' })).toHaveCount(0);
+  await expect(heading).toBeFocused();
+});
+
+for (const [width, height] of [
+  [1366, 768],
+  [1920, 1080],
+  [2560, 1440],
+  [768, 1024],
+  [1024, 768],
+  [360, 800],
+  [412, 915],
+  [819, 900],
+  [820, 900],
+  [821, 900],
+]) {
+  test(`long-list destination geometry ${width}x${height}`, async ({ page }) => {
+    await page.setViewportSize({ width: width!, height: height! });
+    await mockApi(page, 'ADMIN', 0, true);
+    await page.goto('/supplier-reconciliation?tab=reconcile');
+    const trigger = page
+      .locator('.supplier-summary tbody tr')
+      .filter({ has: page.getByText('Mặt hàng 20', { exact: true }) })
+      .getByRole('button', { name: 'Đối chiếu', exact: true });
+    await trigger.click();
+    const heading = page.getByRole('heading', { name: 'Cập nhật tổng tồn Reshare' });
+    await expect(heading).toBeInViewport();
+    await expect(heading).toBeFocused();
+    const box = await heading.boundingBox();
+    expect(box!.y).toBeGreaterThanOrEqual(width! <= 820 ? 60 : 0);
+    await expectNoPageOverflow(page);
+  });
+}
+
+test('multiple sources cannot open a group; preview payload uses the clicked source and product', async ({
+  page,
+}) => {
+  const log = await mockApi(page, 'ADMIN', 0, true);
+  await page.route('**/api/v1/supplier-reconciliation?*', (route) =>
+    route.fulfill({
+      json: {
+        data: [
+          { ...summaryRow, productName: 'Mặt hàng 1' },
+          {
+            ...summaryRow,
+            productId: id(502),
+            productName: 'Mặt hàng 2',
+            sourceId: id(402),
+            sourceCode: 'SECOND',
+          },
+        ],
+        pagination: page1(2),
+        revision: 'rev-1',
+        generatedAt: time,
+      },
+    }),
+  );
+  await page.goto('/supplier-reconciliation?tab=reconcile');
+  await page.getByLabel('Chọn Mặt hàng 1 để đối chiếu', { exact: true }).check();
+  await page.getByLabel('Chọn Mặt hàng 2 để đối chiếu', { exact: true }).check();
+  await expect(page.getByRole('button', { name: 'Đối chiếu 2 mặt hàng' })).toBeDisabled();
+  await expect(page.getByRole('alert')).toContainText('thuộc nhiều nguồn');
+  const row = page.locator('.supplier-summary tbody tr').filter({ hasText: 'Mặt hàng 2' });
+  await row.getByRole('button', { name: 'Đối chiếu', exact: true }).click();
+  await page
+    .getByLabel('Tổng số bao Reshare đang cho đặt của Mặt hàng 2', { exact: true })
+    .fill('5');
+  await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Xem trước đối chiếu' })).toBeInViewport();
+  const writes = log.mutations.filter((r) => r.url().endsWith('/preview'));
+  expect(writes).toHaveLength(1);
+  expect(writes[0]!.postDataJSON()).toMatchObject({
+    sourceId: id(402),
+    lines: [{ productId: id(502), observedQuantity: 5 }],
+  });
+});
+
+test('preview response respects focus moved to the list and invalid quantity points to its field', async ({
+  page,
+}) => {
+  await mockApi(page, 'ADMIN');
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route('**/supplier-stock-observations/preview', async (route) => {
+    await gate;
+    await route.fulfill({ json: { data: preview(false) } });
+  });
+  await page.goto('/supplier-reconciliation?tab=reconcile');
+  await page
+    .locator('.supplier-summary tbody')
+    .getByRole('button', { name: 'Đối chiếu', exact: true })
+    .click();
+  await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
+  await expect(page.getByLabel(totalLabel)).toBeFocused();
+  await expect(page.getByLabel(totalLabel)).toHaveAttribute('aria-invalid', 'true');
+  await page.getByLabel(totalLabel).fill('3');
+  await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
+  const search = page.getByLabel('Tìm mặt hàng', { exact: true });
+  await search.fill('đang nhập');
+  const scroll = await page.evaluate(() => scrollY);
+  release();
+  await expect(page.getByRole('region', { name: 'Xem trước đối chiếu' })).toBeAttached();
+  await expect(search).toBeFocused();
+  expect(await page.evaluate(() => scrollY)).toBeCloseTo(scroll, -1);
 });

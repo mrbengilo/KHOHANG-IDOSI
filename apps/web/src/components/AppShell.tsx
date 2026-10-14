@@ -25,6 +25,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { DashboardSkeleton } from './Skeleton';
+import { RouteContentNavigation } from './RouteContentNavigation';
 import { AllocationResultNotice } from './AllocationResultNotice';
 import { PriorityOfferNotice } from './PriorityOfferNotice';
 import { ApiClientError, getStoreKind, logout, mockModeEnabled } from '../lib/api';
@@ -173,6 +174,23 @@ export function AppShell() {
     if (!open) return undefined;
     menuCloseRef.current?.focus();
     const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Tab') {
+        const targets = [
+          ...document.querySelectorAll<HTMLElement>(
+            '.sidebar--open a[href], .sidebar--open button:not([disabled]), .sidebar--open select',
+          ),
+        ];
+        const first = targets[0];
+        const last = targets.at(-1);
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+        return;
+      }
       if (event.key !== 'Escape') return;
       setOpen(false);
       menuTriggerRef.current?.focus();
@@ -286,122 +304,124 @@ export function AppShell() {
   const profileName = mockModeEnabled ? modeLabel[mode] : (session?.principal.displayName ?? '');
 
   return (
-    <div className="app-shell">
-      <button
-        aria-label="Mở menu"
-        aria-expanded={open}
-        className="mobile-menu-trigger"
-        onClick={() => setOpen(true)}
-        ref={menuTriggerRef}
-        type="button"
-      >
-        <Menu aria-hidden="true" size={22} />
-      </button>
-      <aside className={clsx('sidebar', open && 'sidebar--open')}>
-        <div className="sidebar__brand">
-          <div>
-            <img
-              className="app-logo"
-              src="/idosi-kho-app-1024.png"
-              alt="IDOSI Kho hàng"
-              width="112"
-              height="84"
-            />
-            <span>QUẢN TRỊ HỆ THỐNG</span>
-          </div>
-          <button aria-label="Đóng menu" onClick={closeMenu} ref={menuCloseRef} type="button">
-            <X aria-hidden="true" size={20} />
-          </button>
-        </div>
-        <nav aria-label="Điều hướng chính" className="sidebar__nav">
-          {navSections.map(({ group, entries }) => (
-            <div
-              aria-labelledby={navSections.length > 1 ? `sidebar-group-${group}` : undefined}
-              className="sidebar__group"
-              key={group}
-              role={navSections.length > 1 ? 'group' : undefined}
-            >
-              {navSections.length > 1 ? (
-                <span className="sidebar__group-title" id={`sidebar-group-${group}`}>
-                  {navGroupLabel[group]}
-                </span>
-              ) : null}
-              {entries.map(({ icon: Icon, label, to }) => (
-                <NavLink
-                  className={({ isActive }) =>
-                    clsx('sidebar__link', isActive && 'sidebar__link--active')
-                  }
-                  end={to === '/'}
-                  key={to}
-                  onClick={() => setOpen(false)}
-                  to={to}
-                >
-                  <Icon aria-hidden="true" size={18} />
-                  <span>{to === '/costs' && role === 'HTKD' ? 'Nhập kg & chi phí' : label}</span>
-                </NavLink>
-              ))}
+    <RouteContentNavigation key={`${session?.principal.accountId ?? mode}:${role}`}>
+      <div className="app-shell">
+        <button
+          aria-label="Mở menu"
+          aria-expanded={open}
+          className="mobile-menu-trigger"
+          onClick={() => setOpen(true)}
+          ref={menuTriggerRef}
+          type="button"
+        >
+          <Menu aria-hidden="true" size={22} />
+        </button>
+        <aside className={clsx('sidebar', open && 'sidebar--open')}>
+          <div className="sidebar__brand">
+            <div>
+              <img
+                className="app-logo"
+                src="/idosi-kho-app-1024.png"
+                alt="IDOSI Kho hàng"
+                width="112"
+                height="84"
+              />
+              <span>QUẢN TRỊ HỆ THỐNG</span>
             </div>
+            <button aria-label="Đóng menu" onClick={closeMenu} ref={menuCloseRef} type="button">
+              <X aria-hidden="true" size={20} />
+            </button>
+          </div>
+          <nav aria-label="Điều hướng chính" className="sidebar__nav">
+            {navSections.map(({ group, entries }) => (
+              <div
+                aria-labelledby={navSections.length > 1 ? `sidebar-group-${group}` : undefined}
+                className="sidebar__group"
+                key={group}
+                role={navSections.length > 1 ? 'group' : undefined}
+              >
+                {navSections.length > 1 ? (
+                  <span className="sidebar__group-title" id={`sidebar-group-${group}`}>
+                    {navGroupLabel[group]}
+                  </span>
+                ) : null}
+                {entries.map(({ icon: Icon, label, to }) => (
+                  <NavLink
+                    className={({ isActive }) =>
+                      clsx('sidebar__link', isActive && 'sidebar__link--active')
+                    }
+                    end={to === '/'}
+                    key={to}
+                    onClick={() => setOpen(false)}
+                    to={to}
+                  >
+                    <Icon aria-hidden="true" size={18} />
+                    <span>{to === '/costs' && role === 'HTKD' ? 'Nhập kg & chi phí' : label}</span>
+                  </NavLink>
+                ))}
+              </div>
+            ))}
+          </nav>
+          <div className="sidebar__profile">
+            {mockModeEnabled ? (
+              <>
+                <label htmlFor="role-switcher">Chế độ kiểm thử vai trò</label>
+                <select
+                  id="role-switcher"
+                  onChange={(event) => updateMode(event.target.value as DemoMode)}
+                  value={mode}
+                >
+                  <option value="ADMIN">Admin</option>
+                  <option value="HTKD">HTKD</option>
+                  <option value="STORE_RETAIL">Cửa hàng bán lẻ</option>
+                  <option value="STORE_WHOLESALE">Khách sỉ</option>
+                </select>
+              </>
+            ) : null}
+            <strong className="sidebar__profile-name">{profileName}</strong>
+            <span className="sidebar__profile-scope">
+              {role === 'ADMIN' ? 'Toàn hệ thống' : 'Phạm vi đã phân quyền'}
+            </span>
+            {signOutError ? (
+              <span className="sidebar__error" role="alert">
+                {signOutError}
+              </span>
+            ) : null}
+            <button
+              className="sidebar__logout"
+              disabled={signingOut}
+              onClick={() => void signOut()}
+              type="button"
+            >
+              <LogOut aria-hidden="true" size={20} />
+              {signingOut ? 'Đang đăng xuất…' : 'Đăng xuất'}
+            </button>
+          </div>
+        </aside>
+        {open ? (
+          <button
+            aria-label="Đóng menu"
+            className="sidebar-backdrop"
+            onClick={closeMenu}
+            tabIndex={-1}
+            type="button"
+          />
+        ) : null}
+        <main className="app-main" key={location.pathname}>
+          <PriorityOfferNotice role={role} />
+          <AllocationResultNotice role={role} />
+          <Outlet context={{ role, storeKind }} />
+        </main>
+        <nav aria-label="Điều hướng mobile" className="mobile-bottom-nav">
+          {links.slice(0, 4).map(({ icon: Icon, label, to }) => (
+            <NavLink end={to === '/'} key={to} to={to}>
+              <Icon aria-hidden="true" size={18} />
+              <span>{to === '/costs' && role === 'HTKD' ? 'Nhập kg & chi phí' : label}</span>
+            </NavLink>
           ))}
         </nav>
-        <div className="sidebar__profile">
-          {mockModeEnabled ? (
-            <>
-              <label htmlFor="role-switcher">Chế độ kiểm thử vai trò</label>
-              <select
-                id="role-switcher"
-                onChange={(event) => updateMode(event.target.value as DemoMode)}
-                value={mode}
-              >
-                <option value="ADMIN">Admin</option>
-                <option value="HTKD">HTKD</option>
-                <option value="STORE_RETAIL">Cửa hàng bán lẻ</option>
-                <option value="STORE_WHOLESALE">Khách sỉ</option>
-              </select>
-            </>
-          ) : null}
-          <strong className="sidebar__profile-name">{profileName}</strong>
-          <span className="sidebar__profile-scope">
-            {role === 'ADMIN' ? 'Toàn hệ thống' : 'Phạm vi đã phân quyền'}
-          </span>
-          {signOutError ? (
-            <span className="sidebar__error" role="alert">
-              {signOutError}
-            </span>
-          ) : null}
-          <button
-            className="sidebar__logout"
-            disabled={signingOut}
-            onClick={() => void signOut()}
-            type="button"
-          >
-            <LogOut aria-hidden="true" size={20} />
-            {signingOut ? 'Đang đăng xuất…' : 'Đăng xuất'}
-          </button>
-        </div>
-      </aside>
-      {open ? (
-        <button
-          aria-label="Đóng menu"
-          className="sidebar-backdrop"
-          onClick={closeMenu}
-          tabIndex={-1}
-          type="button"
-        />
-      ) : null}
-      <main className="app-main" key={location.pathname}>
-        <PriorityOfferNotice role={role} />
-        <AllocationResultNotice role={role} />
-        <Outlet context={{ role, storeKind }} />
-      </main>
-      <nav aria-label="Điều hướng mobile" className="mobile-bottom-nav">
-        {links.slice(0, 4).map(({ icon: Icon, label, to }) => (
-          <NavLink end={to === '/'} key={to} to={to}>
-            <Icon aria-hidden="true" size={18} />
-            <span>{to === '/costs' && role === 'HTKD' ? 'Nhập kg & chi phí' : label}</span>
-          </NavLink>
-        ))}
-      </nav>
-    </div>
+      </div>
+    </RouteContentNavigation>
   );
 }
 

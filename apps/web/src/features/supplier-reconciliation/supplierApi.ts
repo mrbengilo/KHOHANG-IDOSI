@@ -209,9 +209,13 @@ export async function loadSupplierHistory(
 }
 
 /** Always sends reshareCoverage (even empty) so the preview carries the RE details. */
-export async function previewSupplierObservation(input: SupplierObservationRequest) {
+export async function previewSupplierObservation(
+  input: SupplierObservationRequest,
+  signal?: AbortSignal,
+) {
   return SupplierObservationPreviewResponseSchema.parse(
     await request('/supplier-stock-observations/preview', {
+      signal: signal ?? null,
       method: 'POST',
       body: JSON.stringify(
         SupplierObservationRequestSchema.parse({

@@ -36,6 +36,8 @@ import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
+import { useRouteContentTarget } from '../components/RouteContentNavigation';
+import { revealContent } from '../lib/content-navigation';
 import { PriorityOffer } from '../components/PriorityOffer';
 import { StatCard } from '../components/StatCard';
 import { TabPanel, Tabs, type TabItem } from '../components/Tabs';
@@ -649,13 +651,6 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
     setAllocationPage(1);
     setAllocationDecisionStatus(decisionStatusParam);
   }, [decisionStatusParam]);
-  useEffect(() => {
-    if (!openDecisionId) return;
-    const frame = window.requestAnimationFrame(() =>
-      decisionHostRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
-    );
-    return () => window.cancelAnimationFrame(frame);
-  }, [openDecisionId]);
   const openDecision = (decisionId: string | null) =>
     setParams((current) => {
       const next = new URLSearchParams(current);
@@ -670,6 +665,12 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
     refetchOnWindowFocus: true,
     retry: false,
   });
+  useRouteContentTarget(
+    decisionHostRef,
+    'detail',
+    Boolean(openDecisionId) && !decisionQuery.isPending,
+    openDecisionId ?? '',
+  );
   const catalogQuery = useQuery({ queryFn: listCatalog, queryKey: ['catalog'], retry: false });
   const storesQuery = useQuery({
     queryFn: listAccessibleStores,
@@ -812,8 +813,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
   useEffect(() => {
     if (resultsFocusRequest === 0 || activeTab !== 'sessions') return;
     const frame = window.requestAnimationFrame(() => {
-      allocationResultsHeadingRef.current?.focus();
-      allocationResultsHeadingRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      revealContent(allocationResultsHeadingRef.current);
     });
     return () => window.cancelAnimationFrame(frame);
   }, [resultsFocusRequest, activeTab]);
@@ -1133,7 +1133,8 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
           {openDecisionId ? (
             <section
               aria-label="Phiếu kết quả đang mở"
-              className="allocation-decision-host"
+              className="allocation-decision-host content-target"
+              tabIndex={-1}
               ref={decisionHostRef}
             >
               {decisionQuery.isPending ? (

@@ -14,6 +14,7 @@ export default defineConfig({
     '**/desktop-login-shell.spec.ts',
     '**/prominent-tabs.spec.ts',
     '**/supplier-reconciliation.spec.ts',
+    '**/content-navigation.spec.ts',
   ],
   fullyParallel: false,
   retries: process.env.CI ? 2 : 0,

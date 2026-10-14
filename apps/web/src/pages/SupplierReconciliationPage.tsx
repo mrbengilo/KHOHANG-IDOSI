@@ -1,4 +1,6 @@
 import { useOutletContext, useSearchParams } from 'react-router-dom';
+import { useState } from 'react';
+import { DraftScope } from '../lib/draft-guard';
 
 import type { AppOutletContext } from '../components/AppShell';
 import { Button } from '../components/Button';
@@ -39,13 +41,19 @@ export function SupplierReconciliationPage() {
   const tab = readSupplierTab(params.get('tab'), role);
   const tabs = supplierTabsFor(role);
   const accountId = session.data?.principal.accountId ?? 'demo';
-  const setTab = (next: SupplierTab) =>
+  const [dirty, setDirty] = useState(false);
+  const setTab = (next: SupplierTab) => {
+    if (next === tab) return;
+    if (dirty && !window.confirm('Bỏ bản nháp đối chiếu để chuyển mục? Chọn Hủy để giữ bản nháp.'))
+      return;
+    setDirty(false);
     setParams((current) => {
       const updated = new URLSearchParams(current);
       if (next === tabs[0]) updated.delete('tab');
       else updated.set('tab', next);
       return updated;
     });
+  };
 
   if (mockModeEnabled) {
     return <UnavailableFeature title="Đơn đặt và tồn Reshare" />;
@@ -87,10 +95,12 @@ export function SupplierReconciliationPage() {
             ) : null}
           </>
         ) : tab === 'reconcile' ? (
-          <ReconciliationWorkspace
-            accountId={`${role}:${accountId}`}
-            onOpenSettings={() => setTab('settings')}
-          />
+          <DraftScope onDirtyChange={setDirty}>
+            <ReconciliationWorkspace
+              accountId={`${role}:${accountId}`}
+              onOpenSettings={() => setTab('settings')}
+            />
+          </DraftScope>
         ) : tab === 'legacy' ? (
           <>
             <div className="supplier-legacy-link">

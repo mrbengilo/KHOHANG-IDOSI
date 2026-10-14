@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
 import { expect, test, type Page, type Response } from '@playwright/test';
-import { routeAccessPolicies, canAccessRoute } from '../src/lib/access';
+import { routeAccessPolicies, canAccessRoute, canShowNavigation } from '../src/lib/access';
 import { tableHeadingIssues } from './table-heading-typography';
 
 const api = 'http://127.0.0.1:3100/api/v1';
@@ -17,7 +18,7 @@ async function signIn(page: Page, credentials: typeof admin) {
   await expect(page.locator('.app-main')).toBeVisible();
 }
 
-test('all registered route guards and reachable table layouts across four roles', async ({
+test('all registered route guards, sidebar clicks and reachable layouts across five principals', async ({
   browser,
   request,
 }, testInfo) => {
@@ -42,11 +43,17 @@ test('all registered route guards and reachable table layouts across four roles'
   }
   const identities: {
     role: 'ADMIN' | 'HTKD' | 'STORE' | 'WHOLESALE';
+    storeKind?: 'RETAIL' | 'WHOLESALE';
     credentials: typeof admin;
   }[] = [{ role: 'ADMIN', credentials: admin }];
-  for (const role of ['HTKD', 'STORE', 'WHOLESALE'] as const) {
+  for (const [role, storeKind] of [
+    ['HTKD', undefined],
+    ['STORE', 'RETAIL'],
+    ['STORE', 'WHOLESALE'],
+    ['WHOLESALE', undefined],
+  ] as const) {
     const credentials = {
-      username: `audit.${role.toLowerCase()}.${token}`,
+      username: `audit.${role.toLowerCase()}.${storeKind ?? 'desk'}.${token}`,
       password: `Test-only-${randomUUID()}!`,
     };
     const response = await request.post(`${api}/admin/accounts`, {
@@ -54,7 +61,7 @@ test('all registered route guards and reachable table layouts across four roles'
         ...credentials,
         displayName: `Audit ${role}`,
         role,
-        ...(role === 'STORE' ? { storeId: stores[0] } : {}),
+        ...(role === 'STORE' ? { storeId: stores[storeKind === 'WHOLESALE' ? 2 : 0] } : {}),
       },
     });
     expect(response.status()).toBe(201);
@@ -69,18 +76,18 @@ test('all registered route guards and reachable table layouts across four roles'
       });
       expect(assigned.status()).toBe(200);
     }
-    identities.push({ role, credentials });
+    identities.push({ role, credentials, ...(storeKind ? { storeKind } : {}) });
   }
   const observations: unknown[] = [];
   try {
-    for (const { role, credentials } of identities) {
+    for (const { role, credentials, storeKind } of identities) {
       const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
       const page = await context.newPage();
       const errors: string[] = [];
       page.on('pageerror', (error) => errors.push(error.message));
       await signIn(page, credentials);
       for (const route of Object.keys(routeAccessPolicies)) {
-        const allowed = canAccessRoute(route, role, role === 'STORE' ? 'RETAIL' : null);
+        const allowed = canAccessRoute(route, role, storeKind ?? null);
         const responses: { method: string; path: string; status: number }[] = [];
         const record = (response: Response) => {
           if (response.url().includes('/api/v1/'))
@@ -91,12 +98,24 @@ test('all registered route guards and reachable table layouts across four roles'
             });
         };
         page.on('response', record);
-        await page.goto(`http://127.0.0.1:4174${route}`);
+        await page.setViewportSize({ width: 1440, height: 900 });
+        if (allowed && canShowNavigation(route, role, storeKind ?? null)) {
+          // Real menu interaction from the previous screen, including a scrolled document.
+          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+          await page.locator(`.sidebar a[href="${route}"]`).click();
+          await expect(page.locator(`.sidebar a[href="${route}"]`)).toHaveAttribute(
+            'aria-current',
+            'page',
+          );
+        } else {
+          await page.goto(`http://127.0.0.1:4174${route}`);
+        }
         await expect(page.locator('.app-main')).toBeVisible();
         if (!allowed) {
           await expect(page).toHaveURL('http://127.0.0.1:4174/');
           observations.push({
             role,
+            storeKind: storeKind ?? null,
             route,
             action: 'direct route guard',
             status: 'PASS',
@@ -106,6 +125,7 @@ test('all registered route guards and reachable table layouts across four roles'
           continue;
         }
         await expect(page.locator('.page-header')).toBeVisible();
+        await expect(page.locator('.page-header h1')).toBeInViewport();
         // A settled render is needed before inspecting real table boxes, including lazy pages.
         await page.waitForLoadState('networkidle');
         const tabs = await page.getByRole('tab').allTextContents();
@@ -255,6 +275,7 @@ test('all registered route guards and reachable table layouts across four roles'
         expect.soft(alerts, `${role} ${route} load errors`).toEqual([]);
         observations.push({
           role,
+          storeKind: storeKind ?? null,
           route,
           action: 'initial route render and responsive bounds',
           status: testInfo.errors.length === initialErrorCount ? 'PASS' : 'FAIL',
@@ -278,6 +299,7 @@ test('all registered route guards and reachable table layouts across four roles'
           if (!(await tab.isEnabled())) {
             observations.push({
               role,
+              storeKind: storeKind ?? null,
               route,
               action: `tab: ${name}`,
               status: 'BLOCKED',
@@ -287,6 +309,9 @@ test('all registered route guards and reachable table layouts across four roles'
           }
           const errorsBefore = testInfo.errors.length;
           await tab.click();
+          await expect(tab).toHaveAttribute('aria-selected', 'true');
+          const panelId = await tab.getAttribute('aria-controls');
+          await expect(page.locator(`[id="${panelId}"]`)).toBeInViewport();
           await page.waitForLoadState('networkidle');
           for (const discovered of await page.getByRole('tab').allTextContents()) {
             if (!tabPaths.has(discovered)) tabPaths.set(discovered, [...path, discovered]);
@@ -313,6 +338,7 @@ test('all registered route guards and reachable table layouts across four roles'
             .toEqual([]);
           observations.push({
             role,
+            storeKind: storeKind ?? null,
             route,
             action: `tab: ${name}`,
             status: testInfo.errors.length === errorsBefore ? 'PASS' : 'FAIL',
@@ -344,8 +370,10 @@ test('all registered route guards and reachable table layouts across four roles'
       await context.close();
     }
   } finally {
+    const auditPath = testInfo.outputPath('route-audit.json');
+    await writeFile(auditPath, JSON.stringify(observations, null, 2));
     await testInfo.attach('route-audit', {
-      body: JSON.stringify(observations, null, 2),
+      path: auditPath,
       contentType: 'application/json',
     });
   }

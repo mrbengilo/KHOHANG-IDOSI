@@ -1,12 +1,22 @@
 import type { SupplierObservationPreview, SupplierObservationRequest } from '@idosi/contracts';
 import { useQueryClient } from '@tanstack/react-query';
-import { useId, useRef, useState, type FormEvent } from 'react';
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type RefObject,
+} from 'react';
 
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { ApiClientError } from '../../lib/api';
 import { formatDocumentTime } from '../../lib/business-time';
 import { formatInteger } from '../../lib/format';
+import { revealContent } from '../../lib/content-navigation';
+import { useBeforeUnloadWhile, useDraftGuard } from '../../lib/draft-guard';
 import { retainIdempotencyForExactRetry, type RetryAttempt } from '../../lib/idempotency-retry';
 import {
   STATE_LABEL,
@@ -56,13 +66,20 @@ export function ObservationForm({
   targets,
   onCancel,
   onDone,
+  headingRef,
+  navigationState,
 }: {
   readonly sourceId: string;
   readonly targets: readonly ObservationTarget[];
   readonly onCancel: () => void;
   readonly onDone: (message: string) => void;
+  readonly headingRef: RefObject<HTMLHeadingElement | null>;
+  readonly navigationState: RefObject<{ dirty: boolean; confirming: boolean }>;
 }) {
   const client = useQueryClient();
+  const [dirty, setDirty] = useState(false);
+  useDraftGuard(dirty);
+  useBeforeUnloadWhile(dirty);
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [observedAt, setObservedAt] = useState(() => toBusinessLocalInput(new Date()));
   const [note, setNote] = useState('');
@@ -77,8 +94,39 @@ export function ObservationForm({
   const [error, setError] = useState<string | null>(null);
   const attempt = useRef<RetryAttempt | null>(null);
   const saveHelpId = useId();
+  const errorId = useId();
+  const previewRef = useRef<HTMLElement>(null);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const request = useRef<AbortController | null>(null);
+  const mounted = useRef(false);
+  const feedbackOwner = useRef<Element | null>(null);
+  const [feedback, setFeedback] = useState(0);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      request.current?.abort();
+    };
+  }, []);
+  useLayoutEffect(() => {
+    if (!feedback) return;
+    // A late response must not pull someone away from another control they chose meanwhile.
+    if (
+      document.activeElement !== feedbackOwner.current &&
+      document.activeElement !== document.body
+    )
+      return;
+    revealContent(
+      error
+        ? (formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]') ?? errorRef.current)
+        : previewRef.current,
+    );
+  }, [feedback, error]);
 
   const changed = () => {
+    setDirty(true);
+    navigationState.current.dirty = true;
     setPreviewStale(true);
     setError(null);
   };
@@ -123,17 +171,27 @@ export function ObservationForm({
     const input = buildRequest();
     if (typeof input === 'string') {
       setError(input);
+      feedbackOwner.current = document.activeElement;
+      setFeedback((value) => value + 1);
       return;
     }
+    const controller = new AbortController();
+    request.current = controller;
+    feedbackOwner.current = document.activeElement;
     setBusy('preview');
     setError(null);
     try {
-      setPreview(await previewSupplierObservation(input));
+      const result = await previewSupplierObservation(input, controller.signal);
+      if (!mounted.current || controller.signal.aborted) return;
+      setPreview(result);
       setPreviewStale(false);
+      setFeedback((value) => value + 1);
     } catch (caught) {
+      if (!mounted.current || controller.signal.aborted) return;
       setError(errorMessage(caught));
+      setFeedback((value) => value + 1);
     } finally {
-      setBusy(null);
+      if (mounted.current && !controller.signal.aborted) setBusy(null);
     }
   };
 
@@ -145,6 +203,8 @@ export function ObservationForm({
       return;
     }
     const payload = { ...input, expectedRevision: preview.revision };
+    navigationState.current.confirming = true;
+    feedbackOwner.current = document.activeElement;
     attempt.current = retainIdempotencyForExactRetry(attempt.current, JSON.stringify(payload));
     setBusy('confirm');
     setError(null);
@@ -157,6 +217,7 @@ export function ObservationForm({
       await Promise.all(
         SUPPLIER_QUERY_ROOTS.map((root) => client.invalidateQueries({ queryKey: [root] })),
       );
+      if (!mounted.current) return;
       onDone(
         `Đã lưu cập nhật tồn lúc ${formatDocumentTime(saved.observedAt)}. ${saved.lines
           .map((line) =>
@@ -169,9 +230,12 @@ export function ObservationForm({
           .join(' ')}`,
       );
     } catch (caught) {
+      if (!mounted.current) return;
       setError(errorMessage(caught));
+      setFeedback((value) => value + 1);
     } finally {
-      setBusy(null);
+      navigationState.current.confirming = false;
+      if (mounted.current) setBusy(null);
     }
   };
 
@@ -202,15 +266,68 @@ export function ObservationForm({
   return (
     <form
       className="panel supplier-observation"
+      ref={formRef}
       noValidate
       onSubmit={(event) => void runPreview(event)}
     >
-      <h2>Cập nhật tổng tồn Reshare</h2>
+      <h2 ref={headingRef} tabIndex={-1} className="content-target">
+        Cập nhật tổng tồn Reshare
+      </h2>
       <p className="supplier-hint">
         Nhập <strong>tổng số bao hiện có thể đặt trên Reshare</strong>, không phải số nhập thêm. Sau
         khi xem trước, đánh dấu các đơn RE mà số tồn này đã trừ; hệ thống tự tính phần còn phân bổ
         được và không trừ một đơn hai lần.
       </p>
+      <div className="responsive-table supplier-table-scroll supplier-observation-table-wrap">
+        <table className="supplier-table supplier-observation-table">
+          <caption className="sr-only">Tổng tồn Reshare theo mặt hàng</caption>
+          <thead>
+            <tr>
+              <th scope="col">Mặt hàng</th>
+              <th scope="col">Số đối chiếu trước</th>
+              <th scope="col">Tổng Reshare đang cho đặt (bao)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {targets.map((target) => (
+              <tr key={target.productId}>
+                <td data-label="Mặt hàng">
+                  <strong className="supplier-product-name">{target.productName}</strong>
+                </td>
+                <td className="table-number" data-label="Số đối chiếu trước">
+                  {target.baselineQuantity === null
+                    ? 'Chưa có'
+                    : `${formatInteger(target.baselineQuantity)} bao`}
+                </td>
+                <td data-label="Tổng Reshare đang cho đặt">
+                  <input
+                    aria-label={`Tổng số bao Reshare đang cho đặt của ${target.productName}`}
+                    aria-invalid={
+                      error && parseBags(quantities[target.productId] ?? '') === null
+                        ? true
+                        : undefined
+                    }
+                    aria-describedby={error ? errorId : undefined}
+                    className="supplier-quantity-input"
+                    disabled={busy !== null}
+                    inputMode="numeric"
+                    min={0}
+                    onChange={(event) => {
+                      setQuantities((current) => ({
+                        ...current,
+                        [target.productId]: event.target.value,
+                      }));
+                      changed();
+                    }}
+                    type="number"
+                    value={quantities[target.productId] ?? ''}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       <fieldset className="supplier-observation__meta" disabled={busy !== null}>
         <label>
           Thời điểm xem tồn Reshare (giờ Việt Nam)
@@ -248,50 +365,6 @@ export function ObservationForm({
           />
         </label>
       </fieldset>
-      <div className="responsive-table supplier-table-scroll supplier-observation-table-wrap">
-        <table className="supplier-table supplier-observation-table">
-          <caption className="sr-only">Tổng tồn Reshare theo mặt hàng</caption>
-          <thead>
-            <tr>
-              <th scope="col">Mặt hàng</th>
-              <th scope="col">Số đối chiếu trước</th>
-              <th scope="col">Tổng Reshare đang cho đặt (bao)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {targets.map((target) => (
-              <tr key={target.productId}>
-                <td data-label="Mặt hàng">
-                  <strong className="supplier-product-name">{target.productName}</strong>
-                </td>
-                <td className="table-number" data-label="Số đối chiếu trước">
-                  {target.baselineQuantity === null
-                    ? 'Chưa có'
-                    : `${formatInteger(target.baselineQuantity)} bao`}
-                </td>
-                <td data-label="Tổng Reshare đang cho đặt">
-                  <input
-                    aria-label={`Tổng số bao Reshare đang cho đặt của ${target.productName}`}
-                    className="supplier-quantity-input"
-                    disabled={busy !== null}
-                    inputMode="numeric"
-                    min={0}
-                    onChange={(event) => {
-                      setQuantities((current) => ({
-                        ...current,
-                        [target.productId]: event.target.value,
-                      }));
-                      changed();
-                    }}
-                    type="number"
-                    value={quantities[target.productId] ?? ''}
-                  />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
       <div className="button-row supplier-actions">
         {!preview ? (
           <Button busy={busy === 'preview'} disabled={busy === 'confirm'} type="submit">
@@ -303,12 +376,23 @@ export function ObservationForm({
         </Button>
       </div>
       {error ? (
-        <p className="form-error" role="alert">
+        <p
+          className="form-error content-target"
+          role="alert"
+          ref={errorRef}
+          tabIndex={-1}
+          id={errorId}
+        >
           {error}
         </p>
       ) : null}
       {preview ? (
-        <section aria-label="Xem trước đối chiếu" className="supplier-preview">
+        <section
+          aria-label="Xem trước đối chiếu"
+          className="supplier-preview content-target"
+          ref={previewRef}
+          tabIndex={-1}
+        >
           {preview.lines.map((line) => (
             <article className="supplier-preview__line" key={line.productId}>
               <header>

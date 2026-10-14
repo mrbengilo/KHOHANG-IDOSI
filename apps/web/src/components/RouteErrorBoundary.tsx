@@ -1,4 +1,5 @@
 import { TriangleAlert } from 'lucide-react';
+import { useContentReveal } from '../lib/use-content-reveal';
 import {
   Link,
   isRouteErrorResponse,
@@ -24,6 +25,7 @@ export function RouteErrorBoundary({ layout }: { readonly layout: 'page' | 'work
   const error = useRouteError();
   const navigate = useNavigate();
   const location = useLocation();
+  const heading = useContentReveal<HTMLHeadingElement>(location.key);
   const chunkFailed = isChunkLoadError(error);
   const requestId = error instanceof ApiClientError ? error.requestId : undefined;
 
@@ -40,7 +42,9 @@ export function RouteErrorBoundary({ layout }: { readonly layout: 'page' | 'work
       role="alert"
     >
       <TriangleAlert aria-hidden="true" size={30} />
-      <h1>{chunkFailed ? 'Không tải được màn hình' : 'Màn hình gặp lỗi khi hiển thị'}</h1>
+      <h1 ref={heading} tabIndex={-1} className="content-target">
+        {chunkFailed ? 'Không tải được màn hình' : 'Màn hình gặp lỗi khi hiển thị'}
+      </h1>
       <p>
         {chunkFailed
           ? 'Mạng bị gián đoạn hoặc hệ thống vừa được cập nhật phiên bản mới. Tải lại trang để lấy phiên bản hiện hành.'

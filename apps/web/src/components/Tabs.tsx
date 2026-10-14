@@ -2,6 +2,8 @@ import clsx from 'clsx';
 import { useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 
 import './tabs.css';
+import { useRouteContentTarget } from './RouteContentNavigation';
+import { revealContent } from '../lib/content-navigation';
 
 export interface TabItem<T extends string> {
   readonly id: T;
@@ -59,6 +61,7 @@ export function Tabs<T extends string>({
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const refs = useRef(new Map<T, HTMLButtonElement>());
+  const clicked = useRef(false);
   // A deep link can select a tab that starts outside the bar's horizontal scroller on narrow
   // screens. Adjust only the bar's scrollLeft: scrollIntoView would also scroll the page.
   useLayoutEffect(() => {
@@ -69,6 +72,10 @@ export function Tabs<T extends string>({
     const tabBox = tab.getBoundingClientRect();
     if (tabBox.left < listBox.left) list.scrollLeft -= listBox.left - tabBox.left;
     else if (tabBox.right > listBox.right) list.scrollLeft += tabBox.right - listBox.right;
+    if (clicked.current) {
+      clicked.current = false;
+      revealContent(list, false);
+    }
   }, [active]);
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     const next = nextTabIndex(event.key, index, items.length);
@@ -76,7 +83,7 @@ export function Tabs<T extends string>({
     event.preventDefault();
     const target = items[next];
     if (!target) return;
-    refs.current.get(target.id)?.focus();
+    refs.current.get(target.id)?.focus({ preventScroll: true });
     onChange(target.id);
   };
   return (
@@ -96,7 +103,10 @@ export function Tabs<T extends string>({
             id={tabId(idPrefix, item.id)}
             key={item.id}
             onClick={() => {
-              if (!selected) onChange(item.id);
+              if (!selected) {
+                clicked.current = true;
+                onChange(item.id);
+              }
             }}
             onKeyDown={(event) => onKeyDown(event, index)}
             ref={(element) => {
@@ -126,10 +136,13 @@ export function TabPanel({
   readonly idPrefix: string;
   readonly tab: string;
 }) {
+  const panel = useRef<HTMLDivElement>(null);
+  useRouteContentTarget(panel, 'tab', true, tab);
   return (
     <div
+      ref={panel}
       aria-labelledby={tabId(idPrefix, tab)}
-      className={clsx('tab-panel', className)}
+      className={clsx('tab-panel content-target', className)}
       id={tabPanelId(idPrefix, tab)}
       role="tabpanel"
       tabIndex={0}

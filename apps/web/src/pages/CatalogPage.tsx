@@ -1,11 +1,12 @@
 import type { Product, ProductConversion } from '@idosi/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Download, History, Pencil, Plus, RefreshCw, Save, Search, Trash2, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { PageHeader } from '../components/PageHeader';
+import { useRouteContentTarget } from '../components/RouteContentNavigation';
 import { StatCard } from '../components/StatCard';
 import type { AppOutletContext } from '../components/AppShell';
 import {
@@ -199,6 +200,8 @@ export function CatalogPage() {
   });
   const sourceEntries = catalogMockMode ? demoEntries : (catalogQuery.data?.entries ?? []);
   const selectedHistoryEntry = sourceEntries.find((entry) => entry.product.id === historyProductId);
+  const tableHeadingRef = useRef<HTMLHeadingElement>(null);
+  useRouteContentTarget(tableHeadingRef, 'page', catalogMockMode || !catalogQuery.isPending);
   const historyQuery = useQuery({
     enabled: !catalogMockMode && Boolean(historyProductId),
     queryFn: () => loadProductConversionHistory(historyProductId ?? ''),
@@ -689,7 +692,14 @@ export function CatalogPage() {
         <section className="panel table-panel" aria-labelledby="catalog-table-title">
           <div className="section-heading section-heading--compact">
             <div>
-              <h2 id="catalog-table-title">Bảng hệ số quy đổi</h2>
+              <h2
+                id="catalog-table-title"
+                ref={tableHeadingRef}
+                tabIndex={-1}
+                className="content-target"
+              >
+                Bảng hệ số quy đổi
+              </h2>
               <p>
                 {visibleEntries.length}/{sourceEntries.length} mặt hàng • Dữ liệu tại{' '}
                 {formatDate(effectiveAt)}
