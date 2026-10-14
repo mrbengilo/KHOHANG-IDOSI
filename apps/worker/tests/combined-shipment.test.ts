@@ -35,7 +35,7 @@ import {
   warehouseShortageChecks,
   withSerializableTransaction,
 } from '@idosi/database';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { materializeOutboundRequests } from '../src/postgres-repository.js';
 
@@ -48,7 +48,11 @@ describePostgres('priority goods join the next ordinary shipment', () => {
       const db = client.db;
       const sessionIds: string[] = [];
       try {
-        const [admin] = await db.select().from(users).where(eq(users.role, 'admin')).limit(1);
+        const [admin] = await db
+          .select()
+          .from(users)
+          .where(and(eq(users.role, 'admin'), eq(users.status, 'active'), isNull(users.deletedAt)))
+          .limit(1);
         const [group] = await db.select().from(storeGroups).limit(1);
         if (!admin || !group) throw new Error('Bootstrap admin and reference seed required.');
         const token = randomUUID().replaceAll('-', '');

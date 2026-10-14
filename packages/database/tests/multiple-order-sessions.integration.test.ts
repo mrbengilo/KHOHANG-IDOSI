@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   auditLogs,
@@ -26,9 +26,16 @@ import { countOrderingQuota } from '../src/order-requests.js';
 const describePostgres = process.env.RUN_POSTGRES_TESTS === '1' ? describe : describe.skip;
 
 /** A business date far from every other test, so routing only sees this test's sessions. */
-function isolatedBusinessDate(): string {
-  const offset = Number.parseInt(randomUUID().replaceAll('-', '').slice(0, 8), 16) % 20_000;
-  return new Date(Date.UTC(2045, 0, 1) + offset * 86_400_000).toISOString().slice(0, 10);
+async function isolatedBusinessDate(): Promise<string> {
+  const dates = (await db.select({ date: orderSessions.businessDate }).from(orderSessions)).map(
+    (row) => row.date,
+  );
+  // Tests run serially. Stay beyond existing fixtures both to avoid schedule collisions and
+  // to keep a later fixture's completed session from becoming this test's quota boundary.
+  const latest = dates.sort().at(-1) ?? '2045-01-01';
+  return new Date(new Date(`${latest}T00:00:00Z`).getTime() + 86_400_000)
+    .toISOString()
+    .slice(0, 10);
 }
 
 const at = (date: string, time: string) => new Date(`${date}T${time}:00+07:00`);
@@ -37,7 +44,11 @@ describePostgres('several independent allocation sessions on one business date',
   afterAll(() => closeDatabase());
 
   async function fixture() {
-    const [admin] = await db.select().from(users).where(eq(users.role, 'admin')).limit(1);
+    const [admin] = await db
+      .select()
+      .from(users)
+      .where(and(eq(users.role, 'admin'), eq(users.status, 'active'), isNull(users.deletedAt)))
+      .limit(1);
     const [group] = await db.select().from(storeGroups).limit(1);
     const [product] = await db.select().from(products).where(eq(products.isActive, true)).limit(1);
     if (!admin || !group || !product) throw new Error('Reference seed and admin are required.');
@@ -85,7 +96,7 @@ describePostgres('several independent allocation sessions on one business date',
 
   it('rejects unsupported policies without persisting a session', async () => {
     const { admin } = await fixture();
-    const date = isolatedBusinessDate();
+    const date = await isolatedBusinessDate();
     await expect(
       createOrderSession(db, {
         businessDate: date,
@@ -106,7 +117,7 @@ describePostgres('several independent allocation sessions on one business date',
 
   it('creates any number of Admin sessions beside the default one, each with its own code', async () => {
     const { admin, htkd } = await fixture();
-    const date = isolatedBusinessDate();
+    const date = await isolatedBusinessDate();
     const s1 = await ensureDailyOrderingSession(db, at(date, '00:05'));
     expect(s1.kind).toBe('default');
     const [s2, s3] = await Promise.all([
@@ -154,7 +165,7 @@ describePostgres('several independent allocation sessions on one business date',
 
   it('refuses a session closing in the past or at the same instant as another session', async () => {
     const { admin } = await fixture();
-    const date = isolatedBusinessDate();
+    const date = await isolatedBusinessDate();
     await create(admin.id, date, '00:00', '10:00', '11:00');
     await expect(create(admin.id, date, '01:00', '10:00', '12:00')).rejects.toBeInstanceOf(
       OrderSessionScheduleConflictError,
@@ -168,7 +179,7 @@ describePostgres('several independent allocation sessions on one business date',
 
   it('routes new requests to the open session closing first and opens scheduled ones on time', async () => {
     const { admin, store } = await fixture();
-    const date = isolatedBusinessDate();
+    const date = await isolatedBusinessDate();
     const late = await create(admin.id, date, '06:00', '14:00', '15:00');
     const early = await create(admin.id, date, '07:00', '10:00', '11:00');
     if (late.replayed || early.replayed) throw new Error('Fresh keys must not replay.');
@@ -204,7 +215,7 @@ describePostgres('several independent allocation sessions on one business date',
 
   it('keeps a submitted request in its session when an earlier session is added later', async () => {
     const { admin, store, product } = await fixture();
-    const date = isolatedBusinessDate();
+    const date = await isolatedBusinessDate();
     const later = await create(admin.id, date, '00:00', '14:00', '15:00');
     if (later.replayed) throw new Error('Fresh key must not replay.');
     const [request] = await db
@@ -231,7 +242,7 @@ describePostgres('several independent allocation sessions on one business date',
 
   it('counts requests waiting for another session even after an earlier session completes', async () => {
     const { admin, store, product } = await fixture();
-    const date = isolatedBusinessDate();
+    const date = await isolatedBusinessDate();
     const s1 = await create(admin.id, date, '00:00', '08:00', '09:00');
     const s2 = await create(admin.id, date, '00:00', '10:00', '11:00');
     const s3 = await create(admin.id, date, '00:00', '14:00', '15:00');
@@ -277,7 +288,7 @@ describePostgres('several independent allocation sessions on one business date',
 
   it('cancels only the targeted session and its own pending requests', async () => {
     const { admin, store, product } = await fixture();
-    const date = isolatedBusinessDate();
+    const date = await isolatedBusinessDate();
     const now = new Date();
     // Two open sessions in the real near future so the cancellation window is still open.
     const insertOpen = async (closeOffsetMinutes: number) => {
@@ -341,7 +352,7 @@ describePostgres('several independent allocation sessions on one business date',
 
   it('lets a scheduled session that never opened be cancelled after its close time', async () => {
     const { admin } = await fixture();
-    const date = isolatedBusinessDate();
+    const date = await isolatedBusinessDate();
     const [stale] = await db
       .insert(orderSessions)
       .values({

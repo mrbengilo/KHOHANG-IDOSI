@@ -43,6 +43,7 @@ export function ReconciliationWorkspace({
   const [notice, setNotice] = useState('');
   const formHeading = useRef<HTMLHeadingElement>(null);
   const listHeading = useRef<HTMLHeadingElement>(null);
+  const noticeTarget = useRef<HTMLDivElement>(null);
   const returnTarget = useRef<HTMLElement | null>(null);
   const formState = useRef({ dirty: false, confirming: false });
   const [navigation, setNavigation] = useState(0);
@@ -82,11 +83,13 @@ export function ReconciliationWorkspace({
     revealContent(
       formTargets
         ? formHeading.current
-        : returnTarget.current?.isConnected
-          ? returnTarget.current
-          : listHeading.current,
+        : notice
+          ? noticeTarget.current
+          : returnTarget.current?.isConnected
+            ? returnTarget.current
+            : listHeading.current,
     );
-  }, [navigation, formTargets]);
+  }, [navigation, formTargets, notice]);
   const sources = useQuery({
     queryKey: ['supplier-sources', accountId],
     queryFn: ({ signal }) => loadSupplierSources(signal),
@@ -125,7 +128,12 @@ export function ReconciliationWorkspace({
   return (
     <>
       {notice ? (
-        <div className="supplier-notice" role="status">
+        <div
+          className="supplier-notice content-target"
+          role="status"
+          ref={noticeTarget}
+          tabIndex={-1}
+        >
           {notice}
         </div>
       ) : null}

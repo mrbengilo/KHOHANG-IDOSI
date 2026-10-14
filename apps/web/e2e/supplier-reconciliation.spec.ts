@@ -689,6 +689,9 @@ test('Admin updates Reshare stock: re-observing frees nothing, RE coverage is ex
   await expect(page.getByRole('status').filter({ hasText: 'Đã lưu cập nhật tồn' })).toContainText(
     `${productName}: khả dụng giữ nguyên 0 bao.`,
   );
+  await expect(
+    page.getByRole('status').filter({ hasText: 'Đã lưu cập nhật tồn' }),
+  ).toBeInViewport();
   const confirms = log.mutations.filter((request) =>
     request.url().endsWith('/supplier-stock-observations'),
   );

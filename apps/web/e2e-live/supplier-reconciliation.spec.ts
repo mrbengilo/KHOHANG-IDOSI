@@ -244,6 +244,9 @@ test('AC01: Reshare shows 3, A granted 3, C re-observes 3 → nothing more is al
       await expect(
         page.getByRole('status').filter({ hasText: 'Đã lưu cập nhật tồn' }),
       ).toContainText(expectedNotice);
+      await expect(
+        page.getByRole('status').filter({ hasText: 'Đã lưu cập nhật tồn' }),
+      ).toBeInViewport();
     };
 
     // Day 1: C sees 3 at Reshare; all 3 are free.
