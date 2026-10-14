@@ -18,6 +18,7 @@ const Context = createContext<((element: HTMLElement, kind: Target) => void) | n
 export function RouteContentNavigation({ children }: { readonly children: ReactNode }) {
   const location = useLocation();
   const action = useNavigationType();
+  const current = useRef<typeof location | null>(null);
   const previous = useRef<typeof location | null>(null);
   const positions = useRef(new Map<string, number>());
   const completed = useRef('');
@@ -31,7 +32,8 @@ export function RouteContentNavigation({ children }: { readonly children: ReactN
   const ready = useCallback(
     (element: HTMLElement, kind: Target) => {
       if (completed.current === location.key) return;
-      const prior = previous.current;
+      // Child layout effects can run before the provider commits the new history entry.
+      const prior = current.current?.key === location.key ? previous.current : current.current;
       const params = new URLSearchParams(location.search);
       const before = new URLSearchParams(prior?.search);
       const newPage = !prior || prior.pathname !== location.pathname;
@@ -109,6 +111,12 @@ export function RouteContentNavigation({ children }: { readonly children: ReactN
     };
   }, []);
   useLayoutEffect(() => {
+    // Strict Mode replays cleanup/setup without navigating. Only a different history key
+    // advances the prior location; cleanup must not consume a pending detail/hash intent.
+    if (current.current?.key !== location.key) {
+      previous.current = current.current;
+      current.current = location;
+    }
     const key = location.key;
     const remember = () => {
       positions.current.set(key, window.scrollY);
@@ -126,7 +134,6 @@ export function RouteContentNavigation({ children }: { readonly children: ReactN
       window.removeEventListener('scroll', remember);
       for (const event of ['pointerdown', 'keydown', 'wheel', 'touchstart'])
         window.removeEventListener(event, cancelPending, true);
-      previous.current = location;
       restoreCleanup.current?.();
     };
   }, [location]);
