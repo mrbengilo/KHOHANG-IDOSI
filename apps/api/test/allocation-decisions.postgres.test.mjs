@@ -296,6 +296,26 @@ describePostgres('allocation result decisions through the API on PostgreSQL', ()
       );
       assert.equal(oldView.json().data.status, 'REJECTED');
       assert.equal('requeued' in oldView.json().data, false);
+      // ...and its REJECTED filter finds that same row; an opted-in client filters exactly.
+      const listIds = async (query) =>
+        (
+          await get(
+            fx.tokens.wholesale,
+            `/api/v1/allocation-decisions?sessionId=${resultW.sessionId}&${query}`,
+          )
+        )
+          .json()
+          .data.map((row) => row.id);
+      assert.deepEqual(await listIds('status=REJECTED'), [resultW.decisionId]);
+      assert.deepEqual(await listIds('status=REJECTED&includeWaitlist=true'), []);
+      assert.deepEqual(await listIds('status=WAITLISTED&includeWaitlist=true'), [
+        resultW.decisionId,
+      ]);
+      const rejectedDocuments = await get(
+        fx.tokens.wholesale,
+        `/api/v1/session-documents?sessionId=${resultW.sessionId}&includeDecision=true&decisionStatus=REJECTED`,
+      );
+      assert.equal(rejectedDocuments.json().data[0].decision.status, 'REJECTED');
       const stale = await respond(fx.tokens.storeB, resultB.decisionId, accept(9));
       assert.equal(stale.statusCode, 409);
       assert.equal(stale.json().error.code, 'VERSION_CONFLICT');

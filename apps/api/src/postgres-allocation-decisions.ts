@@ -19,7 +19,7 @@ import {
   AllocationDecisionValidationError,
   AllocationRevocationIntegrityError,
   allocationResultDecisions,
-  databaseDecisionStatus,
+  databaseDecisionStatusFilter,
   domainDecisionStatus,
   getAllocationDecision,
   IdempotencyConflictError,
@@ -304,7 +304,11 @@ export async function listPostgresAllocationDecisions(
     page: query.page,
     pageSize: query.pageSize,
     ...(storeIds === undefined ? {} : { storeIds }),
-    ...(query.status === undefined ? {} : { status: databaseDecisionStatus(query.status) }),
+    ...(query.status === undefined
+      ? {}
+      : {
+          status: databaseDecisionStatusFilter(query.status, query.includeWaitlist === true),
+        }),
     ...(query.sessionId === undefined ? {} : { sessionId: query.sessionId }),
     ...(query.outboundRequestId === undefined
       ? {}

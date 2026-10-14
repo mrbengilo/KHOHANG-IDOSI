@@ -39,7 +39,7 @@ import {
   type RespondAllocationDecisionRequest,
   type SessionDocument,
 } from '@idosi/contracts';
-import { databaseDecisionStatus } from '@idosi/database';
+import { databaseDecisionStatusFilter } from '@idosi/database';
 import {
   decisionDtosFor,
   getPostgresAllocationDecision,
@@ -1792,7 +1792,12 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       ...(query.includeDecision ? { includeDecision: true } : {}),
       ...(query.decisionStatus === undefined
         ? {}
-        : { decisionStatus: databaseDecisionStatus(query.decisionStatus) }),
+        : {
+            decisionStatus: databaseDecisionStatusFilter(
+              query.decisionStatus,
+              query.includeWaitlist === true,
+            ),
+          }),
     });
     const decisions = query.includeDecision
       ? await decisionDtosFor(

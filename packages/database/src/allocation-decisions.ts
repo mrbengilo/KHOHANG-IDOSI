@@ -87,6 +87,19 @@ export function databaseDecisionStatus(
   return entry[0] as AllocationDecisionDatabaseStatus;
 }
 
+/**
+ * Database statuses a status filter selects. A client that did not opt into the waitlist
+ * statuses sees WAITLISTED and CANCELLED results as REJECTED, so its REJECTED filter must find
+ * them too; otherwise a row shown as REJECTED would vanish when filtered by that same status.
+ */
+export function databaseDecisionStatusFilter(
+  status: AllocationDecisionStatus,
+  includeWaitlist: boolean,
+): readonly AllocationDecisionDatabaseStatus[] {
+  if (status === 'REJECTED' && !includeWaitlist) return ['rejected', 'waitlisted', 'cancelled'];
+  return [databaseDecisionStatus(status)];
+}
+
 // ---------------------------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------------------------
@@ -377,7 +390,7 @@ export interface ListAllocationDecisionsInput {
   readonly pageSize: number;
   /** Server-authorized store scope; undefined means every store. */
   readonly storeIds?: readonly string[];
-  readonly status?: AllocationDecisionDatabaseStatus;
+  readonly status?: AllocationDecisionDatabaseStatus | readonly AllocationDecisionDatabaseStatus[];
   readonly sessionId?: string;
   readonly allocationRunId?: string;
   readonly outboundRequestId?: string;
@@ -440,7 +453,10 @@ export async function listAllocationDecisions(
       if (input.storeIds) {
         predicates.push(inArray(allocationResultDecisions.storeId, [...new Set(input.storeIds)]));
       }
-      if (input.status) predicates.push(eq(allocationResultDecisions.status, input.status));
+      if (input.status) {
+        const statuses = typeof input.status === 'string' ? [input.status] : [...input.status];
+        predicates.push(inArray(allocationResultDecisions.status, statuses));
+      }
       if (input.sessionId) {
         predicates.push(eq(allocationResultDecisions.orderSessionId, input.sessionId));
       }

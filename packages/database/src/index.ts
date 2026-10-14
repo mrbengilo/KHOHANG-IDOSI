@@ -153,6 +153,7 @@ export {
   assertResponderMayAnswer,
   authorizeAllocationDecisionResponder,
   databaseDecisionStatus,
+  databaseDecisionStatusFilter,
   domainDecisionStatus,
   getAllocationDecision,
   listAllocationDecisions,

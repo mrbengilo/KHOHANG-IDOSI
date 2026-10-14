@@ -94,7 +94,7 @@ thu hồi.
 | `POST /api/v1/wait-tickets/:id/cancel`                        | Thêm `expectedFingerprint`. Bắt buộc khi có hàng thu hồi được (409 `WAIT_TICKET_PREVIEW_REQUIRED`); phạm vi đổi → 409 `WAIT_TICKET_PREVIEW_STALE`. |
 
 Tương thích bundle cũ (tab đang mở trong lúc deploy): không có `includeWaitlist`, `WAITLISTED` và
-`CANCELLED` được trả dưới dạng `REJECTED`, `allowedActions` chỉ còn `ACCEPT` (rỗng nếu kết quả đã bị
+`CANCELLED` được trả dưới dạng `REJECTED` (bộ lọc `status`/`decisionStatus=REJECTED` cũng tìm thấy chúng), `allowedActions` chỉ còn `ACCEPT` (rỗng nếu kết quả đã bị
 thu hồi một phần). Client cũ gửi `REJECT` nhận 409 `ALLOCATION_DECISION_ACTION_RETIRED`; gửi
 `ACCEPT` cho kết quả đã thu hồi một phần (hoặc gửi `WAITLIST` mà không opt-in) nhận 409
 `CLIENT_UPGRADE_REQUIRED`, vì client cũ không hiển thị được số thực sẽ xuất. `includeLineage` và
@@ -120,11 +120,15 @@ Thứ tự khóa chung cho xác nhận/chuyển phiếu chờ, hủy phiếu ch�
 2. Hủy phiếu: `wait-ticket:<id>` → `store-product-wait:<store>:<product>` → dòng phiếu `FOR UPDATE`.
 3. `warehouse-outbound:<id>` của chuyến kết quả → dòng quyết định `FOR UPDATE` → chuyến `FOR UPDATE`
    → reservation `FOR UPDATE` → `warehouse-balance:<product>` theo thứ tự product id.
-4. Chuyển phiếu chờ: `store-product-wait` của từng nhóm (thứ tự khóa nhóm) trước khi gộp/tạo PC.
+4. Chuyển phiếu chờ: sau khi trả giữ hàng, lấy `store-product-wait` của từng nhóm (thứ tự khóa
+   nhóm) rồi mới gộp/tạo PC — cùng thứ tự “số dư rồi phiếu chờ” với worker.
 
 Vì mọi luồng lấy `STOCK_JOBS_LOCK` trước, hủy phiếu và xác nhận cùng kết quả được tuần tự hóa: bên
-đến sau đọc trạng thái mới (đã RE → được bảo vệ; đã thu hồi → `actionable` giảm hoặc 409). Bản xem
-trước dùng `REPEATABLE READ`; vân tay sha256 của phạm vi (dòng, số lượng, trạng thái, version) được
+đến sau đọc trạng thái mới (đã RE → được bảo vệ; đã thu hồi → `actionable` giảm hoặc 409). Phản hồi
+lượt ưu tiên (không lấy `STOCK_JOBS_LOCK`) khóa `store-product-wait` trước số dư; nếu trùng đúng cửa
+hàng × mặt hàng với một lần chuyển phiếu chờ, PostgreSQL hủy một bên (40P01) và transaction
+serializable thử lại — không ghi dở. Bản xem trước chạy serializable có thử lại (chỉ đọc, khóa
+`FOR SHARE` khi kiểm quyền); vân tay sha256 của phạm vi (dòng, số lượng, trạng thái, version) được
 so lại trong transaction ghi. Idempotency theo phiếu + tài khoản: cùng khóa cùng nội dung → replay,
 khác nội dung → `IDEMPOTENCY_CONFLICT`.
 

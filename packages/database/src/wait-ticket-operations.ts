@@ -68,7 +68,7 @@ import {
   type WaitTicketCancellationKind,
 } from './schema.js';
 import { livePriorityOfferCondition } from './priority-offer-state.js';
-import { withAdvisoryLock, withTransaction, type Transaction } from './transaction.js';
+import { withAdvisoryLock, withSerializableTransaction, type Transaction } from './transaction.js';
 
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
@@ -1275,34 +1275,31 @@ export async function previewWaitTicketCancellation(
   database: Database,
   input: { readonly actorUserId: string; readonly waitTicketId: string },
 ): Promise<WaitTicketCancelPreview> {
-  return withTransaction(
-    database,
-    async (tx) => {
-      const [ticket] = await tx
-        .select()
-        .from(waitTickets)
-        .where(and(eq(waitTickets.id, input.waitTicketId), isNull(waitTickets.deletedAt)))
-        .limit(1);
-      if (!ticket) throw new WaitTicketNotFoundError();
-      try {
-        await assertActorMayCancelWaitTicket(tx, input.actorUserId, ticket.storeId);
-      } catch (error: unknown) {
-        // Outside the actor's scope the ticket does not exist for it.
-        if (error instanceof WaitTicketAuthorizationError) throw new WaitTicketNotFoundError();
-        throw error;
-      }
-      const scope = await loadCancellationScope(tx, ticket, { lock: false });
-      return {
-        waitTicketId: ticket.id,
-        code: ticket.code,
-        storeId: ticket.storeId,
-        productId: ticket.productId,
-        scope,
-      };
-    },
-    // No writes; not read-only only because authorization takes FOR SHARE row locks.
-    { isolationLevel: 'repeatable read' },
-  );
+  // One snapshot for the whole scope. Serializable (not read only: authorization takes FOR SHARE
+  // row locks) so a concurrent change to those rows is retried instead of surfacing as an error.
+  return withSerializableTransaction(database, async (tx) => {
+    const [ticket] = await tx
+      .select()
+      .from(waitTickets)
+      .where(and(eq(waitTickets.id, input.waitTicketId), isNull(waitTickets.deletedAt)))
+      .limit(1);
+    if (!ticket) throw new WaitTicketNotFoundError();
+    try {
+      await assertActorMayCancelWaitTicket(tx, input.actorUserId, ticket.storeId);
+    } catch (error: unknown) {
+      // Outside the actor's scope the ticket does not exist for it.
+      if (error instanceof WaitTicketAuthorizationError) throw new WaitTicketNotFoundError();
+      throw error;
+    }
+    const scope = await loadCancellationScope(tx, ticket, { lock: false });
+    return {
+      waitTicketId: ticket.id,
+      code: ticket.code,
+      storeId: ticket.storeId,
+      productId: ticket.productId,
+      scope,
+    };
+  });
 }
 
 export async function cancelWaitTicketInTransaction(
