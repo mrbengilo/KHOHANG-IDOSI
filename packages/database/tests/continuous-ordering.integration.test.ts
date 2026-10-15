@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import {
   closeDatabase,
@@ -323,7 +323,13 @@ describePostgres('24/7 ordering and allocation-completion quota', () => {
 });
 
 async function createFixture() {
-  const [admin] = await db.select().from(users).where(eq(users.role, 'admin')).limit(1);
+  // Other suites lock or delete admins in the shared database; only an active one passes authorization.
+  const [admin] = await db
+    .select()
+    .from(users)
+    .where(and(eq(users.role, 'admin'), eq(users.status, 'active'), isNull(users.deletedAt)))
+    .orderBy(asc(users.createdAt))
+    .limit(1);
   const [group] = await db.select().from(storeGroups).limit(1);
   const [product] = await db.select().from(products).where(eq(products.isActive, true)).limit(1);
   if (!admin || !group || !product)

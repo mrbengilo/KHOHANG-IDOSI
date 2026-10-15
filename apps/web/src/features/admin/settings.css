@@ -159,7 +159,7 @@
 .settings-field small,
 .settings-integration-status small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
   line-height: 1.45;
 }
 
@@ -218,7 +218,7 @@
 .settings-history-list span,
 .settings-history-list small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
   line-height: 1.5;
 }
 
@@ -250,7 +250,7 @@
 
 .settings-sticky-actions span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
   line-height: 1.5;
 }
 

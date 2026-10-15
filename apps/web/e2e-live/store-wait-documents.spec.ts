@@ -334,6 +334,9 @@ function liveFixture(db: Database, storeId: string, adminId: string) {
             eligibleQuantityAtOffer: ticket!.remainingQuantity,
             acceptedQuantity: grant.quantity,
             status: 'accepted',
+            // Offered by the 08:00 job, not "now": after 09:00 a default createdAt would put the
+            // offer after its own deadline and break the PriorityOffer contract for every list reader.
+            createdAt: new Date(`${date}T08:00:00+07:00`),
             responseDeadlineAt: new Date(`${date}T09:00:00+07:00`),
             respondedAt: new Date(`${date}T08:30:00+07:00`),
           })

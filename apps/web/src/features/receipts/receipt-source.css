@@ -196,6 +196,7 @@
 }
 
 .receipt-source-card__heading strong {
+  min-width: 0;
   overflow: hidden;
   color: var(--navy);
   font-size: 13px;
@@ -208,7 +209,7 @@
   border-radius: 999px;
   background: var(--info-soft);
   color: var(--info);
-  font-size: 9px;
+  font-size: var(--font-micro);
   font-weight: 800;
   padding: 4px 7px;
 }
@@ -218,7 +219,7 @@
   flex-direction: column;
   gap: 2px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 
 .receipt-source-card__lines {
@@ -231,7 +232,7 @@
 .receipt-source-card__line {
   align-items: flex-start;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 
 .receipt-source-card__line span {
@@ -241,7 +242,7 @@
 .receipt-source-card__line strong {
   flex: 0 0 auto;
   color: var(--text);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 
 .receipt-source-selection {
