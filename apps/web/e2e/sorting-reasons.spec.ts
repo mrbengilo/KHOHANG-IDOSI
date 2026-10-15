@@ -116,6 +116,7 @@ test('sorting credits Sale kilograms and transfers weighed bags per product', as
     if (url.pathname.endsWith('/store-sorted-stocks'))
       return respond({ data: stocks.filter((stock) => stock.storeId === activeStoreId) });
     if (url.pathname.endsWith('/store-charity-exports')) return respond({ data: [] });
+    if (url.pathname.endsWith('/store-sale-breakdown')) return respond({ data: [] });
     if (url.pathname.endsWith('/store-transfers/destinations'))
       return respond({
         data: [
@@ -172,6 +173,7 @@ test('sorting credits Sale kilograms and transfers weighed bags per product', as
         bagQuantity: 0,
         saleWeightKg: '0.625',
         charityWeightKg: '0.000',
+        cancelWeightKg: '0.000',
         version: 0,
         updatedAt: timestamp,
       });
@@ -208,6 +210,7 @@ test('sorting credits Sale kilograms and transfers weighed bags per product', as
           saleWeightKg: '1.250',
           bagQuantity: 0,
           charityWeightKg: '0.000',
+          cancelWeightKg: '0.000',
           version: 0,
           updatedAt: timestamp,
         },
@@ -250,8 +253,8 @@ test('sorting credits Sale kilograms and transfers weighed bags per product', as
   const saleList = page.locator('section', {
     has: page.getByRole('heading', { name: 'Hàng Sale còn lại' }),
   });
-  await expect(saleList.getByRole('cell', { name: 'Đồ nam' })).toBeVisible();
-  await expect(saleList.getByRole('cell', { name: '1,25 kg' })).toBeVisible();
+  await expect(saleList.getByRole('heading', { name: 'Đồ nam' })).toBeVisible();
+  await expect(saleList.getByText('1,25 kg còn lại')).toBeVisible();
   const history = page.getByRole('region', { name: 'Lịch sử lọc' });
   await expect(history.getByText('23/09/2026 14:05:09')).toBeVisible();
   await expect(history.getByRole('cell', { name: 'MB-00001' })).toBeVisible();
@@ -306,7 +309,7 @@ test('sorting credits Sale kilograms and transfers weighed bags per product', as
   expect(transfer?.status).toBe('RECEIVED');
 });
 
-test('charity goes back to Sale by kg or is exported bag by bag per product', async ({ page }) => {
+test('charity goes back to Sale by kg or is finalized bag by bag per product', async ({ page }) => {
   let charityKg = '5.000';
   let saleKg = '0.000';
   let moveRequest: Record<string, unknown> | null = null;
@@ -381,11 +384,13 @@ test('charity goes back to Sale by kg or is exported bag by bag per product', as
             saleWeightKg: saleKg,
             bagQuantity: 0,
             charityWeightKg: charityKg,
+            cancelWeightKg: '0.000',
             version: 0,
             updatedAt: timestamp,
           },
         ],
       });
+    if (url.pathname.endsWith('/store-sale-breakdown')) return respond({ data: [] });
     if (url.pathname.endsWith('/store-charity/move-to-sale')) {
       moveRequest = route.request().postDataJSON() as Record<string, unknown>;
       charityKg = '4.000';
@@ -423,20 +428,182 @@ test('charity goes back to Sale by kg or is exported bag by bag per product', as
   await expect.poll(() => moveRequest).toEqual({ storeId, productId, weightKg: '1.000' });
   await expect(page.getByText('4 kg còn lại')).toBeVisible();
 
+  await page.getByLabel('Hủy luôn (kết thúc)').check();
   await page.getByLabel('Số lượng (bao)').fill('2');
   await page.getByLabel('Bao 1 · Đồ nam (kg)').fill('3');
   await page.getByLabel('Bao 2 · Đồ nam (kg)').fill('1.5');
-  await expect(page.getByRole('button', { name: 'Xuất từ thiện' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Hủy luôn', exact: true })).toBeDisabled();
   await page.getByLabel('Bao 1 · Đồ nam (kg)').fill('2');
   await page.getByLabel('Bao 2 · Đồ nam (kg)').fill('0.5');
-  await page.getByRole('button', { name: 'Xuất từ thiện' }).click();
-  await page.getByRole('button', { name: 'Xác nhận xuất' }).click();
+  await page.getByRole('button', { name: 'Hủy luôn', exact: true }).click();
+  await page.getByRole('button', { name: 'Xác nhận hủy luôn' }).click();
   await expect
     .poll(() => exportRequest)
     .toEqual({ storeId, productId, bagWeightsKg: ['2.000', '0.500'], note: null });
   await expect(page.getByText('1,5 kg còn lại')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'PTT-000001' })).toBeVisible();
   await expect(page.getByText('Bao 1 · Đồ nam · 2 kg')).toBeVisible();
+  for (const width of [360, 390, 768, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      width,
+    );
+  }
+});
+
+test('Sale is rerouted to Cancel, Cancel goes back to Sale or is finalized', async ({ page }) => {
+  let saleKg = '6.000';
+  let cancelKg = '2.000';
+  const requests: { path: string; body: Record<string, unknown> }[] = [];
+  await page.route('**/api/v1/**', async (route) => {
+    const url = new URL(route.request().url());
+    const respond = (json: unknown, status = 200) =>
+      route.fulfill({ contentType: 'application/json', json, status });
+    const record = () =>
+      requests.push({
+        path: url.pathname.replace(/^.*\/api\/v1/, ''),
+        body: route.request().postDataJSON() as Record<string, unknown>,
+      });
+    if (url.pathname.endsWith('/auth/session'))
+      return respond({
+        data: {
+          id: '44444444-4444-4444-8444-444444444444',
+          principal: {
+            accountId: '55555555-5555-4555-8555-555555555555',
+            username: 'store.test',
+            displayName: 'Cửa hàng thử nghiệm',
+            role: 'STORE',
+            status: 'ACTIVE',
+            storeId,
+            assignedStoreIds: [],
+          },
+          createdAt: timestamp,
+          lastSeenAt: timestamp,
+          expiresAt: '2099-09-23T00:00:00.000Z',
+        },
+      });
+    if (url.pathname.endsWith('/stores'))
+      return respond({
+        data: [
+          {
+            id: storeId,
+            code: 'DS_TEST',
+            name: 'Cửa hàng thử nghiệm',
+            groupId: '66666666-6666-4666-8666-666666666666',
+            kind: 'RETAIL',
+            status: 'ACTIVE',
+            address: null,
+            version: 0,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+        ],
+        pagination: { ...pagination, totalItems: 1, totalPages: 1 },
+      });
+    if (url.pathname.endsWith('/products'))
+      return respond({
+        data: [
+          {
+            id: productId,
+            sku: 'DO_NAM',
+            name: 'Đồ nam',
+            measurement: 'WEIGHT',
+            unitLabel: 'kg',
+            status: 'ACTIVE',
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+        ],
+        pagination: { ...pagination, totalItems: 1, totalPages: 1 },
+      });
+    if (url.pathname.endsWith('/store-sorted-stocks'))
+      return respond({
+        data: [
+          {
+            id: stockId,
+            storeId,
+            productId,
+            inventoryLotId: bagId,
+            bagCode: 'MB-00001',
+            saleWeightKg: saleKg,
+            bagQuantity: 0,
+            charityWeightKg: '0.000',
+            cancelWeightKg: cancelKg,
+            version: 0,
+            updatedAt: timestamp,
+          },
+        ],
+      });
+    if (url.pathname.endsWith('/store-sale-breakdown'))
+      return respond({
+        data: [
+          {
+            storeId,
+            productId,
+            creditedWeightKg: '20.000',
+            remainingWeightKg: saleKg,
+            soldByPieceWeightKg: '4.000',
+            soldByWeightWeightKg: '8.000',
+            movedToCharityWeightKg: '0.000',
+            movedToCancelWeightKg: saleKg === '6.000' ? '2.000' : '3.000',
+            transferredOutWeightKg: '0.000',
+          },
+        ],
+      });
+    if (url.pathname.endsWith('/store-sale/move-to-cancel')) {
+      record();
+      saleKg = '5.000';
+      cancelKg = '3.000';
+      return respond({
+        data: { storeId, productId, cancelWeightKg: cancelKg, saleWeightKg: saleKg },
+      });
+    }
+    if (url.pathname.endsWith('/store-cancel/move-to-sale')) {
+      record();
+      saleKg = '5.500';
+      cancelKg = '2.500';
+      return respond({
+        data: { storeId, productId, cancelWeightKg: cancelKg, saleWeightKg: saleKg },
+      });
+    }
+    if (url.pathname.endsWith('/store-cancel/finalize')) {
+      record();
+      cancelKg = '0.000';
+      return respond({
+        data: { storeId, productId, cancelWeightKg: cancelKg, saleWeightKg: saleKg },
+      });
+    }
+    if (url.pathname.endsWith('/store-charity-exports')) return respond({ data: [] });
+    return respond({ data: [], pagination });
+  });
+
+  await page.goto('/sorting');
+  const sale = page.locator('section', {
+    has: page.getByRole('heading', { name: 'Hàng Sale còn lại' }),
+  });
+  const breakdown = sale.getByRole('definition');
+  await expect(sale.getByText('6 kg còn lại')).toBeVisible();
+  await expect(breakdown.first()).toHaveText('4 kg');
+  await expect(breakdown.nth(1)).toHaveText('8 kg');
+  await sale.getByLabel('Chọn danh mục để xử lý').selectOption('CANCEL');
+  await sale.getByLabel('Khối lượng (kg)').fill('1');
+  await sale.getByRole('button', { name: 'Chuyển sang Hủy' }).click();
+  await expect(sale.getByText('5 kg còn lại')).toBeVisible();
+
+  const cancel = page.locator('section', { has: page.getByRole('heading', { name: 'Hàng Hủy' }) });
+  await expect(cancel.getByText('3 kg chờ xử lý')).toBeVisible();
+  await cancel.getByLabel('Khối lượng (kg)').fill('0.5');
+  await cancel.getByRole('button', { name: 'Chuyển sang Sale' }).click();
+  await expect(cancel.getByText('2,5 kg chờ xử lý')).toBeVisible();
+  await cancel.getByRole('button', { name: 'Hủy luôn 2,5 kg' }).click();
+  await cancel.getByRole('button', { name: 'Xác nhận hủy luôn' }).click();
+  await expect(page.getByText('Không có hàng chờ hủy')).toBeVisible();
+
+  expect(requests).toEqual([
+    { path: '/store-sale/move-to-cancel', body: { storeId, productId, weightKg: '1.000' } },
+    { path: '/store-cancel/move-to-sale', body: { storeId, productId, weightKg: '0.500' } },
+    { path: '/store-cancel/finalize', body: { storeId, productId, weightKg: '2.500' } },
+  ]);
   for (const width of [360, 390, 768, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(

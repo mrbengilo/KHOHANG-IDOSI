@@ -715,3 +715,52 @@
 .bag-opening-history__details dt {
   color: var(--text-secondary);
 }
+
+.sorted-breakdown {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border-radius: 0.65rem;
+  background: var(--surface-muted, var(--surface));
+  font-size: 0.9rem;
+}
+
+.sorted-breakdown div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.sorted-breakdown dt {
+  color: var(--text-secondary);
+}
+
+.sorted-breakdown dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.sorted-charity-card select {
+  width: 100%;
+  min-width: 0;
+}
+
+.sorted-outcome {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.sorted-charity-card .sorted-outcome label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.5rem;
+}
+
+.sorted-charity-card .sorted-outcome input {
+  width: auto;
+  margin: 0;
+}

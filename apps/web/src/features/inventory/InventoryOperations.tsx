@@ -12,6 +12,7 @@ import type {
   StoreInventoryBag,
   StoreNormalSalePending,
   StoreOutbound,
+  SaleBreakdown,
   StoreSortedStock,
   StoreSortingHistoryAction,
 } from '@idosi/contracts';
@@ -25,7 +26,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { lazy, Suspense, useId, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import type { AppOutletContext } from '../../components/AppShell';
 import { Badge } from '../../components/Badge';
 import { BagWeightsInput } from '../../components/BagWeightsInput';
@@ -57,7 +58,12 @@ import {
   listStoreSortedStocks,
   listStoreSortingHistory,
   listStoreOutbounds,
+  finalizeProductCancel,
+  listSaleBreakdown,
+  moveProductCancelToSale,
   moveProductCharityToSale,
+  moveProductSaleToCancel,
+  moveProductSaleToCharity,
   openInventoryBag,
   reviewStoreOutbound,
 } from './inventoryApi';
@@ -126,9 +132,13 @@ const sortingHistoryCopy: Record<
 > = {
   SORT_SALE: { label: 'Lọc vào Sale', tone: 'info' },
   SORT_CHARITY: { label: 'Lọc vào Từ thiện', tone: 'warning' },
-  SORT_CANCEL: { label: 'Hủy', tone: 'danger' },
+  SORT_CANCEL: { label: 'Lọc vào Hủy', tone: 'danger' },
   CHARITY_TO_SALE: { label: 'Từ thiện → Sale', tone: 'success' },
-  CHARITY_EXPORT: { label: 'Xuất từ thiện', tone: 'neutral' },
+  CHARITY_EXPORT: { label: 'Xuất Từ thiện · kết thúc', tone: 'neutral' },
+  CANCEL_TO_SALE: { label: 'Hủy → Sale', tone: 'success' },
+  CANCEL_FINALIZE: { label: 'Hủy luôn', tone: 'danger' },
+  SALE_TO_CHARITY: { label: 'Sale → Từ thiện', tone: 'warning' },
+  SALE_TO_CANCEL: { label: 'Sale → Hủy', tone: 'danger' },
 };
 
 const SORTING_HISTORY_PAGE_SIZE = 20;
@@ -1667,10 +1677,11 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
     (sum, stock) => sum + kilogramsToGrams(stock.charityWeightKg),
     0n,
   );
-  const byProduct = new Map<
-    string,
-    { storeId: string; productId: string; saleGrams: bigint; charityGrams: bigint }
-  >();
+  const cancelGrams = stocks.reduce(
+    (sum, stock) => sum + kilogramsToGrams(stock.cancelWeightKg),
+    0n,
+  );
+  const byProduct = new Map<string, ProductBuckets>();
   for (const stock of stocks) {
     const key = `${stock.storeId}:${stock.productId}`;
     const current = byProduct.get(key);
@@ -1679,10 +1690,24 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
       productId: stock.productId,
       saleGrams: (current?.saleGrams ?? 0n) + kilogramsToGrams(stock.saleWeightKg),
       charityGrams: (current?.charityGrams ?? 0n) + kilogramsToGrams(stock.charityWeightKg),
+      cancelGrams: (current?.cancelGrams ?? 0n) + kilogramsToGrams(stock.cancelWeightKg),
     });
   }
-  const saleByProduct = [...byProduct.values()].filter((item) => item.saleGrams > 0n);
+  const breakdownQuery = useQuery({
+    queryKey: ['store-sale-breakdown', effectiveStoreId],
+    queryFn: () => listSaleBreakdown(effectiveStoreId || undefined),
+    enabled: role !== 'STORE' || Boolean(effectiveStoreId),
+    retry: false,
+  });
+  const breakdowns = new Map(
+    (breakdownQuery.data ?? []).map((row) => [`${row.storeId}:${row.productId}`, row]),
+  );
+  const saleByProduct = [...byProduct.values()].filter(
+    (item) => item.saleGrams > 0n || breakdowns.has(`${item.storeId}:${item.productId}`),
+  );
   const charityByProduct = [...byProduct.values()].filter((item) => item.charityGrams > 0n);
+  const cancelByProduct = [...byProduct.values()].filter((item) => item.cancelGrams > 0n);
+  const canEdit = mode === 'SORTING' && role === 'STORE';
   const charityExportsQuery = useQuery({
     queryKey: ['store-charity-exports', effectiveStoreId],
     queryFn: () => listCharityExports(effectiveStoreId || undefined),
@@ -1696,6 +1721,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
       queryClient.invalidateQueries({ queryKey: ['store-inventory-ledger'] }),
       queryClient.invalidateQueries({ queryKey: ['store-charity-exports'] }),
       queryClient.invalidateQueries({ queryKey: ['store-sorting-history'] }),
+      queryClient.invalidateQueries({ queryKey: ['store-sale-breakdown'] }),
     ]);
   };
   const sortingMutation = useMutation({
@@ -1721,54 +1747,48 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
     onSuccess: async () => {
       setOperationError('');
       setNotice(
-        reason === 'CANCEL'
-          ? 'Đã xác nhận hủy và ghi sổ.'
-          : `Đã cộng ${weightKg} kg vào mục ${reason === 'SALE' ? 'Sale' : 'Từ thiện'}.`,
+        `Đã cộng ${weightKg} kg vào mục ${
+          reason === 'SALE' ? 'Sale' : reason === 'CHARITY' ? 'Từ thiện' : 'Hủy'
+        }.`,
       );
       setWeightKg('');
       await refreshStock();
     },
   });
-  const charityMutation = useMutation({
-    mutationFn: async (
-      variables:
-        | { action: 'SALE'; storeId: string; productId: string; kilograms: string }
-        | { action: 'CHARITY'; storeId: string; productId: string; bagWeightsKg: string[] },
-    ) => {
+  const bucketMutation = useMutation({
+    mutationFn: async (variables: BucketMove) => {
       const signature = JSON.stringify(variables);
       const key = operationKeys.current.get(signature) ?? uuid();
       operationKeys.current.set(signature, key);
-      if (variables.action === 'SALE') {
-        await moveProductCharityToSale(
-          {
-            storeId: variables.storeId,
-            productId: variables.productId,
-            weightKg: variables.kilograms,
-          },
+      const target = { storeId: variables.storeId, productId: variables.productId };
+      let exported: Awaited<ReturnType<typeof createCharityExport>> | null = null;
+      if (variables.action === 'CHARITY_FINALIZE') {
+        exported = await createCharityExport(
+          { ...target, bagWeightsKg: variables.bagWeightsKg, note: null },
           key,
         );
-        operationKeys.current.delete(signature);
-        return null;
+      } else {
+        const input = { ...target, weightKg: variables.kilograms };
+        const run = {
+          CHARITY_TO_SALE: moveProductCharityToSale,
+          CANCEL_TO_SALE: moveProductCancelToSale,
+          CANCEL_FINALIZE: finalizeProductCancel,
+          SALE_TO_CHARITY: moveProductSaleToCharity,
+          SALE_TO_CANCEL: moveProductSaleToCancel,
+        }[variables.action];
+        await run(input, key);
       }
-      const created = await createCharityExport(
-        {
-          storeId: variables.storeId,
-          productId: variables.productId,
-          bagWeightsKg: variables.bagWeightsKg,
-          note: null,
-        },
-        key,
-      );
       operationKeys.current.delete(signature);
-      return created;
+      return exported;
     },
     onError: (error) => setOperationError(errorMessage(error)),
-    onSuccess: async (created, variables) => {
+    onSuccess: async (exported, variables) => {
       setOperationError('');
+      const product = productNames.get(variables.productId) ?? '';
       setNotice(
-        variables.action === 'SALE'
-          ? `Đã chuyển ${variables.kilograms} kg ${productNames.get(variables.productId) ?? ''} từ Từ thiện về Sale.`
-          : `Đã xuất từ thiện ${created?.bagQuantity ?? 0} bao (${formatKgExact(created?.weightKg ?? '0')}) theo phiếu ${created?.exportNumber ?? ''}.`,
+        variables.action === 'CHARITY_FINALIZE'
+          ? `Đã hủy luôn ${exported?.bagQuantity ?? 0} bao ${product} (${formatKgExact(exported?.weightKg ?? '0')}) theo phiếu ${exported?.exportNumber ?? ''}.`
+          : bucketMoveNotice(variables.action, formatKgExact(variables.kilograms), product),
       );
       await refreshStock();
     },
@@ -1786,7 +1806,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
         description={
           mode === 'SALE'
             ? 'Số dư Sale theo mặt hàng tự cập nhật từ dữ liệu bán trên IDOSI'
-            : 'Lưu kg đã lọc vào Sale hoặc Từ thiện; kg bán giá thường trên IDOSI tự trừ vào Mã bao'
+            : 'Lọc ra 3 loại: Sale, Từ thiện, Hủy; Sale bán theo cái/kg tự trừ theo IDOSI'
         }
         actions={
           <Button
@@ -1849,19 +1869,27 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
               detail="Tự trừ theo IDOSI"
               tone="info"
             />
-            <StatCard
-              label="Từ thiện còn"
-              value={formatKg(gramsToKilograms(charityGrams))}
-              detail="Chờ chuyển Sale hoặc xuất"
-              tone="warning"
-            />
             {mode === 'SORTING' ? (
-              <StatCard
-                label="Số bao có thể lọc"
-                value={String(eligibleBags.length)}
-                detail="Phần kg chưa phân loại"
-                tone="success"
-              />
+              <>
+                <StatCard
+                  label="Từ thiện còn"
+                  value={formatKgExact(gramsToKilograms(charityGrams))}
+                  detail="Chờ chuyển Sale hoặc xuất"
+                  tone="warning"
+                />
+                <StatCard
+                  label="Hủy chờ xử lý"
+                  value={formatKgExact(gramsToKilograms(cancelGrams))}
+                  detail="Chờ chuyển Sale hoặc hủy luôn"
+                  tone="danger"
+                />
+                <StatCard
+                  label="Số bao có thể lọc"
+                  value={String(eligibleBags.length)}
+                  detail="Phần kg chưa phân loại"
+                  tone="success"
+                />
+              </>
             ) : null}
           </div>
           {mode === 'SORTING' && role === 'STORE' ? (
@@ -1869,10 +1897,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
               <div className="section-heading section-heading--compact">
                 <div>
                   <h2>Lưu khối lượng đã lọc</h2>
-                  <p>
-                    Nhập tổng kg đưa vào Sale hoặc Từ thiện; số bán theo ký/cái được đối soát từ
-                    IDOSI.
-                  </p>
+                  <p>Nhập tổng kg đưa vào Sale, Từ thiện hoặc Hủy; có thể xử lý tiếp ở bên dưới.</p>
                 </div>
                 <Scale aria-hidden="true" />
               </div>
@@ -1928,7 +1953,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
                 }
                 onClick={() => sortingMutation.mutate()}
               >
-                {reason === 'CANCEL' ? 'Xác nhận hủy' : 'Lưu khối lượng đã lọc'}
+                Lưu khối lượng đã lọc
               </Button>
             </section>
           ) : null}
@@ -1936,7 +1961,10 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
             <div className="section-heading section-heading--compact">
               <div>
                 <h2>Hàng Sale còn lại</h2>
-                <p>Kg đã lọc trừ kg bán trên IDOSI, theo từng cửa hàng và mặt hàng.</p>
+                <p>
+                  Xuất bán theo cái/kg tự trừ theo IDOSI. Có thể chuyển sang Từ thiện, Hủy hoặc điều
+                  chuyển.
+                </p>
               </div>
             </div>
             {saleByProduct.length === 0 ? (
@@ -1945,29 +1973,26 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
                 detail="Lưu khối lượng Sale sau lọc để bắt đầu đối soát."
               />
             ) : (
-              <div className="responsive-table">
-                <table className="table-density">
-                  <thead>
-                    <tr>
-                      <th>Cửa hàng</th>
-                      <th>Mặt hàng</th>
-                      <th className="table-number">Sale còn</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {saleByProduct.map((item) => (
-                      <tr key={`${item.storeId}:${item.productId}`}>
-                        <td data-label="Cửa hàng">{storeName(stores, item.storeId)}</td>
-                        <td data-label="Mặt hàng">
-                          {productNames.get(item.productId) ?? item.productId}
-                        </td>
-                        <td className="table-number" data-label="Sale còn">
-                          <strong>{formatKgExact(gramsToKilograms(item.saleGrams))}</strong>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="sorted-charity-grid">
+                {saleByProduct.map((item) => (
+                  <SaleProductCard
+                    key={`${item.storeId}:${item.productId}:${item.saleGrams}`}
+                    productName={productNames.get(item.productId) ?? item.productId}
+                    storeName={storeName(stores, item.storeId)}
+                    saleWeightKg={gramsToKilograms(item.saleGrams)}
+                    breakdown={breakdowns.get(`${item.storeId}:${item.productId}`) ?? null}
+                    editable={canEdit}
+                    busy={bucketMutation.isPending}
+                    onMove={(action, kilograms) =>
+                      bucketMutation.mutate({
+                        action,
+                        storeId: item.storeId,
+                        productId: item.productId,
+                        kilograms,
+                      })
+                    }
+                  />
+                ))}
               </div>
             )}
           </section>
@@ -1977,16 +2002,13 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
                 <div className="section-heading section-heading--compact">
                   <div>
                     <h2>Hàng Từ thiện</h2>
-                    <p>
-                      Theo từng mặt hàng: quay lại Sale theo kg, hoặc xuất từ thiện theo số bao và
-                      kg từng bao.
-                    </p>
+                    <p>Chuyển vào lại mục Sale, hoặc xuất: bán theo kg (về Sale) hay hủy luôn.</p>
                   </div>
                 </div>
                 {charityByProduct.length === 0 ? (
                   <EmptyState
                     title="Chưa có hàng Từ thiện"
-                    detail="Lưu khối lượng Từ thiện sau lọc để quay lại Sale hoặc xuất đi."
+                    detail="Lưu khối lượng Từ thiện sau lọc hoặc chuyển từ Sale."
                   />
                 ) : (
                   <div className="sorted-charity-grid">
@@ -1996,19 +2018,19 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
                         productName={productNames.get(item.productId) ?? item.productId}
                         storeName={storeName(stores, item.storeId)}
                         charityWeightKg={gramsToKilograms(item.charityGrams)}
-                        editable={role === 'STORE'}
-                        busy={charityMutation.isPending}
+                        editable={canEdit}
+                        busy={bucketMutation.isPending}
                         onMoveToSale={(kilograms) =>
-                          charityMutation.mutate({
-                            action: 'SALE',
+                          bucketMutation.mutate({
+                            action: 'CHARITY_TO_SALE',
                             storeId: item.storeId,
                             productId: item.productId,
                             kilograms,
                           })
                         }
-                        onExport={(bagWeightsKg) =>
-                          charityMutation.mutate({
-                            action: 'CHARITY',
+                        onFinalize={(bagWeightsKg) =>
+                          bucketMutation.mutate({
+                            action: 'CHARITY_FINALIZE',
                             storeId: item.storeId,
                             productId: item.productId,
                             bagWeightsKg,
@@ -2022,16 +2044,46 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
               <section className="panel table-panel">
                 <div className="section-heading section-heading--compact">
                   <div>
-                    <h2>Phiếu xuất từ thiện</h2>
-                    <p>{charityExportsQuery.data?.length ?? 0} phiếu gần nhất.</p>
+                    <h2>Hàng Hủy</h2>
+                    <p>Chuyển sang Sale (xuất bán theo kg) hoặc hủy luôn để kết thúc.</p>
                   </div>
                 </div>
-                {(charityExportsQuery.data ?? []).length === 0 ? (
+                {cancelByProduct.length === 0 ? (
                   <EmptyState
-                    title="Chưa có phiếu xuất từ thiện"
-                    detail="Mỗi lần xuất ghi số bao và kg từng bao."
+                    title="Không có hàng chờ hủy"
+                    detail="Lưu khối lượng Hủy sau lọc hoặc chuyển từ Sale."
                   />
                 ) : (
+                  <div className="sorted-charity-grid">
+                    {cancelByProduct.map((item) => (
+                      <CancelProductCard
+                        key={`${item.storeId}:${item.productId}:${item.cancelGrams}`}
+                        productName={productNames.get(item.productId) ?? item.productId}
+                        storeName={storeName(stores, item.storeId)}
+                        cancelWeightKg={gramsToKilograms(item.cancelGrams)}
+                        editable={canEdit}
+                        busy={bucketMutation.isPending}
+                        onMove={(action, kilograms) =>
+                          bucketMutation.mutate({
+                            action,
+                            storeId: item.storeId,
+                            productId: item.productId,
+                            kilograms,
+                          })
+                        }
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
+              {(charityExportsQuery.data ?? []).length > 0 ? (
+                <section className="panel table-panel">
+                  <div className="section-heading section-heading--compact">
+                    <div>
+                      <h2>Phiếu xuất Từ thiện</h2>
+                      <p>{charityExportsQuery.data?.length ?? 0} phiếu gần nhất.</p>
+                    </div>
+                  </div>
                   <div className="sorted-charity-grid">
                     {(charityExportsQuery.data ?? []).map((row) => (
                       <article className="sorted-charity-card" key={row.id}>
@@ -2057,8 +2109,8 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
                       </article>
                     ))}
                   </div>
-                )}
-              </section>
+                </section>
+              ) : null}
               <SortingHistoryPanel
                 key={effectiveStoreId || 'all-stores'}
                 storeId={effectiveStoreId}
@@ -2229,6 +2281,180 @@ function SortingHistoryPanel({
   );
 }
 
+interface ProductBuckets {
+  readonly storeId: string;
+  readonly productId: string;
+  readonly saleGrams: bigint;
+  readonly charityGrams: bigint;
+  readonly cancelGrams: bigint;
+}
+
+type KilogramMoveAction =
+  'CHARITY_TO_SALE' | 'CANCEL_TO_SALE' | 'CANCEL_FINALIZE' | 'SALE_TO_CHARITY' | 'SALE_TO_CANCEL';
+
+type BucketMove =
+  | {
+      readonly action: KilogramMoveAction;
+      readonly storeId: string;
+      readonly productId: string;
+      readonly kilograms: string;
+    }
+  | {
+      readonly action: 'CHARITY_FINALIZE';
+      readonly storeId: string;
+      readonly productId: string;
+      readonly bagWeightsKg: string[];
+    };
+
+function bucketMoveNotice(action: KilogramMoveAction, kilograms: string, product: string): string {
+  switch (action) {
+    case 'CHARITY_TO_SALE':
+      return `Đã chuyển ${kilograms} ${product} từ Từ thiện về Sale.`;
+    case 'CANCEL_TO_SALE':
+      return `Đã chuyển ${kilograms} ${product} từ Hủy sang Sale (xuất bán theo kg).`;
+    case 'CANCEL_FINALIZE':
+      return `Đã hủy luôn ${kilograms} ${product}.`;
+    case 'SALE_TO_CHARITY':
+      return `Đã chuyển ${kilograms} ${product} từ Sale sang Từ thiện.`;
+    case 'SALE_TO_CANCEL':
+      return `Đã chuyển ${kilograms} ${product} từ Sale sang Hủy.`;
+  }
+}
+
+function normalizedKg(value: string): string {
+  return gramsToKilograms(kilogramsToGrams(value));
+}
+
+/** One kilogram input and button that moves part of a bucket elsewhere. */
+function KgMoveField({
+  legend,
+  availableKg,
+  buttonLabel,
+  busy,
+  onSubmit,
+}: {
+  readonly legend: string;
+  readonly availableKg: string;
+  readonly buttonLabel: string;
+  readonly busy: boolean;
+  readonly onSubmit: (kilograms: string) => void;
+}) {
+  const [kilograms, setKilograms] = useState('');
+  const allowed = isOutboundWeightAllowed(kilograms, availableKg);
+  return (
+    <fieldset className="sorted-charity-action">
+      <legend>{legend}</legend>
+      <label>
+        Khối lượng (kg)
+        <input
+          type="number"
+          min="0.001"
+          step="0.001"
+          inputMode="decimal"
+          placeholder="0.000"
+          value={kilograms}
+          onChange={(event) => setKilograms(event.target.value)}
+        />
+      </label>
+      <Button
+        tone="secondary"
+        disabled={!allowed || busy}
+        onClick={() => onSubmit(normalizedKg(kilograms))}
+      >
+        {buttonLabel}
+      </Button>
+    </fieldset>
+  );
+}
+
+const saleTargets = {
+  CHARITY: { label: 'Từ thiện', button: 'Chuyển sang Từ thiện', action: 'SALE_TO_CHARITY' },
+  CANCEL: { label: 'Xử lý hủy', button: 'Chuyển sang Hủy', action: 'SALE_TO_CANCEL' },
+  TRANSFER: { label: 'Điều chuyển sang cửa hàng khác', button: '', action: null },
+} as const;
+
+function SaleProductCard({
+  productName,
+  storeName: sourceStoreName,
+  saleWeightKg,
+  breakdown,
+  editable,
+  busy,
+  onMove,
+}: {
+  readonly productName: string;
+  readonly storeName: string;
+  readonly saleWeightKg: string;
+  readonly breakdown: SaleBreakdown | null;
+  readonly editable: boolean;
+  readonly busy: boolean;
+  readonly onMove: (action: 'SALE_TO_CHARITY' | 'SALE_TO_CANCEL', kilograms: string) => void;
+}) {
+  const [target, setTarget] = useState<keyof typeof saleTargets>('CHARITY');
+  const selectId = useId();
+  const used = breakdown
+    ? [
+        ['Xuất bán theo cái', breakdown.soldByPieceWeightKg],
+        ['Xuất bán theo kg', breakdown.soldByWeightWeightKg],
+        ['Từ thiện', breakdown.movedToCharityWeightKg],
+        ['Xử lý hủy', breakdown.movedToCancelWeightKg],
+        ['Điều chuyển', breakdown.transferredOutWeightKg],
+      ]
+    : [];
+  const chosen = saleTargets[target];
+  return (
+    <article className="sorted-charity-card">
+      <div>
+        <h3>{productName}</h3>
+        <small>{sourceStoreName}</small>
+      </div>
+      <strong>{formatKgExact(saleWeightKg)} còn lại</strong>
+      {breakdown ? (
+        <dl className="sorted-breakdown" aria-label={`Sale ${productName} đã xử lý`}>
+          {used.map(([label, kilograms]) => (
+            <div key={label}>
+              <dt>{label}</dt>
+              <dd>{formatKgExact(kilograms!)}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      {editable ? (
+        <>
+          <label>
+            <span className="field-label">Chọn danh mục để xử lý</span>
+            <select
+              id={selectId}
+              value={target}
+              onChange={(event) => setTarget(event.target.value as keyof typeof saleTargets)}
+            >
+              {Object.entries(saleTargets).map(([value, option]) => (
+                <option key={value} value={value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {chosen.action === null ? (
+            <Link className="button button--secondary" to="/transfers">
+              Mở Điều chuyển
+            </Link>
+          ) : (
+            <KgMoveField
+              key={target}
+              legend={chosen.label}
+              availableKg={saleWeightKg}
+              buttonLabel={chosen.button}
+              busy={busy}
+              onSubmit={(kilograms) => onMove(chosen.action, kilograms)}
+            />
+          )}
+        </>
+      ) : null}
+    </article>
+  );
+}
+
 function CharityProductCard({
   productName,
   storeName: sourceStoreName,
@@ -2236,7 +2462,7 @@ function CharityProductCard({
   editable,
   busy,
   onMoveToSale,
-  onExport,
+  onFinalize,
 }: {
   readonly productName: string;
   readonly storeName: string;
@@ -2244,13 +2470,12 @@ function CharityProductCard({
   readonly editable: boolean;
   readonly busy: boolean;
   readonly onMoveToSale: (kilograms: string) => void;
-  readonly onExport: (bagWeightsKg: string[]) => void;
+  readonly onFinalize: (bagWeightsKg: string[]) => void;
 }) {
-  const [saleKg, setSaleKg] = useState('');
+  const [outcome, setOutcome] = useState<'SALE' | 'CANCEL'>('SALE');
   const [bagCount, setBagCount] = useState('');
   const [bagWeights, setBagWeights] = useState<string[]>([]);
-  const [confirmExport, setConfirmExport] = useState(false);
-  const saleAllowed = isOutboundWeightAllowed(saleKg, charityWeightKg);
+  const [confirmFinalize, setConfirmFinalize] = useState(false);
   const bagCheck = checkBagWeights(bagCount, bagWeights, charityWeightKg);
   const idPrefix = useId();
   return (
@@ -2262,64 +2487,149 @@ function CharityProductCard({
       <strong>{formatKgExact(charityWeightKg)} còn lại</strong>
       {editable ? (
         <>
-          <fieldset className="sorted-charity-action">
-            <legend>Quay lại Sale</legend>
-            <label>
-              Khối lượng (kg)
-              <input
-                type="number"
-                min="0.001"
-                step="0.001"
-                inputMode="decimal"
-                placeholder="0.000"
-                value={saleKg}
-                onChange={(event) => setSaleKg(event.target.value)}
-              />
-            </label>
-            <Button
-              tone="secondary"
-              disabled={!saleAllowed || busy}
-              onClick={() => onMoveToSale(gramsToKilograms(kilogramsToGrams(saleKg)))}
-            >
-              Chuyển về Sale
-            </Button>
-          </fieldset>
+          <KgMoveField
+            legend="Chuyển vào mục Sale"
+            availableKg={charityWeightKg}
+            buttonLabel="Chuyển về Sale"
+            busy={busy}
+            onSubmit={onMoveToSale}
+          />
           <fieldset className="sorted-charity-action">
             <legend>Xuất từ thiện</legend>
-            <BagWeightsInput
-              idPrefix={idPrefix}
-              productName={productName}
-              availableKg={charityWeightKg}
-              count={bagCount}
-              weights={bagWeights}
-              check={bagCheck}
-              onChange={(count, weights) => {
-                setBagCount(count);
-                setBagWeights(weights);
-                setConfirmExport(false);
-              }}
-            />
-            {!confirmExport ? (
-              <Button disabled={!bagCheck.valid || busy} onClick={() => setConfirmExport(true)}>
-                Xuất từ thiện
+            <div className="sorted-outcome" role="radiogroup" aria-label="Kết quả xuất từ thiện">
+              <label>
+                <input
+                  type="radio"
+                  name={`${idPrefix}-outcome`}
+                  checked={outcome === 'SALE'}
+                  onChange={() => setOutcome('SALE')}
+                />
+                Chuyển sang Sale (xuất bán theo kg)
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name={`${idPrefix}-outcome`}
+                  checked={outcome === 'CANCEL'}
+                  onChange={() => setOutcome('CANCEL')}
+                />
+                Hủy luôn (kết thúc)
+              </label>
+            </div>
+            {outcome === 'SALE' ? (
+              <Button
+                tone="secondary"
+                disabled={busy}
+                onClick={() => onMoveToSale(normalizedKg(charityWeightKg))}
+              >
+                Chuyển toàn bộ {formatKgExact(charityWeightKg)} sang Sale
               </Button>
             ) : (
-              <div
-                className="sorted-charity-confirm"
-                role="group"
-                aria-label="Xác nhận xuất từ thiện"
-              >
+              <>
+                <BagWeightsInput
+                  idPrefix={idPrefix}
+                  productName={productName}
+                  availableKg={charityWeightKg}
+                  count={bagCount}
+                  weights={bagWeights}
+                  check={bagCheck}
+                  onChange={(count, weights) => {
+                    setBagCount(count);
+                    setBagWeights(weights);
+                    setConfirmFinalize(false);
+                  }}
+                />
+                {!confirmFinalize ? (
+                  <Button
+                    tone="danger"
+                    disabled={!bagCheck.valid || busy}
+                    onClick={() => setConfirmFinalize(true)}
+                  >
+                    Hủy luôn
+                  </Button>
+                ) : (
+                  <div
+                    className="sorted-charity-confirm"
+                    role="group"
+                    aria-label="Xác nhận hủy luôn"
+                  >
+                    <p>
+                      Hủy luôn {bagCheck.bagWeightsKg.length} bao {productName} (
+                      {formatKgExact(bagCheck.totalKg)})? Không thể hoàn tác.
+                    </p>
+                    <Button
+                      tone="danger"
+                      disabled={busy || !bagCheck.valid}
+                      onClick={() => onFinalize(bagCheck.bagWeightsKg)}
+                    >
+                      Xác nhận hủy luôn
+                    </Button>
+                    <Button tone="secondary" onClick={() => setConfirmFinalize(false)}>
+                      Quay lại
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+          </fieldset>
+        </>
+      ) : null}
+    </article>
+  );
+}
+
+function CancelProductCard({
+  productName,
+  storeName: sourceStoreName,
+  cancelWeightKg,
+  editable,
+  busy,
+  onMove,
+}: {
+  readonly productName: string;
+  readonly storeName: string;
+  readonly cancelWeightKg: string;
+  readonly editable: boolean;
+  readonly busy: boolean;
+  readonly onMove: (action: 'CANCEL_TO_SALE' | 'CANCEL_FINALIZE', kilograms: string) => void;
+}) {
+  const [confirmFinalize, setConfirmFinalize] = useState(false);
+  return (
+    <article className="sorted-charity-card">
+      <div>
+        <h3>{productName}</h3>
+        <small>{sourceStoreName}</small>
+      </div>
+      <strong>{formatKgExact(cancelWeightKg)} chờ xử lý</strong>
+      {editable ? (
+        <>
+          <KgMoveField
+            legend="Chuyển sang Sale (xuất bán theo kg)"
+            availableKg={cancelWeightKg}
+            buttonLabel="Chuyển sang Sale"
+            busy={busy}
+            onSubmit={(kilograms) => onMove('CANCEL_TO_SALE', kilograms)}
+          />
+          <fieldset className="sorted-charity-action">
+            <legend>Hủy luôn (kết thúc)</legend>
+            {!confirmFinalize ? (
+              <Button tone="danger" disabled={busy} onClick={() => setConfirmFinalize(true)}>
+                Hủy luôn {formatKgExact(cancelWeightKg)}
+              </Button>
+            ) : (
+              <div className="sorted-charity-confirm" role="group" aria-label="Xác nhận hủy luôn">
                 <p>
-                  Xác nhận xuất {bagCheck.bagWeightsKg.length} bao {productName} (
-                  {formatKgExact(bagCheck.totalKg)}) đi từ thiện?
+                  Hủy luôn toàn bộ {formatKgExact(cancelWeightKg)} {productName}? Không thể hoàn
+                  tác.
                 </p>
                 <Button
-                  disabled={busy || !bagCheck.valid}
-                  onClick={() => onExport(bagCheck.bagWeightsKg)}
+                  tone="danger"
+                  disabled={busy}
+                  onClick={() => onMove('CANCEL_FINALIZE', normalizedKg(cancelWeightKg))}
                 >
-                  Xác nhận xuất
+                  Xác nhận hủy luôn
                 </Button>
-                <Button tone="secondary" onClick={() => setConfirmExport(false)}>
+                <Button tone="secondary" onClick={() => setConfirmFinalize(false)}>
                   Quay lại
                 </Button>
               </div>
