@@ -76,7 +76,8 @@
   background: var(--brand-soft);
   padding: 2px 6px;
 }
-@media (min-width: 821px) {
+/* Cột mặt hàng rộng tối thiểu 16rem khi đủ chỗ; desktop hẹp không ép để bảng không cuộn ngang. */
+@media (min-width: 1101px) {
   .order-history__table th:nth-child(4),
   .order-history__table td:nth-child(4) {
     min-width: 16rem;
