@@ -5,18 +5,27 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   /* Main fills the space beside the sidebar. */
-  --sidebar-width: 224px;
+  --sidebar-width: 240px;
   /* Lề cơ sở: dùng trên mobile và là đơn vị của lề desktop bên dưới. */
   --content-pad: 18px;
   /*
-   * Lề trái/phải vùng làm việc desktop = 3 × lề cơ sở (54px) từ 1280px. Từ 821px (mốc
-   * sidebar cố định) đến 1280px lề tăng tuyến tính 18 → 54px để bảng không bị bóp ở màn
-   * hẹp; độ dốc 0.0785 = (54 − 18) / (1280 − 821). ≤820px dùng lề mobile riêng.
+   * Lề trái/phải vùng làm việc desktop, đo theo `100vw` (thanh cuộn cổ điển không làm lệch mốc).
+   * Nguyên tắc: bảng không xuống dòng thêm, không tràn. Lề chọn theo bậc:
+   * - Gấp 3 lề cũ (162px) khi vùng làm việc còn đủ `--workspace-min` — từ 2090px (xem @media
+   *   ngay sau :root; 2090 = sidebar 240 + 1526 + 2 × 162).
+   * - Không đủ thì tối đa gấp 2 lề cũ (108px), chỉ khi bảng vẫn vừa (từ 1982px).
+   * - Hẹp hơn: lề lớn nhất mà bảng vẫn vừa, không nhỏ hơn lề nền = lề cũ (18 → 54px) trừ 8px
+   *   (nửa phần sidebar rộng thêm), nên tới 1858px vùng làm việc đúng như bản trước.
+   * 1526px = bề rộng tự nhiên của bảng rộng nhất (lịch sử nhập kho tổng) + viền panel + 15px thanh
+   * cuộn dọc cổ điển (Windows, nằm trong 100vw), đo bằng audit mọi route × vai trò (docs/desktop-wide-gutters.md). ≤820px dùng lề mobile riêng.
    */
-  --content-gutter: clamp(
-    var(--content-pad),
-    calc(var(--content-pad) + (100vw - 821px) * 0.0785),
-    calc(var(--content-pad) * 3)
+  --workspace-min: 1526px;
+  --content-gutter: max(
+    clamp(var(--content-pad), calc(10px + (100vw - 821px) * 0.0785), 46px),
+    min(
+      calc((100vw - var(--sidebar-width) - var(--workspace-min)) / 2),
+      calc(var(--content-pad) * 6)
+    )
   );
   --content-gap: 24px;
   /* Chữ phụ/nhãn nhỏ: giữ gọn trên desktop, nâng lên mức dễ đọc trên mobile (≤820px). */
@@ -71,6 +80,13 @@
   --shadow-box: 0 1px 3px rgba(15, 23, 42, 0.07);
   /* Chiều cao chuẩn của nút và ô nhập; mobile nâng lên 44px để đủ vùng chạm. */
   --control-h: 38px;
+}
+
+/* Bậc gấp 3 lề cũ: chỉ khi vùng làm việc vẫn còn đủ --workspace-min (240 + 1526 + 2 × 162). */
+@media (min-width: 2090px) {
+  :root {
+    --content-gutter: calc(var(--content-pad) * 9);
+  }
 }
 
 * {
@@ -229,6 +245,40 @@ p {
   gap: 4px;
   overflow-x: hidden;
   overflow-y: auto;
+}
+
+/*
+ * Thanh cuộn danh mục mảnh (6px, không nút mũi tên) thay cho thanh cuộn cổ điển 17px của
+ * Windows. Chromium/Safari dùng ::-webkit-scrollbar; Firefox (không hỗ trợ) dùng
+ * scrollbar-width. Không đặt scrollbar-width cho Chromium vì nó vô hiệu ::-webkit-scrollbar.
+ */
+.sidebar::-webkit-scrollbar,
+.sidebar__nav::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sidebar::-webkit-scrollbar-track,
+.sidebar__nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar::-webkit-scrollbar-thumb,
+.sidebar__nav::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #cbd5e1;
+}
+
+.sidebar::-webkit-scrollbar-thumb:hover,
+.sidebar__nav::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  .sidebar,
+  .sidebar__nav {
+    scrollbar-color: #cbd5e1 transparent;
+    scrollbar-width: thin;
+  }
 }
 
 .sidebar__group {
@@ -1153,6 +1203,225 @@ textarea:focus {
 /* Dữ liệu trong ô luôn căn trái theo cột, kể cả số lượng, kg, tiền, ngày và dòng tổng. */
 .app-main table :is(th, td) {
   text-align: left;
+}
+/*
+ * Không cuộn ngang: bảng rộng tối đa bằng vùng chứa; nội dung nhiều hơn chỗ thì ô xuống dòng,
+ * kể cả chuỗi dài không có khoảng trắng. Tiêu đề, số và mã giữ quy tắc ngắt riêng của chúng.
+ */
+.app-main table td {
+  overflow-wrap: anywhere;
+}
+/*
+ * Bảng lớn (7–12 cột: lịch sử chứng từ, phiếu chờ, thống kê nhập, lịch sử khui kiện, đơn và tồn
+ * Reshare) ở độ rộng ≤1100px không còn đủ chỗ để đọc thành bảng: mỗi dòng thành một thẻ "nhãn
+ * (data-label) · giá trị", không cuộn ngang. Bảng lớn khác dùng lớp .table-cards-narrow trên
+ * vùng bao. Thẻ chung chỉ đổi ở ≤620px cho mọi bảng nên không đủ cho bảng nhiều cột ở 621–1100px.
+ * Bảng số liệu nhỏ (.table-density--metrics) giữ dạng bảng.
+ */
+@media (max-width: 1100px) {
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
+    ) {
+    width: 100%;
+    border: 0;
+    border-radius: 0;
+  }
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
+    )
+    > table:not(.table-density--metrics) {
+    display: grid;
+    gap: 10px;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    table-layout: auto;
+  }
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
+    )
+    > table:not(.table-density--metrics)
+    > thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
+    )
+    > table:not(.table-density--metrics)
+    > :is(tbody, tfoot) {
+    display: grid;
+    gap: 10px;
+  }
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
+    )
+    > table:not(.table-density--metrics)
+    > :is(tbody, tfoot)
+    > tr {
+    display: grid;
+    gap: 8px;
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    background: var(--surface);
+    padding: 11px;
+  }
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
+    )
+    > table:not(.table-density--metrics)
+    > tfoot
+    > tr {
+    background: var(--surface-muted);
+  }
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
+    )
+    > table:not(.table-density--metrics)
+    > :is(tbody, tfoot)
+    > tr
+    > :is(td, th) {
+    display: grid;
+    grid-template-columns: minmax(88px, 0.65fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 8px;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    text-align: left;
+  }
+  /* Ô tiêu đề dòng (mã cửa hàng/mặt hàng, "Tổng") là tiêu đề thẻ, chiếm cả dòng. */
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
+    )
+    > table:not(.table-density--metrics)
+    > :is(tbody, tfoot)
+    > tr
+    > th {
+    display: block;
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
+    )
+    > table:not(.table-density--metrics)
+    > :is(tbody, tfoot)
+    > tr
+    > td::before {
+    display: block;
+    content: attr(data-label);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  /* Ô không nhãn (dòng chi tiết mở rộng) chiếm cả thẻ; ô trống ở dòng tổng thì ẩn. */
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
+    )
+    > table:not(.table-density--metrics)
+    > :is(tbody, tfoot)
+    > tr
+    > td:not([data-label]) {
+    display: block;
+  }
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
+    )
+    > table:not(.table-density--metrics)
+    > :is(tbody, tfoot)
+    > tr
+    > td:not([data-label])::before {
+    content: none;
+  }
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
+    )
+    > table:not(.table-density--metrics)
+    > tfoot
+    > tr
+    > td:empty {
+    display: none;
+  }
 }
 .responsive-table {
   overflow-x: auto;
@@ -2294,6 +2563,13 @@ body.dialog-open {
     max-height: 70vh;
     overflow-y: auto;
     align-content: start;
+  }
+}
+
+/* ≤1100px: danh sách trên, chi tiết dưới, rộng đủ cho bảng dòng hàng (không cuộn ngang). */
+@media (max-width: 1100px) {
+  .receipt-workspace {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

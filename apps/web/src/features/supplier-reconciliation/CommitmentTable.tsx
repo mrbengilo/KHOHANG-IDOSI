@@ -53,7 +53,7 @@ export function CommitmentTable({
           : ''}
         .{page.scoped ? ' Chỉ gồm cửa hàng của tài khoản, không phải toàn hệ thống.' : ''}
       </p>
-      <div className="responsive-table supplier-table-scroll">
+      <div className="responsive-table supplier-table-scroll table-cards-narrow">
         <table className="supplier-table">
           <thead>
             <tr>

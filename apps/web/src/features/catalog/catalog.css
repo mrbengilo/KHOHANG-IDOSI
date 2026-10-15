@@ -89,6 +89,23 @@
   font-weight: 700;
 }
 
+/*
+ * Từ 1101px: bảng dùng đủ bề ngang thay vì ép nhỏ mọi cột. Tiêu đề, số quy đổi, phiên bản/hiệu lực
+ * và trạng thái luôn một dòng; chỉ tên mặt hàng (cột chữ dài) và nhóm nút thao tác xuống dòng.
+ */
+@media (min-width: 1101px) {
+  .catalog-table th,
+  .catalog-table td.table-number,
+  .catalog-table td:nth-child(4) > *,
+  .catalog-table td:nth-child(5) {
+    white-space: nowrap;
+  }
+  /* Bảng rộng hết vùng chứa; phần còn lại dành cho nút thao tác (xuống hàng khi hết chỗ). */
+  .app-main table.table-density.catalog-table {
+    width: 100%;
+  }
+}
+
 .catalog-actions button {
   min-height: var(--control-h);
   border-radius: 7px;

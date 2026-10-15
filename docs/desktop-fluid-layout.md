@@ -62,3 +62,9 @@ The fluid workspace and its 18px gutters are unchanged; no shared `max-width` wa
 The 18px desktop gutter above is historical evidence. Current guidance: `--content-gutter` is 54px
 (3 × 18px) per side from 1280px and grows linearly 18 → 54px between 821 and 1279px; ≤820px keeps
 the 16/18px mobile padding. See [desktop-login-spacing-audit.md](desktop-login-spacing-audit.md).
+
+## Update 2026-10-15 — wide-screen gutters × 3
+
+Gutters reach 162px (3 × 54px) per side on wide screens and the sidebar is 240px with a thin
+scrollbar; laptop widths keep their previous workspace width. See
+[desktop-wide-gutters.md](desktop-wide-gutters.md).

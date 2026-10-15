@@ -640,25 +640,19 @@
   padding-top: 10px;
 }
 /*
- * Màn hình hẹp: cùng bảng hiển thị mỗi đơn (tbody) là một thẻ. Dòng con không tạo thẻ riêng
- * (display: contents) nên các dòng mặt hàng nằm liền nhau trong thẻ, tổng hiển thị một lần.
+ * ≤1100px (thẻ dùng chung trong styles.css): mỗi đơn (tbody) là một thẻ. Dòng con không tạo thẻ
+ * riêng (display: contents) nên các dòng mặt hàng nằm liền nhau trong thẻ, tổng hiển thị một lần.
+ * Tiền tố .app-main div để thắng quy tắc thẻ dùng chung (mỗi dòng một thẻ).
  */
-@media (max-width: 620px) {
-  .reshare-history table {
-    display: grid;
-    gap: 12px;
-  }
-  .reshare-history .reshare-history__group {
+@media (max-width: 1100px) {
+  .app-main div.reshare-history > table > tbody.reshare-history__group {
     gap: 8px;
     border: 1px solid var(--border);
     border-radius: 11px;
     background: white;
     padding: 11px;
   }
-  .reshare-history__group + .reshare-history__group {
-    border-top: 1px solid var(--border);
-  }
-  .reshare-history .reshare-history__group tr {
+  .app-main div.reshare-history > table > tbody.reshare-history__group > tr {
     display: contents;
   }
   .reshare-history__order {

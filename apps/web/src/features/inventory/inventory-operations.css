@@ -570,66 +570,67 @@
   border: 1px solid var(--border);
   border-radius: 0.75rem;
 }
-.bag-opening-history table {
-  display: table;
-  width: 100%;
-  min-width: 880px;
-  table-layout: fixed;
-  border-collapse: collapse;
-  font-size: 0.875rem;
-}
-/* The global mobile stylesheet turns tables into cards. History stays tabular. */
-.bag-opening-history thead {
-  display: table-header-group;
-  position: static;
-  width: auto;
-  height: auto;
-  overflow: visible;
-  clip: auto;
-}
-.bag-opening-history tbody {
-  display: table-row-group;
-}
-.bag-opening-history tr {
-  display: table-row;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-.bag-opening-history td::before {
-  display: none;
-}
-.bag-opening-history th,
-.bag-opening-history td {
-  display: table-cell;
-  padding: 0.75rem;
-  text-align: left;
-  vertical-align: middle;
-  overflow-wrap: anywhere;
-  border-bottom: 1px solid var(--border);
-}
-.bag-opening-history th {
-  color: var(--text-secondary);
-  background: var(--surface-soft, var(--surface));
-}
-.bag-opening-history th:nth-child(1) {
-  width: 21%;
-}
-.bag-opening-history th:nth-child(2) {
-  width: 16%;
-}
-.bag-opening-history th:nth-child(3) {
-  width: 13%;
-}
-.bag-opening-history th:nth-child(4) {
-  width: 12%;
-}
-.bag-opening-history th:nth-child(5) {
-  width: 24%;
-}
-.bag-opening-history th:nth-child(6) {
-  width: 14%;
+/* Từ 1101px dạng bảng vừa vùng chứa; ≤1100px thẻ có nhãn (styles.css), không cuộn ngang. */
+@media (min-width: 1101px) {
+  .bag-opening-history table {
+    display: table;
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+  }
+  .bag-opening-history thead {
+    display: table-header-group;
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+  }
+  .bag-opening-history tbody {
+    display: table-row-group;
+  }
+  .bag-opening-history tr {
+    display: table-row;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+  .bag-opening-history td::before {
+    display: none;
+  }
+  .bag-opening-history th,
+  .bag-opening-history td {
+    display: table-cell;
+    padding: 0.75rem;
+    text-align: left;
+    vertical-align: middle;
+    overflow-wrap: anywhere;
+    border-bottom: 1px solid var(--border);
+  }
+  .bag-opening-history th {
+    color: var(--text-secondary);
+    background: var(--surface-soft, var(--surface));
+  }
+  .bag-opening-history th:nth-child(1) {
+    width: 21%;
+  }
+  .bag-opening-history th:nth-child(2) {
+    width: 16%;
+  }
+  .bag-opening-history th:nth-child(3) {
+    width: 13%;
+  }
+  .bag-opening-history th:nth-child(4) {
+    width: 12%;
+  }
+  .bag-opening-history th:nth-child(5) {
+    width: 24%;
+  }
+  .bag-opening-history th:nth-child(6) {
+    width: 14%;
+  }
 }
 .bag-opening-history tbody tr:last-child td {
   border-bottom: 0;
