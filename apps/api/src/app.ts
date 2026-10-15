@@ -75,6 +75,7 @@ import {
   ReceiptReturnActionRequestSchema,
   ReceiptReturnParamsSchema,
   WarehouseInventoryQuerySchema,
+  WarehouseInventoryResponseSchema,
   ListIdosiStatisticsQuerySchema,
   AccountParamsSchema,
   PrepareOrderingRequestSchema,
@@ -1094,12 +1095,22 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
 
   // Central stock is read-only outside Admin: adjustments, dispatch history and shortage checks
   // stay Admin-only.
-  app.get('/api/v1/warehouse-inventory', async (request) => {
+  app.get('/api/v1/warehouse-inventory', async (request, reply) => {
     const session = await authenticate(request, repository);
     requireRole(session.principal, WAREHOUSE_INVENTORY_READ_ROLES);
-    return repository.listWarehouseInventory(
-      session.principal,
-      WarehouseInventoryQuerySchema.parse(request.query),
+    reply.header('cache-control', 'no-store');
+    const query = WarehouseInventoryQuerySchema.parse(request.query);
+    // Old bundles validate strict rows and label physical holds as waiting demand. Fail visibly
+    // instead of changing that meaning or returning an extra field they cannot parse.
+    if (query.projection !== 'waiting-demand-v2') {
+      throw new ApiError(
+        'CONFLICT',
+        'Bảng tồn kho đã đổi phiên bản. Hãy tải lại trang để xem nhu cầu còn chờ chính xác.',
+        409,
+      );
+    }
+    return WarehouseInventoryResponseSchema.parse(
+      await repository.listWarehouseInventory(session.principal, query),
     );
   });
 
@@ -2686,6 +2697,67 @@ function openApiDocument(): Record<string, unknown> {
     },
     servers: [{ url: '/' }],
     components: {
+      schemas: {
+        WarehouseInventoryResponse: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['data', 'pagination'],
+          properties: {
+            data: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: [
+                  'productId',
+                  'productName',
+                  'sku',
+                  'onHandBags',
+                  'reservedBags',
+                  'waitTicketHoldBags',
+                  'waitingDemandBags',
+                  'sharedDeliveryHoldBags',
+                  'availableBags',
+                  'dispatchedBags',
+                  'balanceVersion',
+                  'productActive',
+                  'reshareReconciled',
+                ],
+                properties: {
+                  productId: { type: 'string', format: 'uuid' },
+                  productName: { type: 'string' },
+                  sku: { type: 'string' },
+                  ...Object.fromEntries(
+                    [
+                      'onHandBags',
+                      'reservedBags',
+                      'waitTicketHoldBags',
+                      'waitingDemandBags',
+                      'sharedDeliveryHoldBags',
+                      'availableBags',
+                      'dispatchedBags',
+                      'balanceVersion',
+                    ].map((name) => [name, { type: 'integer', minimum: 0 }]),
+                  ),
+                  productActive: { type: 'boolean' },
+                  reshareReconciled: { type: 'boolean' },
+                },
+              },
+            },
+            pagination: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['page', 'pageSize', 'totalItems', 'totalPages'],
+              properties: {
+                page: { type: 'integer', minimum: 1 },
+                pageSize: { type: 'integer', minimum: 1 },
+                totalItems: { type: 'integer', minimum: 0 },
+                totalPages: { type: 'integer', minimum: 0 },
+              },
+            },
+          },
+        },
+      },
       securitySchemes: {
         cookieSession: { type: 'apiKey', in: 'cookie', name: SESSION_COOKIE },
       },
@@ -3135,6 +3207,13 @@ function openApiDocument(): Record<string, unknown> {
         get: {
           security: cookieSecurity,
           parameters: [
+            {
+              name: 'projection',
+              in: 'query',
+              required: true,
+              schema: { type: 'string', enum: ['waiting-demand-v2'] },
+              description: 'Explicit demand projection; older tabs receive 409 and must reload.',
+            },
             { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 } },
             {
               name: 'pageSize',
@@ -3146,8 +3225,14 @@ function openApiDocument(): Record<string, unknown> {
           responses: {
             '200': {
               description:
-                'ADMIN (manage) and HTKD/STORE/WHOLESALE (read-only) paginated current warehouse bags and cumulative dispatched bags',
+                'ADMIN/HTKD/STORE/WHOLESALE per-product totals; waitingDemandBags sums active undeleted PC remaining, independently of physical reserved stock. No store identities.',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/WarehouseInventoryResponse' },
+                },
+              },
             },
+            '409': { description: 'Missing demand projection version; reload the application.' },
           },
         },
       },

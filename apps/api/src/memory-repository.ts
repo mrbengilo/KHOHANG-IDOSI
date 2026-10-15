@@ -509,6 +509,20 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     if (!WAREHOUSE_INVENTORY_READ_ROLES.includes(actor.role))
       throw forbidden('Tài khoản này không được xem tồn kho tổng.');
     const search = query.search?.toLocaleLowerCase('vi-VN') ?? '';
+    const waitingByProduct = new Map<string, number>();
+    for (const stored of this.waitTickets.values()) {
+      const ticket = this.effectiveWaitTicket(stored);
+      if (
+        ['WAITING', 'OFFERED', 'PARTIALLY_FULFILLED'].includes(ticket.status) &&
+        ticket.remaining.kind === 'UNIT' &&
+        ticket.remaining.quantity > 0
+      ) {
+        waitingByProduct.set(
+          ticket.productId,
+          (waitingByProduct.get(ticket.productId) ?? 0) + ticket.remaining.quantity,
+        );
+      }
+    }
     const values = [...this.products.values()]
       .filter((product) =>
         `${product.name} ${product.sku}`.toLocaleLowerCase('vi-VN').includes(search),
@@ -526,6 +540,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         reservedBags,
         // Memory mode never holds stock for priority offers (see priority offer handling).
         waitTicketHoldBags: 0,
+        waitingDemandBags: waitingByProduct.get(product.id) ?? 0,
         sharedDeliveryHoldBags: reservedBags,
         availableBags: onHandBags - reservedBags,
         dispatchedBags: [...this.dispatchedOutbounds.values()]
