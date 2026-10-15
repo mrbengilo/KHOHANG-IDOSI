@@ -7,7 +7,6 @@ import { expect, it } from 'vitest';
 import {
   createDatabase,
   createStorePartnerInbound,
-  createStoreSorting,
   listSortedSaleTransfers,
   receiveSortedSaleTransfer,
 } from '../src/index.js';
@@ -75,20 +74,11 @@ pg(
           source,
         ])
       ).rows[0];
-      await createStoreSorting(legacy.db, {
-        storeId: source,
-        inventoryBagId: bag.id,
-        expectedInventoryVersion: bag.version,
-        reason: 'SALE',
-        weightKg: '200.000',
-        actorUserId: sender,
-        idempotencyKey: randomUUID(),
-        requestHash: randomUUID(),
-      });
+      // Written with SQL valid at migration 0029: today's sorting code reads columns added later.
       const stock = (
         await legacy.pool.query(
-          'UPDATE store_sorted_stocks SET sale_weight_kg=149.999,transferred_out_weight_kg=50.001 WHERE store_id=$1 RETURNING id',
-          [source],
+          'INSERT INTO store_sorted_stocks(store_id,product_id,store_inventory_bag_id,sale_credited_weight_kg,sale_weight_kg,transferred_out_weight_kg) VALUES ($1,$2,$3,200,149.999,50.001) RETURNING id',
+          [source, product, bag.id],
         )
       ).rows[0].id;
       const original = (

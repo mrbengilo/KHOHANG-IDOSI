@@ -103,6 +103,11 @@ import {
   SetIdosiStoreCodeRequestSchema,
   MoveCharityToSaleRequestSchema,
   MoveProductCharityToSaleRequestSchema,
+  MoveProductCancelToSaleRequestSchema,
+  FinalizeProductCancelRequestSchema,
+  MoveProductSaleToCharityRequestSchema,
+  MoveProductSaleToCancelRequestSchema,
+  ListSaleBreakdownQuerySchema,
   StoreSortedStockParamsSchema,
   CreateStoreRequestSchema,
   DeclareStoreReceiptRequestSchema,
@@ -2023,6 +2028,76 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return reply.send({ data: result.data });
   });
 
+  app.post('/api/v1/store-cancel/move-to-sale', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = MoveProductCancelToSaleRequestSchema.parse(request.body);
+    const result = await repository.moveProductCancelToSale(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'MOVE_PRODUCT_CANCEL_TO_SALE', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.post('/api/v1/store-cancel/finalize', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = FinalizeProductCancelRequestSchema.parse(request.body);
+    const result = await repository.finalizeProductCancel(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'FINALIZE_PRODUCT_CANCEL', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.post('/api/v1/store-sale/move-to-charity', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = MoveProductSaleToCharityRequestSchema.parse(request.body);
+    const result = await repository.moveProductSaleToCharity(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'MOVE_PRODUCT_SALE_TO_CHARITY', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.post('/api/v1/store-sale/move-to-cancel', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['STORE']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const input = MoveProductSaleToCancelRequestSchema.parse(request.body);
+    const result = await repository.moveProductSaleToCancel(
+      session.principal,
+      input,
+      headers['idempotency-key'],
+      hashCanonicalRequest({ action: 'MOVE_PRODUCT_SALE_TO_CANCEL', ...input }),
+      requestContext(request),
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.send({ data: result.data });
+  });
+
+  app.get('/api/v1/store-sale-breakdown', async (request) => {
+    const session = await authenticate(request, repository);
+    const query = ListSaleBreakdownQuerySchema.parse(request.query);
+    return { data: await repository.listSaleBreakdown(session.principal, query.storeId) };
+  });
+
   app.get('/api/v1/store-charity-exports', async (request) => {
     const session = await authenticate(request, repository);
     const query = ListCharityExportsQuerySchema.parse(request.query);
@@ -3382,6 +3457,53 @@ function openApiDocument(): Record<string, unknown> {
             { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
           ],
           responses: { '200': { description: 'Exported the remaining Charity balance' } },
+        },
+      },
+      '/api/v1/store-cancel/move-to-sale': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Moved Cancel kilograms of one product into Sale' } },
+        },
+      },
+      '/api/v1/store-cancel/finalize': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': {
+              description:
+                'Finalized (Hủy luôn) the entire remaining Cancel balance of one product',
+            },
+          },
+        },
+      },
+      '/api/v1/store-sale/move-to-charity': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Moved Sale kilograms of one product into Charity' } },
+        },
+      },
+      '/api/v1/store-sale/move-to-cancel': {
+        post: {
+          security: cookieSecurity,
+          parameters: [
+            { name: 'idempotency-key', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Moved Sale kilograms of one product into Cancel' } },
+        },
+      },
+      '/api/v1/store-sale-breakdown': {
+        get: {
+          security: cookieSecurity,
+          responses: { '200': { description: 'How each store/product Sale pool was used' } },
         },
       },
       '/api/v1/store-charity/move-to-sale': {

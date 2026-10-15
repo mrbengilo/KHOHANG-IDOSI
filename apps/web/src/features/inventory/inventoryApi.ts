@@ -32,6 +32,9 @@ import {
   CharityExportResponseSchema,
   CharityExportsResponseSchema,
   ListStoreSortingHistoryResponseSchema,
+  MoveProductCancelToSaleRequestSchema,
+  ProductCancelBalanceResponseSchema,
+  ListSaleBreakdownResponseSchema,
   ListWarehouseShortageChecksResponseSchema,
   ResolveWarehouseShortageCheckRequestSchema,
   WarehouseShortageCheckResponseSchema,
@@ -55,6 +58,12 @@ import {
   type CreateCharityExportRequest,
   type CharityExport,
   type ListStoreSortingHistoryResponse,
+  type MoveProductCancelToSaleRequest,
+  type FinalizeProductCancelRequest,
+  type MoveProductSaleToCharityRequest,
+  type MoveProductSaleToCancelRequest,
+  type ProductCancelBalance,
+  type SaleBreakdown,
 } from '@idosi/contracts';
 
 import { ApiClientError, mapWithConcurrency, PAGE_FETCH_CONCURRENCY } from '../../lib/api';
@@ -303,6 +312,75 @@ export async function moveProductCharityToSale(
       body: JSON.stringify(parsed),
     }),
   ).data;
+}
+
+async function postBucketMove<T>(
+  path: string,
+  input: { storeId: string; productId: string; weightKg: string },
+  idempotencyKey: string,
+  parse: (payload: unknown) => T,
+): Promise<T> {
+  const parsed = MoveProductCancelToSaleRequestSchema.parse(input);
+  return parse(
+    await request(path, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(parsed),
+    }),
+  );
+}
+
+export function moveProductCancelToSale(
+  input: MoveProductCancelToSaleRequest,
+  idempotencyKey: string,
+): Promise<ProductCancelBalance> {
+  return postBucketMove(
+    '/store-cancel/move-to-sale',
+    input,
+    idempotencyKey,
+    (payload) => ProductCancelBalanceResponseSchema.parse(payload).data,
+  );
+}
+
+export function finalizeProductCancel(
+  input: FinalizeProductCancelRequest,
+  idempotencyKey: string,
+): Promise<ProductCancelBalance> {
+  return postBucketMove(
+    '/store-cancel/finalize',
+    input,
+    idempotencyKey,
+    (payload) => ProductCancelBalanceResponseSchema.parse(payload).data,
+  );
+}
+
+export function moveProductSaleToCharity(
+  input: MoveProductSaleToCharityRequest,
+  idempotencyKey: string,
+): Promise<ProductCharityBalance> {
+  return postBucketMove(
+    '/store-sale/move-to-charity',
+    input,
+    idempotencyKey,
+    (payload) => ProductCharityBalanceResponseSchema.parse(payload).data,
+  );
+}
+
+export function moveProductSaleToCancel(
+  input: MoveProductSaleToCancelRequest,
+  idempotencyKey: string,
+): Promise<ProductCancelBalance> {
+  return postBucketMove(
+    '/store-sale/move-to-cancel',
+    input,
+    idempotencyKey,
+    (payload) => ProductCancelBalanceResponseSchema.parse(payload).data,
+  );
+}
+
+export async function listSaleBreakdown(storeId?: string): Promise<SaleBreakdown[]> {
+  const query = storeId ? `?${new URLSearchParams({ storeId })}` : '';
+  return ListSaleBreakdownResponseSchema.parse(await request(`/store-sale-breakdown${query}`)).data;
 }
 
 export async function listCharityExports(storeId?: string): Promise<CharityExport[]> {

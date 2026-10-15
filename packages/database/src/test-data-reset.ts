@@ -5,9 +5,9 @@ import { idosiProductSaleGrams, idosiItemsForProduct } from './store-sale-sync.j
 import { idosiNormalSaleGrams } from './store-normal-sale-sync.js';
 import { resetLinkSignature } from './reset-sale-boundary.js';
 
-/** Reviewed PostgreSQL 17 catalog built by migrations 0000..0045 in the isolated fixture. */
+/** Reviewed PostgreSQL 17 catalog built by migrations 0000..0046 in the isolated fixture. */
 export const EXPECTED_RESET_SCHEMA_HASH =
-  '79d0f1868ad00f32530dee5590c44fc106eaa2edb059fab261bad3ca3ccfbc0b';
+  'cfea49c51be19838395d1877c8bf2bb1d779c6e5d3bfbadbf8f28b75c2122a46';
 
 /** Only this reviewed set can ever be passed to TRUNCATE. No SQL comes from a manifest. */
 export const RESET_PURGE_TABLES = [

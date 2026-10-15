@@ -342,10 +342,10 @@ test('Admin runs three independent sessions on one day; history and results neve
       .nth(2)
       .getByRole('button', { name: `Xem chứng từ phiên ${s1!.code} của ${storeA.name}` })
       .click();
-    await expect(page.getByRole('heading', { name: 'Kết quả phân bổ đã lưu' })).toBeFocused();
+    await expect(page.getByRole('heading', { name: 'Kết quả phân bổ', exact: true })).toBeFocused();
     await expect(page.getByLabel('Lọc kết quả theo phiên')).toHaveValue(s1!.id);
     await expect(page.getByLabel('Lọc kết quả theo cửa hàng')).toHaveValue(storeA.id);
-    await expect(page.locator('.session-document').first()).toContainText(s1!.code);
+    await expect(page.locator('.allocation-summary-group').first()).toContainText(s1!.code);
 
     // 4. A restart replays every job; nothing is added and nothing moves between sessions.
     expect(await runAll()).toEqual([true, true, true, true, true, true]);

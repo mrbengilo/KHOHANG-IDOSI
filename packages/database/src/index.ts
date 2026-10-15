@@ -314,6 +314,11 @@ export {
   listStoreSortingHistory,
   moveCharityToSale,
   moveProductCharityToSale,
+  moveProductCancelToSale,
+  finalizeProductCancel,
+  moveProductSaleToCharity,
+  moveProductSaleToCancel,
+  listStoreSaleBreakdown,
 } from './store-sorting.js';
 export { idosiProductSaleGrams } from './store-sale-sync.js';
 export { listStoreNormalSalePending } from './store-normal-sale-sync.js';
@@ -334,6 +339,12 @@ export type {
   CreateStoreSortingInput,
   MoveProductCharityToSaleInput,
   ProductCharityBalanceRecord,
+  ProductCancelBalanceRecord,
+  SaleBreakdownRecord,
+  MoveProductCancelToSaleInput,
+  FinalizeProductCancelInput,
+  MoveProductSaleToCharityInput,
+  MoveProductSaleToCancelInput,
   SortedStockMutationInput,
   SortedStockRecord,
   StoreSortingHistoryAction,

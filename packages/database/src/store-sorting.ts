@@ -35,6 +35,7 @@ export interface SortedStockRecord {
   readonly saleWeightKg: string;
   readonly bagQuantity: number;
   readonly charityWeightKg: string;
+  readonly cancelWeightKg: string;
   readonly version: number;
   readonly updatedAt: Date;
 }
@@ -75,6 +76,10 @@ const SORTING_HISTORY_ACTIONS = [
   'sort_cancel',
   'charity_to_sale',
   'charity_export',
+  'cancel_to_sale',
+  'cancel_finalize',
+  'sale_to_charity',
+  'sale_to_cancel',
 ] as const;
 export type StoreSortingHistoryAction = (typeof SORTING_HISTORY_ACTIONS)[number];
 
@@ -166,6 +171,129 @@ export async function listStoreSortedStocks(
   );
 }
 
+export interface SaleBreakdownRecord {
+  readonly storeId: string;
+  readonly productId: string;
+  readonly creditedWeightKg: string;
+  readonly remainingWeightKg: string;
+  readonly soldByPieceWeightKg: string;
+  readonly soldByWeightWeightKg: string;
+  readonly movedToCharityWeightKg: string;
+  readonly movedToCancelWeightKg: string;
+  readonly transferredOutWeightKg: string;
+}
+
+/**
+ * How each store/product's Sale pool was used, for display only: credited = remaining +
+ * sold-by-piece + sold-by-weight + moved-to-charity + moved-to-cancel + transferred-out. The
+ * "sold by weight" figure absorbs IDOSI sale corrections so the breakdown always reconciles
+ * exactly against the credited total.
+ */
+export async function listStoreSaleBreakdown(
+  database: Database,
+  storeIds: readonly string[],
+): Promise<SaleBreakdownRecord[]> {
+  if (storeIds.length === 0) return [];
+  const stocks = await database
+    .select({
+      storeId: storeSortedStocks.storeId,
+      productId: storeSortedStocks.productId,
+      saleCreditedWeightKg: storeSortedStocks.saleCreditedWeightKg,
+      saleWeightKg: storeSortedStocks.saleWeightKg,
+      transferredOutWeightKg: storeSortedStocks.transferredOutWeightKg,
+    })
+    .from(storeSortedStocks)
+    .where(inArray(storeSortedStocks.storeId, [...storeIds]));
+  const events = await database
+    .select({
+      storeId: storeSortingEvents.storeId,
+      productId: storeSortingEvents.productId,
+      action: storeSortingEvents.action,
+      weightKg: storeSortingEvents.weightKg,
+    })
+    .from(storeSortingEvents)
+    .where(
+      and(
+        inArray(storeSortingEvents.storeId, [...storeIds]),
+        inArray(storeSortingEvents.action, [
+          'idosi_sale_piece',
+          'sale_to_charity',
+          'sale_to_cancel',
+        ]),
+      ),
+    );
+  type Accumulator = {
+    storeId: string;
+    productId: string;
+    credited: bigint;
+    remaining: bigint;
+    transferredOut: bigint;
+    soldByPiece: bigint;
+    toCharity: bigint;
+    toCancel: bigint;
+  };
+  const byKey = new Map<string, Accumulator>();
+  const keyOf = (storeId: string, productId: string) => `${storeId}:${productId}`;
+  const entry = (storeId: string, productId: string): Accumulator => {
+    const key = keyOf(storeId, productId);
+    let acc = byKey.get(key);
+    if (!acc) {
+      acc = {
+        storeId,
+        productId,
+        credited: 0n,
+        remaining: 0n,
+        transferredOut: 0n,
+        soldByPiece: 0n,
+        toCharity: 0n,
+        toCancel: 0n,
+      };
+      byKey.set(key, acc);
+    }
+    return acc;
+  };
+  for (const stock of stocks) {
+    const acc = entry(stock.storeId, stock.productId);
+    acc.credited += kilogramsToGramsExact(stock.saleCreditedWeightKg);
+    acc.remaining += kilogramsToGramsExact(stock.saleWeightKg);
+    acc.transferredOut += kilogramsToGramsExact(stock.transferredOutWeightKg);
+  }
+  for (const event of events) {
+    const acc = entry(event.storeId, event.productId);
+    const grams = kilogramsToGramsExact(event.weightKg);
+    if (event.action === 'idosi_sale_piece') acc.soldByPiece += grams;
+    else if (event.action === 'sale_to_charity') acc.toCharity += grams;
+    else if (event.action === 'sale_to_cancel') acc.toCancel += grams;
+  }
+  return [...byKey.values()]
+    .filter((acc) => acc.credited > 0n)
+    .map((acc) => {
+      const soldByWeight = max0(
+        acc.credited -
+          acc.remaining -
+          acc.transferredOut -
+          acc.toCharity -
+          acc.toCancel -
+          acc.soldByPiece,
+      );
+      return {
+        storeId: acc.storeId,
+        productId: acc.productId,
+        creditedWeightKg: gramsToKilogramsExact(acc.credited),
+        remainingWeightKg: gramsToKilogramsExact(acc.remaining),
+        soldByPieceWeightKg: gramsToKilogramsExact(acc.soldByPiece),
+        soldByWeightWeightKg: gramsToKilogramsExact(soldByWeight),
+        movedToCharityWeightKg: gramsToKilogramsExact(acc.toCharity),
+        movedToCancelWeightKg: gramsToKilogramsExact(acc.toCancel),
+        transferredOutWeightKg: gramsToKilogramsExact(acc.transferredOut),
+      };
+    });
+}
+
+function max0(value: bigint): bigint {
+  return value < 0n ? 0n : value;
+}
+
 export async function getStoreSortedStock(
   database: Database,
   stockId: string,
@@ -237,7 +365,7 @@ export async function createStoreSorting(
           throw new StoreOperationConflictError('Inventory bag changed during sorting.');
 
         let stock: SortedStockRow | null = null;
-        if (input.reason !== 'CANCEL') {
+        {
           if (input.reason === 'SALE') {
             const existingCredits = await tx
               .select({ saleWeightKg: storeSortedStocks.saleWeightKg })
@@ -264,6 +392,9 @@ export async function createStoreSorting(
           const charityGrams =
             (existing ? kilogramsToGramsExact(existing.charityWeightKg) : 0n) +
             (input.reason === 'CHARITY' ? weightGrams : 0n);
+          const cancelGrams =
+            (existing ? kilogramsToGramsExact(existing.cancelWeightKg) : 0n) +
+            (input.reason === 'CANCEL' ? weightGrams : 0n);
           if (existing) {
             const updated = await tx
               .update(storeSortedStocks)
@@ -274,6 +405,7 @@ export async function createStoreSorting(
                 ),
                 saleWeightKg: gramsToKilogramsExact(saleGrams),
                 charityWeightKg: gramsToKilogramsExact(charityGrams),
+                cancelWeightKg: gramsToKilogramsExact(cancelGrams),
                 version: existing.version + 1,
                 updatedAt: now,
               })
@@ -292,6 +424,7 @@ export async function createStoreSorting(
                 ),
                 saleWeightKg: gramsToKilogramsExact(saleGrams),
                 charityWeightKg: gramsToKilogramsExact(charityGrams),
+                cancelWeightKg: gramsToKilogramsExact(cancelGrams),
                 createdAt: now,
                 updatedAt: now,
               })
@@ -325,7 +458,7 @@ export async function createStoreSorting(
           storeInventoryBagId: bag.id,
           storeId: bag.storeId,
           productId: bag.productId,
-          eventType: input.reason === 'CANCEL' ? 'consume' : 'adjust',
+          eventType: 'adjust',
           weightBeforeKg: bag.currentWeightKg,
           weightAfterKg: gramsToKilogramsExact(beforeGrams - weightGrams),
           sourceType: 'store_sorting_event',
@@ -507,7 +640,7 @@ async function mutateCharity(
   );
 }
 
-interface ProductCharityCommand {
+interface ProductSortingCommand {
   readonly storeId: string;
   readonly productId: string;
   readonly actorUserId: string;
@@ -515,6 +648,8 @@ interface ProductCharityCommand {
   readonly requestHash: string;
   readonly requestId?: string;
 }
+/** @deprecated kept as an alias; use ProductSortingCommand. */
+type ProductCharityCommand = ProductSortingCommand;
 
 export interface MoveProductCharityToSaleInput extends ProductCharityCommand {
   readonly weightKg: string;
@@ -525,11 +660,34 @@ export interface CreateCharityExportInput extends ProductCharityCommand {
   readonly note: string | null;
 }
 
-// A type alias (not an interface) so it is assignable to the JSON idempotency body.
+export interface MoveProductCancelToSaleInput extends ProductSortingCommand {
+  readonly weightKg: string;
+}
+
+export interface FinalizeProductCancelInput extends ProductSortingCommand {
+  readonly weightKg: string;
+}
+
+export interface MoveProductSaleToCharityInput extends ProductSortingCommand {
+  readonly weightKg: string;
+}
+
+export interface MoveProductSaleToCancelInput extends ProductSortingCommand {
+  readonly weightKg: string;
+}
+
+// Type aliases (not interfaces) so each is assignable to the JSON idempotency body.
 export type ProductCharityBalanceRecord = {
   readonly storeId: string;
   readonly productId: string;
   readonly charityWeightKg: string;
+  readonly saleWeightKg: string;
+};
+
+export type ProductCancelBalanceRecord = {
+  readonly storeId: string;
+  readonly productId: string;
+  readonly cancelWeightKg: string;
   readonly saleWeightKg: string;
 };
 
@@ -578,7 +736,12 @@ export async function moveProductCharityToSale(
       withAdvisoryLock(tx, 'store-sorting', input.storeId, async () => {
         await assertActiveStoreActor(tx, input.actorUserId, input.storeId);
         const lots = await lockProductLots(tx, input.storeId, input.productId);
-        const consumed = takeCharity(lots, weightGrams);
+        const consumed = takeBucket(
+          lots,
+          weightGrams,
+          'charityWeightKg',
+          'Weight exceeds the charity stock of this product.',
+        );
         const now = new Date();
         if (!lots.some((lot) => kilogramsToGramsExact(lot.saleWeightKg) > 0n))
           await initializeSaleBaseline(tx, input.storeId, input.productId, now);
@@ -602,10 +765,12 @@ export async function moveProductCharityToSale(
             )
             .returning({ id: storeSortedStocks.id });
           if (!updated) throw new StoreOperationConflictError('Charity stock changed during move.');
-          eventIds.push(await recordCharityEvent(tx, lot, 'charity_to_sale', grams, input, now));
+          eventIds.push(
+            await recordSortingLotEvent(tx, lot, 'charity_to_sale', grams, input.actorUserId, now),
+          );
         }
         await settleProductSaleProgress(tx, input.storeId, input.productId, now);
-        const balance = await productBalance(tx, input.storeId, input.productId);
+        const balance = await productCharityBalance(tx, input.storeId, input.productId);
         await tx.insert(auditLogs).values({
           requestId: input.requestId,
           actorUserId: input.actorUserId,
@@ -652,7 +817,12 @@ export async function createCharityExport(
       withAdvisoryLock(tx, 'store-sorting', input.storeId, async () => {
         await assertActiveStoreActor(tx, input.actorUserId, input.storeId);
         const lots = await lockProductLots(tx, input.storeId, input.productId);
-        const consumed = takeCharity(lots, totalGrams);
+        const consumed = takeBucket(
+          lots,
+          totalGrams,
+          'charityWeightKg',
+          'Weight exceeds the charity stock of this product.',
+        );
         const now = new Date();
         const [created] = await tx
           .insert(storeCharityExports)
@@ -685,7 +855,7 @@ export async function createCharityExport(
             .returning({ id: storeSortedStocks.id });
           if (!updated)
             throw new StoreOperationConflictError('Charity stock changed during export.');
-          await recordCharityEvent(tx, lot, 'charity_export', grams, input, now);
+          await recordSortingLotEvent(tx, lot, 'charity_export', grams, input.actorUserId, now);
         }
         await tx.insert(auditLogs).values({
           requestId: input.requestId,
@@ -717,6 +887,283 @@ export async function createCharityExport(
   );
 }
 
+/** Move cancel weight of one product back into Sale, oldest sorted lots first. */
+export async function moveProductCancelToSale(
+  database: Database,
+  input: MoveProductCancelToSaleInput,
+): Promise<IdempotencyResult<ProductCancelBalanceRecord>> {
+  const weightGrams = kilogramsToGramsExact(input.weightKg);
+  if (weightGrams <= 0n) throw new StoreOperationValidationError('Weight must be positive.');
+  return withIdempotency(
+    database,
+    {
+      scope: `store-sorting.product_cancel_to_sale:${input.storeId}`,
+      key: input.idempotencyKey,
+      requestHash: input.requestHash,
+    },
+    (tx) =>
+      withAdvisoryLock(tx, 'store-sorting', input.storeId, async () => {
+        await assertActiveStoreActor(tx, input.actorUserId, input.storeId);
+        const lots = await lockProductLots(tx, input.storeId, input.productId);
+        const consumed = takeBucket(
+          lots,
+          weightGrams,
+          'cancelWeightKg',
+          'Weight exceeds the cancelled stock of this product.',
+        );
+        const now = new Date();
+        if (!lots.some((lot) => kilogramsToGramsExact(lot.saleWeightKg) > 0n))
+          await initializeSaleBaseline(tx, input.storeId, input.productId, now);
+        const eventIds: string[] = [];
+        for (const { lot, grams } of consumed) {
+          const [updated] = await tx
+            .update(storeSortedStocks)
+            .set({
+              cancelWeightKg: gramsToKilogramsExact(
+                kilogramsToGramsExact(lot.cancelWeightKg) - grams,
+              ),
+              saleCreditedWeightKg: gramsToKilogramsExact(
+                kilogramsToGramsExact(lot.saleCreditedWeightKg) + grams,
+              ),
+              saleWeightKg: gramsToKilogramsExact(kilogramsToGramsExact(lot.saleWeightKg) + grams),
+              version: lot.version + 1,
+              updatedAt: now,
+            })
+            .where(
+              and(eq(storeSortedStocks.id, lot.id), eq(storeSortedStocks.version, lot.version)),
+            )
+            .returning({ id: storeSortedStocks.id });
+          if (!updated) throw new StoreOperationConflictError('Cancel stock changed during move.');
+          eventIds.push(
+            await recordSortingLotEvent(tx, lot, 'cancel_to_sale', grams, input.actorUserId, now),
+          );
+        }
+        await settleProductSaleProgress(tx, input.storeId, input.productId, now);
+        const balance = await productCancelBalance(tx, input.storeId, input.productId);
+        await tx.insert(auditLogs).values({
+          requestId: input.requestId,
+          actorUserId: input.actorUserId,
+          actorRole: 'store',
+          actorStoreId: input.storeId,
+          action: 'STORE_CANCEL_MOVED_TO_SALE',
+          entityType: 'store_sorting_event',
+          entityId: eventIds[0]!,
+          after: {
+            productId: input.productId,
+            weightKg: gramsToKilogramsExact(weightGrams),
+            lots: consumed.map(({ lot, grams }) => ({
+              stockId: lot.id,
+              weightKg: gramsToKilogramsExact(grams),
+            })),
+            balance,
+          },
+        });
+        return {
+          value: balance,
+          responseBody: balance,
+          responseStatus: 200,
+          resourceType: 'store_sorting_event',
+          resourceId: eventIds[0]!,
+        };
+      }),
+  );
+}
+
+/**
+ * Finalize ("Hủy luôn") the remaining cancel weight of one product: a terminal write-off with no
+ * destination and no revenue. Must confirm the entire remaining cancel balance at once, mirroring
+ * the charity export's all-or-nothing confirmation.
+ */
+export async function finalizeProductCancel(
+  database: Database,
+  input: FinalizeProductCancelInput,
+): Promise<IdempotencyResult<ProductCancelBalanceRecord>> {
+  const weightGrams = kilogramsToGramsExact(input.weightKg);
+  if (weightGrams <= 0n) throw new StoreOperationValidationError('Weight must be positive.');
+  return withIdempotency(
+    database,
+    {
+      scope: `store-sorting.product_cancel_finalize:${input.storeId}`,
+      key: input.idempotencyKey,
+      requestHash: input.requestHash,
+    },
+    (tx) =>
+      withAdvisoryLock(tx, 'store-sorting', input.storeId, async () => {
+        await assertActiveStoreActor(tx, input.actorUserId, input.storeId);
+        const lots = await lockProductLots(tx, input.storeId, input.productId);
+        const totalCancelGrams = lots.reduce(
+          (sum, lot) => sum + kilogramsToGramsExact(lot.cancelWeightKg),
+          0n,
+        );
+        if (weightGrams !== totalCancelGrams) {
+          throw new StoreOperationValidationError(
+            'Finalizing cancel must confirm the entire remaining cancel weight.',
+          );
+        }
+        const consumed = takeBucket(
+          lots,
+          weightGrams,
+          'cancelWeightKg',
+          'Weight exceeds the cancelled stock of this product.',
+        );
+        const now = new Date();
+        const eventIds: string[] = [];
+        for (const { lot, grams } of consumed) {
+          const [updated] = await tx
+            .update(storeSortedStocks)
+            .set({
+              cancelWeightKg: gramsToKilogramsExact(
+                kilogramsToGramsExact(lot.cancelWeightKg) - grams,
+              ),
+              version: lot.version + 1,
+              updatedAt: now,
+            })
+            .where(
+              and(eq(storeSortedStocks.id, lot.id), eq(storeSortedStocks.version, lot.version)),
+            )
+            .returning({ id: storeSortedStocks.id });
+          if (!updated)
+            throw new StoreOperationConflictError('Cancel stock changed during finalize.');
+          eventIds.push(
+            await recordSortingLotEvent(tx, lot, 'cancel_finalize', grams, input.actorUserId, now),
+          );
+        }
+        const balance = await productCancelBalance(tx, input.storeId, input.productId);
+        await tx.insert(auditLogs).values({
+          requestId: input.requestId,
+          actorUserId: input.actorUserId,
+          actorRole: 'store',
+          actorStoreId: input.storeId,
+          action: 'STORE_CANCEL_FINALIZED',
+          entityType: 'store_sorting_event',
+          entityId: eventIds[0]!,
+          after: {
+            productId: input.productId,
+            weightKg: gramsToKilogramsExact(weightGrams),
+            lots: consumed.map(({ lot, grams }) => ({
+              stockId: lot.id,
+              weightKg: gramsToKilogramsExact(grams),
+            })),
+            balance,
+          },
+        });
+        return {
+          value: balance,
+          responseBody: balance,
+          responseStatus: 200,
+          resourceType: 'store_sorting_event',
+          resourceId: eventIds[0]!,
+        };
+      }),
+  );
+}
+
+/** Reroute Sale weight of one product into Charity or Cancel, oldest sorted lots first. */
+async function rerouteProductSale(
+  database: Database,
+  input: MoveProductSaleToCharityInput | MoveProductSaleToCancelInput,
+  destination: 'charityWeightKg' | 'cancelWeightKg',
+  action: 'sale_to_charity' | 'sale_to_cancel',
+  auditAction: 'STORE_SALE_MOVED_TO_CHARITY' | 'STORE_SALE_MOVED_TO_CANCEL',
+): Promise<IdempotencyResult<ProductCharityBalanceRecord | ProductCancelBalanceRecord>> {
+  const weightGrams = kilogramsToGramsExact(input.weightKg);
+  if (weightGrams <= 0n) throw new StoreOperationValidationError('Weight must be positive.');
+  return withIdempotency(
+    database,
+    {
+      scope: `store-sorting.${action}:${input.storeId}`,
+      key: input.idempotencyKey,
+      requestHash: input.requestHash,
+    },
+    (tx) =>
+      withAdvisoryLock(tx, 'store-sorting', input.storeId, async () => {
+        await assertActiveStoreActor(tx, input.actorUserId, input.storeId);
+        const lots = await lockProductLots(tx, input.storeId, input.productId);
+        const consumed = takeBucket(
+          lots,
+          weightGrams,
+          'saleWeightKg',
+          'Weight exceeds the available Sale stock of this product.',
+        );
+        const now = new Date();
+        const eventIds: string[] = [];
+        for (const { lot, grams } of consumed) {
+          const [updated] = await tx
+            .update(storeSortedStocks)
+            .set({
+              saleWeightKg: gramsToKilogramsExact(kilogramsToGramsExact(lot.saleWeightKg) - grams),
+              [destination]: gramsToKilogramsExact(kilogramsToGramsExact(lot[destination]) + grams),
+              version: lot.version + 1,
+              updatedAt: now,
+            })
+            .where(
+              and(eq(storeSortedStocks.id, lot.id), eq(storeSortedStocks.version, lot.version)),
+            )
+            .returning({ id: storeSortedStocks.id });
+          if (!updated) throw new StoreOperationConflictError('Sale stock changed during move.');
+          eventIds.push(
+            await recordSortingLotEvent(tx, lot, action, grams, input.actorUserId, now),
+          );
+        }
+        const balance =
+          destination === 'charityWeightKg'
+            ? await productCharityBalance(tx, input.storeId, input.productId)
+            : await productCancelBalance(tx, input.storeId, input.productId);
+        await tx.insert(auditLogs).values({
+          requestId: input.requestId,
+          actorUserId: input.actorUserId,
+          actorRole: 'store',
+          actorStoreId: input.storeId,
+          action: auditAction,
+          entityType: 'store_sorting_event',
+          entityId: eventIds[0]!,
+          after: {
+            productId: input.productId,
+            weightKg: gramsToKilogramsExact(weightGrams),
+            lots: consumed.map(({ lot, grams }) => ({
+              stockId: lot.id,
+              weightKg: gramsToKilogramsExact(grams),
+            })),
+            balance,
+          },
+        });
+        return {
+          value: balance,
+          responseBody: balance,
+          responseStatus: 200,
+          resourceType: 'store_sorting_event',
+          resourceId: eventIds[0]!,
+        };
+      }),
+  );
+}
+
+export async function moveProductSaleToCharity(
+  database: Database,
+  input: MoveProductSaleToCharityInput,
+): Promise<IdempotencyResult<ProductCharityBalanceRecord>> {
+  return rerouteProductSale(
+    database,
+    input,
+    'charityWeightKg',
+    'sale_to_charity',
+    'STORE_SALE_MOVED_TO_CHARITY',
+  ) as Promise<IdempotencyResult<ProductCharityBalanceRecord>>;
+}
+
+export async function moveProductSaleToCancel(
+  database: Database,
+  input: MoveProductSaleToCancelInput,
+): Promise<IdempotencyResult<ProductCancelBalanceRecord>> {
+  return rerouteProductSale(
+    database,
+    input,
+    'cancelWeightKg',
+    'sale_to_cancel',
+    'STORE_SALE_MOVED_TO_CANCEL',
+  ) as Promise<IdempotencyResult<ProductCancelBalanceRecord>>;
+}
+
 async function lockProductLots(
   tx: Transaction,
   storeId: string,
@@ -730,31 +1177,35 @@ async function lockProductLots(
     .for('update');
 }
 
-function takeCharity(
+type SortedWeightBucket = 'charityWeightKg' | 'cancelWeightKg' | 'saleWeightKg';
+
+function takeBucket(
   lots: readonly SortedStockRow[],
   grams: bigint,
+  field: SortedWeightBucket,
+  errorMessage: string,
 ): { lot: SortedStockRow; grams: bigint }[] {
   const consumed: { lot: SortedStockRow; grams: bigint }[] = [];
   let remaining = grams;
   for (const lot of lots) {
     if (remaining === 0n) break;
-    const balance = kilogramsToGramsExact(lot.charityWeightKg);
+    const balance = kilogramsToGramsExact(lot[field]);
     const take = balance < remaining ? balance : remaining;
     if (take <= 0n) continue;
     consumed.push({ lot, grams: take });
     remaining -= take;
   }
   if (remaining !== 0n || consumed.length === 0)
-    throw new StoreOperationValidationError('Weight exceeds the charity stock of this product.');
+    throw new StoreOperationValidationError(errorMessage);
   return consumed;
 }
 
-async function recordCharityEvent(
+async function recordSortingLotEvent(
   tx: Transaction,
   lot: SortedStockRow,
-  action: 'charity_to_sale' | 'charity_export',
+  action: StoreSortingHistoryAction,
   grams: bigint,
-  input: ProductCharityCommand,
+  actorUserId: string,
   now: Date,
 ): Promise<string> {
   const [event] = await tx
@@ -766,36 +1217,62 @@ async function recordCharityEvent(
       productId: lot.productId,
       action,
       weightKg: gramsToKilogramsExact(grams),
-      actorUserId: input.actorUserId,
+      actorUserId,
       occurredAt: now,
     })
     .returning({ id: storeSortingEvents.id });
-  if (!event) throw new Error('Charity event insert returned no row.');
+  if (!event) throw new Error('Sorting event insert returned no row.');
   return event.id;
 }
 
-async function productBalance(
+async function sumProductBuckets(
   tx: Transaction,
   storeId: string,
   productId: string,
-): Promise<ProductCharityBalanceRecord> {
+): Promise<{ sale: bigint; charity: bigint; cancel: bigint }> {
   const lots = await tx
     .select({
       saleWeightKg: storeSortedStocks.saleWeightKg,
       charityWeightKg: storeSortedStocks.charityWeightKg,
+      cancelWeightKg: storeSortedStocks.cancelWeightKg,
     })
     .from(storeSortedStocks)
     .where(and(eq(storeSortedStocks.storeId, storeId), eq(storeSortedStocks.productId, productId)));
   let sale = 0n;
   let charity = 0n;
+  let cancel = 0n;
   for (const lot of lots) {
     sale += kilogramsToGramsExact(lot.saleWeightKg);
     charity += kilogramsToGramsExact(lot.charityWeightKg);
+    cancel += kilogramsToGramsExact(lot.cancelWeightKg);
   }
+  return { sale, charity, cancel };
+}
+
+async function productCharityBalance(
+  tx: Transaction,
+  storeId: string,
+  productId: string,
+): Promise<ProductCharityBalanceRecord> {
+  const { sale, charity } = await sumProductBuckets(tx, storeId, productId);
   return {
     storeId,
     productId,
     charityWeightKg: gramsToKilogramsExact(charity),
+    saleWeightKg: gramsToKilogramsExact(sale),
+  };
+}
+
+async function productCancelBalance(
+  tx: Transaction,
+  storeId: string,
+  productId: string,
+): Promise<ProductCancelBalanceRecord> {
+  const { sale, cancel } = await sumProductBuckets(tx, storeId, productId);
+  return {
+    storeId,
+    productId,
+    cancelWeightKg: gramsToKilogramsExact(cancel),
     saleWeightKg: gramsToKilogramsExact(sale),
   };
 }
@@ -841,6 +1318,7 @@ function sortedStockRecord(stock: SortedStockRow, bagCode: string): SortedStockR
     saleWeightKg: stock.saleWeightKg,
     bagQuantity: stock.bagQuantity,
     charityWeightKg: stock.charityWeightKg,
+    cancelWeightKg: stock.cancelWeightKg,
     version: stock.version,
     updatedAt: stock.updatedAt,
   };

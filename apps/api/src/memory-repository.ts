@@ -95,6 +95,12 @@ import type {
   MoveCharityToSaleRequest,
   MoveProductCharityToSaleRequest,
   ProductCharityBalance,
+  MoveProductCancelToSaleRequest,
+  FinalizeProductCancelRequest,
+  MoveProductSaleToCharityRequest,
+  MoveProductSaleToCancelRequest,
+  ProductCancelBalance,
+  SaleBreakdown,
   CreateCharityExportRequest,
   CharityExport,
   ExportCharityRequest,
@@ -830,6 +836,10 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
   private readonly productCharityMoves = new Map<
     string,
     { hash: string; result: ProductCharityBalance }
+  >();
+  private readonly productBucketMoves = new Map<
+    string,
+    { hash: string; result: ProductCharityBalance | ProductCancelBalance }
   >();
   private readonly sortedSaleTransfers = new Map<string, SortedSaleTransfer>();
   private readonly sortedSaleTransferMutations = new Map<
@@ -4651,7 +4661,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     this.inventoryLedger.set(ledgerId, {
       id: ledgerId,
       bagId: bag.id,
-      operation: input.reason === 'CANCEL' ? 'CONSUME' : 'ADJUST',
+      operation: 'ADJUST',
       beforeWeightKg: bag.remainingWeightKg,
       afterWeightKg: gramsToKilogramsExact(before - grams),
       reason: `Lọc hàng: ${input.reason}`,
@@ -4659,7 +4669,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       createdAt: now,
     });
     let stock = [...this.sortedStocks.values()].find((row) => row.inventoryLotId === bag.id);
-    if (input.reason !== 'CANCEL') {
+    {
       stock = {
         id: stock?.id ?? randomUUID(),
         storeId: bag.storeId,
@@ -4674,6 +4684,10 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         charityWeightKg: gramsToKilogramsExact(
           (stock ? kilogramsToGramsExact(stock.charityWeightKg) : 0n) +
             (input.reason === 'CHARITY' ? grams : 0n),
+        ),
+        cancelWeightKg: gramsToKilogramsExact(
+          (stock ? kilogramsToGramsExact(stock.cancelWeightKg) : 0n) +
+            (input.reason === 'CANCEL' ? grams : 0n),
         ),
         version: stock ? stock.version + 1 : 0,
         updatedAt: now,
@@ -4708,7 +4722,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       now,
     );
     const result = {
-      stockId: input.reason === 'CANCEL' ? null : stock!.id,
+      stockId: stock.id,
       inventoryLotId: bag.id,
       inventoryVersion: bag.version + 1,
     };
@@ -5169,6 +5183,218 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
     return { data: structuredClone(created), replayed: false };
   }
 
+  public async moveProductCancelToSale(
+    actor: AuthenticatedPrincipal,
+    input: MoveProductCancelToSaleRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ProductCancelBalance>> {
+    return this.moveMemoryBucket(actor, input, idempotencyKey, requestHash, context, {
+      kind: 'cancel-to-sale',
+      from: 'cancelWeightKg',
+      to: 'saleWeightKg',
+      history: 'CANCEL_TO_SALE',
+      audit: 'STORE_CANCEL_MOVED_TO_SALE',
+    }) as Promise<IdempotentResource<ProductCancelBalance>>;
+  }
+
+  public async finalizeProductCancel(
+    actor: AuthenticatedPrincipal,
+    input: FinalizeProductCancelRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ProductCancelBalance>> {
+    return this.moveMemoryBucket(actor, input, idempotencyKey, requestHash, context, {
+      kind: 'cancel-finalize',
+      from: 'cancelWeightKg',
+      to: null,
+      history: 'CANCEL_FINALIZE',
+      audit: 'STORE_CANCEL_FINALIZED',
+    }) as Promise<IdempotentResource<ProductCancelBalance>>;
+  }
+
+  public async moveProductSaleToCharity(
+    actor: AuthenticatedPrincipal,
+    input: MoveProductSaleToCharityRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ProductCharityBalance>> {
+    return this.moveMemoryBucket(actor, input, idempotencyKey, requestHash, context, {
+      kind: 'sale-to-charity',
+      from: 'saleWeightKg',
+      to: 'charityWeightKg',
+      history: 'SALE_TO_CHARITY',
+      audit: 'STORE_SALE_MOVED_TO_CHARITY',
+    }) as Promise<IdempotentResource<ProductCharityBalance>>;
+  }
+
+  public async moveProductSaleToCancel(
+    actor: AuthenticatedPrincipal,
+    input: MoveProductSaleToCancelRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ProductCancelBalance>> {
+    return this.moveMemoryBucket(actor, input, idempotencyKey, requestHash, context, {
+      kind: 'sale-to-cancel',
+      from: 'saleWeightKg',
+      to: 'cancelWeightKg',
+      history: 'SALE_TO_CANCEL',
+      audit: 'STORE_SALE_MOVED_TO_CANCEL',
+    }) as Promise<IdempotentResource<ProductCancelBalance>>;
+  }
+
+  public async listSaleBreakdown(
+    actor: AuthenticatedPrincipal,
+    storeId: string | undefined,
+  ): Promise<readonly SaleBreakdown[]> {
+    this.assertRequestedStoreScope(actor, storeId);
+    const byKey = new Map<
+      string,
+      { storeId: string; productId: string; credited: bigint; remaining: bigint; out: bigint }
+    >();
+    for (const stock of this.sortedStocks.values()) {
+      if (!canAccessStore(actor, stock.storeId)) continue;
+      if (storeId !== undefined && stock.storeId !== storeId) continue;
+      const key = `${stock.storeId}:${stock.productId}`;
+      const acc = byKey.get(key) ?? {
+        storeId: stock.storeId,
+        productId: stock.productId,
+        credited: 0n,
+        remaining: 0n,
+        out: 0n,
+      };
+      acc.credited += this.sortedSaleCredited.get(stock.id) ?? 0n;
+      acc.remaining += kilogramsToGramsExact(stock.saleWeightKg);
+      acc.out += this.sortedSaleTransferredOutWeight.get(stock.id) ?? 0n;
+      byKey.set(key, acc);
+    }
+    const moved = (storeKey: string, action: StoreSortingHistoryAction) =>
+      this.sortingHistory
+        .filter((row) => `${row.storeId}:${row.productId}` === storeKey && row.action === action)
+        .reduce((sum, row) => sum + kilogramsToGramsExact(row.weightKg), 0n);
+    return [...byKey.entries()]
+      .filter(([, acc]) => acc.credited > 0n)
+      .map(([key, acc]) => {
+        const toCharity = moved(key, 'SALE_TO_CHARITY');
+        const toCancel = moved(key, 'SALE_TO_CANCEL');
+        const soldByWeight = acc.credited - acc.remaining - acc.out - toCharity - toCancel;
+        return {
+          storeId: acc.storeId,
+          productId: acc.productId,
+          creditedWeightKg: gramsToKilogramsExact(acc.credited),
+          remainingWeightKg: gramsToKilogramsExact(acc.remaining),
+          soldByPieceWeightKg: '0.000',
+          soldByWeightWeightKg: gramsToKilogramsExact(soldByWeight < 0n ? 0n : soldByWeight),
+          movedToCharityWeightKg: gramsToKilogramsExact(toCharity),
+          movedToCancelWeightKg: gramsToKilogramsExact(toCancel),
+          transferredOutWeightKg: gramsToKilogramsExact(acc.out),
+        };
+      });
+  }
+
+  private async moveMemoryBucket(
+    actor: AuthenticatedPrincipal,
+    input: { storeId: string; productId: string; weightKg: string },
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+    move: {
+      kind: string;
+      from: 'saleWeightKg' | 'charityWeightKg' | 'cancelWeightKg';
+      to: 'saleWeightKg' | 'charityWeightKg' | 'cancelWeightKg' | null;
+      history: StoreSortingHistoryAction;
+      audit: string;
+    },
+  ): Promise<IdempotentResource<ProductCharityBalance | ProductCancelBalance>> {
+    await this.authorizeRetailStoreOperation(actor);
+    if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
+    const key = `${actor.accountId}:sorting:${move.kind}:${idempotencyKey}`;
+    const previous = this.productBucketMoves.get(key);
+    if (previous) {
+      if (previous.hash !== requestHash)
+        throw conflict('Khóa idempotency đã dùng cho nội dung khác');
+      return { data: structuredClone(previous.result), replayed: true };
+    }
+    const grams = kilogramsToGramsExact(input.weightKg);
+    const lots = this.productLots(input.storeId, input.productId);
+    if (move.to === null) {
+      const total = lots.reduce((sum, lot) => sum + kilogramsToGramsExact(lot[move.from]), 0n);
+      if (grams !== total)
+        throw new ApiError('VALIDATION_ERROR', 'Cần xác nhận toàn bộ số kg Hủy còn lại', 400);
+    }
+    const consumed = takeMemoryWeight(lots, move.from, grams);
+    if (!consumed)
+      throw new ApiError('INSUFFICIENT_STOCK', 'Khối lượng vượt quá kg còn lại của mặt hàng', 409);
+    if (move.to === 'saleWeightKg' && !this.hasMemorySaleBalance(input.storeId, input.productId))
+      this.initializeMemorySaleBaseline(input.storeId, input.productId);
+    const now = this.now().toISOString();
+    for (const { lot, grams: moved } of consumed) {
+      const next: StoreSortedStock = {
+        ...lot,
+        [move.from]: gramsToKilogramsExact(kilogramsToGramsExact(lot[move.from]) - moved),
+        version: lot.version + 1,
+        updatedAt: now,
+      };
+      if (move.to)
+        next[move.to] = gramsToKilogramsExact(kilogramsToGramsExact(lot[move.to]) + moved);
+      this.sortedStocks.set(lot.id, next);
+      if (move.to === 'saleWeightKg')
+        this.sortedSaleCredited.set(lot.id, (this.sortedSaleCredited.get(lot.id) ?? 0n) + moved);
+      this.recordSortingHistory(
+        actor,
+        lot.storeId,
+        lot.productId,
+        lot.inventoryLotId,
+        move.history,
+        moved,
+        now,
+      );
+    }
+    if (move.to === 'saleWeightKg') {
+      const creditKey = `${input.storeId}:${input.productId}`;
+      if (!this.sortedSaleFirstCreditPeriod.has(creditKey))
+        this.sortedSaleFirstCreditPeriod.set(
+          creditKey,
+          new Date(this.now().getTime() + 7 * 3600000).toISOString().slice(0, 7),
+        );
+      this.settleMemorySaleProduct(input.storeId, input.productId);
+    }
+    const result =
+      move.to === 'charityWeightKg'
+        ? this.productCharityBalance(input.storeId, input.productId)
+        : this.productCancelBalance(input.storeId, input.productId);
+    this.productBucketMoves.set(key, { hash: requestHash, result });
+    this.appendAudit(
+      actor,
+      context,
+      move.audit,
+      'store_sorted_stock',
+      consumed[0]!.lot.id,
+      consumed.map(({ lot }) => lot),
+      result,
+    );
+    return { data: structuredClone(result), replayed: false };
+  }
+
+  private productCancelBalance(storeId: string, productId: string): ProductCancelBalance {
+    let sale = 0n;
+    let cancel = 0n;
+    for (const lot of this.productLots(storeId, productId)) {
+      sale += kilogramsToGramsExact(lot.saleWeightKg);
+      cancel += kilogramsToGramsExact(lot.cancelWeightKg);
+    }
+    return {
+      storeId,
+      productId,
+      cancelWeightKg: gramsToKilogramsExact(cancel),
+      saleWeightKg: gramsToKilogramsExact(sale),
+    };
+  }
+
   private productLots(storeId: string, productId: string): StoreSortedStock[] {
     return [...this.sortedStocks.values()].filter(
       (stock) => stock.storeId === storeId && stock.productId === productId,
@@ -5383,6 +5609,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         saleWeightKg: line.weightKg,
         bagQuantity: 0,
         charityWeightKg: '0.000',
+        cancelWeightKg: '0.000',
         version: 0,
         updatedAt: now,
       };
@@ -5443,6 +5670,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         saleWeightKg: line.weightKg,
         bagQuantity: 0,
         charityWeightKg: '0.000',
+        cancelWeightKg: '0.000',
         version: 0,
         updatedAt: now,
       };
@@ -7595,7 +7823,7 @@ function auditSnapshot(value: unknown): Record<string, unknown> | null {
 /** Oldest lots first; null when the lots cannot cover the requested weight. */
 function takeMemoryWeight(
   lots: readonly StoreSortedStock[],
-  field: 'saleWeightKg' | 'charityWeightKg',
+  field: 'saleWeightKg' | 'charityWeightKg' | 'cancelWeightKg',
   grams: bigint,
 ): { lot: StoreSortedStock; grams: bigint }[] | null {
   if (grams <= 0n) return null;
