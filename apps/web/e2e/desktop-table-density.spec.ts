@@ -52,8 +52,9 @@ for (const route of ['/inventory', '/warehouse-inbound']) {
           route === '/inventory' ? measurement.cells.slice(1) : measurement.cells.slice(4, 6);
         for (const cell of numeric) {
           // Numbers align left like every other column (docs/responsive-table-layout-audit.md).
+          // Quantity columns are as wide as their one-line header, never a squeezed fixed width.
           expect(cell.align).toBe('left');
-          expect(cell.width).toBeLessThanOrEqual(route === '/inventory' ? 150 : 110);
+          expect(cell.width).toBeLessThanOrEqual(150);
         }
         expect(measurement.firstRowHeight).toBeLessThanOrEqual(route === '/inventory' ? 65 : 130);
         expect(measurement.rows).toBe(route === '/inventory' ? 24 : 4);

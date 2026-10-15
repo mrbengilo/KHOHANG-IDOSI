@@ -715,7 +715,7 @@ export function CatalogPage() {
             </div>
           ) : (
             <div className="responsive-table">
-              <table className="table-density">
+              <table className="table-density catalog-table">
                 <thead>
                   <tr>
                     <th>Mặt hàng</th>

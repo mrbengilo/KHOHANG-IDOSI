@@ -62,10 +62,10 @@
     min-width: 0;
     max-width: 20rem;
   }
+  /* Cột số rộng theo tiêu đề, tiêu đề một dòng: không ép cột hẹp để chữ phải xuống dòng. */
   .document-history--compact .document-number {
-    width: 6rem;
-    min-width: 4rem;
     text-align: left;
+    white-space: nowrap;
     font-variant-numeric: tabular-nums;
   }
   .document-history--compact td.document-number {
@@ -74,6 +74,10 @@
   @media (min-width: 1366px) {
     .document-history--compact td:not(.document-number) {
       max-width: 32rem;
+    }
+    /* Đủ chỗ: tiêu đề cột một dòng, chữ dài trong ô mới xuống dòng. */
+    .document-history--compact table th {
+      white-space: nowrap;
     }
   }
 }
