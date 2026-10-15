@@ -125,7 +125,7 @@ describe('adjustment history timeline', () => {
     const positions = order.map((label) => html.indexOf(label));
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
-    expect(html).toContain('HTKD Lan · HTKD · Q1 · Cửa hàng Quận 1');
+    expect(html.replace(/<[^>]+>/g, '')).toContain('HTKD Lan · HTKD · Q1 · Cửa hàng Quận 1');
     expect(html).toContain('Admin Minh · Admin');
     expect(html).toContain('Ghi chú: Đồng ý');
     expect(html).toContain('Đã xử lý');
@@ -135,7 +135,9 @@ describe('adjustment history timeline', () => {
   it('never invents a missing actor, state or note on legacy rows', () => {
     const html = render({ data: [timeline[3]!], totalItems: 1 });
     expect(html).toContain('Thao tác khác (LEGACY_ACTION)');
-    expect(html).toContain('Chưa ghi nhận · Vai trò chưa ghi nhận · Chưa ghi nhận');
+    expect(html.replace(/<[^>]+>/g, '')).toContain(
+      'Chưa ghi nhận · Vai trò chưa ghi nhận · Chưa ghi nhận',
+    );
     expect(html).toContain('Ghi chú: Chưa ghi nhận');
   });
 

@@ -58,7 +58,7 @@ export function InboundStoreDetails({
     >
       <div className="inbound-store-detail-heading">
         <h3 id={headingId} ref={headingRef} tabIndex={-1} className="content-target">
-          Chi tiết cửa hàng {storeLabel}
+          Chi tiết cửa hàng <span className="store-name">{storeLabel}</span>
         </h3>
         <p>
           Kỳ: {period} · Nguồn: {source} · Sắp xếp: {sort} · Asia/Ho_Chi_Minh
@@ -96,7 +96,8 @@ export function InboundStoreDetails({
       )}
       {data && data.productPagination.totalItems === 0 && (
         <p className="inbound-store-detail-empty">
-          Cửa hàng {storeLabel} không có dữ liệu nhập trong kỳ {period}, nguồn {source}.
+          Cửa hàng <span className="store-name">{storeLabel}</span> không có dữ liệu nhập trong kỳ{' '}
+          {period}, nguồn {source}.
         </p>
       )}
       {data && data.productPagination.totalItems > 0 && (

@@ -167,6 +167,7 @@ export function SupplierOrdersPanel({
             <label>
               Cửa hàng
               <select
+                className="store-name"
                 onChange={(event) => {
                   setStoreId(event.target.value);
                   setQuantities(new Map());
@@ -176,7 +177,7 @@ export function SupplierOrdersPanel({
               >
                 <option value="">Tất cả cửa hàng trong phạm vi</option>
                 {(stores.data?.data ?? []).map((store) => (
-                  <option key={store.id} value={store.id}>
+                  <option className="store-name" key={store.id} value={store.id}>
                     {store.code} — {store.name}
                     {store.isActive ? '' : ' (ngừng hoạt động)'}
                   </option>

@@ -53,7 +53,7 @@ export function OpenBagConfirmation({
       <p>Thao tác áp dụng cho bao {bag.bagCode}.</p>
       {productName || storeName ? (
         <p>
-          {productName} · {storeName}
+          {productName} · <span className="store-name">{storeName}</span>
         </p>
       ) : null}
       <dl>

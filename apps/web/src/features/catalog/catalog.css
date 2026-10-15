@@ -155,7 +155,7 @@
 .catalog-retire textarea {
   width: 100%;
   resize: vertical;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--content-border);
   border-radius: 8px;
   padding: 9px 10px;
   font: inherit;

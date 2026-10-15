@@ -291,7 +291,7 @@ test(
         (
           await app.inject({
             method: 'GET',
-            url: `/api/v1/warehouse-inventory?search=${encodeURIComponent(f.product.sku)}`,
+            url: `/api/v1/warehouse-inventory?projection=waiting-demand-v2&search=${encodeURIComponent(f.product.sku)}`,
             headers: await login(f.admin),
           })
         ).json(),
@@ -300,6 +300,7 @@ test(
     assert.equal(row.onHandBags, 18);
     assert.equal(row.reservedBags, 6);
     assert.equal(row.waitTicketHoldBags, 3);
+    assert.equal(row.waitingDemandBags, 3, 'priority hold is not added to remaining demand');
     assert.equal(row.sharedDeliveryHoldBags, 3);
     assert.equal(row.availableBags, 12);
     assert.equal(
@@ -351,7 +352,7 @@ test(
       const adminHeaders = await login(f.admin);
       const inventory = await app.inject({
         method: 'GET',
-        url: `/api/v1/warehouse-inventory?search=${encodeURIComponent(f.product.sku)}`,
+        url: `/api/v1/warehouse-inventory?projection=waiting-demand-v2&search=${encodeURIComponent(f.product.sku)}`,
         headers: adminHeaders,
       });
       const row = WarehouseInventoryResponseSchema.parse(inventory.json()).data[0];
@@ -371,7 +372,7 @@ test(
       for (const user of [f.htkd, f.storeUser, wholesaleUser]) {
         const read = await app.inject({
           method: 'GET',
-          url: `/api/v1/warehouse-inventory?search=${encodeURIComponent(f.product.sku)}`,
+          url: `/api/v1/warehouse-inventory?projection=waiting-demand-v2&search=${encodeURIComponent(f.product.sku)}`,
           headers: await login(user),
         });
         assert.equal(read.statusCode, 200, `${user.role}: ${read.body}`);

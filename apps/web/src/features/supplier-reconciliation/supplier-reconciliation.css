@@ -71,7 +71,7 @@
   word-break: keep-all;
   hyphens: none;
 }
-.supplier-table th:first-child {
+.supplier-table th[data-primary-column] {
   white-space: nowrap;
 }
 .supplier-empty {
@@ -354,7 +354,7 @@
 .supplier-observation-table {
   font-size: 16px;
 }
-.supplier-observation-table th:first-child {
+.supplier-observation-table th[data-primary-column] {
   width: 46%;
 }
 .supplier-observation-table td {

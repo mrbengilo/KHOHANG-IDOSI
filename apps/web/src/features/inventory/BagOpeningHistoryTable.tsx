@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import type { AccountRole, Store, StoreBagOpening } from '@idosi/contracts';
 import { useId, useState } from 'react';
 import { Badge } from '../../components/Badge';
@@ -31,10 +32,12 @@ const storeLabel = (stores: readonly Store[], id: string) => {
 
 export function BagOpeningHistoryTable({
   rows,
+  offset = 0,
   stores,
   productName,
   showStore,
 }: {
+  readonly offset?: number;
   readonly rows: readonly StoreBagOpening[];
   readonly stores: readonly Store[];
   readonly productName: (id: string | null) => string;
@@ -55,10 +58,19 @@ export function BagOpeningHistoryTable({
         aria-label="Bảng lịch sử khui kiện"
         tabIndex={0}
       >
-        <table className="table-density" aria-label="Lịch sử khui kiện" aria-describedby={noteId}>
+        <DataTable
+          className="table-density"
+          aria-label="Lịch sử khui kiện"
+          aria-describedby={noteId}
+        >
           <thead>
             <tr>
-              <th scope="col">Thời gian khui</th>
+              <th scope="col" className="table-index">
+                STT
+              </th>
+              <th data-primary-column scope="col">
+                Thời gian khui
+              </th>
               <th scope="col">Mã bao</th>
               <th scope="col">Mặt hàng</th>
               <th scope="col" className="bag-opening-history__weight">
@@ -69,9 +81,12 @@ export function BagOpeningHistoryTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
+            {rows.map((row, rowIndex) => (
               <tr key={row.id}>
-                <td data-label="Thời gian khui">
+                <td className="table-index" data-label="STT">
+                  {offset + rowIndex + 1}
+                </td>
+                <td data-primary-column data-label="Thời gian khui">
                   <time dateTime={row.openedAt ?? undefined}>
                     {formatOpeningTime(row.openedAt)}
                   </time>
@@ -87,7 +102,7 @@ export function BagOpeningHistoryTable({
                   </button>
                   {showStore ? (
                     <small className="bag-opening-history__store">
-                      {storeLabel(stores, row.storeId)}
+                      <span className="store-name">{storeLabel(stores, row.storeId)}</span>
                     </small>
                   ) : null}
                 </td>
@@ -111,7 +126,7 @@ export function BagOpeningHistoryTable({
               </tr>
             ))}
           </tbody>
-        </table>
+        </DataTable>
       </div>
       {selected ? (
         <OpeningDetails
@@ -148,7 +163,7 @@ function OpeningDetails({
         <h3 id={titleId}>Chi tiết khui · {row.bagCode || unknown}</h3>
         <dl>
           <dt>Cửa hàng</dt>
-          <dd>{store}</dd>
+          <dd className="store-name">{store}</dd>
           <dt>Thời gian khui</dt>
           <dd>{formatOpeningTime(row.openedAt)}</dd>
           <dt>Nguồn khui</dt>

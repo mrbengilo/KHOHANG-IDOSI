@@ -1,9 +1,10 @@
+import { DataTable } from '../../components/DataTable';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Button } from '../../components/Button';
 import { TabPanel, Tabs, type TabItem } from '../../components/Tabs';
-import { listAccessibleStores, listCatalog } from '../../lib/api';
+import { ApiClientError, listAccessibleStores, listCatalog } from '../../lib/api';
 import { useSession } from '../../lib/auth';
 import { formatInteger } from '../../lib/format';
 import { loadWarehouseInventory, loadWarehouseOutboundHistory } from './inventoryApi';
@@ -114,8 +115,9 @@ function WarehouseStock({
     <section className="panel warehouse-stock-panel" aria-label="Tồn kho tổng theo mặt hàng">
       <h2>Tồn kho hiện tại theo mặt hàng</h2>
       <p>
-        Đang có tại kho = số bao còn cấp phân bổ được. Hai cột giữ là hàng đã cấp nhưng chưa rời
-        kho; tồn thực = khả dụng + hai cột giữ.
+        Đang có tại kho là số bao còn có thể cấp phân bổ. Đang giữ phiếu chờ là tổng nhu cầu còn chờ
+        ưu tiên/phân bổ của các cửa hàng, chưa phải hàng đã giữ trong kho và không trừ thêm vào
+        lượng có thể cấp.
       </p>
       {!readOnly ? (
         <p className="supplier-inventory-note">
@@ -157,27 +159,41 @@ function WarehouseStock({
       {inventory.isPending ? (
         <p role="status">Đang tải tồn kho tổng…</p>
       ) : inventory.isError ? (
-        <p role="alert">Không tải được tồn kho tổng. Hãy bấm Làm mới để thử lại.</p>
+        <p role="alert">
+          {inventory.error instanceof ApiClientError && inventory.error.status === 409
+            ? inventory.error.message
+            : 'Không tải được tồn kho tổng. Hãy bấm Làm mới để thử lại.'}
+        </p>
       ) : (
         <>
           <div className="responsive-table">
-            <table className="warehouse-stock-table">
+            <DataTable className="warehouse-stock-table">
               <thead>
                 <tr>
-                  <th>Mặt hàng</th>
+                  <th scope="col" className="table-index">
+                    STT
+                  </th>
+                  <th data-primary-column>Mặt hàng</th>
                   <th>Đang có tại kho</th>
                   <th title="Kết quả phân bổ chờ xác nhận, hàng cấp một phần giữ để giao cùng đơn kế tiếp">
                     Đang giữ chờ giao chung
                   </th>
-                  <th title="Lượt ưu tiên đang giữ hàng cho phiếu chờ">Đang giữ phiếu chờ</th>
+                  <th title="Tổng số bao còn chờ ưu tiên/phân bổ của mặt hàng tại các cửa hàng; chưa phải hàng đã giữ trong kho.">
+                    Đang giữ phiếu chờ
+                  </th>
                   <th>Tổng đã xuất</th>
                   {!readOnly ? <th>Thao tác</th> : null}
                 </tr>
               </thead>
               <tbody>
-                {inventory.data.data.map((row) => (
+                {inventory.data.data.map((row, rowIndex) => (
                   <tr key={row.productId}>
-                    <td data-label="Mặt hàng">
+                    <td className="table-index" data-label="STT">
+                      {(inventory.data.pagination.page - 1) * inventory.data.pagination.pageSize +
+                        rowIndex +
+                        1}
+                    </td>
+                    <td data-primary-column data-label="Mặt hàng">
                       <strong>{row.productName}</strong>
                     </td>
                     <td data-label="Đang có tại kho">
@@ -190,7 +206,7 @@ function WarehouseStock({
                       {formatInteger(row.sharedDeliveryHoldBags)} bao
                     </td>
                     <td data-label="Đang giữ phiếu chờ">
-                      {formatInteger(row.waitTicketHoldBags)} bao
+                      {formatInteger(row.waitingDemandBags)} bao
                     </td>
                     <td data-label="Tổng đã xuất">{formatInteger(row.dispatchedBags)} bao</td>
                     {!readOnly ? (
@@ -221,7 +237,7 @@ function WarehouseStock({
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </DataTable>
           </div>
           {!inventory.data.data.length ? <p>Không có mặt hàng phù hợp.</p> : null}
           {!readOnly && adjustingRow ? (
@@ -287,10 +303,13 @@ function WarehouseHistory({ page: historyPage }: { readonly page: number }) {
       ) : (
         <>
           <div className="responsive-table">
-            <table className="table-density">
+            <DataTable className="table-density">
               <thead>
                 <tr>
-                  <th>Phiếu / cửa hàng</th>
+                  <th scope="col" className="table-index">
+                    STT
+                  </th>
+                  <th data-primary-column>Phiếu / cửa hàng</th>
                   <th>Mặt hàng</th>
                   <th className="table-number">Chờ xuất</th>
                   <th className="table-number">Đã xuất</th>
@@ -298,12 +317,27 @@ function WarehouseHistory({ page: historyPage }: { readonly page: number }) {
                 </tr>
               </thead>
               <tbody>
-                {history.data.data.flatMap((outbound) =>
-                  outbound.lines.map((line) => (
+                {history.data.data.flatMap((outbound, documentIndex) =>
+                  outbound.lines.map((line, lineIndex) => (
                     <tr key={`${outbound.id}:${line.id}`}>
+                      {lineIndex === 0 ? (
+                        <td
+                          className="table-index"
+                          data-label="STT"
+                          rowSpan={outbound.lines.length}
+                        >
+                          {(history.data.pagination.page - 1) * history.data.pagination.pageSize +
+                            documentIndex +
+                            1}
+                        </td>
+                      ) : null}
                       <td data-label="Phiếu / cửa hàng">
                         <strong>{outbound.requestNumber}</strong>
-                        <small>{storeNames.get(outbound.storeId) ?? outbound.storeId}</small>
+                        <small>
+                          <span className="store-name">
+                            {storeNames.get(outbound.storeId) ?? outbound.storeId}
+                          </span>
+                        </small>
                         {line.allocationLineId === null ? (
                           <small>Chưa ghi nhận nguồn phân bổ</small>
                         ) : null}
@@ -336,7 +370,7 @@ function WarehouseHistory({ page: historyPage }: { readonly page: number }) {
                   )),
                 )}
               </tbody>
-            </table>
+            </DataTable>
           </div>
           {!history.data.data.length ? <p>Chưa có phiếu xuất kho.</p> : null}
           <div className="inventory-actions">

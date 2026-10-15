@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import type { WarehouseStockAdjustment } from '@idosi/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
@@ -131,10 +132,13 @@ export function WarehouseAdjustmentHistory({
           ) : null}
           {history.isFetching ? <p role="status">Đang cập nhật…</p> : null}
           <div className="responsive-table">
-            <table className="table-density warehouse-adjustment-table">
+            <DataTable className="table-density warehouse-adjustment-table">
               <thead>
                 <tr>
-                  <th>Phiếu / thời gian</th>
+                  <th scope="col" className="table-index">
+                    STT
+                  </th>
+                  <th data-primary-column>Phiếu / thời gian</th>
                   <th>Mặt hàng</th>
                   <th>Thay đổi</th>
                   <th>Đang có tại kho</th>
@@ -144,9 +148,12 @@ export function WarehouseAdjustmentHistory({
                 </tr>
               </thead>
               <tbody>
-                {data.data.map((adjustment) => (
+                {data.data.map((adjustment, rowIndex) => (
                   <tr key={adjustment.id}>
-                    <td data-label="Phiếu / thời gian">
+                    <td className="table-index" data-label="STT">
+                      {(data.pagination.page - 1) * data.pagination.pageSize + rowIndex + 1}
+                    </td>
+                    <td data-primary-column data-label="Phiếu / thời gian">
                       <strong>{adjustment.code}</strong>
                       <small>{formatAdjustmentTime(adjustment.createdAt)}</small>
                     </td>
@@ -177,7 +184,7 @@ export function WarehouseAdjustmentHistory({
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </DataTable>
           </div>
           {data.data.length === 0 ? <p>Chưa có điều chỉnh tồn phù hợp bộ lọc.</p> : null}
           <div className="inventory-actions">

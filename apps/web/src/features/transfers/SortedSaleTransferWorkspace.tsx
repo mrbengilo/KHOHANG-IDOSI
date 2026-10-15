@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Store, StoreSortedStock } from '@idosi/contracts';
 import { useMemo, useRef, useState } from 'react';
@@ -17,6 +18,7 @@ import {
   cancelSortedSaleTransfer,
   createSortedSaleTransfer,
   listSortedSaleTransfers,
+  SORTED_SALE_TRANSFER_PAGE_SIZE,
   receiveSortedSaleTransfer,
 } from './sortedSaleApi';
 
@@ -257,6 +259,7 @@ export function SortedSaleTransferWorkspace({
             <label>
               Cửa hàng nhận
               <select
+                className="store-name"
                 disabled={createMutation.isPending}
                 value={effectiveDestinationId}
                 onChange={(event) => setDestinationId(event.target.value)}
@@ -265,7 +268,7 @@ export function SortedSaleTransferWorkspace({
                   <option value="">Không có cửa hàng nhận</option>
                 ) : null}
                 {destinations.map((store) => (
-                  <option key={store.id} value={store.id}>
+                  <option className="store-name" key={store.id} value={store.id}>
                     {store.code} · {store.name}
                   </option>
                 ))}
@@ -382,7 +385,9 @@ export function SortedSaleTransferWorkspace({
           <div className="transfer-card-grid">
             {saleOverview.map((item) => (
               <article className="transfer-card" key={`${item.storeId}:${item.productId}`}>
-                <strong>{storeName(item.storeId)}</strong>
+                <strong>
+                  <span className="store-name">{storeName(item.storeId)}</span>
+                </strong>
                 <p>
                   {productName(item.productId)} · {formatKgExact(item.saleWeightKg)}
                 </p>
@@ -416,9 +421,12 @@ export function SortedSaleTransferWorkspace({
             aria-label="Lịch sử điều chuyển Sale"
             tabIndex={0}
           >
-            <table className="table-density">
+            <DataTable className="table-density">
               <thead>
                 <tr>
+                  <th scope="col" className="table-index">
+                    STT
+                  </th>
                   {[
                     'Thời gian',
                     'Mã phiếu',
@@ -448,7 +456,7 @@ export function SortedSaleTransferWorkspace({
                   ))}
                 </tr>
               </thead>
-              {(transfersQuery.data?.data ?? []).map((transfer) => {
+              {(transfersQuery.data?.data ?? []).map((transfer, documentIndex) => {
                 const lines = transfer.lines ?? [transfer];
                 const totalBags =
                   transfer.totalBagQuantity ??
@@ -462,6 +470,9 @@ export function SortedSaleTransferWorkspace({
                       <tr key={line.productId}>
                         {index === 0 ? (
                           <>
+                            <td className="table-index" data-label="STT" rowSpan={lines.length}>
+                              {(page - 1) * SORTED_SALE_TRANSFER_PAGE_SIZE + documentIndex + 1}
+                            </td>
                             <td data-label="Thời gian" rowSpan={lines.length}>
                               <time dateTime={transfer.createdAt}>
                                 <span className="document-time-part">
@@ -536,13 +547,17 @@ export function SortedSaleTransferWorkspace({
                                 ) : null}
                               </details>
                             </td>
-                            <td data-label="Cửa hàng chuyển" rowSpan={lines.length}>
-                              {stores.find((store) => store.id === transfer.sourceStoreId)?.name ||
-                                'Chưa xác định cửa hàng'}
+                            <td data-label="Cửa hàng gửi" rowSpan={lines.length}>
+                              <span className="store-name">
+                                {stores.find((store) => store.id === transfer.sourceStoreId)
+                                  ?.name || 'Chưa xác định cửa hàng'}
+                              </span>
                             </td>
                             <td data-label="Cửa hàng nhận" rowSpan={lines.length}>
-                              {stores.find((store) => store.id === transfer.destinationStoreId)
-                                ?.name || 'Chưa xác định cửa hàng'}
+                              <span className="store-name">
+                                {stores.find((store) => store.id === transfer.destinationStoreId)
+                                  ?.name || 'Chưa xác định cửa hàng'}
+                              </span>
                             </td>
                           </>
                         ) : null}
@@ -565,14 +580,14 @@ export function SortedSaleTransferWorkspace({
                         {index === 0 ? (
                           <>
                             <td
-                              data-label="Tổng số lượng (bao)"
+                              data-label="Tổng số bao"
                               className="document-quantity table-number"
                               rowSpan={lines.length}
                             >
                               {totalBags}
                             </td>
                             <td
-                              data-label="Tổng khối lượng (kg)"
+                              data-label="Tổng khối lượng"
                               className="table-number"
                               rowSpan={lines.length}
                             >
@@ -593,7 +608,7 @@ export function SortedSaleTransferWorkspace({
                   </tbody>
                 );
               })}
-            </table>
+            </DataTable>
           </div>
         )}
         <nav className="button-row" aria-label="Phân trang điều chuyển Sale">

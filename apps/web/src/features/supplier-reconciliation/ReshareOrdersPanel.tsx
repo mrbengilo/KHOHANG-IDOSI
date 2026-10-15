@@ -65,6 +65,7 @@ export function ReshareOrdersPanel({
   const [busyDecisionId, setBusyDecisionId] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState('');
   const [notice, setNotice] = useState('');
+  const [noticeStore, setNoticeStore] = useState('');
   const busy = useRef(false);
   const attempt = useRef<RetryAttempt | null>(null);
   const [page, setPage] = useState(1);
@@ -136,10 +137,11 @@ export function ReshareOrdersPanel({
     try {
       const saved = await updateReshareOrderStatus(row.decisionId, input, attempt.current.key);
       attempt.current = null;
+      setNoticeStore(row.storeName);
       setNotice(
         saved.version === input.expectedVersion
-          ? `${row.sessionCode} · ${row.storeName}: trạng thái đã là “${RESHARE_STATUS_LABEL[saved.status]}”, không có thay đổi.`
-          : `${row.sessionCode} · ${row.storeName}: đã lưu “${RESHARE_STATUS_LABEL[saved.status]}” và ghi vào lịch sử thay đổi.`,
+          ? `${row.sessionCode}: trạng thái đã là “${RESHARE_STATUS_LABEL[saved.status]}”, không có thay đổi.`
+          : `${row.sessionCode}: đã lưu “${RESHARE_STATUS_LABEL[saved.status]}” và ghi vào lịch sử thay đổi.`,
       );
       await Promise.all([
         client.invalidateQueries({ queryKey: ['reshare-orders'] }),
@@ -195,12 +197,16 @@ export function ReshareOrdersPanel({
         {(stores.data?.data.length ?? 0) > 1 ? (
           <label>
             Cửa hàng
-            <select onChange={(event) => reset(setStoreId)(event.target.value)} value={storeId}>
+            <select
+              className="store-name"
+              onChange={(event) => reset(setStoreId)(event.target.value)}
+              value={storeId}
+            >
               <option value="">
                 {stores.data?.scoped ? 'Tất cả cửa hàng trong phạm vi' : 'Tất cả cửa hàng'}
               </option>
               {(stores.data?.data ?? []).map((store) => (
-                <option key={store.id} value={store.id}>
+                <option className="store-name" key={store.id} value={store.id}>
                   {store.name}
                   {store.isActive ? '' : ' (ngừng hoạt động)'}
                 </option>
@@ -275,6 +281,8 @@ export function ReshareOrdersPanel({
       ) : null}
       {notice ? (
         <p className="supplier-notice" role="status">
+          <span className="store-name">{noticeStore}</span>
+          {' · '}
           {notice}
         </p>
       ) : null}
@@ -320,6 +328,7 @@ export function ReshareOrdersPanel({
             </div>
           ) : (
             <ReshareOrderHistoryTable
+              offset={(data.pagination.page - 1) * data.pagination.pageSize}
               caption="Lịch sử đặt hàng theo phân bổ"
               rows={data.data}
               {...(canEdit

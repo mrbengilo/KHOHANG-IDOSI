@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import { calculateReceiptVat } from '@idosi/domain';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
@@ -297,6 +298,9 @@ function ProductionReceivePage({ role }: AppOutletContext) {
       }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['store-receipts'] }),
+        ...['warehouse-inventory', 'wait-tickets', 'wait-documents', 'wait-document'].map((key) =>
+          queryClient.invalidateQueries({ queryKey: [key] }),
+        ),
         ...(operation.kind === 'DECLARE'
           ? [queryClient.invalidateQueries({ queryKey: ['store-receipt-sources'] })]
           : []),
@@ -394,6 +398,7 @@ function ProductionReceivePage({ role }: AppOutletContext) {
           <label>
             Cửa hàng
             <select
+              className="store-name"
               disabled={mutation.isPending || storesQuery.isPending}
               onChange={(event) => selectStore(event.target.value)}
               value={selectedScopeStoreId}
@@ -422,7 +427,7 @@ function ProductionReceivePage({ role }: AppOutletContext) {
                       .includes(storeSearch.toLocaleLowerCase('vi')),
                 )
                 .map((store) => (
-                  <option key={store.id} value={store.id}>
+                  <option className="store-name" key={store.id} value={store.id}>
                     {store.code} · {store.name}
                   </option>
                 ))}
@@ -617,7 +622,9 @@ function ProductionReceivePage({ role }: AppOutletContext) {
                     <strong>{receipt.receiptNumber}</strong>
                     {!selectedScopeStoreId || selectedScopeStoreId === 'ALL' ? (
                       <small>
-                        {storeNameById.get(receipt.storeId) ?? 'Chưa xác định cửa hàng'}
+                        <span className="store-name">
+                          {storeNameById.get(receipt.storeId) ?? 'Chưa xác định cửa hàng'}
+                        </span>
                       </small>
                     ) : null}
                     <small>Cập nhật {formatDateTime(receipt.updatedAt)}</small>
@@ -930,8 +937,8 @@ function CreateReceiptForm({
         <div>
           <h2 id={`${bodyId}-title`}>Khai phiếu nhận hàng</h2>
           <p>
-            {storeName ? `${storeName} · ` : ''}Chọn lệnh đã giao từ máy chủ; mặt hàng và số duyệt
-            không thể tự nhập hoặc sửa.
+            <span className="store-name">{storeName ? `${storeName} · ` : ''}</span>Chọn lệnh đã
+            giao từ máy chủ; mặt hàng và số duyệt không thể tự nhập hoặc sửa.
           </p>
         </div>
         <div className="receipt-source-actions">
@@ -1222,7 +1229,9 @@ function ReceiptDetail({
       <div className="receipt-detail__header">
         <div>
           <span>Phiếu nhận hàng · {receipt.receiptNumber}</span>
-          <h2>{storeName}</h2>
+          <h2>
+            <span className="store-name">{storeName}</span>
+          </h2>
           <small>
             {total} bao · cập nhật {formatDateTime(receipt.updatedAt)}
           </small>
@@ -1372,19 +1381,25 @@ function StoreReceiptForm({
         </span>
       </div>
       <div className="responsive-table receipt-lines-table">
-        <table>
+        <DataTable>
           <thead>
             <tr>
-              <th>Mặt hàng</th>
+              <th scope="col" className="table-index">
+                STT
+              </th>
+              <th data-primary-column>Mặt hàng</th>
               <th>Đã duyệt</th>
               <th>Thực nhận</th>
               <th>Chênh lệch</th>
             </tr>
           </thead>
           <tbody>
-            {lines.map((line) => (
+            {lines.map((line, rowIndex) => (
               <tr key={line.productId}>
-                <td data-label="Mặt hàng">
+                <td className="table-index" data-label="STT">
+                  {rowIndex + 1}
+                </td>
+                <td data-primary-column data-label="Mặt hàng">
                   <strong>{productNameById.get(line.productId) ?? line.productId}</strong>
                 </td>
                 <td data-label="Đã duyệt">{line.approvedUnits} bao</td>
@@ -1426,7 +1441,7 @@ function StoreReceiptForm({
               </tr>
             ))}
           </tbody>
-        </table>
+        </DataTable>
       </div>
       <div className="receipt-unexpected-items">
         <strong>Hàng nhận dư</strong>
@@ -1899,19 +1914,25 @@ function ReadonlyReceiptLines({
 }) {
   return (
     <div className="responsive-table receipt-lines-table">
-      <table>
+      <DataTable>
         <thead>
           <tr>
-            <th>Mặt hàng</th>
+            <th scope="col" className="table-index">
+              STT
+            </th>
+            <th data-primary-column>Mặt hàng</th>
             <th>Duyệt / nhận</th>
             <th>Mã bao</th>
             <th>Giá / kg</th>
           </tr>
         </thead>
         <tbody>
-          {receipt.lines.map((line) => (
+          {receipt.lines.map((line, rowIndex) => (
             <tr key={line.productId}>
-              <td data-label="Mặt hàng">
+              <td className="table-index" data-label="STT">
+                {rowIndex + 1}
+              </td>
+              <td data-primary-column data-label="Mặt hàng">
                 <strong>{productNameById.get(line.productId) ?? line.productId}</strong>
               </td>
               <td data-label="Duyệt / nhận">
@@ -1928,7 +1949,7 @@ function ReadonlyReceiptLines({
             </tr>
           ))}
         </tbody>
-      </table>
+      </DataTable>
     </div>
   );
 }

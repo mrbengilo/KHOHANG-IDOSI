@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import { Clock3, RotateCcw, Send, Trash2 } from 'lucide-react';
 import type { CreateStoreOrderRequest } from '@idosi/contracts';
 import { useQuery } from '@tanstack/react-query';
@@ -440,6 +441,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
           <label>
             Cửa hàng
             <select
+              className="store-name"
               disabled={formDisabled}
               onChange={(event) => {
                 setSelectedStoreId(event.target.value);
@@ -452,7 +454,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
                 <option value="">Chưa có cửa hàng được phân công</option>
               ) : null}
               {stores.map((store) => (
-                <option key={store.id} value={store.id}>
+                <option className="store-name" key={store.id} value={store.id}>
                   {store.code} • {store.name}
                 </option>
               ))}
@@ -684,9 +686,12 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
           <p>Chưa có yêu cầu đã gửi.</p>
         ) : null}
         <div className="document-history" role="region" aria-label="Lịch sử đặt hàng" tabIndex={0}>
-          <table className="table-density">
+          <DataTable className="table-density">
             <thead>
               <tr>
+                <th scope="col" className="table-index">
+                  STT
+                </th>
                 {[
                   'Thời gian',
                   'Mã phiếu',
@@ -706,12 +711,15 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
                 ))}
               </tr>
             </thead>
-            {orderHistory.map((request) => (
+            {orderHistory.map((request, documentIndex) => (
               <tbody key={request.id}>
                 {request.lines.map((line, index) => (
                   <tr key={line.productId}>
                     {index === 0 ? (
                       <>
+                        <td className="table-index" data-label="STT" rowSpan={request.lines.length}>
+                          {documentIndex + 1}
+                        </td>
                         <td rowSpan={request.lines.length}>
                           <time dateTime={request.submittedAt}>
                             {formatDocumentTime(request.submittedAt)}
@@ -823,7 +831,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
                 ))}
               </tbody>
             ))}
-          </table>
+          </DataTable>
         </div>
       </section>
 

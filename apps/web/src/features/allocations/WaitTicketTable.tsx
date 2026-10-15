@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import type { WaitTicket } from '@idosi/contracts';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
@@ -69,6 +70,7 @@ export function WaitTicketTable({
   if (variant === 'scoped') {
     return (
       <ScopedWaitTicketTable
+        offset={offset}
         onCancel={onCancel}
         onHistory={onHistory}
         showStore={showStore}
@@ -83,7 +85,7 @@ export function WaitTicketTable({
       role="region"
       aria-label="Danh sách phiếu chờ"
     >
-      <table className="table-density wait-ticket-table">
+      <DataTable className="table-density wait-ticket-table">
         <thead>
           <tr>
             {[
@@ -97,14 +99,18 @@ export function WaitTicketTable({
               'Thao tác',
               'Ghi chú',
             ].map((label) => (
-              <th key={label}>{label}</th>
+              <th key={label} scope="col" className={label === 'STT' ? 'table-index' : undefined}>
+                {label}
+              </th>
             ))}
           </tr>
         </thead>
         <tbody>
           {tickets.map((ticket, index) => (
             <tr key={ticket.id}>
-              <td data-label="STT">{offset + index + 1}</td>
+              <td className="table-index" data-label="STT">
+                {offset + index + 1}
+              </td>
               <td data-label="Thời gian">
                 <time dateTime={ticket.createdAt}>{waitTicketTime(ticket.createdAt)}</time>
               </td>
@@ -112,7 +118,9 @@ export function WaitTicketTable({
                 <strong>{ticket.latestOffer?.code ?? 'Chưa phát sinh phiếu ưu tiên'}</strong>
                 <small>{ticket.code ?? ticket.id}</small>
               </td>
-              <td data-label="Tên cửa hàng">{ticket.storeName ?? ticket.storeId}</td>
+              <td data-label="Tên cửa hàng">
+                <span className="store-name">{ticket.storeName ?? ticket.storeId}</span>
+              </td>
               <td data-label="Mặt hàng">
                 <strong>{ticket.productName ?? ticket.productId}</strong>
                 <small>{ticket.sku ?? ticket.productId}</small>
@@ -181,7 +189,7 @@ export function WaitTicketTable({
             </tr>
           ))}
         </tbody>
-      </table>
+      </DataTable>
     </div>
   );
 }
@@ -191,6 +199,7 @@ export function WaitTicketTable({
  * proven sessions, bags, and the three labels. Admin keeps its own 9-column table above.
  */
 function ScopedWaitTicketTable({
+  offset,
   tickets,
   onHistory,
   onCancel,
@@ -200,6 +209,7 @@ function ScopedWaitTicketTable({
   readonly onHistory: (id: string) => void;
   readonly onCancel: (ticket: WaitTicket) => void;
   readonly showStore: boolean;
+  readonly offset: number;
 }) {
   const headers = [
     'Mã phiếu chờ',
@@ -217,9 +227,12 @@ function ScopedWaitTicketTable({
       role="region"
       aria-label="Phiếu chờ ưu tiên"
     >
-      <table className="table-density wait-ticket-table wait-ticket-table--scoped">
+      <DataTable className="table-density wait-ticket-table wait-ticket-table--scoped">
         <thead>
           <tr>
+            <th scope="col" className="table-index">
+              STT
+            </th>
             {headers.map((label) => (
               <th key={label} scope="col">
                 {label}
@@ -228,7 +241,7 @@ function ScopedWaitTicketTable({
           </tr>
         </thead>
         <tbody>
-          {tickets.map((ticket) => {
+          {tickets.map((ticket, rowIndex) => {
             const lineage = ticket.lineage;
             const display = lineage?.displayStatus;
             const sessions = lineage?.sessions ?? [];
@@ -237,7 +250,10 @@ function ScopedWaitTicketTable({
             const fulfilled = ticket.fulfilled.kind === 'UNIT' ? ticket.fulfilled.quantity : 0;
             return (
               <tr key={ticket.id}>
-                <td data-label="Mã phiếu chờ">
+                <td className="table-index" data-label="STT">
+                  {offset + rowIndex + 1}
+                </td>
+                <td data-primary-column data-label="Mã phiếu chờ">
                   <strong className="wait-ticket-code">{ticket.code ?? 'PC chưa có mã'}</strong>
                   <small>
                     Chờ từ:{' '}
@@ -253,7 +269,9 @@ function ScopedWaitTicketTable({
                   ) : null}
                 </td>
                 {showStore ? (
-                  <td data-label="Cửa hàng">{ticket.storeName ?? ticket.storeId}</td>
+                  <td data-label="Cửa hàng">
+                    <span className="store-name">{ticket.storeName ?? ticket.storeId}</span>
+                  </td>
                 ) : null}
                 <td data-label="Phiên phân bổ">
                   {origin ? (
@@ -352,7 +370,7 @@ function ScopedWaitTicketTable({
             );
           })}
         </tbody>
-      </table>
+      </DataTable>
     </div>
   );
 }

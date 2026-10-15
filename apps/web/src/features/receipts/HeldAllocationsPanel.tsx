@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import type { HeldAllocation } from '@idosi/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Clock3 } from 'lucide-react';
@@ -82,9 +83,12 @@ export function HeldAllocationsPanel({
         <Badge tone="warning">{totalUnits} bao đang giữ</Badge>
       </div>
       <div className="responsive-table">
-        <table className="table-density">
+        <DataTable className="table-density">
           <thead>
             <tr>
+              <th scope="col" className="table-index">
+                STT
+              </th>
               {audience === 'OPERATIONS' ? <th>Cửa hàng</th> : null}
               <th>Mặt hàng</th>
               <th className="table-number">Số bao đang giữ</th>
@@ -92,10 +96,19 @@ export function HeldAllocationsPanel({
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
+            {rows.map((row, rowIndex) => (
               <tr key={row.key}>
-                {audience === 'OPERATIONS' ? <td data-label="Cửa hàng">{row.storeName}</td> : null}
-                <td data-label="Mặt hàng">{row.productName}</td>
+                <td className="table-index" data-label="STT">
+                  {rowIndex + 1}
+                </td>
+                {audience === 'OPERATIONS' ? (
+                  <td data-label="Cửa hàng">
+                    <span className="store-name">{row.storeName}</span>
+                  </td>
+                ) : null}
+                <td data-primary-column data-label="Mặt hàng">
+                  {row.productName}
+                </td>
                 <td className="table-number" data-label="Số bao đang giữ">
                   {row.heldUnits} bao
                 </td>
@@ -107,7 +120,7 @@ export function HeldAllocationsPanel({
               </tr>
             ))}
           </tbody>
-        </table>
+        </DataTable>
       </div>
     </section>
   );

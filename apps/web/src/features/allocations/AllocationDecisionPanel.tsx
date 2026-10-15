@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import type { AllocationDecision, AllocationDecisionDetail } from '@idosi/contracts';
 import { CheckCircle2, PackageCheck, Undo2, X } from 'lucide-react';
 import { useId, useState } from 'react';
@@ -75,8 +76,8 @@ export function AllocationDecisionPanel({
         <div className="allocation-decision__title">
           <h3 id={headingId}>Phiếu kết quả {decisionCode(decision)}</h3>
           <p>
-            {storeName} · Phiên {decision.sessionCode} · Ngày {decision.businessDate} · Phiên bản
-            kết quả {decision.runVersion}
+            <span className="store-name">{storeName}</span> · Phiên {decision.sessionCode} · Ngày{' '}
+            {decision.businessDate} · Phiên bản kết quả {decision.runVersion}
           </p>
         </div>
         <div className="allocation-decision__status">
@@ -111,10 +112,13 @@ export function AllocationDecisionPanel({
           <p>Phiếu không có dòng mặt hàng.</p>
         ) : (
           <div className="document-history">
-            <table className="table-density table-density--metrics">
+            <DataTable className="table-density table-density--metrics">
               <thead>
                 <tr>
-                  <th>Mặt hàng</th>
+                  <th scope="col" className="table-index">
+                    STT
+                  </th>
+                  <th data-primary-column>Mặt hàng</th>
                   <th>Được cấp (bao)</th>
                   {revoked > 0 ? <th>Đã thu hồi (bao)</th> : null}
                   {revoked > 0 ? <th>Còn hiệu lực (bao)</th> : null}
@@ -122,11 +126,16 @@ export function AllocationDecisionPanel({
                 </tr>
               </thead>
               <tbody>
-                {decision.lines.map((line) => {
+                {decision.lines.map((line, rowIndex) => {
                   const row = actionable.find((item) => item.productId === line.productId);
                   return (
                     <tr key={line.productId}>
-                      <td data-label="Mặt hàng">{productName(line.productId)}</td>
+                      <td className="table-index" data-label="STT">
+                        {rowIndex + 1}
+                      </td>
+                      <td data-primary-column data-label="Mặt hàng">
+                        {productName(line.productId)}
+                      </td>
                       <td data-label="Được cấp">
                         {row && row.revokedQuantity > 0 ? (
                           <s aria-label={`Cấp ban đầu ${line.allocatedQuantity} bao`}>
@@ -151,14 +160,14 @@ export function AllocationDecisionPanel({
               </tbody>
               <tfoot>
                 <tr>
-                  <th>Tổng</th>
+                  <th colSpan={2}>Tổng</th>
                   <td>{decision.grantedQuantity}</td>
                   {revoked > 0 ? <td>{revoked}</td> : null}
                   {revoked > 0 ? <td>{actionableTotal}</td> : null}
                   <td>{waitlisted}</td>
                 </tr>
               </tfoot>
-            </table>
+            </DataTable>
           </div>
         )}
         {waitlisted > 0 ? (

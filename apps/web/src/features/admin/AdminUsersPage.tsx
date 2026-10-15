@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import type {
   Account,
   AccountRole,
@@ -532,11 +533,16 @@ function AdminUsersContent() {
         ) : null}
         {accounts.length > 0 ? (
           <div className="admin-table-wrap">
-            <table className="table-density admin-table">
+            <DataTable className="table-density admin-table">
               <caption className="admin-sr-only">Danh sách tài khoản hệ thống</caption>
               <thead>
                 <tr>
-                  <th scope="col">Tài khoản</th>
+                  <th scope="col" className="table-index">
+                    STT
+                  </th>
+                  <th data-primary-column scope="col">
+                    Tài khoản
+                  </th>
                   <th scope="col">Vai trò</th>
                   <th scope="col">Phạm vi</th>
                   <th scope="col">Trạng thái</th>
@@ -544,9 +550,12 @@ function AdminUsersContent() {
                 </tr>
               </thead>
               <tbody>
-                {accounts.map((account) => (
+                {accounts.map((account, rowIndex) => (
                   <tr key={account.id}>
-                    <td data-label="Tài khoản">
+                    <td className="table-index" data-label="STT">
+                      {rowIndex + 1}
+                    </td>
+                    <td data-primary-column data-label="Tài khoản">
                       <strong>{account.displayName}</strong>
                       <small>{account.username}</small>
                     </td>
@@ -554,11 +563,13 @@ function AdminUsersContent() {
                       <Badge tone="info">{roleLabels[account.role]}</Badge>
                     </td>
                     <td data-label="Phạm vi">
-                      {account.role === 'STORE'
-                        ? storeLabel(account.storeId, storesById)
-                        : account.role === 'ADMIN'
-                          ? 'Toàn hệ thống'
-                          : 'Theo phân công HTKD'}
+                      <span className="store-name">
+                        {account.role === 'STORE'
+                          ? storeLabel(account.storeId, storesById)
+                          : account.role === 'ADMIN'
+                            ? 'Toàn hệ thống'
+                            : 'Theo phân công HTKD'}
+                      </span>
                       {account.role === 'HTKD' && account.status !== 'ACTIVE' ? (
                         <small>Kích hoạt tài khoản để sửa phân công.</small>
                       ) : null}
@@ -627,7 +638,7 @@ function AdminUsersContent() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </DataTable>
           </div>
         ) : null}
 
@@ -979,7 +990,9 @@ function HtkdAssignmentsForm({
                   />
                   <span>
                     <strong>{store.code}</strong>
-                    <small>{store.name}</small>
+                    <small>
+                      <span className="store-name">{store.name}</span>
+                    </small>
                   </span>
                 </label>
               );
@@ -1138,6 +1151,7 @@ function CreateAccountForm({
           <label className="admin-field">
             <span className="field-label">Cửa hàng</span>
             <select
+              className="store-name"
               disabled={busy || Boolean(storesError)}
               onChange={(event) => update('storeId', event.target.value)}
               required
@@ -1145,7 +1159,7 @@ function CreateAccountForm({
             >
               <option value="">Chọn cửa hàng</option>
               {stores.map((store) => (
-                <option key={store.id} value={store.id}>
+                <option className="store-name" key={store.id} value={store.id}>
                   {store.code} · {store.name}
                 </option>
               ))}

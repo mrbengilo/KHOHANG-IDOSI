@@ -106,9 +106,10 @@ test('HTKD sees assigned stores, selects bags inline and persists two ordinary r
   expect(order.lines).toHaveLength(3);
   const history = page.getByRole('region', { name: 'Lịch sử đặt hàng', exact: true });
   const document = history.locator('tbody').filter({ hasText: order.code });
-  await expect(history.locator('thead th')).toHaveCount(7);
+  await expect(history.locator('thead th')).toHaveCount(8);
+  await expect(history.getByRole('columnheader').first()).toHaveText('STT');
   await expect(document.locator('tr')).toHaveCount(3);
-  await expect(document.locator('[rowspan="3"]')).toHaveCount(5);
+  await expect(document.locator('[rowspan="3"]')).toHaveCount(6);
   await expect(document.getByRole('button', { name: 'Hủy yêu cầu', exact: true })).toHaveCount(1);
   expect(
     order.lines.map((line: { requested: { quantity: number } }) => line.requested.quantity).sort(),

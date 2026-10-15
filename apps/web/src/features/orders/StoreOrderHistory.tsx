@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import type { OrderHistoryEntry, OrderSession, Store } from '@idosi/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, FileText, RotateCcw } from 'lucide-react';
@@ -127,12 +128,13 @@ export function StoreOrderHistory({
         <label>
           Cửa hàng
           <select
+            className="store-name"
             onChange={(event) => update({ storeId: event.target.value })}
             value={filters.storeId}
           >
             <option value="">Tất cả cửa hàng được phép xem</option>
             {stores.map((store) => (
-              <option key={store.id} value={store.id}>
+              <option className="store-name" key={store.id} value={store.id}>
                 {store.code} · {store.name}
               </option>
             ))}
@@ -265,19 +267,23 @@ export function StoreOrderHistory({
             </p>
           ) : null}
           <div className="responsive-table">
-            <table className="table-density order-history__table">
+            <DataTable className="table-density order-history__table">
               <thead>
                 <tr>
-                  <th>Thời gian gửi</th>
+                  <th scope="col" className="table-index">
+                    STT
+                  </th>
+                  <th data-primary-column>Thời gian gửi</th>
                   <th>Phiếu / cửa hàng</th>
                   <th>Phiên</th>
-                  <th>Mặt hàng và số lượng đặt</th>
+                  <th data-column="products">Mặt hàng và số lượng đặt</th>
                   <th>Trạng thái</th>
                 </tr>
               </thead>
               <tbody>
-                {data.data.map((entry) => (
+                {data.data.map((entry, rowIndex) => (
                   <OrderHistoryRow
+                    rowNumber={(data.pagination.page - 1) * data.pagination.pageSize + rowIndex + 1}
                     entry={entry}
                     filteredProduct={Boolean(filters.productId)}
                     key={entry.id}
@@ -286,7 +292,7 @@ export function StoreOrderHistory({
                   />
                 ))}
               </tbody>
-            </table>
+            </DataTable>
           </div>
           <div className="allocation-result-pagination">
             <span>
@@ -317,11 +323,13 @@ export function StoreOrderHistory({
 }
 
 function OrderHistoryRow({
+  rowNumber,
   entry,
   filteredProduct,
   onFilterSession,
   onOpenDocument,
 }: {
+  readonly rowNumber: number;
   readonly entry: OrderHistoryEntry;
   readonly filteredProduct: boolean;
   readonly onFilterSession: () => void;
@@ -330,6 +338,9 @@ function OrderHistoryRow({
   const document = entry.mergedDocument;
   return (
     <tr>
+      <td className="table-index" data-label="STT">
+        {rowNumber}
+      </td>
       <td data-label="Thời gian gửi">
         <strong>{formatDateTime(entry.submittedAt)}</strong>
         {entry.submittedBy ? <small>Người gửi: {entry.submittedBy.displayName}</small> : null}
@@ -337,7 +348,7 @@ function OrderHistoryRow({
       <td data-label="Phiếu / cửa hàng">
         <strong>{entry.code}</strong>
         <small>
-          {entry.storeCode} · {entry.storeName}
+          {entry.storeCode} · <span className="store-name">{entry.storeName}</span>
         </small>
         <small>Lượt {entry.requestSequence}/2 của phiên</small>
       </td>

@@ -121,7 +121,9 @@ export function PriorityOfferNotice({ role }: { readonly role: Role }) {
       ) : null}
       {offers.map((offer) => (
         <div key={offer.id}>
-          <strong>{storeNames.get(offer.storeId) ?? offer.storeId}</strong>
+          <strong>
+            <span className="store-name">{storeNames.get(offer.storeId) ?? offer.storeId}</span>
+          </strong>
           <PriorityOffer
             busyAction={busy?.id === offer.id ? busy.action : null}
             canRespond

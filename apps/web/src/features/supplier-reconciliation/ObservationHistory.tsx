@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 
@@ -33,10 +34,15 @@ export function ObservationHistory({ accountId }: { readonly accountId: string }
       ) : (
         <>
           <div className="responsive-table supplier-table-scroll table-cards-narrow">
-            <table className="supplier-table">
+            <DataTable className="supplier-table">
               <thead>
                 <tr>
-                  <th scope="col">Mặt hàng</th>
+                  <th scope="col" className="table-index">
+                    STT
+                  </th>
+                  <th data-primary-column scope="col">
+                    Mặt hàng
+                  </th>
                   <th scope="col">Xem tồn lúc</th>
                   <th scope="col">Reshare cho đặt</th>
                   <th scope="col">Chưa đặt (U)</th>
@@ -47,9 +53,14 @@ export function ObservationHistory({ accountId }: { readonly accountId: string }
                 </tr>
               </thead>
               <tbody>
-                {history.data.data.map((row) => (
+                {history.data.data.map((row, rowIndex) => (
                   <tr key={row.lineId}>
-                    <td data-label="Mặt hàng">
+                    <td className="table-index" data-label="STT">
+                      {(history.data.pagination.page - 1) * history.data.pagination.pageSize +
+                        rowIndex +
+                        1}
+                    </td>
+                    <td data-primary-column data-label="Mặt hàng">
                       <strong>{row.productName}</strong>
                     </td>
                     <td data-label="Xem tồn lúc">
@@ -86,7 +97,7 @@ export function ObservationHistory({ accountId }: { readonly accountId: string }
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </DataTable>
           </div>
           <Pager
             page={page}

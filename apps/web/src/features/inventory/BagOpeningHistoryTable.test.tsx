@@ -36,9 +36,12 @@ describe('bag opening history', () => {
     expect(formatOpeningTime(null)).toBe('Chưa ghi nhận');
     expect(formatOpeningTime('invalid')).toBe('Chưa ghi nhận');
   });
-  it('renders six semantic columns in order and exactly one body row per bag', () => {
+  it('renders STT then six semantic columns and exactly one body row per bag', () => {
     const html = render();
-    expect([...html.matchAll(/<th scope="col"[^>]*>(.*?)<\/th>/g)].map((m) => m[1])).toEqual([
+    expect(
+      [...html.matchAll(/<th\b(?=[^>]*scope="col")[^>]*>(.*?)<\/th>/g)].map((m) => m[1]),
+    ).toEqual([
+      'STT',
       'Thời gian khui',
       'Mã bao',
       'Mặt hàng',

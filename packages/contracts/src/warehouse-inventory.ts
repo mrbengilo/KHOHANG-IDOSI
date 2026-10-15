@@ -8,6 +8,7 @@ import {
 
 export const WarehouseInventoryQuerySchema = PaginationQuerySchema.extend({
   search: z.string().trim().max(120).optional(),
+  projection: z.literal('waiting-demand-v2').optional(),
 }).strict();
 export type WarehouseInventoryQuery = z.infer<typeof WarehouseInventoryQuerySchema>;
 export const WarehouseInventoryRowSchema = z
@@ -18,11 +19,13 @@ export const WarehouseInventoryRowSchema = z
     onHandBags: UnitQuantitySchema,
     reservedBags: UnitQuantitySchema,
     /**
-     * Split of reservedBags: bags held for priority offers of wait tickets ("Đang giữ phiếu chờ")
+     * Split of reservedBags: physical bags held for priority offers of wait tickets
      * and bags held for granted allocation lines that wait for the store's answer or its next
      * ordinary shipment ("Đang giữ chờ giao chung"). The two always add up to reservedBags.
      */
     waitTicketHoldBags: UnitQuantitySchema,
+    /** Unallocated live wait-ticket demand across stores; independent of physical stock. */
+    waitingDemandBags: UnitQuantitySchema,
     sharedDeliveryHoldBags: UnitQuantitySchema,
     /** Free to allocate: onHandBags − reservedBags. */
     availableBags: UnitQuantitySchema,

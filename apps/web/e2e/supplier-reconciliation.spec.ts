@@ -644,10 +644,10 @@ test('HTKD changes the status of any store and every change shows in the order h
   await expect(rows).toHaveCount(2);
   // Newest first, with the real actor and role, before → after.
   await expect(rows.nth(0)).toContainText('Đã đặt Reshare');
-  await expect(rows.nth(0).locator('td').nth(2)).toHaveText('Chưa đặt Reshare');
+  await expect(rows.nth(0).locator('[data-label="Trạng thái sau"]')).toHaveText('Chưa đặt Reshare');
   await expect(rows.nth(0)).toContainText('Nhân viên HTKD');
-  await expect(rows.nth(0).locator('td').nth(4)).toHaveText('HTKD');
-  await expect(rows.nth(1).locator('td').nth(2)).toHaveText('Đã đặt Reshare');
+  await expect(rows.nth(0).locator('[data-label="Vai trò"]')).toHaveText('HTKD');
+  await expect(rows.nth(1).locator('[data-label="Trạng thái sau"]')).toHaveText('Đã đặt Reshare');
   await expect(dialog).toContainText('08:00:00 13/10/2026');
   await expect(dialog.getByText(/Không có dữ liệu lịch sử nào trước các dòng trên/u)).toBeVisible();
   for (const width of [360, 390, 1440]) {
@@ -1404,9 +1404,16 @@ test('preview response respects focus moved to the list and invalid quantity poi
   await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
   const search = page.getByLabel('Tìm mặt hàng', { exact: true });
   await search.fill('đang nhập');
-  const scroll = await page.evaluate(() => scrollY);
+  // Capture the chosen control, not scrollY: the response inserts a taller form above it.
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  const top = await search.evaluate((element) => element.getBoundingClientRect().top);
+  await expect(search).toBeInViewport();
   release();
   await expect(page.getByRole('region', { name: 'Xem trước đối chiếu' })).toBeAttached();
   await expect(search).toBeFocused();
-  expect(await page.evaluate(() => scrollY)).toBeCloseTo(scroll, -1);
+  await expect(search).toBeInViewport();
+  expect(await search.evaluate((element) => element.getBoundingClientRect().top)).toBeCloseTo(
+    top,
+    0,
+  );
 });

@@ -69,12 +69,29 @@ import {
 import { ApiClientError, mapWithConcurrency, PAGE_FETCH_CONCURRENCY } from '../../lib/api';
 
 export async function loadWarehouseInventory(page: number, search: string, signal?: AbortSignal) {
-  return WarehouseInventoryResponseSchema.parse(
-    await request(
-      `/warehouse-inventory?${new URLSearchParams({ page: String(page), pageSize: '20', search })}`,
+  try {
+    const response = await request(
+      `/warehouse-inventory?${new URLSearchParams({ page: String(page), pageSize: '20', search, projection: 'waiting-demand-v2' })}`,
       { signal: signal ?? null },
-    ),
-  );
+    );
+    const parsed = WarehouseInventoryResponseSchema.safeParse(response);
+    if (!parsed.success)
+      throw new ApiClientError(
+        'Phiên bản dữ liệu tồn kho không tương thích. Hãy tải lại trang; không thể hiển thị số chờ an toàn.',
+        409,
+        'CONFLICT',
+      );
+    return parsed.data;
+  } catch (error) {
+    if (error instanceof ApiClientError && error.status === 400) {
+      throw new ApiClientError(
+        'API tồn kho chưa hỗ trợ phiên bản này. Hãy tải lại trang sau khi triển khai hoặc khôi phục phiên bản hoàn tất.',
+        409,
+        'CONFLICT',
+      );
+    }
+    throw error;
+  }
 }
 
 export interface WarehouseAdjustmentFilters {

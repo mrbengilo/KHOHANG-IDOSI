@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import type {
   ReshareActorRole,
   ReshareOrderHistoryRow,
@@ -103,7 +104,8 @@ export function ReshareStatusHistoryDialog({
           <div>
             <h2 id={titleId}>Lịch sử thay đổi trạng thái</h2>
             <p className="reshare-status-history__subject">
-              {row.order?.code ?? 'Chưa có mã RE'} · {row.sessionCode} · {row.storeName}
+              {row.order?.code ?? 'Chưa có mã RE'} · {row.sessionCode} ·{' '}
+              <span className="store-name">{row.storeName}</span>
             </p>
           </div>
           <button
@@ -141,11 +143,16 @@ export function ReshareStatusHistoryDialog({
               </p>
             ) : (
               <div className="responsive-table reshare-status-history__table">
-                <table className="supplier-table">
+                <DataTable className="supplier-table">
                   <caption className="sr-only">Lịch sử thay đổi trạng thái, mới nhất trước</caption>
                   <thead>
                     <tr>
-                      <th scope="col">Thời gian</th>
+                      <th scope="col" className="table-index">
+                        STT
+                      </th>
+                      <th data-primary-column scope="col">
+                        Thời gian
+                      </th>
                       <th scope="col">Trạng thái trước</th>
                       <th scope="col">Trạng thái sau</th>
                       <th scope="col">Người thay đổi</th>
@@ -154,9 +161,12 @@ export function ReshareStatusHistoryDialog({
                     </tr>
                   </thead>
                   <tbody aria-busy={history.isFetching}>
-                    {data.data.map((event) => (
+                    {data.data.map((event, rowIndex) => (
                       <tr key={event.id}>
-                        <td data-label="Thời gian">
+                        <td className="table-index" data-label="STT">
+                          {(data.pagination.page - 1) * data.pagination.pageSize + rowIndex + 1}
+                        </td>
+                        <td data-primary-column data-label="Thời gian">
                           <time dateTime={event.occurredAt}>
                             {formatDocumentTime(event.occurredAt)}
                           </time>
@@ -181,7 +191,7 @@ export function ReshareStatusHistoryDialog({
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </DataTable>
               </div>
             )}
             {lastPage || data.data.length === 0 ? (

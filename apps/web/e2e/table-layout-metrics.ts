@@ -35,6 +35,12 @@ export interface TableLayoutMeasurement {
   readonly lastColumnReachable: boolean;
   readonly misaligned: readonly string[];
   readonly text: string;
+  readonly presentation: null | {
+    headerLines: readonly number[];
+    headerWrap: boolean;
+    headerRequiredWidth: number;
+    portWidth: number;
+  };
 }
 
 export interface PageTableLayout {
@@ -42,6 +48,7 @@ export interface PageTableLayout {
   readonly clientWidth: number;
   readonly scrollWidth: number;
   readonly tables: readonly TableLayoutMeasurement[];
+  readonly presentationIssues: readonly string[];
 }
 
 /**
@@ -50,6 +57,12 @@ export interface PageTableLayout {
  * gaps are taken against the content box of the block's direct container.
  */
 export async function measureTableLayout(page: Page): Promise<PageTableLayout> {
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve(null))),
+      ),
+  );
   return page.evaluate(() => {
     const px = (value: string) => Number.parseFloat(value) || 0;
     const describe = (element: Element) =>
@@ -73,7 +86,56 @@ export async function measureTableLayout(page: Page): Promise<PageTableLayout> {
     const tables = Array.from(
       document.querySelectorAll<HTMLTableElement>('.app-main table, [role="dialog"] table'),
     ).filter(visible);
+    const presentationIssues: string[] = [];
+    const luminance = (rgb: number[]) =>
+      rgb.slice(0, 3).reduce((sum, value, index) => {
+        const channel = value / 255;
+        return (
+          sum +
+          (channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4) *
+            [0.2126, 0.7152, 0.0722][index]!
+        );
+      }, 0);
+    for (const name of document.querySelectorAll(
+      '.app-main .store-name, [role="dialog"] .store-name',
+    )) {
+      if (!visible(name) || !name.textContent?.trim()) continue;
+      const style = getComputedStyle(name);
+      if (style.color !== 'rgb(30, 64, 175)' || Number(style.fontWeight) < 700)
+        presentationIssues.push(
+          `${describe(name)}: store name style ${style.color}/${style.fontWeight}`,
+        );
+      let background = [255, 255, 255];
+      for (let node: Element | null = name; node; node = node.parentElement) {
+        const channels = getComputedStyle(node)
+          .backgroundColor.match(/[\d.]+/g)
+          ?.map(Number);
+        if (channels && (channels.length === 3 || channels[3] === 1)) {
+          background = channels;
+          break;
+        }
+      }
+      const color = style.color.match(/[\d.]+/g)?.map(Number) ?? [0, 0, 0];
+      const a = luminance(color),
+        b = luminance(background);
+      const contrast = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      if (contrast < 4.5)
+        presentationIssues.push(`${describe(name)}: store name contrast ${contrast}`);
+    }
+    for (const box of document.querySelectorAll('.app-main .panel, .wait-document-card')) {
+      if (!visible(box)) continue;
+      const style = getComputedStyle(box);
+      if (
+        px(style.borderTopWidth) * devicePixelRatio < 0.9 ||
+        style.borderTopStyle === 'none' ||
+        style.borderTopColor === 'rgba(0, 0, 0, 0)'
+      )
+        presentationIssues.push(
+          `${describe(box)}: missing visible content border (${style.borderTopWidth}, DPR ${devicePixelRatio})`,
+        );
+    }
     return {
+      presentationIssues,
       viewport: innerWidth,
       clientWidth: document.documentElement.clientWidth,
       scrollWidth: document.documentElement.scrollWidth,
@@ -165,6 +227,25 @@ export async function measureTableLayout(page: Page): Promise<PageTableLayout> {
           lastColumnReachable,
           misaligned,
           text: table.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+          presentation: table.classList.contains('data-table')
+            ? {
+                headerLines: Array.from(headerRow?.children ?? [], (cell) => {
+                  const tops = new Set<number>();
+                  const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+                  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                    if (!node.textContent?.trim()) continue;
+                    const range = document.createRange();
+                    range.selectNodeContents(node);
+                    for (const rect of range.getClientRects())
+                      if (rect.width && rect.height) tops.add(Math.round(rect.top));
+                  }
+                  return tops.size;
+                }),
+                headerWrap: table.dataset.headerWrap !== 'false',
+                headerRequiredWidth: Number(table.dataset.headerRequiredWidth ?? 0),
+                portWidth: (scrollport ?? table.parentElement!).clientWidth,
+              }
+            : null,
         } satisfies TableLayoutMeasurement;
       }),
     };
@@ -173,17 +254,34 @@ export async function measureTableLayout(page: Page): Promise<PageTableLayout> {
 
 /**
  * Human-readable violations of the centring, overflow, reachability and alignment rules.
- * Real tables never scroll sideways: they wrap, or become labelled cards up to 1100px. Only the
- * synthetic stress tables (dozens of columns) may opt into the local-scroll fallback.
+ * Tables fill their content box. Large tables keep the narrow-screen cards from the shared
+ * layout; local horizontal scrolling is a valid fallback when readable columns cannot fit.
  */
 export function tableLayoutViolations(
   layout: PageTableLayout,
-  { allowLocalScroll = false }: { allowLocalScroll?: boolean } = {},
+  { allowLocalScroll = true }: { allowLocalScroll?: boolean } = {},
 ): string[] {
-  const problems: string[] = [];
+  const problems: string[] = [...layout.presentationIssues];
   if (layout.scrollWidth > layout.clientWidth + 1)
     problems.push(`page overflow ${layout.scrollWidth} > ${layout.clientWidth}`);
   for (const table of layout.tables) {
+    if (table.presentation) {
+      if (table.headers[0] !== 'STT') problems.push(`${table.id}: STT must be the first header`);
+      if (table.mode === 'table') {
+        if (!table.overflowing && Math.abs(table.visibleWidth - table.containerWidth) > 3)
+          problems.push(
+            `${table.id}: table does not fill content box (${table.visibleWidth}/${table.containerWidth})`,
+          );
+        if (
+          table.presentation.headerRequiredWidth > 0 &&
+          table.presentation.headerRequiredWidth <= table.presentation.portWidth &&
+          table.presentation.headerLines.some((lines) => lines !== 1)
+        )
+          problems.push(
+            `${table.id}: fitting headers wrap (${table.presentation.headerLines.join(',')})`,
+          );
+      }
+    }
     if (Math.abs(table.gapLeft - table.gapRight) > 2)
       problems.push(`${table.id}: not centred (left ${table.gapLeft}, right ${table.gapRight})`);
     if (table.gapLeft < -1 || table.gapRight < -1)

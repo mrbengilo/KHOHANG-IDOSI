@@ -3900,7 +3900,7 @@ describe('KHOHANG-IDOSI API', () => {
   });
 
   test('warehouse inventory is readable by HTKD, store and wholesale accounts and reconciles on-hand, reserved and dispatched bags', async () => {
-    const url = '/api/v1/warehouse-inventory?pageSize=100';
+    const url = '/api/v1/warehouse-inventory?projection=waiting-demand-v2&pageSize=100';
     assert.equal((await app.inject({ method: 'GET', url })).statusCode, 401);
     const headers = { cookie: cookieOf(await login('admin')) };
     const result = await app.inject({ method: 'GET', url, headers });
@@ -3970,7 +3970,20 @@ describe('KHOHANG-IDOSI API', () => {
     const outbounds = (
       await app.inject({ method: 'GET', url: '/api/v1/outbound-requests?pageSize=100', headers })
     ).json().data;
+    const waiting = (
+      await app.inject({ method: 'GET', url: '/api/v1/wait-tickets?pageSize=100', headers })
+    ).json().data;
     for (const row of result.json().data) {
+      assert.equal(
+        row.waitingDemandBags,
+        waiting
+          .filter(
+            (ticket) =>
+              ticket.productId === row.productId &&
+              ['WAITING', 'OFFERED', 'PARTIALLY_FULFILLED'].includes(ticket.status),
+          )
+          .reduce((sum, ticket) => sum + ticket.remaining.quantity, 0),
+      );
       const balance = balances.find((entry) => entry.productId === row.productId);
       assert.equal(row.availableBags, balance.available.quantity);
       assert.equal(row.reservedBags, balance.reserved.quantity);
@@ -3986,7 +3999,7 @@ describe('KHOHANG-IDOSI API', () => {
     const page = (
       await app.inject({
         method: 'GET',
-        url: '/api/v1/warehouse-inventory?pageSize=1&page=2',
+        url: '/api/v1/warehouse-inventory?projection=waiting-demand-v2&pageSize=1&page=2',
         headers,
       })
     ).json();
@@ -3995,7 +4008,7 @@ describe('KHOHANG-IDOSI API', () => {
     const empty = (
       await app.inject({
         method: 'GET',
-        url: '/api/v1/warehouse-inventory?search=nonexistent-product-xyz',
+        url: '/api/v1/warehouse-inventory?projection=waiting-demand-v2&search=nonexistent-product-xyz',
         headers,
       })
     ).json();

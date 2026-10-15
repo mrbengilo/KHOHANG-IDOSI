@@ -23,9 +23,12 @@ function post(path: string, body: unknown, key: string): Promise<unknown> {
   });
 }
 
+export const SORTED_SALE_TRANSFER_PAGE_SIZE = 20;
 export async function listSortedSaleTransfers(page = 1) {
   return SortedSaleTransfersResponseSchema.parse(
-    await request('/sorted-sale-transfers?page=' + page + '&pageSize=20'),
+    await request(
+      '/sorted-sale-transfers?page=' + page + '&pageSize=' + SORTED_SALE_TRANSFER_PAGE_SIZE,
+    ),
   );
 }
 

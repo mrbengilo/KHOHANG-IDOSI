@@ -1,5 +1,7 @@
 # Mật độ bảng desktop — 2026-09-29
 
+> **Cập nhật 15/10/2026:** bảng dùng hết content box, có STT đầu tiên và giữ tiêu đề một dòng khi đủ chỗ. Không giữ giới hạn cột số 110/150px làm bảng co hẹp; đo ô/nội dung thực và tính tiếp cận cột cuối. Tên cửa hàng dùng `--store-name-color` xanh đậm 700; box dùng `--content-border`. Những số đo cũ bên dưới là lịch sử. Xem [table-presentation-waiting-demand.md](table-presentation-waiting-demand.md).
+
 > **Cập nhật 14/10/2026:** tiêu đề bảng/cột và nhãn cột của thẻ mobile (`td::before` từ `data-label`) dùng chữ đầu câu, in đậm (`font-weight: 700`, `text-transform: none`, `letter-spacing: normal`, 13px desktop / 12px nhãn thẻ), không còn in hoa bằng CSS. Nhãn được viết đúng ở nguồn, giữ viết tắt/tên riêng (Reshare, IDOSI, HTKD, SKU, VAT, RE). Kiểm tra thực chất trên DOM ở `e2e-live/table-heading-typography.ts` (mọi vai trò × route × tab trong `system-route-audit.spec.ts`). Xem `docs/reshare-htkd-ui-status-history.md`.
 
 > **Cập nhật 01/10/2026:** quy tắc căn phải cột số và độ rộng cố định 32rem của cột tên tồn kho trong tài liệu này đã được thay thế. Mọi ô dữ liệu (kể cả số lượng, kg, tiền, ngày, dòng tổng) căn trái; bảng rộng theo nội dung và được căn giữa trong vùng chứa trực tiếp, cuộn ngang cục bộ khi vượt vùng chứa. Xem [responsive-table-layout-audit.md](responsive-table-layout-audit.md). Các số đo bên dưới là lịch sử của đợt 29–30/09.

@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import type { InboundReceipt } from '@idosi/contracts';
 import { formatInteger } from '../lib/format';
 
@@ -42,29 +43,41 @@ export function InboundReceiptDetails({
         </time>
         {' · giờ Việt Nam'}
       </p>
-      <table className="inbound-receipt__products">
+      <DataTable className="inbound-receipt__products">
         <caption className="sr-only">Mặt hàng trong phiếu {receipt.referenceCode}</caption>
         <thead>
           <tr>
-            <th scope="col">Mặt hàng</th>
+            <th scope="col" className="table-index">
+              STT
+            </th>
+            <th data-primary-column scope="col">
+              Mặt hàng
+            </th>
             <th scope="col">Số bao</th>
           </tr>
         </thead>
         <tbody>
-          {lines.map((line) => (
+          {lines.map((line, rowIndex) => (
             <tr key={line.productId}>
-              <th scope="row">{line.name}</th>
+              <td className="table-index" data-label="STT">
+                {rowIndex + 1}
+              </td>
+              <th data-primary-column scope="row">
+                {line.name}
+              </th>
               <td>{formatInteger(line.quantity)} bao</td>
             </tr>
           ))}
         </tbody>
         <tfoot>
           <tr>
-            <th scope="row">Tổng · {formatInteger(lines.length)} mặt hàng</th>
+            <th colSpan={2} scope="row">
+              Tổng · {formatInteger(lines.length)} mặt hàng
+            </th>
             <td>{formatInteger(receipt.bags.length)} bao</td>
           </tr>
         </tfoot>
-      </table>
+      </DataTable>
     </>
   );
 }

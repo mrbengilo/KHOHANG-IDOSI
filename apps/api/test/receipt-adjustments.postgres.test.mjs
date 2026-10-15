@@ -255,6 +255,7 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
       .where(and(eq(waitTickets.storeId, fx.storeId), eq(waitTickets.status, 'active')));
     assert.equal(wait.priorityLevel, 'P0B');
     assert.equal(wait.remainingQuantity, 1);
+    await assertWaitingDemand(repository, fx.admin, wait.productId, 1);
   });
 
   test('return flow through the API: approval completes return and rejects stale operational commands', async () => {
@@ -813,6 +814,11 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
       shortage.map((row) => row.remaining),
       [1],
     );
+    const [right] = await db
+      .select({ productId: waitTickets.productId })
+      .from(waitTickets)
+      .where(and(eq(waitTickets.storeId, fx.storeId), eq(waitTickets.status, 'active')));
+    await assertWaitingDemand(repository, fx.admin, right.productId, 1);
 
     // Retrying the winner's request (lost response) replays; a changed payload is refused.
     if (outcomes[0].status === 'fulfilled') {
@@ -1080,6 +1086,19 @@ describePostgres('PostgreSQL receipt discrepancy adjustments API', () => {
     }
   });
 });
+
+async function assertWaitingDemand(repository, actor, productId, expected) {
+  const [product] = await db.select().from(products).where(eq(products.id, productId));
+  const inventory = await repository.listWarehouseInventory(actor, {
+    page: 1,
+    pageSize: 20,
+    search: product.sku,
+  });
+  const row = inventory.data.find((item) => item.productId === productId);
+  assert.equal(row.waitingDemandBags, expected);
+  assert.equal(row.availableBags, row.onHandBags - row.reservedBags);
+  assert.equal(row.reservedBags, row.sharedDeliveryHoldBags + row.waitTicketHoldBags);
+}
 
 /**
  * `wholesale: true` makes store A a wholesale store received for by a wholesale-desk account

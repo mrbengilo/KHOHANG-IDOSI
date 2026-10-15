@@ -8,5 +8,6 @@ export * from './ProductQuantityCard';
 export * from './Shell';
 export * from './States';
 export * from './Table';
+export * from './DataTable';
 export * from './Toast';
 export * from './utils';

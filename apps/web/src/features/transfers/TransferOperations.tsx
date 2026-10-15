@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { formatDocumentTime } from '../../lib/business-time';
 import { formatKg, formatKgExact } from '../../lib/format';
@@ -160,11 +161,15 @@ function TransferCard({
       <dl>
         <div>
           <dt>Nguồn</dt>
-          <dd>{sourceName}</dd>
+          <dd>
+            <span className="store-name">{sourceName}</span>
+          </dd>
         </div>
         <div>
           <dt>Đích</dt>
-          <dd>{destinationName}</dd>
+          <dd>
+            <span className="store-name">{destinationName}</span>
+          </dd>
         </div>
         <div>
           <dt>Mặt hàng</dt>
@@ -406,9 +411,12 @@ export function ProductionTransfersPage({ role }: AppOutletContext) {
                 aria-label="Lịch sử điều chuyển trước đây"
                 tabIndex={0}
               >
-                <table>
+                <DataTable>
                   <thead>
                     <tr>
+                      <th scope="col" className="table-index">
+                        STT
+                      </th>
                       {[
                         'Thời gian',
                         'Mã phiếu',
@@ -429,23 +437,30 @@ export function ProductionTransfersPage({ role }: AppOutletContext) {
                     </tr>
                   </thead>
                   <tbody>
-                    {(transfersQuery.data ?? []).map((transfer) => {
+                    {(transfersQuery.data ?? []).map((transfer, rowIndex) => {
                       const busy =
                         actionMutation.isPending &&
                         actionMutation.variables?.transfer.id === transfer.id;
                       return (
                         <tr key={transfer.id}>
-                          <td data-label="Thời gian">
+                          <td className="table-index" data-label="STT">
+                            {rowIndex + 1}
+                          </td>
+                          <td data-primary-column data-label="Thời gian">
                             <time dateTime={transfer.createdAt}>
                               {formatDocumentTime(transfer.createdAt)}
                             </time>
                           </td>
                           <td data-label="Mã phiếu">{transfer.transferNumber}</td>
                           <td data-label="Cửa hàng chuyển">
-                            {storeLabel(allVisibleStores, transfer.sourceStoreId)}
+                            <span className="store-name">
+                              {storeLabel(allVisibleStores, transfer.sourceStoreId)}
+                            </span>
                           </td>
                           <td data-label="Cửa hàng nhận">
-                            {storeLabel(allVisibleStores, transfer.destinationStoreId)}
+                            <span className="store-name">
+                              {storeLabel(allVisibleStores, transfer.destinationStoreId)}
+                            </span>
                           </td>
                           <td data-label="Mặt hàng">
                             {productNames.get(transfer.productId) ?? transfer.productId}
@@ -499,7 +514,7 @@ export function ProductionTransfersPage({ role }: AppOutletContext) {
                       );
                     })}
                   </tbody>
-                </table>
+                </DataTable>
               </div>
             )}
           </section>

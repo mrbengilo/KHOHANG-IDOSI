@@ -506,50 +506,63 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         ? or(ilike(products.name, `%${query.search}%`), ilike(products.sku, `%${query.search}%`))
         : undefined,
     );
-    const [total] = await db.select({ count: count() }).from(products).where(filter);
-    const rows = await db
-      .select({
-        productId: products.id,
-        productName: products.name,
-        sku: products.sku,
-        onHandBags: sql<number>`coalesce(${warehouseBalances.onHandQuantity}, 0)`.mapWith(Number),
-        reservedBags: sql<number>`coalesce(${warehouseBalances.reservedQuantity}, 0)`.mapWith(
-          Number,
-        ),
-        // Priority offers hold reserved bags for wait tickets until the 09:00 run converts or
-        // releases them; every other reserved bag belongs to a granted allocation line. Clamped
-        // so the two columns always add up to the reserved balance shown next to them.
-        waitTicketHoldBags:
-          sql<number>`least(coalesce(${warehouseBalances.reservedQuantity}, 0), (select coalesce(sum(${dailyPriorityOffers.stockHeldQuantity}), 0) from ${dailyPriorityOffers} where ${dailyPriorityOffers.productId} = ${products.id} and ${dailyPriorityOffers.stockHeldQuantity} > 0 and ${dailyPriorityOffers.deletedAt} is null))`.mapWith(
-            Number,
-          ),
-        availableBags:
-          sql<number>`coalesce(${warehouseBalances.onHandQuantity}, 0) - coalesce(${warehouseBalances.reservedQuantity}, 0)`.mapWith(
-            Number,
-          ),
-        // Bags that left on-hand: RE issuance at acceptance, legacy receipt finalization and
-        // excess receipts. Trip dispatch alone never moves on-hand, so it is not counted twice.
-        dispatchedBags:
-          sql<number>`(select coalesce(sum(-${warehouseLedgerEntries.onHandDelta}), 0) from ${warehouseLedgerEntries} where ${warehouseLedgerEntries.productId} = ${products.id} and ${warehouseLedgerEntries.eventType} = 'outbound')`.mapWith(
-            Number,
-          ),
-        balanceVersion: sql<number>`coalesce(${warehouseBalances.version}, 0)`.mapWith(Number),
-        productActive: products.isActive,
-        reshareReconciled: sql<boolean>`exists (select 1 from ${supplierSourceProducts} where ${supplierSourceProducts.productId} = ${products.id})`,
-      })
-      .from(products)
-      .leftJoin(warehouseBalances, eq(warehouseBalances.productId, products.id))
-      .where(filter)
-      .orderBy(asc(products.displayOrder), asc(products.sku))
-      .limit(query.pageSize)
-      .offset((query.page - 1) * query.pageSize);
-    return {
-      data: rows.map((row) => ({
-        ...row,
-        sharedDeliveryHoldBags: row.reservedBags - row.waitTicketHoldBags,
-      })),
-      pagination: pagination(query.page, query.pageSize, total?.count ?? 0),
-    };
+    return db.transaction(
+      async (tx) => {
+        const [total] = await tx.select({ count: count() }).from(products).where(filter);
+        const rows = await tx
+          .select({
+            productId: products.id,
+            productName: products.name,
+            sku: products.sku,
+            onHandBags: sql<number>`coalesce(${warehouseBalances.onHandQuantity}, 0)`.mapWith(
+              Number,
+            ),
+            reservedBags: sql<number>`coalesce(${warehouseBalances.reservedQuantity}, 0)`.mapWith(
+              Number,
+            ),
+            // Priority offers hold reserved bags for wait tickets until the 09:00 run converts or
+            // releases them; every other reserved bag belongs to a granted allocation line. Clamped
+            // so the two columns always add up to the reserved balance shown next to them.
+            waitTicketHoldBags:
+              sql<number>`least(coalesce(${warehouseBalances.reservedQuantity}, 0), (select coalesce(sum(${dailyPriorityOffers.stockHeldQuantity}), 0) from ${dailyPriorityOffers} where ${dailyPriorityOffers.productId} = ${products.id} and ${dailyPriorityOffers.stockHeldQuantity} > 0 and ${dailyPriorityOffers.deletedAt} is null))`.mapWith(
+                Number,
+              ),
+            // Same canonical remaining source as live PCT lines. Pending grants and offer holds
+            // must not be added again; historical document/member joins would multiply demand.
+            waitingDemandBags:
+              sql<number>`(select coalesce(sum(${waitTickets.remainingQuantity}), 0) from ${waitTickets} where ${waitTickets.productId} = ${products.id} and ${waitTickets.status} = 'active' and ${waitTickets.deletedAt} is null and ${waitTickets.remainingQuantity} > 0)`.mapWith(
+                Number,
+              ),
+            availableBags:
+              sql<number>`coalesce(${warehouseBalances.onHandQuantity}, 0) - coalesce(${warehouseBalances.reservedQuantity}, 0)`.mapWith(
+                Number,
+              ),
+            // Bags that left on-hand: RE issuance at acceptance, legacy receipt finalization and
+            // excess receipts. Trip dispatch alone never moves on-hand, so it is not counted twice.
+            dispatchedBags:
+              sql<number>`(select coalesce(sum(-${warehouseLedgerEntries.onHandDelta}), 0) from ${warehouseLedgerEntries} where ${warehouseLedgerEntries.productId} = ${products.id} and ${warehouseLedgerEntries.eventType} = 'outbound')`.mapWith(
+                Number,
+              ),
+            balanceVersion: sql<number>`coalesce(${warehouseBalances.version}, 0)`.mapWith(Number),
+            productActive: products.isActive,
+            reshareReconciled: sql<boolean>`exists (select 1 from ${supplierSourceProducts} where ${supplierSourceProducts.productId} = ${products.id})`,
+          })
+          .from(products)
+          .leftJoin(warehouseBalances, eq(warehouseBalances.productId, products.id))
+          .where(filter)
+          .orderBy(asc(products.displayOrder), asc(products.sku))
+          .limit(query.pageSize)
+          .offset((query.page - 1) * query.pageSize);
+        return {
+          data: rows.map((row) => ({
+            ...row,
+            sharedDeliveryHoldBags: row.reservedBags - row.waitTicketHoldBags,
+          })),
+          pagination: pagination(query.page, query.pageSize, total?.count ?? 0),
+        };
+      },
+      { isolationLevel: 'repeatable read', accessMode: 'read only' },
+    );
   }
 
   public async listOrderHistory(

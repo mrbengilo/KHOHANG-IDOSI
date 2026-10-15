@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import type { WarehouseShortageCheck } from '@idosi/contracts';
@@ -95,10 +96,13 @@ export function ShortageChecksPanel({
         <p>Không có hàng thiếu nào chờ xác nhận.</p>
       ) : (
         <div className="responsive-table">
-          <table className="table-density">
+          <DataTable className="table-density">
             <thead>
               <tr>
-                <th>Phiếu nhận / cửa hàng</th>
+                <th scope="col" className="table-index">
+                  STT
+                </th>
+                <th data-primary-column>Phiếu nhận / cửa hàng</th>
                 <th>Mặt hàng</th>
                 <th className="table-number">Số bao thiếu</th>
                 <th>Lý do cửa hàng ghi</th>
@@ -106,13 +110,22 @@ export function ShortageChecksPanel({
               </tr>
             </thead>
             <tbody>
-              {checks.data.data.map((check) => {
+              {checks.data.data.map((check, rowIndex) => {
                 const busy = resolve.isPending && resolve.variables?.check.id === check.id;
                 return (
                   <tr key={check.id}>
-                    <td data-label="Phiếu nhận / cửa hàng">
+                    <td className="table-index" data-label="STT">
+                      {(checks.data.pagination.page - 1) * checks.data.pagination.pageSize +
+                        rowIndex +
+                        1}
+                    </td>
+                    <td data-primary-column data-label="Phiếu nhận / cửa hàng">
                       <strong>{check.receiptNumber}</strong>
-                      <small>{storeNames.get(check.storeId) ?? check.storeId}</small>
+                      <small>
+                        <span className="store-name">
+                          {storeNames.get(check.storeId) ?? check.storeId}
+                        </span>
+                      </small>
                     </td>
                     <td data-label="Mặt hàng">
                       {productNames.get(check.productId) ?? check.productId}
@@ -158,7 +171,7 @@ export function ShortageChecksPanel({
                 );
               })}
             </tbody>
-          </table>
+          </DataTable>
         </div>
       )}
     </section>

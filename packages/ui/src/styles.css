@@ -22,7 +22,7 @@
   --idosi-color-text-success: #16a34a;
   --idosi-color-text-warning: #d97706;
   --idosi-color-text-danger: #dc2626;
-  --idosi-color-border-default: #e2e8f0;
+  --idosi-color-border-default: #93bdf0;
   --idosi-color-border-strong: #cbd5e1;
   --idosi-color-border-brand: #6366f1;
   --idosi-color-border-warning: #d97706;
@@ -997,7 +997,7 @@ a {
     font-size: 22px;
   }
 
-  .idosi-table {
+  .idosi-table-wrap:has(.idosi-table-cards) .idosi-table {
     display: none;
   }
 
@@ -1054,4 +1054,24 @@ a {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+.idosi-table-wrap {
+  width: 100%;
+  max-width: 100%;
+}
+.idosi-table thead th {
+  width: auto;
+  white-space: normal;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.idosi-table[data-header-wrap='false'] thead th {
+  white-space: nowrap;
+  min-width: var(--header-min-width, 0);
+}
+.idosi-table .table-index {
+  width: 1%;
+  min-width: 3rem;
+  text-align: left;
 }

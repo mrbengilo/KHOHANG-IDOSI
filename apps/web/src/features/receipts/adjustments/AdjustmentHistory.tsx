@@ -179,7 +179,7 @@ function HistoryItem({ event }: { readonly event: ReceiptAdjustmentHistoryEvent 
         {event.actor.role
           ? auditRoleCopy[event.actor.role]
           : `Vai trò ${NOT_RECORDED.toLowerCase()}`}{' '}
-        · {storeLabel(event.store)}
+        · <span className="store-name">{storeLabel(event.store)}</span>
       </p>
       <p className="adjustment-timeline__status">
         {event.type === 'REPORTED' && event.statusBefore === null ? (

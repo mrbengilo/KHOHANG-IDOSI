@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import type { Store, StoreWaitDocument } from '@idosi/contracts';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { ArrowRight, ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react';
@@ -171,12 +172,13 @@ export function WaitDocumentList({
           <label>
             Cửa hàng
             <select
+              className="store-name"
               onChange={(event) => update({ storeId: event.target.value })}
               value={filters.storeId}
             >
               <option value="">Tất cả cửa hàng được phép xem</option>
               {stores.map((store) => (
-                <option key={store.id} value={store.id}>
+                <option className="store-name" key={store.id} value={store.id}>
                   {store.code} · {store.name}
                 </option>
               ))}
@@ -332,7 +334,12 @@ function WaitDocumentCard({
         <div>
           <h3 id={`wait-document-${document.id}`}>
             Phiếu chờ {document.code}
-            {showStore ? <span> · {document.storeName}</span> : null}
+            {showStore ? (
+              <span>
+                {' '}
+                · <span className="store-name">{document.storeName}</span>
+              </span>
+            ) : null}
           </h3>
           <p>
             Tạo {formatDateTime(document.openedAt)} · chờ từ {formatDateTime(document.waitingSince)}
@@ -349,10 +356,15 @@ function WaitDocumentCard({
             } · chuyển tiếp ${totals.carriedOut}`}
       </p>
       <div className="responsive-table wait-document-lines">
-        <table>
+        <DataTable>
           <thead>
             <tr>
-              <th scope="col">Mặt hàng</th>
+              <th scope="col" className="table-index">
+                STT
+              </th>
+              <th data-primary-column scope="col">
+                Mặt hàng
+              </th>
               {current ? (
                 <>
                   <th scope="col">Còn chờ phân bổ</th>
@@ -369,9 +381,12 @@ function WaitDocumentCard({
             </tr>
           </thead>
           <tbody>
-            {lines.map((line) => (
+            {lines.map((line, rowIndex) => (
               <tr key={line.productId}>
-                <th data-label="Mặt hàng" scope="row">
+                <td className="table-index" data-label="STT">
+                  {rowIndex + 1}
+                </td>
+                <th data-primary-column data-label="Mặt hàng" scope="row">
                   {line.productName}
                 </th>
                 {current ? (
@@ -390,7 +405,7 @@ function WaitDocumentCard({
               </tr>
             ))}
           </tbody>
-        </table>
+        </DataTable>
       </div>
       <footer className="wait-document-card__footer">
         <span className="wait-document-card__links">

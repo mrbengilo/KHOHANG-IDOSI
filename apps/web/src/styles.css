@@ -38,8 +38,10 @@
   --surface: #ffffff;
   --surface-muted: #f8fafc;
   /* Viền đậm hơn nền trang một bậc để mọi box tách bạch, kể cả trên màn hình độ sáng cao. */
-  --border: #b6c4d6;
-  --border-strong: #94a3b8;
+  --content-border: #93bdf0;
+  --store-name-color: #1e40af;
+  --border: var(--content-border);
+  --border-strong: #60a5fa;
   /* Màu icon danh mục: tươi và tách biệt nhau để nhận diện nhanh từng nhóm. */
   --icon-violet: #6d28d9;
   --icon-emerald: #059669;
@@ -1049,7 +1051,7 @@ textarea:focus {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 9px;
-  border: 1px solid #dfe6ef;
+  border: 1px solid var(--content-border);
   border-radius: 9px;
   background: #f8fafc;
   margin-bottom: 6px;
@@ -1148,7 +1150,7 @@ textarea:focus {
 .mini-kpis > div {
   display: flex;
   flex-direction: column;
-  border: 1px solid #dfe6ef;
+  border: 1px solid var(--content-border);
   border-radius: 9px;
   background: #f8fafc;
   padding: 9px 11px;
@@ -1168,9 +1170,8 @@ textarea:focus {
 }
 /*
  * Bố cục bảng dùng chung (docs/responsive-table-layout-audit.md):
- * vùng làm việc → vùng cuộn căn giữa trong vùng chứa trực tiếp → bảng rộng theo nội dung.
- * Vùng cuộn rộng bằng nội dung bảng nhưng không vượt vùng chứa; khi bảng cần rộng hơn,
- * vùng cuộn chiếm hết vùng chứa và cuộn ngang cục bộ từ cột đầu tới cột cuối.
+ * vùng làm việc → vùng cuộn phủ chiều rộng box → bảng dùng hết vùng nội dung.
+ * Khi nội dung không thể vừa, chỉ vùng chứa bảng cuộn từ cột đầu tới cột cuối.
  * Tiền tố .app-main giữ thứ tự ưu tiên trước CSS feature được lazy-load sau file này.
  */
 .app-main
@@ -1182,7 +1183,7 @@ textarea:focus {
     .bag-opening-history__scroll
   ) {
   box-sizing: border-box;
-  width: fit-content;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
   margin-inline: auto;
@@ -1197,7 +1198,7 @@ textarea:focus {
     .bag-opening-history__scroll
   )
   > table {
-  width: auto;
+  width: 100%;
   margin-inline: auto;
 }
 /* Dữ liệu trong ô luôn căn trái theo cột, kể cả số lượng, kg, tiền, ngày và dòng tổng. */
@@ -1427,7 +1428,7 @@ textarea:focus {
   overflow-x: auto;
 }
 table {
-  width: auto;
+  width: 100%;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -1453,7 +1454,9 @@ thead th :where(a, button, span, abbr) {
 }
 /* Tên mặt hàng, tên danh mục trong ô đầu mỗi dòng in đậm. */
 tbody th,
-tbody td:first-child {
+tbody [data-primary-column],
+tbody [data-label='Mặt hàng'],
+tbody [data-label='Sản phẩm'] {
   font-weight: 700;
 }
 th:first-child {
@@ -2071,7 +2074,7 @@ td small {
   display: flex;
   align-items: center;
   gap: 7px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--content-border);
   border-radius: 8px;
   background: white;
   padding: 0 10px;
@@ -4505,7 +4508,7 @@ label:has(:required) > .field-label::after {
   display: flex;
   align-items: center;
   gap: 4px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--content-border);
   border-radius: 8px;
   background: white;
   padding-right: 4px;

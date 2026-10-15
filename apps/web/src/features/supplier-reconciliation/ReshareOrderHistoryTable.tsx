@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import type { ReshareOrderHistoryRow, ReshareOrderHistoryStatus } from '@idosi/contracts';
 import { Link } from 'react-router-dom';
 
@@ -120,6 +121,7 @@ function StatusCell({ row }: { readonly row: ReshareOrderHistoryRow }) {
  */
 export function ReshareOrderHistoryTable({
   rows,
+  offset = 0,
   caption,
   onChangeStatus,
   onShowHistory,
@@ -128,6 +130,7 @@ export function ReshareOrderHistoryTable({
 }: {
   readonly rows: readonly ReshareOrderHistoryRow[];
   readonly caption: string;
+  readonly offset?: number;
   readonly onChangeStatus?: (row: ReshareOrderHistoryRow) => void;
   /** Opens "Lịch sử thay đổi" of the row; its data loads only then. */
   readonly onShowHistory?: (row: ReshareOrderHistoryRow) => void;
@@ -136,11 +139,16 @@ export function ReshareOrderHistoryTable({
 }) {
   return (
     <div className="responsive-table reshare-history">
-      <table className="supplier-table">
+      <DataTable className="supplier-table">
         <caption className="sr-only">{caption}</caption>
         <thead>
           <tr>
-            <th scope="col">Mã phiên phân bổ</th>
+            <th scope="col" className="table-index">
+              STT
+            </th>
+            <th data-primary-column scope="col">
+              Mã phiên phân bổ
+            </th>
             <th scope="col">Mã đặt hàng Reshare</th>
             <th scope="col">Tên cửa hàng</th>
             <th scope="col">Mặt hàng</th>
@@ -149,12 +157,15 @@ export function ReshareOrderHistoryTable({
             <th scope="col">Trạng thái</th>
           </tr>
         </thead>
-        {rows.map((row) => {
+        {rows.map((row, documentIndex) => {
           const span = Math.max(1, row.lines.length);
           const [first, ...rest] = row.lines;
           return (
             <tbody key={row.decisionId} className="reshare-history__group">
               <tr>
+                <td className="table-index" data-label="STT" rowSpan={span}>
+                  {offset + documentIndex + 1}
+                </td>
                 <td rowSpan={span} className="reshare-history__session" data-label="Mã phiên">
                   <SessionCell row={row} />
                 </td>
@@ -162,7 +173,7 @@ export function ReshareOrderHistoryTable({
                   <CodeCell row={row} />
                 </td>
                 <td rowSpan={span} className="reshare-history__store" data-label="Cửa hàng">
-                  {row.storeName}
+                  <span className="store-name">{row.storeName}</span>
                 </td>
                 <td className="reshare-history__product" data-label="Mặt hàng">
                   {first ? first.productName : '—'}
@@ -218,7 +229,7 @@ export function ReshareOrderHistoryTable({
             </tbody>
           );
         })}
-      </table>
+      </DataTable>
     </div>
   );
 }

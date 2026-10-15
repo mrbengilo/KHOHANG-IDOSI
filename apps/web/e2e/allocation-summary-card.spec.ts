@@ -180,6 +180,19 @@ test('allocation result card reads order, result, waiting and old ⇒ new wait d
     expect(box!.x + box!.width).toBeLessThanOrEqual(width);
     await card.screenshot({ path: testInfo.outputPath(`allocation-card-${width}.png`) });
   }
+  // Opening at desktop first sets header minimum widths. The details grid item must still
+  // shrink when the viewport changes, so the observer can re-evaluate those widths.
+  await card.locator('summary').click();
+  const detailTable = card.locator('details table');
+  await expect(detailTable.locator('th').first()).toHaveText('STT');
+  for (const width of [360, 390, 412, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expectNoHorizontalOverflow(page);
+    const detailBox = await card.locator('details').boundingBox();
+    const cardBox = await card.boundingBox();
+    expect(detailBox!.x + detailBox!.width).toBeLessThanOrEqual(cardBox!.x + cardBox!.width);
+    await expect(detailTable.locator('tbody tr')).toHaveCount(sessionDocument.lines.length);
+  }
 });
 
 test('warehouse stock shows available, both holds, total dispatched and the action', async ({

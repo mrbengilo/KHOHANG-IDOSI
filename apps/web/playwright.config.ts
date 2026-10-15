@@ -4,6 +4,7 @@ export default defineConfig({
   testDir: './e2e',
   outputDir: './test-results/smoke',
   testIgnore: [
+    '**/table-presentation.spec.ts',
     '**/sorting-reasons.spec.ts',
     '**/desktop-layout.spec.ts',
     '**/desktop-table-density.spec.ts',

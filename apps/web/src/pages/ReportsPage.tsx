@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import type {
   BasisPointsReportMetric,
   ExactIntegerReportMetric,
@@ -415,6 +416,7 @@ export function ReportsPage() {
         <label>
           Phạm vi
           <select
+            className="store-name"
             aria-label="Phạm vi báo cáo"
             disabled={mockModeEnabled || storesQuery.isPending || noAssignedStores}
             onChange={(event) => setScopeSelection(event.target.value)}
@@ -427,7 +429,7 @@ export function ReportsPage() {
               <option value={demoStoreId}>Gò Vấp</option>
             ) : null}
             {stores.map((store) => (
-              <option key={store.id} value={store.id}>
+              <option className="store-name" key={store.id} value={store.id}>
                 {store.code} • {store.name}
               </option>
             ))}
@@ -623,10 +625,13 @@ function ReportContent({ report }: { readonly report: MonthlyOperationalReport }
           </div>
         ) : (
           <div className="responsive-table">
-            <table className="table-density table-density--metrics">
+            <DataTable className="table-density table-density--metrics">
               <thead>
                 <tr>
-                  <th>Mặt hàng</th>
+                  <th scope="col" className="table-index">
+                    STT
+                  </th>
+                  <th data-primary-column>Mặt hàng</th>
                   <th>Nhập</th>
                   <th>Tiền hàng nhập</th>
                   <th>Đã bán</th>
@@ -635,9 +640,12 @@ function ReportContent({ report }: { readonly report: MonthlyOperationalReport }
                 </tr>
               </thead>
               <tbody>
-                {report.products.map((product) => (
+                {report.products.map((product, rowIndex) => (
                   <tr key={product.productId}>
-                    <td data-label="Mặt hàng">
+                    <td className="table-index" data-label="STT">
+                      {rowIndex + 1}
+                    </td>
+                    <td data-primary-column data-label="Mặt hàng">
                       <strong>{product.productName}</strong>
                       <small>{product.sku}</small>
                     </td>
@@ -672,7 +680,7 @@ function ReportContent({ report }: { readonly report: MonthlyOperationalReport }
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </DataTable>
           </div>
         )}
       </section>

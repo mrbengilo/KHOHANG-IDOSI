@@ -193,6 +193,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+.allocation-summary-card__details {
+  /* A grid item must shrink below the table's previous desktop header width. Otherwise the
+     scrollport never shrinks and its ResizeObserver cannot switch the headers to wrapping. */
+  min-width: 0;
+}
+
 .allocation-summary-card__details summary {
   display: flex;
   align-items: center;

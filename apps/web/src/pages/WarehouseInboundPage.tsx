@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import {
   CreateInboundReceiptRequestSchema,
   type CreateInboundReceiptRequest,
@@ -235,9 +236,12 @@ function WarehouseInboundContent() {
           aria-label="Lịch sử nhập kho tổng"
           tabIndex={0}
         >
-          <table>
+          <DataTable>
             <thead>
               <tr>
+                <th scope="col" className="table-index">
+                  STT
+                </th>
                 {[
                   'Thời gian',
                   'Mã phiếu',
@@ -257,7 +261,7 @@ function WarehouseInboundContent() {
                 ))}
               </tr>
             </thead>
-            {history.data?.data.map((receipt) => {
+            {history.data?.data.map((receipt, documentIndex) => {
               const lines = groupInboundProducts(receipt.bags, catalog.data ?? []);
               return (
                 <tbody key={receipt.id}>
@@ -265,6 +269,12 @@ function WarehouseInboundContent() {
                     <tr key={line.productId}>
                       {index === 0 ? (
                         <>
+                          <td className="table-index" data-label="STT" rowSpan={lines.length}>
+                            {(history.data!.pagination.page - 1) *
+                              history.data!.pagination.pageSize +
+                              documentIndex +
+                              1}
+                          </td>
                           <td data-label="Thời gian" rowSpan={lines.length}>
                             <time dateTime={receipt.receivedAt}>
                               {formatDocumentTime(receipt.receivedAt)}
@@ -325,7 +335,7 @@ function WarehouseInboundContent() {
                 </tbody>
               );
             })}
-          </table>
+          </DataTable>
         </div>
         <div className="button-row">
           <Button

@@ -72,7 +72,7 @@ export function CancelWaitTicketDialog({
           <div>
             <h2 id={titleId}>Hủy phiếu chờ {ticket.code ?? ''}</h2>
             <p>
-              {storeName ? `${storeName} • ` : ''}
+              <span className="store-name">{storeName ? `${storeName} • ` : ''}</span>
               {productName}. Xem kỹ phạm vi trước khi xác nhận; thao tác được ghi vào nhật ký.
             </p>
           </div>

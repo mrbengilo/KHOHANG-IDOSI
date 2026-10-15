@@ -1,3 +1,4 @@
+import { DataTable } from '../../../components/DataTable';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import type { ReceiptAdjustmentListItem } from '@idosi/contracts';
 import { ClipboardList, Eye, X } from 'lucide-react';
@@ -237,6 +238,7 @@ export function AdminAdjustmentWorkspace() {
           <label>
             Cửa hàng
             <select
+              className="store-name"
               disabled={storesQuery.isPending}
               onChange={(event) =>
                 update(
@@ -252,7 +254,7 @@ export function AdminAdjustmentWorkspace() {
             >
               <option value="">Mọi cửa hàng</option>
               {stores.map((store) => (
-                <option key={store.id} value={store.id}>
+                <option className="store-name" key={store.id} value={store.id}>
                   {store.code} · {store.name}
                 </option>
               ))}
@@ -371,10 +373,13 @@ export function AdminAdjustmentWorkspace() {
               />
             ) : (
               <div className="responsive-table adjustment-workspace__table">
-                <table className="table-density">
+                <DataTable className="table-density">
                   <thead>
                     <tr>
-                      <th>Hồ sơ</th>
+                      <th scope="col" className="table-index">
+                        STT
+                      </th>
+                      <th data-primary-column>Hồ sơ</th>
                       <th>Cửa hàng</th>
                       <th>Cửa hàng báo</th>
                       <th>Xác minh hàng</th>
@@ -387,7 +392,7 @@ export function AdminAdjustmentWorkspace() {
                     </tr>
                   </thead>
                   <tbody>
-                    {page.data.map((item) => {
+                    {page.data.map((item, rowIndex) => {
                       const copy = adjustmentStatusCopy[item.status];
                       const money = listMoneyCopy(item);
                       const selected = item.id === filters.openId;
@@ -397,13 +402,18 @@ export function AdminAdjustmentWorkspace() {
                           className={selected ? 'selected' : undefined}
                           key={item.id}
                         >
-                          <td data-label="Hồ sơ">
+                          <td className="table-index" data-label="STT">
+                            {(page.pagination.page - 1) * page.pagination.pageSize + rowIndex + 1}
+                          </td>
+                          <td data-primary-column data-label="Hồ sơ">
                             <span className="adjustment-cell">
                               <strong>{item.code}</strong>
                               <small>Phiếu nhận {item.receiptNumber}</small>
                             </span>
                           </td>
-                          <td data-label="Cửa hàng">{itemStore(item)}</td>
+                          <td data-label="Cửa hàng">
+                            <span className="store-name">{itemStore(item)}</span>
+                          </td>
                           <td data-label="Cửa hàng báo">
                             <span className="adjustment-cell">
                               {accountLabel(item.reportedBy)}
@@ -461,7 +471,7 @@ export function AdminAdjustmentWorkspace() {
                       );
                     })}
                   </tbody>
-                </table>
+                </DataTable>
               </div>
             )}
             {totalPages > 1 ? (
@@ -529,9 +539,20 @@ export function AdminAdjustmentWorkspace() {
         >
           <div className="adjustment-workspace__detail-head">
             <strong>
-              {opened
-                ? `${opened.code} · ${storeLabel({ storeId: opened.storeId, code: storeById.get(opened.storeId)?.code ?? null, name: storeById.get(opened.storeId)?.name ?? null })}`
-                : 'Hồ sơ sai lệch'}
+              {opened ? (
+                <>
+                  {opened.code} ·{' '}
+                  <span className="store-name">
+                    {storeLabel({
+                      storeId: opened.storeId,
+                      code: storeById.get(opened.storeId)?.code ?? null,
+                      name: storeById.get(opened.storeId)?.name ?? null,
+                    })}
+                  </span>
+                </>
+              ) : (
+                'Hồ sơ sai lệch'
+              )}
             </strong>
             <Button
               aria-label="Đóng chi tiết hồ sơ"

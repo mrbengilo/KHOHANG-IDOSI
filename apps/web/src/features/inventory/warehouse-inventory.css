@@ -15,7 +15,7 @@
 .warehouse-stock-panel td small {
   font-size: 11px;
 }
-.warehouse-stock-panel td:not(:first-child) {
+.warehouse-stock-panel td:not([data-primary-column]) {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -32,26 +32,12 @@
   margin-block: 12px;
 }
 @media (min-width: 821px) {
-  .warehouse-stock-table {
-    width: auto;
-    max-width: 100%;
-  }
-  /* Tên rộng theo nội dung tới 32rem rồi xuống dòng; cột số căn trái, không ngắt giữa số. */
-  .warehouse-stock-table th:first-child,
-  .warehouse-stock-table td:first-child {
-    min-width: 12rem;
+  .warehouse-stock-table [data-primary-column] {
     max-width: 32rem;
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
   }
-  .warehouse-stock-table th:not(:first-child),
-  .warehouse-stock-table td:not(:first-child) {
-    text-align: left;
+  .warehouse-stock-table td:not([data-primary-column]) {
     white-space: nowrap;
-  }
-  /* Long headers ("Đang giữ chờ giao chung") wrap so they never widen the numeric columns. */
-  .warehouse-stock-table th:not(:first-child) {
-    width: 7rem;
-    white-space: normal;
   }
 }
 /*
@@ -59,12 +45,12 @@
  * đơn vị ("1.234.567" / "bao"), giữa các từ của tiêu đề và nhãn nút; cột tên tối thiểu 8rem.
  */
 @media (min-width: 821px) and (max-width: 1365px) {
-  .warehouse-stock-table th:first-child,
-  .warehouse-stock-table td:first-child {
+  .warehouse-stock-table th[data-primary-column],
+  .warehouse-stock-table td[data-primary-column] {
     min-width: 8rem;
   }
-  .warehouse-stock-table th:not(:first-child),
-  .warehouse-stock-table td:not(:first-child) {
+  .warehouse-stock-table th:not([data-primary-column]),
+  .warehouse-stock-table td:not([data-primary-column]) {
     white-space: normal;
     overflow-wrap: normal;
   }

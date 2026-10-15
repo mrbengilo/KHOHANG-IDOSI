@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   IdosiStatisticsScope,
@@ -385,7 +386,9 @@ export function IdosiStatisticsPanel({ storeId, period: sharedPeriod }: IdosiSta
               <dl>
                 <div>
                   <dt>Cửa hàng nguồn</dt>
-                  <dd>{payload.store.name}</dd>
+                  <dd>
+                    <span className="store-name">{payload.store.name}</span>
+                  </dd>
                 </div>
                 <div>
                   <dt>IDOSI tạo dữ liệu</dt>
@@ -411,10 +414,13 @@ export function IdosiStatisticsPanel({ storeId, period: sharedPeriod }: IdosiSta
                   {title} · {formatInteger(payload.groups[groupKey].length)} dòng
                 </summary>
                 <div className="responsive-table">
-                  <table>
+                  <DataTable>
                     <thead>
                       <tr>
-                        <th>{groupKey === 'day' ? 'Ngày' : 'Ca'}</th>
+                        <th scope="col" className="table-index">
+                          STT
+                        </th>
+                        <th data-primary-column>{groupKey === 'day' ? 'Ngày' : 'Ca'}</th>
                         <th>Bán thường</th>
                         <th>Sale theo ký</th>
                         <th>Sale theo cái</th>
@@ -423,9 +429,14 @@ export function IdosiStatisticsPanel({ storeId, period: sharedPeriod }: IdosiSta
                       </tr>
                     </thead>
                     <tbody>
-                      {payload.groups[groupKey].map((group) => (
+                      {payload.groups[groupKey].map((group, rowIndex) => (
                         <tr key={group.key}>
-                          <td data-label={groupKey === 'day' ? 'Ngày' : 'Ca'}>{group.key}</td>
+                          <td className="table-index" data-label="STT">
+                            {rowIndex + 1}
+                          </td>
+                          <td data-primary-column data-label={groupKey === 'day' ? 'Ngày' : 'Ca'}>
+                            {group.key}
+                          </td>
                           <td data-label="Bán thường">
                             {formatVnd(group.revenueByType.NORMAL - group.unclassifiedRevenue)}
                           </td>
@@ -450,7 +461,7 @@ export function IdosiStatisticsPanel({ storeId, period: sharedPeriod }: IdosiSta
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                  </DataTable>
                 </div>
               </details>
             ) : null,
@@ -470,10 +481,13 @@ export function IdosiStatisticsPanel({ storeId, period: sharedPeriod }: IdosiSta
               />
             ) : (
               <div className="responsive-table">
-                <table>
+                <DataTable>
                   <thead>
                     <tr>
-                      <th>Sản phẩm</th>
+                      <th scope="col" className="table-index">
+                        STT
+                      </th>
+                      <th data-primary-column>Sản phẩm</th>
                       <th>Loại doanh thu</th>
                       <th>Đơn</th>
                       <th>Số lượng</th>
@@ -481,9 +495,12 @@ export function IdosiStatisticsPanel({ storeId, period: sharedPeriod }: IdosiSta
                     </tr>
                   </thead>
                   <tbody>
-                    {payload.products.items.map((item) => (
+                    {payload.products.items.map((item, rowIndex) => (
                       <tr key={`${item.productId}:${item.classification}:${item.unit}`}>
-                        <td data-label="Sản phẩm">
+                        <td className="table-index" data-label="STT">
+                          {rowIndex + 1}
+                        </td>
+                        <td data-primary-column data-label="Sản phẩm">
                           <strong>{item.productName}</strong>
                           <small>{item.productCode ?? item.productId}</small>
                         </td>
@@ -506,7 +523,7 @@ export function IdosiStatisticsPanel({ storeId, period: sharedPeriod }: IdosiSta
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </DataTable>
               </div>
             )}
           </div>

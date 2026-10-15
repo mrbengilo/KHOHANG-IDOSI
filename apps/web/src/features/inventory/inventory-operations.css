@@ -575,7 +575,7 @@
   .bag-opening-history table {
     display: table;
     width: 100%;
-    table-layout: fixed;
+    table-layout: auto;
     border-collapse: collapse;
     font-size: 0.875rem;
   }
@@ -613,20 +613,11 @@
     color: var(--text-secondary);
     background: var(--surface-soft, var(--surface));
   }
-  .bag-opening-history th:nth-child(1) {
-    width: 21%;
-  }
   .bag-opening-history th:nth-child(2) {
     width: 16%;
   }
-  .bag-opening-history th:nth-child(3) {
-    width: 13%;
-  }
   .bag-opening-history th:nth-child(4) {
     width: 12%;
-  }
-  .bag-opening-history th:nth-child(5) {
-    width: 24%;
   }
   .bag-opening-history th:nth-child(6) {
     width: 14%;

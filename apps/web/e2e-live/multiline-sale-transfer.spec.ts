@@ -136,15 +136,21 @@ test('one multi-product Sale document is created, displayed and received against
     const history = page.getByRole('region', { name: 'Lịch sử điều chuyển Sale', exact: true });
     const body = history.locator('tbody').filter({ hasText: transfer.transferNumber });
     await expect(body.locator('tr')).toHaveCount(2);
-    await expect(body.locator('tr').first().locator('td').nth(7)).toHaveText('3');
-    await expect(body.locator('tr').first().locator('td').nth(8)).toHaveText('130 kg');
-    await expect(body.locator('tr').first().locator('td').nth(9)).toHaveText('Actor source');
+    await expect(body.locator('tr').first().locator('[data-label="Tổng số bao"]')).toHaveText('3');
+    await expect(body.locator('tr').first().locator('[data-label="Tổng khối lượng"]')).toHaveText(
+      '130 kg',
+    );
+    await expect(body.locator('tr').first().locator('[data-label="Người thực hiện"]')).toHaveText(
+      'Actor source',
+    );
     await expect(
       history.getByRole('columnheader', { name: 'Trạng thái', exact: true }),
     ).toBeVisible();
     const firstRow = body.locator('tr').first();
-    await expect(firstRow.locator('td').nth(2)).toHaveText(source!.store.name);
-    await expect(firstRow.locator('td').nth(3)).toHaveText(destination!.store.name);
+    await expect(firstRow.locator('[data-label="Cửa hàng gửi"]')).toHaveText(source!.store.name);
+    await expect(firstRow.locator('[data-label="Cửa hàng nhận"]')).toHaveText(
+      destination!.store.name,
+    );
     await expect(firstRow.locator('td').last()).toHaveText('Đã điều chuyển');
     await expect(firstRow.locator('td').last().getByRole('button')).toHaveCount(0);
     await expect(body.locator('time .document-time-part').first()).toHaveText(/^\d{2}:\d{2}$/);

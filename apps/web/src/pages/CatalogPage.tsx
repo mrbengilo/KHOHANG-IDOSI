@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import type { Product, ProductConversion } from '@idosi/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Download, History, Pencil, Plus, RefreshCw, Save, Search, Trash2, X } from 'lucide-react';
@@ -715,10 +716,13 @@ export function CatalogPage() {
             </div>
           ) : (
             <div className="responsive-table">
-              <table className="table-density catalog-table">
+              <DataTable className="table-density catalog-table">
                 <thead>
                   <tr>
-                    <th>Mặt hàng</th>
+                    <th scope="col" className="table-index">
+                      STT
+                    </th>
+                    <th data-primary-column>Mặt hàng</th>
                     <th className="table-number">Quy đổi số cái</th>
                     <th className="table-number">Khối lượng 1 cái</th>
                     <th>Phiên bản / hiệu lực</th>
@@ -727,12 +731,15 @@ export function CatalogPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleEntries.map((entry) => {
+                  {visibleEntries.map((entry, rowIndex) => {
                     const ratios = formatConversionRatios(entry.conversion);
                     const hasActiveLatest = entry.latestConversion?.retiredAt === null;
                     return (
                       <tr key={entry.product.id}>
-                        <td data-label="Mặt hàng">
+                        <td className="table-index" data-label="STT">
+                          {rowIndex + 1}
+                        </td>
+                        <td data-primary-column data-label="Mặt hàng">
                           <strong>{entry.product.name}</strong>
                           <small>{entry.product.sku}</small>
                         </td>
@@ -811,7 +818,7 @@ export function CatalogPage() {
                     );
                   })}
                 </tbody>
-              </table>
+              </DataTable>
             </div>
           )}
         </section>

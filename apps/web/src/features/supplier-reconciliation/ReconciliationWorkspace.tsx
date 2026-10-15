@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import type { SupplierReconciliationFilter, SupplierReconciliationRow } from '@idosi/contracts';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -226,10 +227,15 @@ export function ReconciliationWorkspace({
               </p>
             ) : null}
             <div className="responsive-table supplier-table-scroll table-cards-narrow">
-              <table className="supplier-table supplier-summary-table">
+              <DataTable className="supplier-table supplier-summary-table">
                 <thead>
                   <tr>
-                    <th scope="col">Chọn</th>
+                    <th scope="col" className="table-index">
+                      STT
+                    </th>
+                    <th data-primary-column scope="col">
+                      Chọn
+                    </th>
                     <th scope="col">Mặt hàng</th>
                     <th scope="col">Reshare cho đặt (S)</th>
                     <th scope="col">Biến động sau</th>
@@ -243,13 +249,18 @@ export function ReconciliationWorkspace({
                   </tr>
                 </thead>
                 <tbody>
-                  {summary.data.data.map((row) => {
+                  {summary.data.data.map((row, rowIndex) => {
                     const open = expanded === row.productId;
                     const detailId = `supplier-detail-${row.productId}`;
                     return (
                       <Fragment key={row.productId}>
                         <tr>
-                          <td data-label="Chọn">
+                          <td className="table-index" data-label="STT">
+                            {(summary.data.pagination.page - 1) * summary.data.pagination.pageSize +
+                              rowIndex +
+                              1}
+                          </td>
+                          <td data-primary-column data-label="Chọn">
                             <input
                               aria-label={`Chọn ${row.productName} để đối chiếu`}
                               checked={selected.has(row.productId)}
@@ -331,7 +342,7 @@ export function ReconciliationWorkspace({
                         </tr>
                         {open ? (
                           <tr className="supplier-detail-row">
-                            <td colSpan={11} id={detailId}>
+                            <td colSpan={11 + 1} id={detailId}>
                               <p className="supplier-hint">{positionSentence(row.position)}</p>
                               <CommitmentDetail accountId={accountId} productId={row.productId} />
                             </td>
@@ -341,7 +352,7 @@ export function ReconciliationWorkspace({
                     );
                   })}
                 </tbody>
-              </table>
+              </DataTable>
             </div>
             {summary.data.data.length === 0 ? (
               <p className="supplier-empty">Không có mặt hàng phù hợp bộ lọc.</p>

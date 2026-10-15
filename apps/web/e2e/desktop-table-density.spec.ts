@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { mockLayoutAdmin } from './layout-fixtures';
+import { measureTableLayout, tableLayoutViolations } from './table-layout-metrics';
 
 for (const route of ['/inventory', '/warehouse-inbound']) {
   test(`table content measurements ${route}`, async ({ page }, testInfo) => {
@@ -49,12 +50,14 @@ for (const route of ['/inventory', '/warehouse-inbound']) {
       measurements.push(measurement);
       if (width >= 1366) {
         const numeric =
-          route === '/inventory' ? measurement.cells.slice(1) : measurement.cells.slice(4, 6);
+          route === '/inventory' ? measurement.cells.slice(2) : measurement.cells.slice(5, 7);
         for (const cell of numeric) {
           // Numbers align left like every other column (docs/responsive-table-layout-audit.md).
           // Quantity columns are as wide as their one-line header, never a squeezed fixed width.
           expect(cell.align).toBe('left');
-          expect(cell.width).toBeLessThanOrEqual(150);
+          // A full-width table may expand numeric columns; preserve content and alignment.
+          expect(cell.contentX).toBeGreaterThanOrEqual(cell.x - 1);
+          expect(cell.contentRight).toBeLessThanOrEqual(cell.x + cell.width + 1);
         }
         expect(measurement.firstRowHeight).toBeLessThanOrEqual(route === '/inventory' ? 65 : 130);
         expect(measurement.rows).toBe(route === '/inventory' ? 24 : 4);
@@ -62,6 +65,7 @@ for (const route of ['/inventory', '/warehouse-inbound']) {
           route === '/inventory' ? 14 : 13,
         );
       }
+      expect(tableLayoutViolations(await measureTableLayout(page))).toEqual([]);
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
         width + 1,
       );
