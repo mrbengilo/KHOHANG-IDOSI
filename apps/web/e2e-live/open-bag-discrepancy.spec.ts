@@ -161,8 +161,10 @@ test('production opening locks a stale discrepancy form and retains opening hist
       'Người thực hiện',
       'Trạng thái',
     ]);
-    await expect(table.locator('.bag-opening-history__weight')).toHaveText('20 kg');
-    await expect(table.locator('.bag-opening-history__actor')).toContainText('Cửa hàng sai lệch');
+    await expect(table.locator('td.bag-opening-history__weight')).toHaveText('20 kg');
+    await expect(table.locator('td[data-label="Người thực hiện"]')).toContainText(
+      'Cửa hàng sai lệch',
+    );
     await table.getByRole('button', { name: target!.displayCode!, exact: true }).click();
     await expect(
       tab.getByRole('dialog').getByText('Xác nhận khui bán', { exact: true }),

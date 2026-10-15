@@ -201,7 +201,19 @@ postgres('warehouse remaining demand projection on PostgreSQL', () => {
     }
     const lookup = sql`select coalesce(sum(remaining_quantity),0) from wait_tickets where product_id=${f.productIds[0]} and status='active' and deleted_at is null and remaining_quantity>0`;
     const plan = await db.execute(sql`explain (analyze,buffers,format json) ${lookup}`);
-    assert.match(JSON.stringify(plan.rows), /wait_tickets_active_priority_idx/);
+    // PostgreSQL may choose either existing partial index as table statistics change.
+    // Assert indexed access to the two live rows, not one particular planner decision.
+    const nodes = [];
+    const visit = (node) => {
+      nodes.push(node);
+      for (const child of node.Plans ?? []) visit(child);
+    };
+    visit(plan.rows[0]['QUERY PLAN'][0].Plan);
+    const scan = nodes.find((node) => node['Relation Name'] === 'wait_tickets');
+    assert.ok(['Index Scan', 'Index Only Scan', 'Bitmap Heap Scan'].includes(scan?.['Node Type']));
+    assert.ok(nodes.some((node) => node['Index Name'] && /product_id/.test(node['Index Cond'])));
+    assert.equal(scan['Actual Rows'], 2);
+    assert.equal(scan['Rows Removed by Filter'] ?? 0, 0);
     const timings = { withoutDemand: [], withDemand: [] };
     for (let iteration = 0; iteration < 12; iteration++) {
       for (const [label, query] of [

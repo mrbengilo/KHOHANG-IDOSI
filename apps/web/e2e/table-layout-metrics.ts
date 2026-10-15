@@ -126,11 +126,13 @@ export async function measureTableLayout(page: Page): Promise<PageTableLayout> {
       if (!visible(box)) continue;
       const style = getComputedStyle(box);
       if (
-        px(style.borderTopWidth) < 1 ||
+        px(style.borderTopWidth) * devicePixelRatio < 0.9 ||
         style.borderTopStyle === 'none' ||
         style.borderTopColor === 'rgba(0, 0, 0, 0)'
       )
-        presentationIssues.push(`${describe(box)}: missing visible content border`);
+        presentationIssues.push(
+          `${describe(box)}: missing visible content border (${style.borderTopWidth}, DPR ${devicePixelRatio})`,
+        );
     }
     return {
       presentationIssues,
