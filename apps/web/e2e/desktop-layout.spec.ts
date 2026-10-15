@@ -76,8 +76,8 @@ for (const route of ['/warehouse-inbound', '/inventory']) {
         expect(Math.abs(leftGap - gutter), `left gutter @${width}`).toBeLessThanOrEqual(2);
         expect(Math.abs(rightGap - gutter), `right gutter @${width}`).toBeLessThanOrEqual(2);
         expect(Math.abs(leftGap - rightGap), `symmetric gutters @${width}`).toBeLessThanOrEqual(2);
-        if (width >= 1600) expect(leftGap).toBeCloseTo(DESKTOP_GUTTER, 0);
-        // 1366/1440 → 1034px, 1920 → 1356px: full-width panels fill the space between gutters.
+        if (width >= 2070) expect(leftGap).toBeCloseTo(DESKTOP_GUTTER, 0);
+        // 1440 → 1108px, 1920 → 1506px, 2560 → 1996px: full-width panels fill the gutters' gap.
         expect(
           Math.abs(box.width - (clientWidth - sidebar.width - 2 * gutter)),
         ).toBeLessThanOrEqual(2);

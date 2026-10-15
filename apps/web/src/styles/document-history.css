@@ -84,6 +84,8 @@
 .document-history th {
   white-space: normal;
 }
+/* Mã chứng từ (PN…, RE…) là một khối, không bao giờ ngắt giữa mã. */
+.document-history summary,
 .document-history time {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
