@@ -25,7 +25,6 @@
   overflow-x: auto;
 }
 .wait-ticket-table {
-  min-width: 1200px;
   width: 100%;
 }
 .wait-ticket-table td,
@@ -48,42 +47,47 @@
   min-width: 150px;
 }
 
-/* Preserve all nine columns at every viewport; this table uses local scrolling, not mobile cards. */
-.app-main .wait-ticket-table-scroll {
-  width: 100%;
-  min-width: 0;
-}
-.app-main table.wait-ticket-table {
-  display: table;
-  min-width: 1200px;
-  width: 100%;
-  max-width: none;
-}
-.wait-ticket-table thead {
-  display: table-header-group;
-  position: static;
-  width: auto;
-  height: auto;
-  overflow: visible;
-  clip: auto;
-}
-.wait-ticket-table tbody {
-  display: table-row-group;
-}
-.wait-ticket-table tr,
-.wait-ticket-table tbody tr {
-  display: table-row;
-  border: 0;
-  padding: 0;
-}
-.wait-ticket-table th,
-.wait-ticket-table td {
-  display: table-cell;
-  padding: 12px;
-  border-bottom: 1px solid var(--border);
-}
-.wait-ticket-table td::before {
-  content: none;
+/*
+ * Từ 1101px: đủ mọi cột, vừa vùng chứa; hết chỗ thì ô xuống dòng, không cuộn ngang.
+ * ≤1100px: thẻ có nhãn (data-label) theo bố cục bảng lớn dùng chung trong styles.css.
+ */
+@media (min-width: 1101px) {
+  .app-main .wait-ticket-table-scroll {
+    width: 100%;
+    min-width: 0;
+  }
+  .app-main table.wait-ticket-table {
+    display: table;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+  .wait-ticket-table thead {
+    display: table-header-group;
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+  }
+  .wait-ticket-table tbody {
+    display: table-row-group;
+  }
+  .wait-ticket-table tr,
+  .wait-ticket-table tbody tr {
+    display: table-row;
+    border: 0;
+    padding: 0;
+  }
+  .wait-ticket-table th,
+  .wait-ticket-table td {
+    display: table-cell;
+    padding: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .wait-ticket-table td::before {
+    content: none;
+  }
 }
 
 .wait-ticket-table th:first-child {
@@ -114,10 +118,6 @@
   min-height: 32px;
   cursor: pointer;
   color: var(--brand);
-}
-/* Six or seven columns: fits a desktop content area, scrolls in its own region on mobile. */
-.app-main table.wait-ticket-table.wait-ticket-table--scoped {
-  min-width: 860px;
 }
 .wait-ticket-table--scoped .wait-ticket-actions {
   min-width: 132px;

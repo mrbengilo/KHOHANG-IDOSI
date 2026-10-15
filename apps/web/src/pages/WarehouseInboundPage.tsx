@@ -265,12 +265,12 @@ function WarehouseInboundContent() {
                     <tr key={line.productId}>
                       {index === 0 ? (
                         <>
-                          <td rowSpan={lines.length}>
+                          <td data-label="Thời gian" rowSpan={lines.length}>
                             <time dateTime={receipt.receivedAt}>
                               {formatDocumentTime(receipt.receivedAt)}
                             </time>
                           </td>
-                          <td rowSpan={lines.length}>
+                          <td data-label="Mã phiếu" rowSpan={lines.length}>
                             <details>
                               <summary>{receipt.referenceCode || 'Chưa ghi nhận mã phiếu'}</summary>
                               <p>
@@ -297,17 +297,25 @@ function WarehouseInboundContent() {
                             </details>
                             {receipt.status === 'CANCELLED' ? <strong>Đã hủy</strong> : null}
                           </td>
-                          <td rowSpan={lines.length}>{receipt.supplierName}</td>
+                          <td data-label="Nhà cung cấp" rowSpan={lines.length}>
+                            {receipt.supplierName}
+                          </td>
                         </>
                       ) : null}
-                      <td>{line.name}</td>
-                      <td className="document-number">{line.quantity}</td>
+                      <td data-label="Mặt hàng">{line.name}</td>
+                      <td data-label="Số lượng (bao)" className="document-number">
+                        {line.quantity}
+                      </td>
                       {index === 0 ? (
                         <>
-                          <td className="document-number" rowSpan={lines.length}>
+                          <td
+                            data-label="Tổng số lượng (bao)"
+                            className="document-number"
+                            rowSpan={lines.length}
+                          >
                             {receipt.bags.length}
                           </td>
-                          <td rowSpan={lines.length}>
+                          <td data-label="Người thực hiện" rowSpan={lines.length}>
                             {receipt.receivedByDisplayName ?? 'Chưa ghi nhận'}
                           </td>
                         </>

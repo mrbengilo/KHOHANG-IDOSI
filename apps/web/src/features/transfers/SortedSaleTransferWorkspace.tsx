@@ -462,7 +462,7 @@ export function SortedSaleTransferWorkspace({
                       <tr key={line.productId}>
                         {index === 0 ? (
                           <>
-                            <td rowSpan={lines.length}>
+                            <td data-label="Thời gian" rowSpan={lines.length}>
                               <time dateTime={transfer.createdAt}>
                                 <span className="document-time-part">
                                   {formatRequestSubmittedAt(transfer.createdAt).time}
@@ -472,7 +472,7 @@ export function SortedSaleTransferWorkspace({
                                 </span>
                               </time>
                             </td>
-                            <td rowSpan={lines.length}>
+                            <td data-label="Mã phiếu" rowSpan={lines.length}>
                               <details>
                                 <summary>{transfer.transferNumber}</summary>
                                 <p>{transfer.note}</p>
@@ -536,19 +536,21 @@ export function SortedSaleTransferWorkspace({
                                 ) : null}
                               </details>
                             </td>
-                            <td rowSpan={lines.length}>
+                            <td data-label="Cửa hàng chuyển" rowSpan={lines.length}>
                               {stores.find((store) => store.id === transfer.sourceStoreId)?.name ||
                                 'Chưa xác định cửa hàng'}
                             </td>
-                            <td rowSpan={lines.length}>
+                            <td data-label="Cửa hàng nhận" rowSpan={lines.length}>
                               {stores.find((store) => store.id === transfer.destinationStoreId)
                                 ?.name || 'Chưa xác định cửa hàng'}
                             </td>
                           </>
                         ) : null}
-                        <td>{productName(line.productId)}</td>
-                        <td className="document-quantity table-number">{line.bagQuantity}</td>
-                        <td className="table-number">
+                        <td data-label="Mặt hàng">{productName(line.productId)}</td>
+                        <td data-label="Số lượng (bao)" className="document-quantity table-number">
+                          {line.bagQuantity}
+                        </td>
+                        <td data-label="Khối lượng (kg)" className="table-number">
                           {line.bagWeightsKg.length ? (
                             line.bagWeightsKg.map((weight, i) => (
                               <div key={i}>
@@ -562,16 +564,24 @@ export function SortedSaleTransferWorkspace({
                         </td>
                         {index === 0 ? (
                           <>
-                            <td className="document-quantity table-number" rowSpan={lines.length}>
+                            <td
+                              data-label="Tổng số lượng (bao)"
+                              className="document-quantity table-number"
+                              rowSpan={lines.length}
+                            >
                               {totalBags}
                             </td>
-                            <td className="table-number" rowSpan={lines.length}>
+                            <td
+                              data-label="Tổng khối lượng (kg)"
+                              className="table-number"
+                              rowSpan={lines.length}
+                            >
                               {formatKgExact(totalWeight)}
                             </td>
-                            <td rowSpan={lines.length}>
+                            <td data-label="Người thực hiện" rowSpan={lines.length}>
                               {transfer.createdByDisplayName ?? 'Chưa ghi nhận'}
                             </td>
-                            <td rowSpan={lines.length}>
+                            <td data-label="Trạng thái" rowSpan={lines.length}>
                               <p>
                                 {transfer.status === 'CANCELLED' ? 'Đã hủy' : 'Đã điều chuyển'}
                               </p>{' '}

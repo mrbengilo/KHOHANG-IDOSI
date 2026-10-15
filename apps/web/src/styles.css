@@ -1204,6 +1204,200 @@ textarea:focus {
 .app-main table :is(th, td) {
   text-align: left;
 }
+/*
+ * Không cuộn ngang: bảng rộng tối đa bằng vùng chứa; nội dung nhiều hơn chỗ thì ô xuống dòng,
+ * kể cả chuỗi dài không có khoảng trắng. Tiêu đề, số và mã giữ quy tắc ngắt riêng của chúng.
+ */
+.app-main table td {
+  overflow-wrap: anywhere;
+}
+/*
+ * Bảng lớn (7–11 cột: lịch sử chứng từ, phiếu chờ, thống kê nhập, lịch sử khui kiện) ở độ rộng
+ * ≤1100px không còn đủ chỗ để đọc thành bảng: mỗi dòng thành một thẻ "nhãn (data-label) ·
+ * giá trị", không cuộn ngang. Từ 1101px các bảng này dùng bố cục bảng trong CSS feature của
+ * chúng. Bảng số liệu nhỏ (.table-density--metrics) giữ dạng bảng.
+ */
+@media (max-width: 1100px) {
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll
+    ) {
+    width: 100%;
+    border: 0;
+    border-radius: 0;
+  }
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll
+    )
+    > table:not(.table-density--metrics) {
+    display: grid;
+    gap: 10px;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    table-layout: auto;
+  }
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll
+    )
+    > table:not(.table-density--metrics)
+    > thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll
+    )
+    > table:not(.table-density--metrics)
+    > :is(tbody, tfoot) {
+    display: grid;
+    gap: 10px;
+  }
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll
+    )
+    > table:not(.table-density--metrics)
+    > :is(tbody, tfoot)
+    > tr {
+    display: grid;
+    gap: 8px;
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    background: var(--surface);
+    padding: 11px;
+  }
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll
+    )
+    > table:not(.table-density--metrics)
+    > tfoot
+    > tr {
+    background: var(--surface-muted);
+  }
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll
+    )
+    > table:not(.table-density--metrics)
+    > :is(tbody, tfoot)
+    > tr
+    > :is(td, th) {
+    display: grid;
+    grid-template-columns: minmax(88px, 0.65fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 8px;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    text-align: left;
+  }
+  /* Ô tiêu đề dòng (mã cửa hàng/mặt hàng, "Tổng") là tiêu đề thẻ, chiếm cả dòng. */
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll
+    )
+    > table:not(.table-density--metrics)
+    > :is(tbody, tfoot)
+    > tr
+    > th {
+    display: block;
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll
+    )
+    > table:not(.table-density--metrics)
+    > :is(tbody, tfoot)
+    > tr
+    > td::before {
+    display: block;
+    content: attr(data-label);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  /* Ô không nhãn (dòng chi tiết mở rộng) chiếm cả thẻ; ô trống ở dòng tổng thì ẩn. */
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll
+    )
+    > table:not(.table-density--metrics)
+    > :is(tbody, tfoot)
+    > tr
+    > td:not([data-label]) {
+    display: block;
+  }
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll
+    )
+    > table:not(.table-density--metrics)
+    > :is(tbody, tfoot)
+    > tr
+    > td:not([data-label])::before {
+    content: none;
+  }
+  .app-main
+    :is(
+      .document-history,
+      .wait-ticket-table-scroll,
+      .inbound-table-scroll,
+      .bag-opening-history__scroll
+    )
+    > table:not(.table-density--metrics)
+    > tfoot
+    > tr
+    > td:empty {
+    display: none;
+  }
+}
 .responsive-table {
   overflow-x: auto;
 }

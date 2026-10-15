@@ -435,24 +435,34 @@ export function ProductionTransfersPage({ role }: AppOutletContext) {
                         actionMutation.variables?.transfer.id === transfer.id;
                       return (
                         <tr key={transfer.id}>
-                          <td>
+                          <td data-label="Thời gian">
                             <time dateTime={transfer.createdAt}>
                               {formatDocumentTime(transfer.createdAt)}
                             </time>
                           </td>
-                          <td>{transfer.transferNumber}</td>
-                          <td>{storeLabel(allVisibleStores, transfer.sourceStoreId)}</td>
-                          <td>{storeLabel(allVisibleStores, transfer.destinationStoreId)}</td>
-                          <td>{productNames.get(transfer.productId) ?? transfer.productId}</td>
-                          <td>1</td>
-                          <td>
+                          <td data-label="Mã phiếu">{transfer.transferNumber}</td>
+                          <td data-label="Cửa hàng chuyển">
+                            {storeLabel(allVisibleStores, transfer.sourceStoreId)}
+                          </td>
+                          <td data-label="Cửa hàng nhận">
+                            {storeLabel(allVisibleStores, transfer.destinationStoreId)}
+                          </td>
+                          <td data-label="Mặt hàng">
+                            {productNames.get(transfer.productId) ?? transfer.productId}
+                          </td>
+                          <td data-label="Số lượng (bao)">1</td>
+                          <td data-label="Khối lượng (kg)">
                             {formatKgExact(transfer.weightKg)}
                             <p>Khối lượng điều chuyển từ bao nguồn</p>
                           </td>
-                          <td>1</td>
-                          <td>{formatKgExact(transfer.weightKg)}</td>
-                          <td>{transfer.createdByDisplayName ?? 'Chưa ghi nhận'}</td>
-                          <td>
+                          <td data-label="Tổng số lượng (bao)">1</td>
+                          <td data-label="Tổng khối lượng (kg)">
+                            {formatKgExact(transfer.weightKg)}
+                          </td>
+                          <td data-label="Người thực hiện">
+                            {transfer.createdByDisplayName ?? 'Chưa ghi nhận'}
+                          </td>
+                          <td data-label="Trạng thái / Thao tác">
                             <Badge tone={transferStatusCopy[transfer.status].tone}>
                               {transferStatusCopy[transfer.status].label}
                             </Badge>

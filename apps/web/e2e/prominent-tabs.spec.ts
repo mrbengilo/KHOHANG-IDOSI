@@ -1053,17 +1053,23 @@ test('Admin wait list has nine columns, server pages, cancellation history and U
     await expectDocumentContained(page);
     await page.evaluate(() => window.scrollTo(0, 0));
     await expect(table.locator('th').first()).toBeVisible();
-    expect(await table.evaluate((el) => getComputedStyle(el).display)).toBe('table');
-    const reachable = await table.evaluate((el) => {
+    // ≤1100px each ticket is a labelled card; wider it is a table. Never a sideways scroll.
+    expect(await table.evaluate((el) => getComputedStyle(el).display)).toBe(
+      width > 1100 ? 'table' : 'grid',
+    );
+    const fits = await table.evaluate((el) => {
       const region = el.parentElement!;
-      region.scrollLeft = region.scrollWidth;
-      const last = el.querySelector('th:last-child')!.getBoundingClientRect();
       const bounds = region.getBoundingClientRect();
-      const fits = last.right <= bounds.right + 1 && last.left >= bounds.left - 1;
-      region.scrollLeft = 0;
-      return fits;
+      const cells = [...el.querySelectorAll('tbody td')].map((cell) =>
+        cell.getBoundingClientRect(),
+      );
+      return {
+        scrolls: region.scrollWidth > region.clientWidth + 1,
+        escaped: cells.filter((r) => r.left < bounds.left - 1 || r.right > bounds.right + 1).length,
+        unlabelled: [...el.querySelectorAll('tbody td:not([data-label])')].length,
+      };
     });
-    expect(reachable).toBe(true);
+    expect(fits).toEqual({ scrolls: false, escaped: 0, unlabelled: 0 });
     await page.screenshot({
       path: testInfo.outputPath(`wait-list-${width}.png`),
       fullPage: true,

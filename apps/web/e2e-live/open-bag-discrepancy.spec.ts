@@ -237,30 +237,23 @@ test('production opening locks a stale discrepancy form and retains opening hist
       expect(await tab.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
         true,
       );
-      await expect(table.locator('thead')).toBeVisible();
+      // From 1101px a table row; ≤1100px a labelled card. Never a sideways scroll.
+      const tabular = width > 1100;
       expect(
         await table
           .locator('tbody tr')
           .first()
           .evaluate((el) => getComputedStyle(el).display),
-      ).toBe('table-row');
+      ).toBe(tabular ? 'table-row' : 'grid');
       const cells = await table
         .locator('tbody tr')
         .first()
         .locator('td')
         .evaluateAll((els) => els.map((el) => el.getBoundingClientRect().y));
-      expect(new Set(cells).size).toBe(1);
+      if (tabular) expect(new Set(cells).size).toBe(1);
+      else expect(new Set(cells).size).toBe(cells.length);
       const scroll = tab.locator('.bag-opening-history__scroll');
-      if (width <= 768) {
-        expect(await scroll.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
-        await scroll.evaluate((el) => {
-          el.scrollLeft = el.scrollWidth;
-        });
-        expect(await scroll.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
-        await scroll.evaluate((el) => {
-          el.scrollLeft = 0;
-        });
-      }
+      expect(await scroll.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
       await tab.screenshot({
         path: testInfo.outputPath('history-' + width + '.png'),
         fullPage: true,

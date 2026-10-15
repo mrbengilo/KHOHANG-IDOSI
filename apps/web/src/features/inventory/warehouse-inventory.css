@@ -41,6 +41,24 @@
     white-space: nowrap;
   }
 }
+/*
+ * Desktop hẹp (821–1365px): không cuộn ngang. Số vẫn không bị ngắt; chỉ xuống dòng giữa số và
+ * đơn vị ("1.234.567" / "bao"), giữa các từ của tiêu đề và nhãn nút; cột tên tối thiểu 8rem.
+ */
+@media (min-width: 821px) and (max-width: 1365px) {
+  .warehouse-stock-table th:first-child,
+  .warehouse-stock-table td:first-child {
+    min-width: 8rem;
+  }
+  .warehouse-stock-table th:not(:first-child),
+  .warehouse-stock-table td:not(:first-child) {
+    white-space: normal;
+    overflow-wrap: normal;
+  }
+  .warehouse-stock-table .warehouse-adjust-button {
+    white-space: normal;
+  }
+}
 .shortage-check-actions {
   display: flex;
   flex-wrap: wrap;
