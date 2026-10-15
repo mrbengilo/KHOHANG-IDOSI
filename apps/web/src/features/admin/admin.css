@@ -622,7 +622,7 @@
 
 .admin-audit-meta dt {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
