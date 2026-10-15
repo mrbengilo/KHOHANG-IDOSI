@@ -2,7 +2,31 @@
 
 ## Lọc & xử lý
 
-Khi lưu khối lượng đã lọc vào **Sale** hoặc **Từ thiện**, cửa hàng chỉ nhập tổng kg. Không nhập số bao ở bước này. Bán theo ký/cái tiếp tục được đối soát từ IDOSI theo kg.
+Sau khi lọc, mỗi Mã bao chia ra 3 loại: **Sale**, **Từ thiện**, **Hủy**. Cửa hàng chỉ nhập tổng kg, không nhập số bao ở bước này. Cả 3 loại đều là tồn có theo dõi trên `store_sorted_stocks` (`sale_weight_kg`, `charity_weight_kg`, `cancel_weight_kg`) và xử lý tiếp được:
+
+| Loại     | Xử lý tiếp                                                                                                                   | Kết thúc                                   |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| Sale     | Xuất bán theo cái / theo kg (tự trừ theo IDOSI, chỉ hiển thị phân loại); Từ thiện; Xử lý hủy; Điều chuyển sang cửa hàng khác | Bán (IDOSI), điều chuyển                   |
+| Từ thiện | Chuyển vào lại mục Sale; Xuất từ thiện → chọn _Chuyển sang Sale (xuất bán theo kg)_ hoặc _Hủy luôn_                          | Hủy luôn (phiếu `PTT-…`, kg từng bao)      |
+| Hủy      | Chuyển sang Sale (xuất bán theo kg)                                                                                          | Hủy luôn (xác nhận toàn bộ kg Hủy còn lại) |
+
+Mọi lệnh chuyển lấy kg từ các Mã bao lọc sớm nhất trước, có idempotency key, khóa theo cửa hàng, ghi `store_sorting_events` và audit trong cùng transaction:
+
+| API                                | Sự kiện           | Audit                         |
+| ---------------------------------- | ----------------- | ----------------------------- |
+| `POST /store-sale/move-to-charity` | `sale_to_charity` | `STORE_SALE_MOVED_TO_CHARITY` |
+| `POST /store-sale/move-to-cancel`  | `sale_to_cancel`  | `STORE_SALE_MOVED_TO_CANCEL`  |
+| `POST /store-cancel/move-to-sale`  | `cancel_to_sale`  | `STORE_CANCEL_MOVED_TO_SALE`  |
+| `POST /store-cancel/finalize`      | `cancel_finalize` | `STORE_CANCEL_FINALIZED`      |
+
+`GET /store-sale-breakdown` trả cho mỗi cửa hàng × mặt hàng: tổng kg đã vào Sale = còn lại + bán theo cái + bán theo kg + chuyển Từ thiện + chuyển Hủy + điều chuyển. "Bán theo cái" cộng từ sự kiện `idosi_sale_piece`; "bán theo kg" là phần còn lại để tổng luôn khớp (hấp thụ điều chỉnh IDOSI).
+
+### Thay đổi invariant (migration `0046_store_sorted_cancel_bucket.sql`)
+
+- **Cũ:** lọc vào Hủy là điểm kết ngay — trừ bao, ghi sổ `consume`, không có dòng tồn, không xử lý tiếp được. "Xuất từ thiện" luôn là cho tặng.
+- **Mới:** lọc vào Hủy cộng `cancel_weight_kg` (sổ bao ghi `adjust` như Sale/Từ thiện); chỉ **Hủy luôn** mới kết thúc. "Xuất từ thiện" buộc chọn chuyển về Sale theo kg hoặc Hủy luôn; phiếu `PTT-…` giờ là chứng từ Hủy luôn hàng Từ thiện.
+- **Dữ liệu cũ:** sự kiện `sort_cancel` và sổ `consume` trước migration giữ nguyên, không backfill (số kg đó đã kết thúc, không có tồn để phục hồi). Phiếu `PTT-…` cũ vẫn đọc được, nhãn lịch sử là "Xuất Từ thiện · kết thúc".
+- Migration chỉ mở rộng: thêm cột mặc định `0.000` + check không âm, mở rộng danh sách `store_sorting_events.action`. Image cũ vẫn chạy được; rollback ứng dụng giữ cột mới. Nếu đã có kg trong `cancel_weight_kg` khi rollback, phải đối soát thủ công vì bản cũ không hiển thị/xử lý cột này.
 
 ## Điều chuyển Sale
 
