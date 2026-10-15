@@ -188,9 +188,20 @@ test('an old API response or rollback fails clearly without substituting zero or
   page,
 }) => {
   await mock(page);
-  let requests = 0;
+  await page.clock.install();
+  let completedResponses = 0;
+  let documentNavigations = 0;
+  // CI's NODE_ENV=test enables Strict Mode: its first mount can abort a request before
+  // the remount succeeds. That cancellation is not a retry/reload caused by this error.
+  page.on('response', (response) => {
+    if (new URL(response.url()).pathname === '/api/v1/warehouse-inventory' && response.ok())
+      completedResponses++;
+  });
+  page.on('request', (request) => {
+    if (request.isNavigationRequest() && request.frame() === page.mainFrame())
+      documentNavigations++;
+  });
   await page.route('**/api/v1/warehouse-inventory?*', (route) => {
-    requests++;
     return route.fulfill({
       json: {
         data: [
@@ -218,5 +229,10 @@ test('an old API response or rollback fails clearly without substituting zero or
     'Phiên bản dữ liệu tồn kho không tương thích',
   );
   await expect(page.locator('.warehouse-stock-table')).toHaveCount(0);
-  expect(requests).toBe(1);
+  await page.clock.fastForward(60_000);
+  await expect(page.getByRole('alert')).toContainText(
+    'Phiên bản dữ liệu tồn kho không tương thích',
+  );
+  expect(completedResponses).toBe(1);
+  expect(documentNavigations).toBe(1);
 });
