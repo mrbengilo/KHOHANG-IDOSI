@@ -236,3 +236,71 @@ test('an old API response or rollback fails clearly without substituting zero or
   expect(completedResponses).toBe(1);
   expect(documentNavigations).toBe(1);
 });
+
+test('discrepancy filters and populated list stay inside the viewport across the sidebar breakpoint', async ({
+  page,
+}) => {
+  await mock(page);
+  await page.route('**/api/v1/receipt-adjustments?*', (route) =>
+    route.fulfill({
+      json: {
+        data: [
+          {
+            id: id(21),
+            code: 'PSL-000001',
+            receiptId: id(22),
+            receiptNumber: 'PNH-000001',
+            storeId: store.id,
+            storeCode: store.code,
+            storeName: store.name,
+            status: 'PENDING_HTKD',
+            version: 1,
+            reason: 'Khui bao thấy mặt hàng khác với phiếu nhận',
+            cause: 'SOURCE_MISCLASSIFICATION',
+            lineCount: 1,
+            shortageQuantity: 1,
+            goodsDeltaVnd: -200000,
+            reportedBy: {
+              accountId: id(23),
+              displayName: store.name,
+              username: 'store.table.test',
+            },
+            reportedAt: time,
+            verifiedBy: null,
+            verifiedAt: null,
+            decidedBy: null,
+            decidedAt: null,
+            decisionNote: null,
+            appliedAt: null,
+            updatedAt: time,
+          },
+        ],
+        pagination,
+      },
+    }),
+  );
+  await page.goto('/inventory?tab=adjustments');
+  await expect(page.locator('.adjustment-workspace__table tbody tr')).toHaveCount(1);
+  for (const width of [1440, 360, 819, 820, 821, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+      `viewport ${width}`,
+    ).toBeLessThanOrEqual(width + 1);
+    const scrollport = page.locator('.adjustment-workspace__table');
+    // Wide tables may scroll locally, but their last action must remain reachable.
+    await scrollport.evaluate((node) => {
+      node.scrollLeft = node.scrollWidth;
+    });
+    const actionBounds = await scrollport.evaluate((node) => {
+      const action = node.querySelector('button')!.getBoundingClientRect();
+      const box = node.getBoundingClientRect();
+      return { left: action.left - box.left, right: action.right - box.right };
+    });
+    expect(actionBounds.left).toBeGreaterThanOrEqual(-1);
+    expect(actionBounds.right).toBeLessThanOrEqual(1);
+    await scrollport.evaluate((node) => {
+      node.scrollLeft = 0;
+    });
+  }
+});

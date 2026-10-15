@@ -35,6 +35,8 @@
   table-layout: auto;
 }
 .app-main .data-table thead th {
+  /* Anchor screen-reader labels inside the scrollport, including off-screen columns. */
+  position: relative;
   width: auto;
   max-width: none;
   white-space: normal;
