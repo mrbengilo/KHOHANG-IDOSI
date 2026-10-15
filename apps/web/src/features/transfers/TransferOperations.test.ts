@@ -40,6 +40,7 @@ describe('transfer UI guards', () => {
       bagCode: 'B-1',
       bagQuantity: 0,
       charityWeightKg: '0.000',
+      cancelWeightKg: '0.000',
       version: 0,
       updatedAt: '2026-09-17T02:00:00.000Z',
     };

@@ -25,6 +25,8 @@ export const StoreSortedStockSchema = z
     saleWeightKg: KilogramsDecimalSchema,
     bagQuantity: z.number().int().nonnegative().safe(),
     charityWeightKg: KilogramsDecimalSchema,
+    /** Defaults for responses from servers that predate the Cancel holding bucket. */
+    cancelWeightKg: KilogramsDecimalSchema.default('0.000'),
     version: z.number().int().nonnegative(),
     updatedAt: IsoDateTimeSchema,
   })
@@ -103,6 +105,67 @@ export const ProductCharityBalanceResponseSchema = z
   .object({ data: ProductCharityBalanceSchema })
   .strict();
 
+/** Product-level cancel actions take weight from the oldest sorted lots first. */
+export const MoveProductCancelToSaleRequestSchema = z
+  .object({
+    storeId: EntityIdSchema,
+    productId: EntityIdSchema,
+    weightKg: PositiveKilogramsDecimalSchema,
+  })
+  .strict();
+export type MoveProductCancelToSaleRequest = z.infer<typeof MoveProductCancelToSaleRequestSchema>;
+
+/** "Hủy luôn": must confirm the entire remaining cancel balance of the product at once. */
+export const FinalizeProductCancelRequestSchema = MoveProductCancelToSaleRequestSchema;
+export type FinalizeProductCancelRequest = z.infer<typeof FinalizeProductCancelRequestSchema>;
+
+export const MoveProductSaleToCharityRequestSchema = MoveProductCancelToSaleRequestSchema;
+export type MoveProductSaleToCharityRequest = z.infer<typeof MoveProductSaleToCharityRequestSchema>;
+
+export const MoveProductSaleToCancelRequestSchema = MoveProductCancelToSaleRequestSchema;
+export type MoveProductSaleToCancelRequest = z.infer<typeof MoveProductSaleToCancelRequestSchema>;
+
+export const ProductCancelBalanceSchema = z
+  .object({
+    storeId: EntityIdSchema,
+    productId: EntityIdSchema,
+    cancelWeightKg: KilogramsDecimalSchema,
+    saleWeightKg: KilogramsDecimalSchema,
+  })
+  .strict();
+export type ProductCancelBalance = z.infer<typeof ProductCancelBalanceSchema>;
+export const ProductCancelBalanceResponseSchema = z
+  .object({ data: ProductCancelBalanceSchema })
+  .strict();
+
+/**
+ * How one store/product's Sale pool was used so far, for display only. The identity
+ * creditedWeightKg = remainingWeightKg + soldByPieceWeightKg + soldByWeightWeightKg +
+ * movedToCharityWeightKg + movedToCancelWeightKg + transferredOutWeightKg always holds.
+ */
+export const SaleBreakdownSchema = z
+  .object({
+    storeId: EntityIdSchema,
+    productId: EntityIdSchema,
+    creditedWeightKg: KilogramsDecimalSchema,
+    remainingWeightKg: KilogramsDecimalSchema,
+    soldByPieceWeightKg: KilogramsDecimalSchema,
+    soldByWeightWeightKg: KilogramsDecimalSchema,
+    movedToCharityWeightKg: KilogramsDecimalSchema,
+    movedToCancelWeightKg: KilogramsDecimalSchema,
+    transferredOutWeightKg: KilogramsDecimalSchema,
+  })
+  .strict();
+export type SaleBreakdown = z.infer<typeof SaleBreakdownSchema>;
+
+export const ListSaleBreakdownQuerySchema = z
+  .object({ storeId: EntityIdSchema.optional() })
+  .strict();
+export type ListSaleBreakdownQuery = z.infer<typeof ListSaleBreakdownQuerySchema>;
+export const ListSaleBreakdownResponseSchema = z
+  .object({ data: z.array(SaleBreakdownSchema) })
+  .strict();
+
 export const CreateCharityExportRequestSchema = z
   .object({
     storeId: EntityIdSchema,
@@ -144,6 +207,10 @@ export const StoreSortingHistoryActionSchema = z.enum([
   'SORT_CANCEL',
   'CHARITY_TO_SALE',
   'CHARITY_EXPORT',
+  'CANCEL_TO_SALE',
+  'CANCEL_FINALIZE',
+  'SALE_TO_CHARITY',
+  'SALE_TO_CANCEL',
 ]);
 export type StoreSortingHistoryAction = z.infer<typeof StoreSortingHistoryActionSchema>;
 

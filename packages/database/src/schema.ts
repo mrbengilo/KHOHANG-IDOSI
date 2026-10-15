@@ -2718,6 +2718,9 @@ export const storeSortedStocks = pgTable(
     charityWeightKg: numeric('charity_weight_kg', { precision: 14, scale: 3 })
       .notNull()
       .default('0.000'),
+    cancelWeightKg: numeric('cancel_weight_kg', { precision: 14, scale: 3 })
+      .notNull()
+      .default('0.000'),
     version: integer('version').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -2751,6 +2754,7 @@ export const storeSortedStocks = pgTable(
       sql`${table.saleWeightKg} <= ${table.saleCreditedWeightKg}`,
     ),
     check('store_sorted_stocks_charity_nonnegative', sql`${table.charityWeightKg} >= 0`),
+    check('store_sorted_stocks_cancel_nonnegative', sql`${table.cancelWeightKg} >= 0`),
     check('store_sorted_stocks_version_nonnegative', sql`${table.version} >= 0`),
   ],
 );
@@ -2902,7 +2906,7 @@ export const storeSortingEvents = pgTable(
     check('store_sorting_events_weight_positive', sql`${table.weightKg} > 0`),
     check(
       'store_sorting_events_action',
-      sql`${table.action} IN ('sort_sale', 'sort_charity', 'sort_cancel', 'charity_to_sale', 'charity_export', 'idosi_sale_kg', 'idosi_sale_piece', 'idosi_sale_correction', 'sale_transfer_out', 'sale_transfer_in', 'sale_transfer_return')`,
+      sql`${table.action} IN ('sort_sale', 'sort_charity', 'sort_cancel', 'charity_to_sale', 'charity_export', 'cancel_to_sale', 'cancel_finalize', 'sale_to_charity', 'sale_to_cancel', 'idosi_sale_kg', 'idosi_sale_piece', 'idosi_sale_correction', 'sale_transfer_out', 'sale_transfer_in', 'sale_transfer_return')`,
     ),
     check(
       'store_sorting_events_piece_positive',

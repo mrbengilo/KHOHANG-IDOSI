@@ -1,0 +1,4 @@
+ALTER TABLE "store_sorting_events" DROP CONSTRAINT "store_sorting_events_action";--> statement-breakpoint
+ALTER TABLE "store_sorted_stocks" ADD COLUMN "cancel_weight_kg" numeric(14, 3) DEFAULT '0.000' NOT NULL;--> statement-breakpoint
+ALTER TABLE "store_sorted_stocks" ADD CONSTRAINT "store_sorted_stocks_cancel_nonnegative" CHECK ("store_sorted_stocks"."cancel_weight_kg" >= 0);--> statement-breakpoint
+ALTER TABLE "store_sorting_events" ADD CONSTRAINT "store_sorting_events_action" CHECK ("store_sorting_events"."action" IN ('sort_sale', 'sort_charity', 'sort_cancel', 'charity_to_sale', 'charity_export', 'cancel_to_sale', 'cancel_finalize', 'sale_to_charity', 'sale_to_cancel', 'idosi_sale_kg', 'idosi_sale_piece', 'idosi_sale_correction', 'sale_transfer_out', 'sale_transfer_in', 'sale_transfer_return'));

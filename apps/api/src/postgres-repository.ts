@@ -237,6 +237,12 @@ import type {
   ProductCharityBalance,
   CreateCharityExportRequest,
   CharityExport,
+  MoveProductCancelToSaleRequest,
+  FinalizeProductCancelRequest,
+  MoveProductSaleToCharityRequest,
+  MoveProductSaleToCancelRequest,
+  ProductCancelBalance,
+  SaleBreakdown,
   ListStoreTransfersQuery,
   CreateStoreTransferRequest,
   DispatchStoreTransferRequest,
@@ -277,6 +283,11 @@ import {
   listStoreSortingHistory as listDatabaseStoreSortingHistory,
   type StoreSortingHistoryRecord,
   moveCharityToSale as moveDatabaseCharityToSale,
+  moveProductCancelToSale as moveDatabaseProductCancelToSale,
+  finalizeProductCancel as finalizeDatabaseProductCancel,
+  moveProductSaleToCharity as moveDatabaseProductSaleToCharity,
+  moveProductSaleToCancel as moveDatabaseProductSaleToCancel,
+  listStoreSaleBreakdown as listDatabaseStoreSaleBreakdown,
   createStorePartnerInbound as createDatabaseStorePartnerInbound,
   type DatabaseUserRole,
   getStorePartnerInbound as getDatabaseStorePartnerInbound,
@@ -4102,6 +4113,111 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       if (!row) throw notFound('Không tìm thấy phiếu xuất từ thiện');
       return { data: charityExportDto(row), replayed: result.replayed };
     });
+  }
+
+  public async moveProductCancelToSale(
+    actor: AuthenticatedPrincipal,
+    input: MoveProductCancelToSaleRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ProductCancelBalance>> {
+    await this.authorizeRetailStoreOperation(actor);
+    if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
+    return withStoreInventoryErrors(async () => {
+      const result = await moveDatabaseProductCancelToSale(db, {
+        ...input,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      return {
+        data: (result.replayed ? result.responseBody : result.value) as ProductCancelBalance,
+        replayed: result.replayed,
+      };
+    });
+  }
+
+  public async finalizeProductCancel(
+    actor: AuthenticatedPrincipal,
+    input: FinalizeProductCancelRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ProductCancelBalance>> {
+    await this.authorizeRetailStoreOperation(actor);
+    if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
+    return withStoreInventoryErrors(async () => {
+      const result = await finalizeDatabaseProductCancel(db, {
+        ...input,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      return {
+        data: (result.replayed ? result.responseBody : result.value) as ProductCancelBalance,
+        replayed: result.replayed,
+      };
+    });
+  }
+
+  public async moveProductSaleToCharity(
+    actor: AuthenticatedPrincipal,
+    input: MoveProductSaleToCharityRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ProductCharityBalance>> {
+    await this.authorizeRetailStoreOperation(actor);
+    if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
+    return withStoreInventoryErrors(async () => {
+      const result = await moveDatabaseProductSaleToCharity(db, {
+        ...input,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      return {
+        data: (result.replayed ? result.responseBody : result.value) as ProductCharityBalance,
+        replayed: result.replayed,
+      };
+    });
+  }
+
+  public async moveProductSaleToCancel(
+    actor: AuthenticatedPrincipal,
+    input: MoveProductSaleToCancelRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ProductCancelBalance>> {
+    await this.authorizeRetailStoreOperation(actor);
+    if (actor.role !== 'STORE' || actor.storeId !== input.storeId) throw forbidden();
+    return withStoreInventoryErrors(async () => {
+      const result = await moveDatabaseProductSaleToCancel(db, {
+        ...input,
+        actorUserId: actor.accountId,
+        idempotencyKey: `${actor.accountId}:${idempotencyKey}`,
+        requestHash,
+        requestId: context.requestId,
+      });
+      return {
+        data: (result.replayed ? result.responseBody : result.value) as ProductCancelBalance,
+        replayed: result.replayed,
+      };
+    });
+  }
+
+  public async listSaleBreakdown(
+    actor: AuthenticatedPrincipal,
+    storeId: string | undefined,
+  ): Promise<readonly SaleBreakdown[]> {
+    if (storeId !== undefined && !canAccessStore(actor, storeId)) throw forbidden();
+    const ids = storeId === undefined ? await this.retailScopeStoreIds(actor) : [storeId];
+    return listDatabaseStoreSaleBreakdown(db, ids);
   }
 
   private async retailScopeStoreIds(actor: AuthenticatedPrincipal): Promise<string[]> {

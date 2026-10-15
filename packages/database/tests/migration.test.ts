@@ -244,6 +244,28 @@ describe('initial migration invariants', () => {
     ) as { id: string };
     expect(snapshot.prevId).toBe(previous.id);
   });
+  it('adds a defaulted Cancel bucket and new sorting actions without touching history', () => {
+    const migration = readFileSync(
+      new URL('../migrations/0046_store_sorted_cancel_bucket.sql', import.meta.url),
+      'utf8',
+    );
+    expect(migration).toContain(
+      'ADD COLUMN "cancel_weight_kg" numeric(14, 3) DEFAULT \'0.000\' NOT NULL',
+    );
+    expect(migration).toContain('"store_sorted_stocks_cancel_nonnegative"');
+    for (const action of ['cancel_to_sale', 'cancel_finalize', 'sale_to_charity', 'sale_to_cancel'])
+      expect(migration).toContain(`'${action}'`);
+    // Historical sort_cancel events and their consume ledger rows stay as written.
+    expect(migration).not.toMatch(/UPDATE |DELETE FROM|DROP TABLE|DROP COLUMN/i);
+    const snapshot = JSON.parse(
+      readFileSync(new URL('../migrations/meta/0046_snapshot.json', import.meta.url), 'utf8'),
+    ) as { prevId: string };
+    const previous = JSON.parse(
+      readFileSync(new URL('../migrations/meta/0045_snapshot.json', import.meta.url), 'utf8'),
+    ) as { id: string };
+    expect(snapshot.prevId).toBe(previous.id);
+  });
+
   it('adds an optional, unique IDOSI store code without touching existing stores', () => {
     const migration = readFileSync(
       new URL('../migrations/0029_store_idosi_code.sql', import.meta.url),
@@ -404,7 +426,11 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(46);
+    expect(journal.entries).toHaveLength(47);
+    expect(journal.entries[46]).toMatchObject({
+      tag: '0046_store_sorted_cancel_bucket',
+      breakpoints: true,
+    });
     expect(journal.entries[45]).toMatchObject({
       tag: '0045_store_wait_documents',
       breakpoints: true,

@@ -160,6 +160,12 @@ import type {
   ProductCharityBalance,
   CreateCharityExportRequest,
   CharityExport,
+  MoveProductCancelToSaleRequest,
+  FinalizeProductCancelRequest,
+  MoveProductSaleToCharityRequest,
+  MoveProductSaleToCancelRequest,
+  ProductCancelBalance,
+  SaleBreakdown,
   ReviewStoreOutboundRequest,
   StoreTransfer,
   SortedSaleTransfer,
@@ -970,6 +976,38 @@ export interface WarehouseRepository extends SupplierReconciliationRepository {
     requestHash: string,
     context: RequestContext,
   ): Promise<IdempotentResource<CharityExport>>;
+  moveProductCancelToSale(
+    actor: AuthenticatedPrincipal,
+    input: MoveProductCancelToSaleRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ProductCancelBalance>>;
+  finalizeProductCancel(
+    actor: AuthenticatedPrincipal,
+    input: FinalizeProductCancelRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ProductCancelBalance>>;
+  moveProductSaleToCharity(
+    actor: AuthenticatedPrincipal,
+    input: MoveProductSaleToCharityRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ProductCharityBalance>>;
+  moveProductSaleToCancel(
+    actor: AuthenticatedPrincipal,
+    input: MoveProductSaleToCancelRequest,
+    idempotencyKey: string,
+    requestHash: string,
+    context: RequestContext,
+  ): Promise<IdempotentResource<ProductCancelBalance>>;
+  listSaleBreakdown(
+    actor: AuthenticatedPrincipal,
+    storeId: string | undefined,
+  ): Promise<readonly SaleBreakdown[]>;
 
   listSortedSaleTransfers(
     actor: AuthenticatedPrincipal,
