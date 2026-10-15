@@ -64,7 +64,7 @@ test('Admin adjusts central stock with preview, conflict reload, safe retry and 
     await page.goto(`/inventory?kt.q=${encodeURIComponent(product!.sku)}`);
     const stock = page.getByRole('region', { name: 'Tồn kho tổng theo mặt hàng' });
     const row = stock.locator('tbody tr').filter({ hasText: name });
-    await expect(row).toContainText('10 bao');
+    await expect(row).toContainText('tồn thực 10');
     const open = () => row.getByRole('button', { name: `Điều chỉnh tồn ${name}` }).click();
     const dialog = page.getByRole('dialog', { name: 'Điều chỉnh tồn kho tổng' });
     const submitResponse = () =>
@@ -105,7 +105,7 @@ test('Admin adjusts central stock with preview, conflict reload, safe retry and 
     await expect(page.getByRole('status').filter({ hasText: 'Đã ghi phiếu DCK-' })).toContainText(
       '10 → 13 bao',
     );
-    await expect(row).toContainText('13 bao');
+    await expect(row).toContainText('tồn thực 13');
 
     // 2. A decrease may not reach into the 4 held bags.
     await open();
@@ -118,7 +118,7 @@ test('Admin adjusts central stock with preview, conflict reload, safe retry and 
     response = submitResponse();
     await dialog.getByRole('button', { name: 'Xác nhận giảm 2 bao' }).click();
     expect((await response).status()).toBe(201);
-    await expect(row).toContainText('11 bao');
+    await expect(row).toContainText('tồn thực 11');
 
     // 3. Someone else changes the balance meanwhile: refused, reloaded, then confirmed.
     await open();
@@ -150,7 +150,7 @@ test('Admin adjusts central stock with preview, conflict reload, safe retry and 
     response = submitResponse();
     await dialog.getByRole('button', { name: 'Xác nhận giảm 1 bao' }).click();
     expect((await response).status()).toBe(201);
-    await expect(row).toContainText('11 bao');
+    await expect(row).toContainText('tồn thực 11');
 
     // 4. The response is lost after the server committed: the retry replays the same key.
     await open();
@@ -171,7 +171,7 @@ test('Admin adjusts central stock with preview, conflict reload, safe retry and 
     const replay = await response;
     expect(replay.status()).toBe(201);
     expect(replay.headers()['idempotency-replayed']).toBe('true');
-    await expect(row).toContainText('16 bao');
+    await expect(row).toContainText('tồn thực 16');
     const documents = await db
       .select()
       .from(warehouseStockAdjustments)

@@ -19,6 +19,14 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+.warehouse-stock-available {
+  color: var(--success);
+  font-size: 15px;
+}
+.warehouse-stock-table td small {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
 .warehouse-stock-panel .inventory-actions {
   align-items: end;
   margin-block: 12px;
@@ -40,6 +48,11 @@
     text-align: left;
     white-space: nowrap;
   }
+  /* Long headers ("Đang giữ chờ giao chung") wrap so they never widen the numeric columns. */
+  .warehouse-stock-table th:not(:first-child) {
+    width: 7rem;
+    white-space: normal;
+  }
 }
 .shortage-check-actions {
   display: flex;
@@ -58,6 +71,7 @@
 .warehouse-adjust-button {
   min-height: 40px;
   white-space: nowrap;
+  text-decoration: none;
 }
 .warehouse-adjustment-dialog {
   width: min(100%, 600px);

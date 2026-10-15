@@ -15,6 +15,7 @@ import {
   getStoreWaitDocument,
   htkdAssignments,
   inventorySnapshots,
+  listSessionDocuments,
   listStoreWaitDocuments,
   mergedOrderItems,
   mergedOrders,
@@ -246,6 +247,78 @@ describePostgres('store wait documents (phiếu chờ tổng)', () => {
     expect(closedC.lines.find((line) => line.productId === fx.nam)?.confirmedQuantity).toBe(1);
     // The answer was recorded once: replaying the command changes nothing more.
     expect(await documentCount(store.id)).toBe(3);
+  });
+
+  it('session documents show the wait document before and after each run', async () => {
+    const store = await createStore();
+    await createTicket(store.id, fx.nu, 3);
+    await reconcile(store.id, 'allocation_run', `run:${randomUUID()}`);
+    const old = await currentDocument(store.id);
+
+    // The run grants 2 nam of a 6-bag order and queues the other 4 on a new ticket.
+    const run = await publishOrderResult(store.id, fx.nam, 2);
+    await createTicket(store.id, fx.nam, 4);
+    await withSerializableTransaction(db, (tx) =>
+      reconcileStoreWaitDocumentsInTransaction(tx, [
+        {
+          storeId: store.id,
+          event: {
+            kind: 'allocation_run',
+            sourceKey: `allocation-run:${run.runId}`,
+            actorUserId: null,
+            occurredAt: new Date(),
+            orderSessionId: run.sessionId,
+            allocationRunId: run.runId,
+          },
+        },
+      ]),
+    );
+    const next = await currentDocument(store.id);
+    expect(next.id).not.toBe(old.id);
+
+    // A later run that leaves the open demand unchanged writes no event.
+    const quiet = await publishOrderResult(store.id, fx.tre, 1);
+    await db
+      .update(allocationRuns)
+      .set({ finishedAt: new Date() })
+      .where(eq(allocationRuns.id, quiet.runId));
+
+    const read = async (includeWaitDocuments: boolean) =>
+      (
+        await listSessionDocuments(db, {
+          page: 1,
+          pageSize: 20,
+          storeIds: [store.id],
+          includeWaitDocuments,
+        })
+      ).data;
+    const documents = await read(true);
+    const byRun = new Map(documents.map((document) => [document.allocationRunId, document]));
+    const changed = byRun.get(run.runId)!;
+    expect('waitDocuments' in changed && changed.waitDocuments).toEqual({
+      before: {
+        id: old.id,
+        code: old.code,
+        lines: [{ productId: fx.nu, quantity: 3, remainingQuantity: 3, pendingQuantity: 0 }],
+      },
+      after: {
+        id: next.id,
+        code: next.code,
+        lines: expect.arrayContaining([
+          { productId: fx.nu, quantity: 3, remainingQuantity: 3, pendingQuantity: 0 },
+          { productId: fx.nam, quantity: 4, remainingQuantity: 4, pendingQuantity: 0 },
+        ]),
+      },
+      changed: true,
+    });
+    const unchanged = byRun.get(quiet.runId)!;
+    expect('waitDocuments' in unchanged && unchanged.waitDocuments).toMatchObject({
+      before: { id: next.id },
+      after: { id: next.id },
+      changed: false,
+    });
+    // Without the opt-in the document keeps its previous shape.
+    expect((await read(false)).every((document) => !('waitDocuments' in document))).toBe(true);
   });
 
   it('a document whose open demand only awaits an answer stays open; no empty successor', async () => {

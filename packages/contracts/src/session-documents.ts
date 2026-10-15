@@ -23,6 +23,39 @@ export const SessionDocumentSourceSchema = z
     priorityOfferId: EntityIdSchema.nullable(),
   })
   .strict();
+const SessionWaitDocumentSnapshotSchema = z
+  .object({
+    id: EntityIdSchema,
+    code: z.string(),
+    /** Opening snapshot per product: open bags, split waiting / granted awaiting the answer. */
+    lines: z.array(
+      z
+        .object({
+          productId: EntityIdSchema,
+          quantity: z.number().int().positive().safe(),
+          remainingQuantity: z.number().int().nonnegative().safe(),
+          pendingQuantity: z.number().int().nonnegative().safe(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+export type SessionWaitDocumentSnapshot = z.infer<typeof SessionWaitDocumentSnapshotSchema>;
+
+/**
+ * The store's wait document (PCT) just before and right after the document's allocation run.
+ * `changed` is false when the run left the store's open demand unchanged (both are the same
+ * document). Both are null when the store had no open demand, or for runs older than 0045.
+ */
+export const SessionWaitDocumentsSchema = z
+  .object({
+    before: SessionWaitDocumentSnapshotSchema.nullable(),
+    after: SessionWaitDocumentSnapshotSchema.nullable(),
+    changed: z.boolean(),
+  })
+  .strict();
+export type SessionWaitDocuments = z.infer<typeof SessionWaitDocumentsSchema>;
+
 export const SessionDocumentSchema = z
   .object({
     id: z.string().min(1),
@@ -51,6 +84,8 @@ export const SessionDocumentSchema = z
      * asked for it (includeDecision=true), so bundles that validate the older shape keep working.
      */
     decision: AllocationDecisionSchema.nullable().optional(),
+    /** Present only with includeWaitDocuments=true, so older bundles keep their shape. */
+    waitDocuments: SessionWaitDocumentsSchema.nullable().optional(),
     lines: z.array(
       z
         .object({
@@ -73,6 +108,11 @@ export const ListSessionDocumentsQuerySchema = PaginationQuerySchema.extend({
   priority: AllocationPrioritySchema.optional(),
   decisionStatus: AllocationDecisionStatusSchema.optional(),
   includeDecision: z
+    .enum(['true', 'false'])
+    .transform((value) => value === 'true')
+    .optional(),
+  /** Opt-in: attach the store wait documents before and after each document's run. */
+  includeWaitDocuments: z
     .enum(['true', 'false'])
     .transform((value) => value === 'true')
     .optional(),

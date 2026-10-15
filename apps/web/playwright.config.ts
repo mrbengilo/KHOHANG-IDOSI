@@ -15,6 +15,7 @@ export default defineConfig({
     '**/prominent-tabs.spec.ts',
     '**/supplier-reconciliation.spec.ts',
     '**/content-navigation.spec.ts',
+    '**/allocation-summary-card.spec.ts',
   ],
   fullyParallel: false,
   retries: process.env.CI ? 2 : 0,

@@ -9,6 +9,7 @@ import {
 } from '@idosi/contracts';
 import {
   applyWarehouseMovement,
+  dailyPriorityOffers,
   db,
   htkdAssignments,
   orderRequestItems,
@@ -18,7 +19,10 @@ import {
   sessions,
   storeGroups,
   stores,
+  supplierSources,
+  supplierSourceProducts,
   users,
+  waitTickets,
   warehouseStockAdjustments,
 } from '@idosi/database';
 import { createApi } from '../dist/app.js';
@@ -210,6 +214,115 @@ test('order history is ADMIN-wide, HTKD-scoped and store-own only', { skip }, as
     assert.ok(['SESSION_REVOKED', 'ACCOUNT_INACTIVE'].includes(locked.json().error.code));
   }
 });
+
+test(
+  'warehouse inventory splits held stock and counts ledger outbound as dispatched',
+  { skip },
+  async () => {
+    const f = await fixture();
+    const [item] = await db
+      .select({ id: orderRequestItems.id })
+      .from(orderRequestItems)
+      .innerJoin(orderRequests, eq(orderRequests.id, orderRequestItems.orderRequestId))
+      .where(eq(orderRequests.storeId, f.storeRows[0].id));
+    await db.transaction(async (tx) => {
+      await applyWarehouseMovement(tx, {
+        productId: f.product.id,
+        eventType: 'opening_balance',
+        onHandDelta: 20,
+        reservedDelta: 0,
+        sourceType: 'api_inventory_split_test',
+        sourceId: randomUUID(),
+      });
+      // A granted allocation line still in the warehouse: held for shared delivery.
+      await applyWarehouseMovement(tx, {
+        productId: f.product.id,
+        eventType: 'reservation',
+        onHandDelta: 0,
+        reservedDelta: 5,
+        sourceType: 'api_inventory_split_test_hold',
+        sourceId: randomUUID(),
+      });
+      // A priority offer holding bags for a wait ticket.
+      const [ticket] = await tx
+        .insert(waitTickets)
+        .values({
+          storeId: f.storeRows[0].id,
+          productId: f.product.id,
+          sourceOrderRequestItemId: item.id,
+          originalQuantity: 3,
+          remainingQuantity: 3,
+          fulfilledQuantity: 0,
+          status: 'active',
+        })
+        .returning();
+      await tx.insert(dailyPriorityOffers).values({
+        businessDate: '2041-03-04',
+        storeId: f.storeRows[0].id,
+        productId: f.product.id,
+        waitTicketId: ticket.id,
+        priorityLevel: 'P0A',
+        offeredQuantity: 3,
+        stockHeldQuantity: 3,
+        roundNumber: 1,
+        status: 'offered',
+        responseDeadlineAt: new Date('2041-03-04T09:00:00+07:00'),
+      });
+      await applyWarehouseMovement(tx, {
+        productId: f.product.id,
+        eventType: 'reservation',
+        onHandDelta: 0,
+        reservedDelta: 3,
+        sourceType: 'api_inventory_split_test_offer',
+        sourceId: randomUUID(),
+      });
+      // Two bags issued out of on-hand (as an RE order does): counted once as dispatched.
+      await applyWarehouseMovement(tx, {
+        productId: f.product.id,
+        eventType: 'outbound',
+        onHandDelta: -2,
+        reservedDelta: -2,
+        sourceType: 'api_inventory_split_test_issue',
+        sourceId: randomUUID(),
+      });
+    });
+    const read = async () =>
+      WarehouseInventoryResponseSchema.parse(
+        (
+          await app.inject({
+            method: 'GET',
+            url: `/api/v1/warehouse-inventory?search=${encodeURIComponent(f.product.sku)}`,
+            headers: await login(f.admin),
+          })
+        ).json(),
+      ).data[0];
+    const row = await read();
+    assert.equal(row.onHandBags, 18);
+    assert.equal(row.reservedBags, 6);
+    assert.equal(row.waitTicketHoldBags, 3);
+    assert.equal(row.sharedDeliveryHoldBags, 3);
+    assert.equal(row.availableBags, 12);
+    assert.equal(
+      row.onHandBags,
+      row.availableBags + row.waitTicketHoldBags + row.sharedDeliveryHoldBags,
+    );
+    assert.equal(row.dispatchedBags, 2);
+    assert.equal(row.reshareReconciled, false);
+    // A Reshare-reconciled product is flagged so the screen offers the Reshare update instead.
+    const [source] = await db
+      .insert(supplierSources)
+      .values({
+        code: `OHS-${randomUUID().slice(0, 8).toUpperCase()}`,
+        name: 'Order history Reshare',
+        createdByUserId: f.admin.id,
+      })
+      .returning();
+    await db
+      .insert(supplierSourceProducts)
+      .values({ sourceId: source.id, productId: f.product.id, createdByUserId: f.admin.id });
+    assert.equal((await read()).reshareReconciled, true);
+  },
+);
 
 test(
   'warehouse adjustments: admin-only writes, replay by key, stale and reserved-stock conflicts',

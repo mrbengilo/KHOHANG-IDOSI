@@ -27,6 +27,8 @@ export default defineConfig({
     // Reshare reconciliation: Admin/HTKD/store flows, idempotent retry and responsive widths.
     '**/supplier-reconciliation.spec.ts',
     '**/content-navigation.spec.ts',
+    // Allocation result card and warehouse stock columns at 360–1440 px.
+    '**/allocation-summary-card.spec.ts',
   ],
   use: { ...smokeConfig.use, baseURL: webOrigin },
   webServer: {

@@ -33,6 +33,7 @@ test('admin warehouse inventory reconciles with PostgreSQL balances and remains 
     expect(row.availableBags).toBe(balance.available.quantity);
     expect(row.reservedBags).toBe(balance.reserved.quantity);
     expect(row.onHandBags).toBe(row.availableBags + row.reservedBags);
+    expect(row.reservedBags).toBe(row.waitTicketHoldBags + row.sharedDeliveryHoldBags);
     expect(row.dispatchedBags).toBeGreaterThanOrEqual(0);
   }
   await expect(page.getByRole('heading', { name: 'Tồn kho & lịch sử', level: 1 })).toBeVisible();

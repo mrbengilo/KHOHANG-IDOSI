@@ -57,6 +57,23 @@ hồi do hủy phiếu chờ”). They are only returned with `includeWaitlist=t
 Historical `REJECTED` rows stay as they are. See
 [allocation waitlist workflow](allocation-waitlist-workflow.md).
 
+## Wait documents around each result
+
+`GET /api/v1/session-documents?includeWaitDocuments=true` (opt-in, older bundles keep their shape)
+attaches `waitDocuments: { before, after, changed }` to every document: the store's wait document
+(`PCT`, see [store active wait document](store-active-wait-document.md)) just before the run and
+right after it, each as its immutable opening snapshot per product (`quantity`, split into
+`remainingQuantity` / `pendingQuantity`). A run that changed the store's open demand wrote one
+`allocation_run` event: the document it closed is `before`, the one it opened is `after`
+(`changed: true`; `after` is null when nothing stays open). A run that left the demand unchanged
+wrote no event: the document current when the run finished is both (`changed: false`). Runs older
+than 0045 find no document; the card then says the session predates wait documents instead of
+showing an empty one. Read-only, same snapshot and scope as the documents.
+
+The allocation page card reads top to bottom: session, store, “[cửa hàng] đặt” (ordinary orders),
+“Kết quả” (all grants, with the part granted to old wait tickets noted), “Chờ ưu tiên” (this
+session's ordinary remainder), “Phiếu chờ cũ” and “⇒ Phiếu chờ mới”.
+
 ## Receipt navigation
 
 `GET /api/v1/store-receipt-summaries` accepts existing receipt filters and pagination

@@ -27,7 +27,11 @@ import {
   reservations,
   outboundRequestLines,
   outboundRequests,
+  storeWaitDocumentEvents,
+  storeWaitDocumentLines,
+  storeWaitDocuments,
 } from './schema.js';
+import type { Transaction } from './transaction.js';
 import { withTransaction } from './transaction.js';
 import {
   allocationRoundsFromMetadata,
@@ -40,6 +44,176 @@ export interface ListSessionDocumentsInput extends ListAllocationResultsInput {
   readonly includeDecision?: boolean;
   readonly decisionStatus?:
     AllocationDecisionDatabaseStatus | readonly AllocationDecisionDatabaseStatus[];
+  /** Attach the store wait documents (PCT) before and after every document's run. */
+  readonly includeWaitDocuments?: boolean;
+}
+
+export interface SessionWaitDocumentSnapshot {
+  readonly id: string;
+  readonly code: string;
+  /** Opening snapshot of each product: total open bags, split waiting / granted awaiting answer. */
+  readonly lines: readonly {
+    readonly productId: string;
+    readonly quantity: number;
+    readonly remainingQuantity: number;
+    readonly pendingQuantity: number;
+  }[];
+}
+
+export interface SessionWaitDocuments {
+  /** The store's wait document just before the run ("phiếu chờ cũ"). */
+  readonly before: SessionWaitDocumentSnapshot | null;
+  /** The store's wait document right after the run ("phiếu chờ mới"). */
+  readonly after: SessionWaitDocumentSnapshot | null;
+  /** The run closed/opened the store's document; false when it left the open demand unchanged. */
+  readonly changed: boolean;
+}
+
+/**
+ * The store wait documents around each (run, store) document. A run that changed a store's open
+ * demand wrote one immutable `allocation_run` event: the document it closed is the old one and the
+ * document it opened is the new one. A run that left the open demand unchanged wrote nothing, so
+ * the document current when the run finished is both. Documents are immutable snapshots, so the
+ * answer never drifts with later events. Runs older than 0045 find no document at all.
+ */
+async function loadRunWaitDocuments(
+  tx: Transaction,
+  headers: readonly { readonly allocationRunId: string; readonly storeId: string }[],
+): Promise<Map<string, SessionWaitDocuments>> {
+  const key = (runId: string, storeId: string) => `${runId}:${storeId}`;
+  const result = new Map<string, SessionWaitDocuments>();
+  if (headers.length === 0) return result;
+  const events = await tx
+    .select({
+      id: storeWaitDocumentEvents.id,
+      allocationRunId: storeWaitDocumentEvents.allocationRunId,
+      storeId: storeWaitDocumentEvents.storeId,
+    })
+    .from(storeWaitDocumentEvents)
+    .where(
+      and(
+        eq(storeWaitDocumentEvents.kind, 'allocation_run'),
+        or(
+          ...headers.map((header) =>
+            and(
+              eq(storeWaitDocumentEvents.storeId, header.storeId),
+              eq(storeWaitDocumentEvents.allocationRunId, header.allocationRunId),
+            ),
+          ),
+        ),
+      ),
+    );
+  const eventByHeader = new Map(
+    events.map((event) => [key(event.allocationRunId ?? '', event.storeId), event.id]),
+  );
+  const unchanged = headers.filter(
+    (header) => !eventByHeader.has(key(header.allocationRunId, header.storeId)),
+  );
+  const runTimes = unchanged.length
+    ? await tx
+        .select({
+          id: allocationRuns.id,
+          at: sql<Date>`coalesce(${allocationRuns.finishedAt}, ${allocationRuns.createdAt})`.mapWith(
+            (value: string | Date) => new Date(value),
+          ),
+        })
+        .from(allocationRuns)
+        .where(inArray(allocationRuns.id, [...new Set(unchanged.map((h) => h.allocationRunId))]))
+    : [];
+  const runTime = new Map(runTimes.map((run) => [run.id, run.at]));
+  const eventIds = events.map((event) => event.id);
+  const documentPredicates: SQL[] = [];
+  if (eventIds.length) {
+    documentPredicates.push(inArray(storeWaitDocuments.closedEventId, eventIds));
+    documentPredicates.push(inArray(storeWaitDocuments.openedEventId, eventIds));
+  }
+  for (const header of unchanged) {
+    const at = runTime.get(header.allocationRunId);
+    if (!at) continue;
+    documentPredicates.push(
+      and(
+        eq(storeWaitDocuments.storeId, header.storeId),
+        sql`${storeWaitDocuments.openedAt} <= ${at}`,
+        sql`(${storeWaitDocuments.closedAt} is null or ${storeWaitDocuments.closedAt} > ${at})`,
+      )!,
+    );
+  }
+  const documents = documentPredicates.length
+    ? await tx
+        .select({
+          id: storeWaitDocuments.id,
+          code: storeWaitDocuments.code,
+          storeId: storeWaitDocuments.storeId,
+          openedEventId: storeWaitDocuments.openedEventId,
+          closedEventId: storeWaitDocuments.closedEventId,
+          openedAt: storeWaitDocuments.openedAt,
+          closedAt: storeWaitDocuments.closedAt,
+        })
+        .from(storeWaitDocuments)
+        .where(or(...documentPredicates))
+    : [];
+  const lines = documents.length
+    ? await tx
+        .select({
+          documentId: storeWaitDocumentLines.documentId,
+          productId: storeWaitDocumentLines.productId,
+          carriedIn: storeWaitDocumentLines.carriedInQuantity,
+          added: storeWaitDocumentLines.addedQuantity,
+          remaining: storeWaitDocumentLines.openingRemainingQuantity,
+          pending: storeWaitDocumentLines.openingPendingQuantity,
+        })
+        .from(storeWaitDocumentLines)
+        .where(
+          inArray(
+            storeWaitDocumentLines.documentId,
+            documents.map((document) => document.id),
+          ),
+        )
+        .orderBy(asc(storeWaitDocumentLines.productId))
+    : [];
+  const snapshot = (
+    document: (typeof documents)[number] | undefined,
+  ): SessionWaitDocumentSnapshot | null =>
+    document
+      ? {
+          id: document.id,
+          code: document.code,
+          lines: lines
+            .filter((line) => line.documentId === document.id)
+            .map((line) => ({
+              productId: line.productId,
+              quantity: line.carriedIn + line.added,
+              remainingQuantity: line.remaining,
+              pendingQuantity: line.pending,
+            })),
+        }
+      : null;
+  for (const header of headers) {
+    const eventId = eventByHeader.get(key(header.allocationRunId, header.storeId));
+    if (eventId) {
+      result.set(key(header.allocationRunId, header.storeId), {
+        before: snapshot(documents.find((document) => document.closedEventId === eventId)),
+        after: snapshot(documents.find((document) => document.openedEventId === eventId)),
+        changed: true,
+      });
+      continue;
+    }
+    const at = runTime.get(header.allocationRunId);
+    const current = at
+      ? documents.find(
+          (document) =>
+            document.storeId === header.storeId &&
+            document.openedAt <= at &&
+            (document.closedAt === null || document.closedAt > at),
+        )
+      : undefined;
+    result.set(key(header.allocationRunId, header.storeId), {
+      before: snapshot(current),
+      after: snapshot(current),
+      changed: false,
+    });
+  }
+  return result;
 }
 
 /** Header pagination followed by complete sources in the same MVCC snapshot. No writes. */
@@ -172,6 +346,9 @@ export async function listSessionDocuments(database: Database, input: ListSessio
       const decisions: readonly AllocationDecisionRecord[] = input.includeDecision
         ? await loadAllocationDecisionsForResults(tx, selected)
         : [];
+      const waitDocuments = input.includeWaitDocuments
+        ? await loadRunWaitDocuments(tx, selected)
+        : null;
       return {
         data: selected.map((header) => ({
           ...header,
@@ -183,6 +360,12 @@ export async function listSessionDocuments(database: Database, input: ListSessio
                       decision.allocationRunId === header.allocationRunId &&
                       decision.storeId === header.storeId,
                   ) ?? null,
+              }
+            : {}),
+          ...(waitDocuments
+            ? {
+                waitDocuments:
+                  waitDocuments.get(`${header.allocationRunId}:${header.storeId}`) ?? null,
               }
             : {}),
           carriedAllocations: carried

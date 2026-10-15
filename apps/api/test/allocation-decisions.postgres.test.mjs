@@ -332,6 +332,16 @@ describePostgres('allocation result decisions through the API on PostgreSQL', ()
         `/api/v1/session-documents?sessionId=${resultA.sessionId}`,
       );
       assert.equal('decision' in legacyShape.json().data[0], false);
+      assert.equal('waitDocuments' in legacyShape.json().data[0], false);
+      // Wait documents around the run are opt-in too, and pass the strict response schema.
+      const withWait = await get(
+        fx.tokens.storeA,
+        `/api/v1/session-documents?sessionId=${resultA.sessionId}&includeDecision=true&includeWaitDocuments=true`,
+      );
+      assert.equal(withWait.statusCode, 200, withWait.body);
+      const waitDocuments = withWait.json().data[0].waitDocuments;
+      assert.equal(typeof waitDocuments.changed, 'boolean');
+      assert.ok('before' in waitDocuments && 'after' in waitDocuments);
 
       // Locking the account takes effect at once, even for a retry of its own key.
       const keyB = randomUUID();

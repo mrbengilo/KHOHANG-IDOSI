@@ -247,10 +247,11 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   expect(allocationPayload.data.length).toBeGreaterThan(0);
   await expect(page.getByRole('heading', { name: 'Giám sát phân bổ hàng hóa' })).toBeVisible();
   const allocationResults = page.getByRole('region', { name: 'Kết quả phân bổ', exact: true });
-  // Each store's card leads with what it got and what still waits for priority.
+  // Each store's card reads: ordered, result, waiting for priority, old ⇒ new wait document.
   const firstResult = allocationResults.locator('.session-document').first();
-  await expect(firstResult).toContainText('Được phân bổ');
-  await expect(firstResult).toContainText('Đang chờ ưu tiên');
+  await expect(firstResult).toContainText('Kết quả');
+  await expect(firstResult).toContainText('Chờ ưu tiên');
+  await expect(firstResult).toContainText('Phiếu chờ mới');
   // Mã lý do mặc định của vòng chia ưu tiên bị ẩn vì trùng nghĩa với nhãn trạng thái.
   await expect(allocationResults.getByText('ALLOCATED_BY_PRIORITY_ROUND_ROBIN')).toHaveCount(0);
   // Codes, sources and rounds stay one click away for audit.
@@ -564,7 +565,7 @@ test('production allocation results remain usable at 390px', async ({ page }) =>
   const allocationResults = page.getByRole('region', { name: 'Kết quả phân bổ', exact: true });
   await expect(allocationResults).toBeVisible();
   const firstResult = allocationResults.locator('.session-document').first();
-  await expect(firstResult).toContainText('Được phân bổ');
+  await expect(firstResult).toContainText('Kết quả');
   await firstResult.locator('summary').first().click();
   await expect(firstResult.getByText('Phiếu nguồn và các vòng phân bổ')).toBeVisible();
   await expect(firstResult.locator('.allocation-summary-card__sources li').first()).toContainText(

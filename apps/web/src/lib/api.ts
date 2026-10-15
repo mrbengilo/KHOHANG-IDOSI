@@ -374,6 +374,8 @@ export interface AllocationResultFilters {
 export interface SessionDocumentFilters extends AllocationResultFilters {
   /** Ask for the store decision of every document (opt-in so older shapes stay valid). */
   readonly includeDecision?: boolean;
+  /** Ask for the store wait document before and after each document's run (opt-in). */
+  readonly includeWaitDocuments?: boolean;
   readonly decisionStatus?: AllocationDecisionStatus;
 }
 
@@ -389,6 +391,7 @@ export async function listSessionDocuments(filters: SessionDocumentFilters = {})
     query.set('includeDecision', 'true');
     query.set('includeWaitlist', 'true');
   }
+  if (filters.includeWaitDocuments) query.set('includeWaitDocuments', 'true');
   if (filters.decisionStatus) query.set('decisionStatus', filters.decisionStatus);
   return ListSessionDocumentsResponseSchema.parse(await request('/session-documents?' + query));
 }
