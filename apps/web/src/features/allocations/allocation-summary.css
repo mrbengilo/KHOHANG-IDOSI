@@ -45,6 +45,16 @@
   gap: 0.5rem 1rem;
 }
 
+.allocation-summary-card__title {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.allocation-summary-card__session {
+  overflow-wrap: anywhere;
+}
+
 .allocation-summary-card__header h3 {
   margin: 0;
   font-size: 1.05rem;
@@ -87,11 +97,59 @@
   background: var(--warning-soft);
 }
 
+.allocation-summary__row--ordered {
+  background: var(--surface);
+}
+
+.allocation-summary__row--next {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+
+/* "Chờ ưu tiên" and "Phiếu chờ cũ" add up to the new wait document below them. */
+.allocation-summary__group {
+  display: grid;
+  gap: 0.5rem;
+  padding-left: 0.75rem;
+  border-left: 3px solid var(--border);
+}
+
 .allocation-summary__row dt {
   display: flex;
   justify-content: space-between;
+  align-items: baseline;
   gap: 0.75rem;
   font-weight: 700;
+}
+
+.allocation-summary__label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.5rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.allocation-summary__row dt > span:last-child:not(.allocation-summary__label) {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.allocation-summary__code {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.allocation-summary__row--next dt {
+  color: var(--brand-dark);
+}
+
+.allocation-summary__note {
+  margin: 0.35rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
 }
 
 .allocation-summary__row--granted dt {

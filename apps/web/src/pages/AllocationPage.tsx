@@ -733,6 +733,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
         page: allocationPage,
         pageSize: allocationResultPageSize,
         includeDecision: true,
+        includeWaitDocuments: true,
         ...(allocationSessionId ? { sessionId: allocationSessionId } : {}),
         ...(allocationStoreId ? { storeId: allocationStoreId } : {}),
         ...(allocationDecisionStatus ? { decisionStatus: allocationDecisionStatus } : {}),
@@ -1364,6 +1365,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                             storeName={
                               storeNameById.get(document.storeId) ?? 'Chưa xác định cửa hàng'
                             }
+                            sessionText={session ? sessionLabel(session) : sessionId}
                             createdAtText={allocationTimestampFormatter.format(
                               new Date(document.createdAt),
                             )}

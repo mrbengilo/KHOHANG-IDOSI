@@ -86,7 +86,10 @@ import {
   recordPostgresSupplierOrder,
   recordPostgresSupplierSourceReturn,
 } from './postgres-supplier-reconciliation.js';
-import { listSessionDocuments as listDatabaseSessionDocuments } from '@idosi/database';
+import {
+  listSessionDocuments as listDatabaseSessionDocuments,
+  type SessionWaitDocumentSnapshot,
+} from '@idosi/database';
 import { listStoreBagOpenings } from '@idosi/database';
 import {
   createWarehouseStockAdjustment as createDatabaseWarehouseStockAdjustment,
@@ -482,6 +485,10 @@ import {
   conversionRetirementDate,
 } from './time.js';
 import { workerStatusDto } from './worker-status.js';
+
+function waitDocumentSnapshotDto(snapshot: SessionWaitDocumentSnapshot | null) {
+  return snapshot && { ...snapshot, lines: snapshot.lines.map((line) => ({ ...line })) };
+}
 
 /** lastSeenAt is refreshed at most this often per session. */
 const SESSION_LAST_SEEN_RESOLUTION_MS = 60_000;
@@ -1846,6 +1853,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       ...(query.productId === undefined ? {} : { productId: query.productId }),
       ...(query.priority === undefined ? {} : { priority: query.priority }),
       ...(query.includeDecision ? { includeDecision: true } : {}),
+      ...(query.includeWaitDocuments ? { includeWaitDocuments: true } : {}),
       ...(query.decisionStatus === undefined
         ? {}
         : {
@@ -1877,6 +1885,15 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
                       decision.allocationRunId === header.allocationRunId &&
                       decision.storeId === header.storeId,
                   ) ?? null,
+              }
+            : {}),
+          ...('waitDocuments' in header
+            ? {
+                waitDocuments: header.waitDocuments && {
+                  before: waitDocumentSnapshotDto(header.waitDocuments.before),
+                  after: waitDocumentSnapshotDto(header.waitDocuments.after),
+                  changed: header.waitDocuments.changed,
+                },
               }
             : {}),
           id: header.sessionId + ':' + header.storeId,
