@@ -1002,12 +1002,18 @@ for (const role of ['ADMIN', 'HTKD', 'STORE'] as const) {
     for (const width of [360, 390, 412, 683, 768, 1366, 1440, 1920, 2560]) {
       await page.setViewportSize({ width, height: 900 });
       await expectNoPageOverflow(page);
-      // The same table everywhere: narrow screens lay each order out as one card (lines inside,
-      // total once), wide ones as grouped rows.
+      // The same table everywhere: up to 1100px each order is one card (lines inside, total
+      // once), never a sideways scroll; wider screens show grouped rows.
       const table = page.locator('.reshare-history table');
       await expect(table).toBeVisible();
       const display = await table.evaluate((element) => getComputedStyle(element).display);
-      expect(display === 'table').toBe(width > 620);
+      expect(display === 'table').toBe(width > 1100);
+      expect(
+        await table.evaluate((element) => {
+          const port = element.parentElement!;
+          return port.scrollWidth <= port.clientWidth + 1;
+        }),
+      ).toBe(true);
       const group = table.locator('tbody').first();
       await expect(group).toContainText('RE-000001');
       await expect(group.locator('.reshare-history__total')).toHaveText('5');
