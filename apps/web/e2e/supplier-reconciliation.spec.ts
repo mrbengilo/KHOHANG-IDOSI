@@ -1404,12 +1404,16 @@ test('preview response respects focus moved to the list and invalid quantity poi
   await page.getByRole('button', { name: 'Xem trước', exact: true }).click();
   const search = page.getByLabel('Tìm mặt hàng', { exact: true });
   await search.fill('đang nhập');
-  // fill() scrolls the list control into view. Let that frame's native scroll anchoring
-  // finish before capturing the baseline for the separately gated network response.
+  // Capture the chosen control, not scrollY: the response inserts a taller form above it.
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-  const scroll = await page.evaluate(() => scrollY);
+  const top = await search.evaluate((element) => element.getBoundingClientRect().top);
+  await expect(search).toBeInViewport();
   release();
   await expect(page.getByRole('region', { name: 'Xem trước đối chiếu' })).toBeAttached();
   await expect(search).toBeFocused();
-  expect(await page.evaluate(() => scrollY)).toBeCloseTo(scroll, -1);
+  await expect(search).toBeInViewport();
+  expect(await search.evaluate((element) => element.getBoundingClientRect().top)).toBeCloseTo(
+    top,
+    0,
+  );
 });

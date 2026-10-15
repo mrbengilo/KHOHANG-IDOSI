@@ -104,6 +104,7 @@ export function ObservationForm({
   const request = useRef<AbortController | null>(null);
   const mounted = useRef(false);
   const feedbackOwner = useRef<Element | null>(null);
+  const feedbackAnchor = useRef<{ element: HTMLElement; top: number } | null>(null);
   const [feedback, setFeedback] = useState(0);
   useEffect(() => {
     mounted.current = true;
@@ -114,18 +115,51 @@ export function ObservationForm({
   }, []);
   useLayoutEffect(() => {
     if (!feedback) return;
+    const anchor = feedbackAnchor.current;
+    feedbackAnchor.current = null;
     // A late response must not pull someone away from another control they chose meanwhile.
     if (
       document.activeElement !== feedbackOwner.current &&
       document.activeElement !== document.body
-    )
+    ) {
+      // The preview is above the list. Keeping focus alone still pushes the chosen input
+      // out of view when the response inserts rows. Preserve its viewport position after
+      // the child tables finish their layout effects, without taking focus back.
+      if (anchor)
+        queueMicrotask(() => {
+          if (
+            !mounted.current ||
+            !anchor.element.isConnected ||
+            document.activeElement !== anchor.element
+          )
+            return;
+          window.scrollBy({
+            top: anchor.element.getBoundingClientRect().top - anchor.top,
+            behavior: 'instant',
+          });
+        });
       return;
+    }
     revealContent(
       error
         ? (formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]') ?? errorRef.current)
         : previewRef.current,
     );
   }, [feedback, error]);
+
+  const rememberFeedbackAnchor = () => {
+    const element = document.activeElement;
+    feedbackAnchor.current = null;
+    if (
+      !(element instanceof HTMLElement) ||
+      element === document.body ||
+      element === feedbackOwner.current
+    )
+      return;
+    const rect = element.getBoundingClientRect();
+    if (rect.top >= 0 && rect.bottom <= window.innerHeight)
+      feedbackAnchor.current = { element, top: rect.top };
+  };
 
   const changed = () => {
     setDirty(true);
@@ -186,11 +220,13 @@ export function ObservationForm({
     try {
       const result = await previewSupplierObservation(input, controller.signal);
       if (!mounted.current || controller.signal.aborted) return;
+      rememberFeedbackAnchor();
       setPreview(result);
       setPreviewStale(false);
       setFeedback((value) => value + 1);
     } catch (caught) {
       if (!mounted.current || controller.signal.aborted) return;
+      rememberFeedbackAnchor();
       setError(errorMessage(caught));
       setFeedback((value) => value + 1);
     } finally {
