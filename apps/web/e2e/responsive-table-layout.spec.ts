@@ -12,8 +12,7 @@ test.beforeEach(async ({ page }) => {
 
 /**
  * Synthetic primitive inside the real workspace: the shared wrapper class with a table whose
- * column count grows. Budgets were fixed before the fix: a short table equals its max-content
- * width (±1px) at every desktop width, and adding columns never shrinks the table.
+ * column count grows. Short tables fill the wrapper; adding columns never shrinks the table.
  */
 async function mountSyntheticTable(page: Page, columns: number, rows = 3) {
   await page.evaluate(
@@ -82,7 +81,9 @@ test('short tables fill their content box; wide tables remain locally scrollable
   for (let columns = 2; columns <= 40; columns += 2) {
     const probe = await mountSyntheticTable(page, columns);
     const layout = await measureTableLayout(page);
-    expect(tableLayoutViolations(layout), `${columns} columns`).toEqual([]);
+    expect(tableLayoutViolations(layout, { allowLocalScroll: true }), `${columns} columns`).toEqual(
+      [],
+    );
     growth.push({ columns, ...probe });
   }
   for (const [index, probe] of growth.entries())
@@ -136,34 +137,39 @@ for (const route of ['/inventory', '/warehouse-inbound']) {
   });
 }
 
-test('wide history scrolls inside its region by keyboard and keeps the page still', async ({
+test('wide history becomes labelled cards on narrow screens and never scrolls sideways', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile-390', 'needs a viewport narrower than the table');
   await page.goto('/warehouse-inbound');
   const region = page.getByRole('region', { name: 'Lịch sử nhập kho tổng' });
   await expect(region.locator('tbody tr')).toHaveCount(4);
-  const before = await region.evaluate((element) => ({
-    scrollLeft: element.scrollLeft,
-    overflowing: element.scrollWidth > element.clientWidth + 1,
-  }));
-  expect(before.overflowing).toBe(true);
-  await region.focus();
-  await page.keyboard.press('End');
-  for (let step = 0; step < 40; step += 1) await page.keyboard.press('ArrowRight');
-  // Chromium animates keyboard scrolling, so the last key press may still be settling.
-  await expect
-    .poll(() =>
-      region.evaluate((element) => element.scrollWidth - element.clientWidth - element.scrollLeft),
-    )
-    .toBeLessThanOrEqual(1);
-  expect(await region.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
-  const last = await region.locator('thead th').last().boundingBox();
-  const port = await region.boundingBox();
-  expect(last!.x + last!.width).toBeLessThanOrEqual(port!.x + port!.width + 1);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
-    await page.evaluate(() => document.documentElement.clientWidth),
-  );
+  for (const width of [360, 390, 412, 768, 820, 821, 1024, 1100]) {
+    await page.setViewportSize({ width, height: 900 });
+    const metrics = await region.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const cells = [...element.querySelectorAll('tbody td')];
+      return {
+        display: getComputedStyle(element.querySelector('table')!).display,
+        scrolls: element.scrollWidth > element.clientWidth + 1,
+        escaped: cells
+          .map((cell) => cell.getBoundingClientRect())
+          .filter((r) => r.left < bounds.left - 1 || r.right > bounds.right + 1).length,
+        labels: cells.map((cell) => getComputedStyle(cell, '::before').content),
+      };
+    });
+    expect(metrics.display, `${width}`).toBe('grid');
+    expect(metrics.scrolls, `${width}`).toBe(false);
+    expect(metrics.escaped, `${width}`).toBe(0);
+    // Every value carries its column name, so no information is lost without the header row.
+    expect(
+      metrics.labels.every((label) => label.length > 2),
+      `${width}`,
+    ).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      await page.evaluate(() => document.documentElement.clientWidth),
+    );
+  }
 });
 
 test('lazy feature CSS order and the mobile menu do not move the tables', async ({

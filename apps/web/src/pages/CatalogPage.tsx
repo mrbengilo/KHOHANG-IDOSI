@@ -716,7 +716,7 @@ export function CatalogPage() {
             </div>
           ) : (
             <div className="responsive-table">
-              <DataTable className="table-density">
+              <DataTable className="table-density catalog-table">
                 <thead>
                   <tr>
                     <th scope="col" className="table-index">

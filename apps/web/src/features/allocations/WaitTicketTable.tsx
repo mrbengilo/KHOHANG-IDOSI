@@ -83,7 +83,7 @@ export function WaitTicketTable({
       className="wait-ticket-table-scroll"
       tabIndex={0}
       role="region"
-      aria-label="Danh sách phiếu chờ, cuộn ngang để xem đủ cột"
+      aria-label="Danh sách phiếu chờ"
     >
       <DataTable className="table-density wait-ticket-table">
         <thead>
@@ -111,27 +111,27 @@ export function WaitTicketTable({
               <td className="table-index" data-label="STT">
                 {offset + index + 1}
               </td>
-              <td>
+              <td data-label="Thời gian">
                 <time dateTime={ticket.createdAt}>{waitTicketTime(ticket.createdAt)}</time>
               </td>
-              <td>
+              <td data-label="Mã phiếu ưu tiên">
                 <strong>{ticket.latestOffer?.code ?? 'Chưa phát sinh phiếu ưu tiên'}</strong>
                 <small>{ticket.code ?? ticket.id}</small>
               </td>
-              <td>
+              <td data-label="Tên cửa hàng">
                 <span className="store-name">{ticket.storeName ?? ticket.storeId}</span>
               </td>
-              <td>
+              <td data-label="Mặt hàng">
                 <strong>{ticket.productName ?? ticket.productId}</strong>
                 <small>{ticket.sku ?? ticket.productId}</small>
               </td>
-              <td>
+              <td data-label="Số lượng (bao)">
                 {amountLabel(ticket.remaining)}
                 {ticket.remaining.kind !== 'UNIT' ? (
                   <small>Đơn vị gốc; không quy đổi sang bao</small>
                 ) : null}
               </td>
-              <td>
+              <td data-label="Trạng thái">
                 <Badge
                   tone={
                     ticket.status === 'CANCELLED'
@@ -144,7 +144,7 @@ export function WaitTicketTable({
                   {ticketStatusLabel[ticket.status]}
                 </Badge>
               </td>
-              <td>
+              <td data-label="Thao tác">
                 <div className="wait-ticket-actions">
                   <Button tone="secondary" onClick={() => onHistory(ticket.id)}>
                     Xem chi tiết / lịch sử
@@ -156,7 +156,7 @@ export function WaitTicketTable({
                   ) : null}
                 </div>
               </td>
-              <td>
+              <td data-label="Ghi chú">
                 {ticket.status === 'CANCELLED' ? (
                   <>
                     <CancellationNote ticket={ticket} />
@@ -225,7 +225,7 @@ function ScopedWaitTicketTable({
       className="wait-ticket-table-scroll"
       tabIndex={0}
       role="region"
-      aria-label="Phiếu chờ ưu tiên, cuộn ngang để xem đủ cột"
+      aria-label="Phiếu chờ ưu tiên"
     >
       <DataTable className="table-density wait-ticket-table wait-ticket-table--scoped">
         <thead>

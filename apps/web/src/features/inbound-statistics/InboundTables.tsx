@@ -14,14 +14,15 @@ export const inboundSourceLabels: Record<InboundSource, string> = {
   PARTNER: 'Đối tác khác',
 };
 
-export function MetricCells({ value }: { value: InboundMetric }) {
+/** `label` names the source column pair; mobile cards show it as `label · bao` / `label · kg`. */
+export function MetricCells({ value, label }: { value: InboundMetric; label: string }) {
   return (
     <>
-      <td className="table-number">
+      <td className="table-number" data-label={`${label} · bao`}>
         {formatInboundValue(value.bagQuantity)}
         {!value.bagsComplete && <small>Đã biết · thiếu dữ liệu</small>}
       </td>
-      <td className="table-number">
+      <td className="table-number" data-label={`${label} · kg`}>
         {formatInboundValue(value.weightGrams, true)}
         {!value.weightComplete && <small>Đã biết · thiếu dữ liệu</small>}
       </td>
@@ -31,9 +32,9 @@ export function MetricCells({ value }: { value: InboundMetric }) {
 export function BreakdownCells({ value }: { value: InboundBreakdown }) {
   return (
     <>
-      <MetricCells value={value.warehouse} />
-      <MetricCells value={value.partner} />
-      <MetricCells value={value.total} />
+      <MetricCells value={value.warehouse} label="Kho" />
+      <MetricCells value={value.partner} label="Đối tác khác" />
+      <MetricCells value={value.total} label="Tổng nhập" />
     </>
   );
 }
@@ -122,10 +123,10 @@ export function InboundProductTable({
               {source === 'ALL' ? (
                 <BreakdownCells value={row.amounts} />
               ) : (
-                <MetricCells value={row.selected} />
+                <MetricCells value={row.selected} label={inboundSourceLabels[source]} />
               )}
-              <td>{basisPoints(row.bagShareBasisPoints)}</td>
-              <td>{basisPoints(row.weightShareBasisPoints)}</td>
+              <td data-label="Tỷ trọng bao">{basisPoints(row.bagShareBasisPoints)}</td>
+              <td data-label="Tỷ trọng kg">{basisPoints(row.weightShareBasisPoints)}</td>
             </tr>
           ))}
         </tbody>
@@ -135,16 +136,16 @@ export function InboundProductTable({
             {source === 'ALL' ? (
               <BreakdownCells value={data.overviewAllSources} />
             ) : (
-              <MetricCells value={data.selectedTotal} />
+              <MetricCells value={data.selectedTotal} label={inboundSourceLabels[source]} />
             )}
-            <td>
+            <td data-label="Tỷ trọng bao">
               {inboundShare(
                 data.selectedTotal.bagQuantity,
                 data.selectedTotal.bagQuantity,
                 data.selectedTotal.bagsComplete,
               )}
             </td>
-            <td>
+            <td data-label="Tỷ trọng kg">
               {inboundShare(
                 data.selectedTotal.weightGrams,
                 data.selectedTotal.weightGrams,

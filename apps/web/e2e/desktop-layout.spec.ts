@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { expectedGutter } from './desktop-gutter';
+import { DESKTOP_GUTTER, TRIPLE_GUTTER_FROM, expectedGutter } from './desktop-gutter';
 import { layoutProducts, mockLayoutAdmin } from './layout-fixtures';
 
 const desktop = [
@@ -76,8 +76,8 @@ for (const route of ['/warehouse-inbound', '/inventory']) {
         expect(Math.abs(leftGap - gutter), `left gutter @${width}`).toBeLessThanOrEqual(2);
         expect(Math.abs(rightGap - gutter), `right gutter @${width}`).toBeLessThanOrEqual(2);
         expect(Math.abs(leftGap - rightGap), `symmetric gutters @${width}`).toBeLessThanOrEqual(2);
-        if (width >= 1280) expect(leftGap).toBeCloseTo(54, 0);
-        // 1440 → 1108px, 1920 → 1588px: full-width panels fill the space between gutters.
+        if (width >= TRIPLE_GUTTER_FROM) expect(leftGap).toBeCloseTo(DESKTOP_GUTTER, 0);
+        // 1440 → 1108px, 1920 → 1526px, 2560 → 1996px: full-width panels fill the gutters' gap.
         expect(
           Math.abs(box.width - (clientWidth - sidebar.width - 2 * gutter)),
         ).toBeLessThanOrEqual(2);

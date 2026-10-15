@@ -250,8 +250,15 @@ export async function measureTableLayout(page: Page): Promise<PageTableLayout> {
   });
 }
 
-/** Human-readable violations of the centring, overflow, reachability and alignment rules. */
-export function tableLayoutViolations(layout: PageTableLayout): string[] {
+/**
+ * Human-readable violations of the centring, overflow, reachability and alignment rules.
+ * Tables fill their content box. Large tables keep the narrow-screen cards from the shared
+ * layout; local horizontal scrolling is a valid fallback when readable columns cannot fit.
+ */
+export function tableLayoutViolations(
+  layout: PageTableLayout,
+  { allowLocalScroll = true }: { allowLocalScroll?: boolean } = {},
+): string[] {
   const problems: string[] = [...layout.presentationIssues];
   if (layout.scrollWidth > layout.clientWidth + 1)
     problems.push(`page overflow ${layout.scrollWidth} > ${layout.clientWidth}`);
@@ -277,6 +284,8 @@ export function tableLayoutViolations(layout: PageTableLayout): string[] {
       problems.push(`${table.id}: not centred (left ${table.gapLeft}, right ${table.gapRight})`);
     if (table.gapLeft < -1 || table.gapRight < -1)
       problems.push(`${table.id}: escapes its container (${table.gapLeft}/${table.gapRight})`);
+    if (table.overflowing && !allowLocalScroll)
+      problems.push(`${table.id}: scrolls sideways instead of wrapping`);
     if (!table.firstColumnReachable || !table.lastColumnReachable)
       problems.push(`${table.id}: first/last column not reachable by scrolling`);
     if (table.misaligned.length)

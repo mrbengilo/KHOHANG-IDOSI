@@ -162,3 +162,24 @@ Chạy cục bộ theo đúng thứ tự `.github/workflows/ci.yml` trên databa
 ## 8. Rollback
 
 Revert squash commit qua PR, để watcher triển khai SHA mới khi CI xanh. Không có migration, không đổi dữ liệu/API nên không cần khôi phục DB.
+
+## Cập nhật 2026-10-15 — không cuộn ngang
+
+Yêu cầu mới của chủ repo: **bảng không cuộn ngang; bảng lớn, nhiều dữ liệu thì xuống dòng**. Quy
+tắc "bảng rộng cuộn ngang cục bộ" ở trên được thay bằng:
+
+- Mọi bảng rộng tối đa bằng vùng chứa; ô dữ liệu được ngắt dòng kể cả chuỗi dài
+  (`.app-main table td { overflow-wrap: anywhere }`). Số, thời gian, mã chứng từ (`summary`) vẫn
+  không bị ngắt giữa chừng.
+- Bỏ bề rộng tối thiểu ép cuộn: phiếu chờ 1200/860px, lịch sử khui kiện 880px, cửa hàng 720/940px,
+  bảng quản trị 900px, thống kê nhập 95/190px mỗi cột.
+- Bảng lớn (lịch sử chứng từ, phiếu chờ, thống kê nhập, lịch sử khui kiện) ở ≤1100px thành thẻ
+  "nhãn · giá trị" (`data-label` trên mọi ô), chứng từ nhiều dòng là một thẻ; từ 1101px là bảng.
+  Bảng số liệu nhỏ (`.table-density--metrics`) giữ dạng bảng.
+- Tồn kho tổng 821–1365px: chỉ xuống dòng giữa số và đơn vị, tiêu đề và nhãn nút.
+- `tableLayoutViolations` báo lỗi "scrolls sideways" cho mọi bảng thật (e2e mock và e2e-live mọi
+  route × vai trò); chỉ bảng tổng hợp 40 cột của spec nguyên thủy được phép cuộn dự phòng.
+
+Audit sau thay đổi (bản dựng mock, thanh cuộn thật, 4 vai trò × mọi route × 18 độ rộng từ 360 đến
+2560px = 900 tổ hợp): 0 bảng cuộn ngang, 0 trang tràn; từ 1366px không ô nào xuống dòng thêm so
+với trước. Chi tiết lề: [desktop-wide-gutters.md](desktop-wide-gutters.md).

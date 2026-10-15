@@ -55,7 +55,7 @@ export function BagOpeningHistoryTable({
       <div
         className="bag-opening-history__scroll"
         role="region"
-        aria-label="Bảng lịch sử khui kiện, cuộn ngang để xem đủ cột"
+        aria-label="Bảng lịch sử khui kiện"
         tabIndex={0}
       >
         <DataTable
@@ -86,12 +86,12 @@ export function BagOpeningHistoryTable({
                 <td className="table-index" data-label="STT">
                   {offset + rowIndex + 1}
                 </td>
-                <td data-primary-column>
+                <td data-primary-column data-label="Thời gian khui">
                   <time dateTime={row.openedAt ?? undefined}>
                     {formatOpeningTime(row.openedAt)}
                   </time>
                 </td>
-                <td>
+                <td data-label="Mã bao">
                   <button
                     className="bag-opening-history__code"
                     type="button"
@@ -106,9 +106,11 @@ export function BagOpeningHistoryTable({
                     </small>
                   ) : null}
                 </td>
-                <td>{productName(row.productId)}</td>
-                <td className="bag-opening-history__weight">{weight(row.weightBeforeKg)}</td>
-                <td>
+                <td data-label="Mặt hàng">{productName(row.productId)}</td>
+                <td data-label="Khối lượng" className="bag-opening-history__weight">
+                  {weight(row.weightBeforeKg)}
+                </td>
+                <td data-label="Người thực hiện">
                   <div className="bag-opening-history__actor">
                     <span>{row.actorDisplayName || unknown}</span>
                     <Badge tone={row.actorRole ? 'info' : 'neutral'}>
@@ -116,7 +118,7 @@ export function BagOpeningHistoryTable({
                     </Badge>
                   </div>
                 </td>
-                <td>
+                <td data-label="Trạng thái">
                   <Badge tone={bagStatusCopy[row.currentStatus].tone}>
                     {bagStatusCopy[row.currentStatus].label}
                   </Badge>

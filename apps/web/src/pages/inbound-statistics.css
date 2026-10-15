@@ -106,45 +106,49 @@
   overflow-x: auto;
   border-radius: 8px;
 }
-.inbound-statistics table {
-  display: table;
-  width: auto;
-  border-collapse: collapse;
-  font-size: 0.9rem;
-}
-.inbound-statistics thead {
-  display: table-header-group;
-  position: static;
-  width: auto;
-  height: auto;
-  overflow: visible;
-  clip: auto;
-}
-.inbound-statistics tbody {
-  display: table-row-group;
-}
-.inbound-statistics tfoot {
-  display: table-footer-group;
-}
-.inbound-statistics tr,
-.inbound-statistics tbody tr {
-  display: table-row;
-}
-.inbound-statistics td::before {
-  display: none;
-}
-.inbound-statistics th,
-.inbound-statistics td {
-  display: table-cell;
-  padding: 12px;
-  border-bottom: 1px solid #e0e6ef;
-  text-align: left;
-  min-width: 95px;
-  vertical-align: top;
-}
-.inbound-statistics th[data-primary-column] {
-  text-align: left;
-  min-width: 190px;
+/*
+ * Từ 1101px dạng bảng, rộng tối đa bằng vùng chứa; hết chỗ thì ô xuống dòng.
+ * ≤1100px: thẻ có nhãn (data-label) theo bố cục bảng lớn dùng chung trong styles.css.
+ */
+@media (min-width: 1101px) {
+  .inbound-statistics table {
+    display: table;
+    width: auto;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+  .inbound-statistics thead {
+    display: table-header-group;
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+  }
+  .inbound-statistics tbody {
+    display: table-row-group;
+  }
+  .inbound-statistics tfoot {
+    display: table-footer-group;
+  }
+  .inbound-statistics tr,
+  .inbound-statistics tbody tr {
+    display: table-row;
+  }
+  .inbound-statistics td::before {
+    display: none;
+  }
+  .inbound-statistics th,
+  .inbound-statistics td {
+    display: table-cell;
+    padding: 12px;
+    border-bottom: 1px solid #e0e6ef;
+    text-align: left;
+    vertical-align: top;
+  }
+  .inbound-statistics th[data-primary-column] {
+    text-align: left;
+  }
 }
 .inbound-statistics thead,
 .inbound-statistics tfoot {
@@ -298,6 +302,16 @@
   max-width: 100cqi;
   padding: 4px 16px 4px;
   border-left: 4px solid #3267ca;
+}
+/* ≤1100px bảng cửa hàng là thẻ: chi tiết nằm trong thẻ, rộng đúng bằng thẻ, không tràn. */
+@media (max-width: 1100px) {
+  .inbound-store-detail {
+    position: static;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
 }
 .inbound-store-detail-heading h3 {
   font-size: 1rem;

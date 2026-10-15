@@ -1,6 +1,6 @@
-import { expect, test, type Page, type Route, type TestInfo } from '@playwright/test';
+import { chromium, expect, test, type Page, type Route, type TestInfo } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
-import { expectedGutter } from './desktop-gutter';
+import { expectedGutter, expectedPanelWidth } from './desktop-gutter';
 import { layoutAdminSession, mockLayoutAdmin, mockLayoutData } from './layout-fixtures';
 
 /*
@@ -369,8 +369,7 @@ test('desktop shell gutters, navigation typography and sign-out button', async (
     // Header and full-width panel share both edges.
     expect(Math.abs(m.header.left - m.panel.left), label).toBeLessThanOrEqual(1);
     expect(Math.abs(m.header.right - m.panel.right), label).toBeLessThanOrEqual(1);
-    if (width === 1440) expect(Math.abs(m.panel.width - 1108), label).toBeLessThanOrEqual(2);
-    if (width === 1920) expect(Math.abs(m.panel.width - 1588), label).toBeLessThanOrEqual(2);
+    expect(Math.abs(m.panel.width - expectedPanelWidth(width)), label).toBeLessThanOrEqual(2);
     // Hierarchy: page title > menu item > group title; all larger than the old 26/13/11px.
     if (width >= 1366) expect(m.pageTitle, label).toBeGreaterThanOrEqual(30);
     expect(m.pageTitle, label).toBeLessThanOrEqual(34);
@@ -512,5 +511,33 @@ test('short and mobile sidebars keep the last menu item and sign-out reachable',
       expect(main.left).toBeLessThanOrEqual(18);
       expect(main.right).toBeLessThanOrEqual(18);
     }
+  }
+});
+
+test('sidebar menu scrolls with a thin scrollbar on classic-scrollbar browsers', async ({
+  baseURL,
+}, testInfo) => {
+  desktopOnly(testInfo.project.name);
+  // Playwright hides scrollbars in headless mode; draw them like Windows Chrome/Edge do.
+  const browser = await chromium.launch({
+    ...testInfo.project.use.launchOptions,
+    ignoreDefaultArgs: ['--hide-scrollbars'],
+  });
+  try {
+    const page = await browser.newPage({ baseURL, viewport: { width: 1366, height: 600 } });
+    await mockLayoutAdmin(page);
+    await page.goto('/inventory');
+    await expect(page.locator('.page-header')).toBeVisible();
+    const nav = await page.locator('.sidebar__nav').evaluate((el) => ({
+      overflows: el.scrollHeight > el.clientHeight,
+      scrollbar: el.offsetWidth - el.clientWidth,
+    }));
+    expect(nav.overflows).toBe(true);
+    expect(nav.scrollbar).toBeGreaterThan(0);
+    expect(nav.scrollbar).toBeLessThanOrEqual(6);
+    expect((await page.locator('.sidebar').boundingBox())!.width).toBe(240);
+    await page.screenshot({ path: testInfo.outputPath('sidebar-thin-scrollbar-1366x600.png') });
+  } finally {
+    await browser.close();
   }
 });

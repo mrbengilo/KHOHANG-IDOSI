@@ -230,7 +230,7 @@ test('HTKD sees all assigned priority offers, reads central stock and cancels th
     ).toBe(true);
     await adminPage!.goto(`/allocations?tab=wait-tickets&wt.q=${tickets[1]!.code}`);
     const table = adminPage!.locator('.wait-ticket-table');
-    await expect(table.locator('th')).toHaveCount(10);
+    await expect(table.locator('th')).toHaveCount(9);
     await expect(table.getByRole('columnheader').first()).toHaveText('STT');
     await expect(table).toContainText('Đã bị hủy');
     await expect(table).toContainText('HTKD hủy theo yêu cầu cửa hàng');

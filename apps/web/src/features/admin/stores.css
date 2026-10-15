@@ -63,14 +63,6 @@
   justify-content: flex-start;
 }
 
-.store-lifecycle-table {
-  min-width: 720px;
-}
-
-.store-lifecycle-table--stores {
-  min-width: 940px;
-}
-
 .store-lifecycle-table td[data-primary-column] {
   max-width: 340px;
 }

@@ -124,7 +124,9 @@ test('inbound history preserves product details, required markers and compact re
     const firstRow = card.locator('tbody tr').first();
     const nameBox = (await firstRow.locator('[data-label="Mặt hàng"]').boundingBox())!;
     const quantityBox = (await firstRow.locator('[data-label="Số lượng (bao)"]').boundingBox())!;
-    expect(Math.abs(nameBox.y - quantityBox.y)).toBeLessThan(2);
+    if (width > 1100) expect(Math.abs(nameBox.y - quantityBox.y)).toBeLessThan(2);
+    else expect(quantityBox.y).toBeGreaterThan(nameBox.y);
+    expect(await card.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     if ([375, 768, 1440].includes(width)) {
       await card.screenshot({ path: testInfo.outputPath(`inbound-history-${width}.png`) });
     }

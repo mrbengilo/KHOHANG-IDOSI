@@ -5,71 +5,139 @@
   border: 1px solid var(--border);
   border-radius: 0.75rem;
 }
-.document-history table {
-  display: table;
-  width: 100%;
-  min-width: 0;
-  table-layout: auto;
-  border-collapse: collapse;
-}
-.document-history thead {
-  display: table-header-group;
-  position: static;
-  width: auto;
-  height: auto;
-  clip: auto;
-  overflow: visible;
-}
-.document-history tbody {
-  display: table-row-group;
-}
-.document-history tr {
-  display: table-row;
-  padding: 0;
-  border: 0;
-  background: transparent;
-}
-.document-history th,
-.document-history td {
-  display: table-cell;
-  text-align: left;
-  vertical-align: top;
-  padding: 0.75rem;
-  border: 1px solid var(--border);
-  max-width: 20rem;
-  overflow-wrap: break-word;
-  word-break: normal;
-}
-.document-history td::before {
-  display: none;
-}
-/* Opt in per measured document: merged cells keep their real column semantics. */
-.document-history--compact table {
-  width: 100%;
-  min-width: 0;
-}
-.document-history--compact th,
-.document-history--compact td {
-  padding: 8px 10px;
-  min-width: 0;
-  max-width: 20rem;
-}
-.document-history--compact .document-number {
-  width: 6rem;
-  min-width: 4rem;
-  text-align: left;
-  font-variant-numeric: tabular-nums;
-}
-.document-history--compact td.document-number {
-  white-space: nowrap;
-}
-@media (min-width: 1366px) {
-  .document-history--compact td:not(.document-number) {
-    max-width: 32rem;
+/*
+ * Bảng chứng từ không bao giờ cuộn ngang:
+ * - Từ 1101px: dạng bảng, rộng tối đa bằng vùng chứa, hết chỗ thì ô xuống dòng.
+ * - Đến 1100px (desktop hẹp và mobile): 7–11 cột không còn đủ chỗ để đọc thành bảng, nên mỗi
+ *   chứng từ (tbody) thành một thẻ, mỗi ô một dòng "nhãn (data-label) · giá trị".
+ * - Bảng số liệu nhỏ (.table-density--metrics, 4–5 cột) giữ dạng bảng ở mọi độ rộng.
+ */
+@media (min-width: 1101px) {
+  .document-history table {
+    display: table;
+    width: 100%;
+    min-width: 0;
+    table-layout: auto;
+    border-collapse: collapse;
+  }
+  .document-history thead {
+    display: table-header-group;
+    position: static;
+    width: 100%;
+    height: auto;
+    clip: auto;
+    overflow: visible;
+  }
+  .document-history tbody {
+    display: table-row-group;
+  }
+  .document-history tr {
+    display: table-row;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+  .document-history th,
+  .document-history td {
+    display: table-cell;
+    text-align: left;
+    vertical-align: top;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    max-width: 20rem;
+    overflow-wrap: break-word;
+    word-break: normal;
+  }
+  .document-history td::before {
+    display: none;
+  }
+  /* Opt in per measured document: merged cells keep their real column semantics. */
+  .document-history--compact table {
+    width: 100%;
+    min-width: 0;
+  }
+  .document-history--compact th,
+  .document-history--compact td {
+    padding: 8px 10px;
+    min-width: 0;
+    max-width: 20rem;
+  }
+  /* Cột số rộng theo tiêu đề, tiêu đề một dòng: không ép cột hẹp để chữ phải xuống dòng. */
+  .document-history--compact .document-number {
+    text-align: left;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .document-history--compact td.document-number {
+    white-space: nowrap;
+  }
+  @media (min-width: 1366px) {
+    .document-history--compact td:not(.document-number) {
+      max-width: 32rem;
+    }
+    /* Đủ chỗ: tiêu đề cột một dòng, chữ dài trong ô mới xuống dòng. */
+    .document-history--compact table th {
+      white-space: nowrap;
+    }
   }
 }
-.document-history tbody + tbody {
-  border-top: 2px solid var(--text-secondary);
+@media (max-width: 1100px) {
+  /*
+   * Thẻ dùng chung (styles.css) cho mỗi dòng; riêng chứng từ thì một tbody = một thẻ, các dòng
+   * mặt hàng nối tiếp trong cùng thẻ. Phần tử div tăng độ ưu tiên hơn quy tắc dùng chung.
+   */
+  .app-main div.document-history > table:not(.table-density--metrics) > tbody {
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    background: var(--surface);
+  }
+  .app-main div.document-history > table:not(.table-density--metrics) > tbody > tr {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+  .app-main div.document-history > table:not(.table-density--metrics) > tbody > tr + tr {
+    border-top: 1px dashed var(--border);
+  }
+  .document-history .table-density--metrics {
+    display: table;
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .document-history .table-density--metrics thead {
+    display: table-header-group;
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+  }
+  .document-history .table-density--metrics tbody {
+    display: table-row-group;
+  }
+  .document-history .table-density--metrics tfoot {
+    display: table-footer-group;
+  }
+  .document-history .table-density--metrics tr {
+    display: table-row;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+  .document-history .table-density--metrics :is(th, td) {
+    display: table-cell;
+    padding: 8px;
+    border: 1px solid var(--border);
+  }
+  .document-history .table-density--metrics td::before {
+    display: none;
+  }
+}
+@media (min-width: 1101px) {
+  .document-history tbody + tbody {
+    border-top: 2px solid var(--text-secondary);
+  }
 }
 .document-history th {
   background: var(--surface-soft, var(--surface));
@@ -84,12 +152,26 @@
 .document-history th {
   white-space: normal;
 }
+.document-history summary,
 .document-history time {
-  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
-.transfer-list .document-history td:last-child {
-  min-width: 12rem;
+/*
+ * Thời gian không ngắt trong bảng. Mã chứng từ (PN…, RE…) giữ nguyên một khối khi vừa, chỉ ngắt
+ * khi mã dài hơn cả cột/thẻ — mã do người dùng nhập có thể rất dài, không được đẩy bảng tràn ngang.
+ */
+@media (min-width: 1101px) {
+  .document-history time {
+    white-space: nowrap;
+  }
+}
+.document-history summary {
+  overflow-wrap: anywhere;
+}
+@media (min-width: 1101px) {
+  .transfer-list .document-history td:last-child {
+    min-width: 12rem;
+  }
 }
 .transfer-list > .button-row {
   display: flex;
@@ -105,12 +187,16 @@
   display: block;
 }
 .sale-transfer-history .document-quantity {
-  min-width: 3.5rem;
-  width: 4.5rem;
   font-variant-numeric: tabular-nums;
 }
-.transfer-list .sale-transfer-history td:last-child {
-  min-width: 7rem;
+@media (min-width: 1101px) {
+  .sale-transfer-history .document-quantity {
+    min-width: 3.5rem;
+    width: 4.5rem;
+  }
+  .transfer-list .sale-transfer-history td:last-child {
+    min-width: 7rem;
+  }
 }
 
 .session-document {

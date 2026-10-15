@@ -280,7 +280,7 @@ function WarehouseInboundContent() {
                               {formatDocumentTime(receipt.receivedAt)}
                             </time>
                           </td>
-                          <td rowSpan={lines.length}>
+                          <td data-label="Mã phiếu" rowSpan={lines.length}>
                             <details>
                               <summary>{receipt.referenceCode || 'Chưa ghi nhận mã phiếu'}</summary>
                               <p>
@@ -307,7 +307,9 @@ function WarehouseInboundContent() {
                             </details>
                             {receipt.status === 'CANCELLED' ? <strong>Đã hủy</strong> : null}
                           </td>
-                          <td rowSpan={lines.length}>{receipt.supplierName}</td>
+                          <td data-label="Nhà cung cấp" rowSpan={lines.length}>
+                            {receipt.supplierName}
+                          </td>
                         </>
                       ) : null}
                       <td data-label="Mặt hàng">{line.name}</td>

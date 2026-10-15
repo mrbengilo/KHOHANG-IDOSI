@@ -226,7 +226,7 @@ export function ReconciliationWorkspace({
                 Đang cập nhật…
               </p>
             ) : null}
-            <div className="responsive-table supplier-table-scroll">
+            <div className="responsive-table supplier-table-scroll table-cards-narrow">
               <DataTable className="supplier-table supplier-summary-table">
                 <thead>
                   <tr>

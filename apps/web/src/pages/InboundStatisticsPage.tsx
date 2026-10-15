@@ -459,22 +459,22 @@ export function InboundStatisticsPage() {
                               <span className="store-name">{row.name}</span>
                             </small>
                           </th>
-                          <td>{kinds[row.kind]}</td>
+                          <td data-label="Loại">{kinds[row.kind]}</td>
                           <BreakdownCells value={row.amounts} />
-                          <td>
+                          <td data-label="Nhiều nhất">
                             {row.ranking.most
                               ? `${row.ranking.most.productName} · ${inboundMetricLabel(row.ranking.most.selected)}`
                               : 'Không có dữ liệu'}
                             {row.ranking.mostTied && <small>Đồng hạng theo bao</small>}
                           </td>
-                          <td>
+                          <td data-label="Ít nhất">
                             {row.ranking.least
                               ? `${row.ranking.least.productName} · ${inboundMetricLabel(row.ranking.least.selected)}`
                               : 'Không có dữ liệu'}
                             {row.ranking.leastTied && <small>Đồng hạng theo bao</small>}
                             {!row.ranking.complete && <small>Xếp hạng chưa đầy đủ</small>}
                           </td>
-                          <td>
+                          <td data-label="Chi tiết">
                             <button
                               type="button"
                               className="inbound-store-toggle"
