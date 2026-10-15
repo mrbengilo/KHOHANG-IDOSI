@@ -53,8 +53,22 @@ phép × 1366/1440/1680/1920/1980/2050/2070/2150/2560px = 450 tổ hợp, 6.768 
 hơn một dòng, bảng phải cuộn ngang và trang tràn ngang.
 
 - Kết quả: **0 tổ hợp xấu hơn bản trước**; không bảng nào phải cuộn ngang; không trang nào tràn.
-- Còn lại từ trước (không do thay đổi này): danh mục ở 1366px (bảng cần 1073px, vùng làm việc
-  1034px như cũ) và tiêu đề cột số trong lịch sử nhập kho tổng (cột cố định 6rem theo thiết kế).
+- Hai trường hợp xuống dòng có từ trước (danh mục 1366px, tiêu đề cột số lịch sử nhập kho tổng)
+  đã sửa — xem "Bảng không bị ép nhỏ". Lần chạy cuối (19 độ rộng 360–2560px, 950 tổ hợp): 0 cuộn
+  ngang, 0 tràn, 0 ô xuống dòng thêm so với bản trước.
+
+## Bảng không bị ép nhỏ
+
+Yêu cầu: "mở rộng bảng ra, đừng ép nhỏ bảng". Bảng dùng đủ bề ngang; cột ngắn không bị bóp để
+chữ phải xuống dòng, chỉ cột chữ dài (tên mặt hàng, nhà cung cấp) xuống dòng khi thiếu chỗ.
+
+- Danh mục (từ 1101px): bảng rộng 100% vùng chứa; tiêu đề, số quy đổi, khối lượng, phiên bản /
+  hiệu lực và trạng thái một dòng; nhóm nút thao tác xuống hàng khi hết chỗ. 1366px: chỉ còn tên
+  "Chăn, ga, bao gối, nệm gòn" xuống dòng (trước: 28 ô).
+- Lịch sử nhập kho tổng: bỏ cột số cố định 6rem; "Số lượng (bao)", "Tổng số lượng (bao)" một
+  dòng ở mọi độ rộng bảng; từ 1366px mọi tiêu đề một dòng; từ 1920px cả bảng không ô nào xuống
+  dòng.
+- `desktop-table-density`: cột số tối đa 150px (bằng tiêu đề một dòng), thay cho 110px cũ.
 
 ## Thanh cuộn
 
@@ -72,6 +86,7 @@ qua `@supports not selector(::-webkit-scrollbar)`. Áp dụng cho `.sidebar__nav
 | Tồn kho 1920px       | ![Trước](evidence/desktop-wide-gutters/before-inventory-1920.png)         | ![Sau](evidence/desktop-wide-gutters/after-inventory-1920.png)         |
 | Tồn kho 1366px       | ![Trước](evidence/desktop-wide-gutters/before-inventory-1366.png)         | ![Sau](evidence/desktop-wide-gutters/after-inventory-1366.png)         |
 | Nhập kho tổng 1920px | ![Trước](evidence/desktop-wide-gutters/before-warehouse-inbound-1920.png) | ![Sau](evidence/desktop-wide-gutters/after-warehouse-inbound-1920.png) |
+| Danh mục 1366px      | ![Trước](evidence/desktop-wide-gutters/before-catalog-1366.png)           | ![Sau](evidence/desktop-wide-gutters/after-catalog-1366.png)           |
 
 Kiểm thử: `desktop-gutter.ts` là nguồn duy nhất của công thức lề cho `desktop-layout`,
 `desktop-login-shell` và `desktop-visual-colors` (ma trận mọi route × 4 vai trò ở
