@@ -12,6 +12,7 @@ export default defineConfig({
     : 'list',
   testIgnore: [],
   testMatch: [
+    '**/table-presentation.spec.ts',
     '**/sorting-reasons.spec.ts',
     '**/desktop-layout.spec.ts',
     '**/desktop-table-density.spec.ts',

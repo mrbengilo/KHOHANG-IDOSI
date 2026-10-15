@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import type { Receipt, Store, StoreOrderRequest } from '@idosi/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
@@ -121,6 +122,12 @@ export function WholesaleOverview({
       ? wholesaleStores
       : wholesaleStores.filter((store) => store.id === scope.storeId);
   const byStore = wholesaleTotals(selectedStores, query.data.orders, query.data.receipts, period);
+  const rowOffsets = new Map<string, number>();
+  let rowOffset = 0;
+  for (const store of selectedStores) {
+    rowOffsets.set(store.id, rowOffset);
+    rowOffset += byStore.get(store.id)?.length ?? 0;
+  }
   const productNames = new Map(query.data.products.map((product) => [product.id, product.name]));
   const byProduct = new Map<string, { ordered: number; received: number }>();
   for (const rows of byStore.values())
@@ -185,10 +192,13 @@ export function WholesaleOverview({
           <p>Chưa có số liệu trong kỳ đã chọn.</p>
         ) : (
           <div className="responsive-table">
-            <table className="table-density">
+            <DataTable className="table-density">
               <thead>
                 <tr>
-                  <th>Mặt hàng</th>
+                  <th scope="col" className="table-index">
+                    STT
+                  </th>
+                  <th data-primary-column>Mặt hàng</th>
                   <th className="table-number">Đặt hàng</th>
                   <th className="table-number">Thực nhận</th>
                 </tr>
@@ -201,8 +211,11 @@ export function WholesaleOverview({
                       'vi',
                     ),
                   )
-                  .map(([id, total]) => (
+                  .map(([id, total], rowIndex) => (
                     <tr key={id}>
+                      <td className="table-index" data-label="STT">
+                        {rowIndex + 1}
+                      </td>
                       <td data-label="Mặt hàng">{productNames.get(id) ?? id}</td>
                       <td className="table-number" data-label="Đặt hàng">
                         {total.ordered} bao
@@ -213,7 +226,7 @@ export function WholesaleOverview({
                     </tr>
                   ))}
               </tbody>
-            </table>
+            </DataTable>
           </div>
         )}
       </section>
@@ -228,10 +241,13 @@ export function WholesaleOverview({
           <p>Chưa có cửa hàng sỉ được phân quyền.</p>
         ) : (
           <div className="responsive-table">
-            <table className="table-density">
+            <DataTable className="table-density">
               <thead>
                 <tr>
-                  <th>Cửa hàng</th>
+                  <th scope="col" className="table-index">
+                    STT
+                  </th>
+                  <th data-primary-column>Cửa hàng</th>
                   <th>Mặt hàng</th>
                   <th className="table-number">Đặt hàng</th>
                   <th className="table-number">Thực nhận</th>
@@ -241,9 +257,14 @@ export function WholesaleOverview({
                 {selectedStores.flatMap((store) => {
                   const rows = byStore.get(store.id) ?? [];
                   return rows.length
-                    ? rows.map((row) => (
+                    ? rows.map((row, rowIndex) => (
                         <tr key={`${store.id}:${row.productId}`}>
-                          <td data-label="Cửa hàng">{store.name}</td>
+                          <td className="table-index" data-label="STT">
+                            {(rowOffsets.get(store.id) ?? 0) + rowIndex + 1}
+                          </td>
+                          <td data-label="Cửa hàng">
+                            <span className="store-name">{store.name}</span>
+                          </td>
                           <td data-label="Mặt hàng">
                             {productNames.get(row.productId) ?? row.productId}
                           </td>
@@ -257,13 +278,15 @@ export function WholesaleOverview({
                       ))
                     : [
                         <tr key={store.id}>
-                          <td data-label="Cửa hàng">{store.name}</td>
+                          <td colSpan={2} data-label="Cửa hàng">
+                            <span className="store-name">{store.name}</span>
+                          </td>
                           <td colSpan={3}>Chưa có số liệu trong kỳ</td>
                         </tr>,
                       ];
                 })}
               </tbody>
-            </table>
+            </DataTable>
           </div>
         )}
       </section>

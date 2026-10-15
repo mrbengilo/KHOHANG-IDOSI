@@ -294,11 +294,13 @@ test('accepting creates one RE order, issues stock at once and shows it in the s
     const events = dialog.locator('tbody tr');
     await expect(events).toHaveCount(4);
     await expect(events.nth(0)).toContainText('RE htkd-free');
-    await expect(events.nth(0).locator('td').nth(4)).toHaveText('HTKD');
-    await expect(events.nth(0).locator('td').nth(2)).toHaveText('Chưa đặt Reshare');
-    await expect(events.nth(1).locator('td').nth(4)).toHaveText('Admin');
+    await expect(events.nth(0).locator('[data-label="Vai trò"]')).toHaveText('HTKD');
+    await expect(events.nth(0).locator('[data-label="Trạng thái sau"]')).toHaveText(
+      'Chưa đặt Reshare',
+    );
+    await expect(events.nth(1).locator('[data-label="Vai trò"]')).toHaveText('Admin');
     await expect(events.nth(3)).toContainText(`Tạo đơn ${orderA!.code}`);
-    await expect(events.nth(3).locator('td').nth(4)).toHaveText('Cửa hàng');
+    await expect(events.nth(3).locator('[data-label="Vai trò"]')).toHaveText('Cửa hàng');
     for (const width of [360, 390, 1440]) {
       await page.setViewportSize({ width, height: 900 });
       await noPageOverflow(page);

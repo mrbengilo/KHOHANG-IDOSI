@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -76,10 +77,13 @@ export function InventoryPage() {
           </label>
         </div>
         <div className="responsive-table">
-          <table>
+          <DataTable>
             <thead>
               <tr>
-                <th>Thời gian</th>
+                <th scope="col" className="table-index">
+                  STT
+                </th>
+                <th data-primary-column>Thời gian</th>
                 <th>Chứng từ</th>
                 <th>Mặt hàng</th>
                 <th>Nghiệp vụ</th>
@@ -89,9 +93,14 @@ export function InventoryPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
+              {rows.map((row, rowIndex) => (
                 <tr key={row.id}>
-                  <td data-label="Thời gian">{row.at}</td>
+                  <td className="table-index" data-label="STT">
+                    {rowIndex + 1}
+                  </td>
+                  <td data-primary-column data-label="Thời gian">
+                    {row.at}
+                  </td>
                   <td data-label="Chứng từ">
                     <strong>{row.document}</strong>
                     <small>{row.id}</small>
@@ -112,7 +121,7 @@ export function InventoryPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </DataTable>
         </div>
       </section>
     </>
@@ -259,10 +268,13 @@ export function SalesPage() {
           </div>
         </div>
         <div className="responsive-table">
-          <table>
+          <DataTable>
             <thead>
               <tr>
-                <th>Mặt hàng</th>
+                <th scope="col" className="table-index">
+                  STT
+                </th>
+                <th data-primary-column>Mặt hàng</th>
                 <th>Số cái</th>
                 <th>Hệ số</th>
                 <th>Khối lượng ước tính</th>
@@ -273,7 +285,12 @@ export function SalesPage() {
             <tbody>
               {productConversions.slice(0, 5).map((product, index) => (
                 <tr key={product.id}>
-                  <td data-label="Mặt hàng">{product.name}</td>
+                  <td className="table-index" data-label="STT">
+                    {index + 1}
+                  </td>
+                  <td data-primary-column data-label="Mặt hàng">
+                    {product.name}
+                  </td>
                   <td data-label="Số cái">{[18, 12, 22, 30, 44][index]}</td>
                   <td data-label="Hệ số">
                     {product.name.startsWith('Chăn')
@@ -296,7 +313,7 @@ export function SalesPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </DataTable>
         </div>
       </section>
     </>

@@ -40,8 +40,8 @@ describe('admin wait ticket list', () => {
     const html = renderToStaticMarkup(
       <WaitTicketTable tickets={[ticket]} offset={20} onHistory={() => {}} onCancel={() => {}} />,
     );
-    expect(html.match(/<th>/g)).toHaveLength(9);
-    expect(html).toContain('<td>21</td>');
+    expect(html.match(/<th\b/g)).toHaveLength(9);
+    expect(html).toMatch(/<td[^>]*data-label="STT"[^>]*>21<\/td>/u);
     expect(html).toContain('Đã bị hủy');
     expect(html).toContain('Dữ liệu cũ chưa ghi nhận lý do hủy');
     expect(html).toContain('Chưa phát sinh phiếu ưu tiên');

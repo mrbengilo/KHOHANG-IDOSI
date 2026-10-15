@@ -44,12 +44,16 @@ export function IdosiSalesWorkspace({
         {role !== 'STORE' ? (
           <label>
             Cửa hàng thống kê IDOSI
-            <select value={storeId} onChange={(event) => setSelectedStoreId(event.target.value)}>
+            <select
+              className="store-name"
+              value={storeId}
+              onChange={(event) => setSelectedStoreId(event.target.value)}
+            >
               <option value="">Tất cả cửa hàng bán lẻ được phân quyền</option>
               {stores
                 .filter((store) => store.kind === 'RETAIL')
                 .map((store) => (
-                  <option key={store.id} value={store.id}>
+                  <option className="store-name" key={store.id} value={store.id}>
                     {store.code} · {store.name}
                   </option>
                 ))}

@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import type { SupplierCommitment, SupplierCommitmentsResponse } from '@idosi/contracts';
 
 import { Badge } from '../../components/Badge';
@@ -54,9 +55,12 @@ export function CommitmentTable({
         .{page.scoped ? ' Chỉ gồm cửa hàng của tài khoản, không phải toàn hệ thống.' : ''}
       </p>
       <div className="responsive-table supplier-table-scroll">
-        <table className="supplier-table">
+        <DataTable className="supplier-table">
           <thead>
             <tr>
+              <th scope="col" className="table-index">
+                STT
+              </th>
               {selection ? <th scope="col">Chọn</th> : null}
               <th scope="col">Cửa hàng</th>
               {showProduct ? <th scope="col">Mặt hàng</th> : null}
@@ -71,10 +75,13 @@ export function CommitmentTable({
             </tr>
           </thead>
           <tbody>
-            {page.data.map((row) => {
+            {page.data.map((row, rowIndex) => {
               const selected = selection?.quantities.has(row.id) ?? false;
               return (
                 <tr key={`${row.kind}:${row.id}`} className={selected ? 'is-selected' : undefined}>
+                  <td className="table-index" data-label="STT">
+                    {(page.pagination.page - 1) * page.pagination.pageSize + rowIndex + 1}
+                  </td>
                   {selection ? (
                     <td data-label="Chọn">
                       <input
@@ -86,9 +93,11 @@ export function CommitmentTable({
                       />
                     </td>
                   ) : null}
-                  <td data-label="Cửa hàng">
+                  <td data-primary-column data-label="Cửa hàng">
                     <strong>{row.storeCode}</strong>
-                    <small>{row.storeName}</small>
+                    <small>
+                      <span className="store-name">{row.storeName}</span>
+                    </small>
                     {row.htkdNames.length > 0 ? (
                       <small>HTKD: {row.htkdNames.join(', ')}</small>
                     ) : null}
@@ -171,7 +180,7 @@ export function CommitmentTable({
               );
             })}
           </tbody>
-        </table>
+        </DataTable>
       </div>
       {page.data.length === 0 ? (
         <p className="supplier-empty">Không có lượng giữ phù hợp.</p>

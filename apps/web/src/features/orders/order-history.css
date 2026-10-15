@@ -77,8 +77,8 @@
   padding: 2px 6px;
 }
 @media (min-width: 821px) {
-  .order-history__table th:nth-child(4),
-  .order-history__table td:nth-child(4) {
+  .order-history__table th[data-column='products'],
+  .order-history__table td[data-label='Mặt hàng và số lượng đặt'] {
     min-width: 16rem;
   }
 }

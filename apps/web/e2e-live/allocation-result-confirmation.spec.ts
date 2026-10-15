@@ -42,6 +42,13 @@ test('a store confirms results or moves them back to waiting; state survives rel
       .insert(products)
       .values({ sku: `E2E-DEC-C-${token}`, slug: `e2e-dec-c-${token}`, name: carriedName })
       .returning();
+    const assertWaitingDemand = async (quantity: number) => {
+      const response = await tabApi(page).get(
+        `${api}/warehouse-inventory?projection=waiting-demand-v2&search=${product!.sku}`,
+      );
+      expect(response.status()).toBe(200);
+      expect((await response.json()).data[0].waitingDemandBags).toBe(quantity);
+    };
     for (const productId of [product!.id, carriedProduct!.id]) {
       await withSerializableTransaction(db, (tx) =>
         applyWarehouseMovement(tx, {
@@ -214,6 +221,7 @@ test('a store confirms results or moves them back to waiting; state survives rel
       'Đã chuyển phiếu chờ',
     );
     await expect(panel).toContainText('Tạo phiếu chờ mới 4 bao');
+    await assertWaitingDemand(4);
     await page.reload();
     await expect(page.locator('.allocation-decision__status > .badge')).toHaveText(
       'Đã chuyển phiếu chờ',
@@ -221,6 +229,7 @@ test('a store confirms results or moves them back to waiting; state survives rel
     // Only this result's 4 bags went back (reserved only, on-hand unchanged); the carried goods
     // stay issued with their own RE order; no RE order was created for the moved result.
     expect(await balance(db, product!.id)).toEqual({ onHand: 47, reserved: 0 });
+    await assertWaitingDemand(4);
     expect(await balance(db, carriedProduct!.id)).toEqual({ onHand: 48, reserved: 0 });
     await page.screenshot({
       path: testInfo.outputPath('decision-waitlisted-1440.png'),
@@ -260,6 +269,7 @@ test('a store confirms results or moves them back to waiting; state survives rel
     await cancelDialog.getByRole('button', { name: 'Xác nhận hủy phiếu chờ' }).click();
     await expect(page.getByRole('status')).toContainText('Đã hủy phiếu');
     await expect(ticketRow).toContainText('Đã hủy');
+    await assertWaitingDemand(0);
     await expect(ticketRow.getByRole('button', { name: 'Hủy phiếu chờ' })).toHaveCount(0);
     await page.setViewportSize({ width: 1440, height: 900 });
 

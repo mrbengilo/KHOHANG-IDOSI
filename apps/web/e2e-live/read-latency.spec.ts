@@ -17,7 +17,7 @@ test('records bounded read latency under single and four-reader concurrency', as
   ).toBe(200);
   const samples = [];
   for (const path of [
-    '/warehouse-inventory',
+    '/warehouse-inventory?projection=waiting-demand-v2',
     '/order-requests?pageSize=50',
     '/store-receipts?pageSize=50',
   ]) {

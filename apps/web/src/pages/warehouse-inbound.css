@@ -90,8 +90,8 @@
 .inbound-receipt__products td::before {
   content: none;
 }
-.inbound-receipt__products th:first-child,
-.inbound-receipt__products td:first-child {
+.inbound-receipt__products th[data-primary-column],
+.inbound-receipt__products td[data-primary-column] {
   width: 100%;
 }
 

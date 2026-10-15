@@ -420,6 +420,12 @@ test('detail keeps parent paging, searches and sort; it pages on its own', async
   await expect(storePager).toContainText('Trang 2/2');
   await expect(productPager).toContainText('14 dòng · Trang 1/2');
   await expect(parentStoreRows(page)).toHaveCount(2);
+  await expect(
+    page
+      .getByLabel('Bảng cửa hàng', { exact: true })
+      .locator(':scope > table > tbody > tr > [data-label="STT"]')
+      .first(),
+  ).toHaveText('11');
   const before = await parentSnapshot(page);
   const requestCount = state.requests.length;
 
@@ -445,6 +451,7 @@ test('detail keeps parent paging, searches and sort; it pages on its own', async
   await detailPager.getByRole('button', { name: 'Sau', exact: true }).click();
   await expect(detailPager).toContainText('Trang 2/2');
   await expect(region.locator('tbody > tr')).toHaveCount(2);
+  await expect(region.locator('tbody > tr').first().locator('[data-label="STT"]')).toHaveText('11');
   expect(state.requests.at(-1)).toMatchObject({ storeId: alpha.id, productPage: 2 });
   expect(await parentSnapshot(page)).toEqual(before);
 

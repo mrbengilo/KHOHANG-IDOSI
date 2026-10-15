@@ -75,7 +75,8 @@ describe('AllocationResultCard', () => {
     expect(html).toContain('Phiên PDH-000042');
     expect(html).toContain('Đã xác nhận phân bổ');
     expect(html).toContain('Xem phiếu');
-    expect(html).toContain('Cửa hàng A đặt');
+    expect(html.replace(/<[^>]+>/g, '')).toContain('Cửa hàng A đặt');
+    expect(html).toContain('<span class="store-name">Cửa hàng A</span>');
     expect(html).toContain('9 bao');
     expect(html).toContain('Kết quả');
     expect(html).toContain('Chờ ưu tiên');

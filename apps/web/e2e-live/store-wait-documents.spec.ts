@@ -20,9 +20,11 @@ import {
   withSerializableTransaction,
   type Database,
 } from '@idosi/database';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 
 import { signIn } from './allocation-result-fixture';
+import { tabApi } from './tab-api';
+import { measureTableLayout, tableLayoutViolations } from '../e2e/table-layout-metrics';
 
 const api = 'http://127.0.0.1:3100/api/v1';
 const VIEWPORTS = [360, 390, 412, 768, 1366, 1440] as const;
@@ -109,6 +111,20 @@ test('a store reads its wait document, history and results; B → C → D throug
 
     // 1. The store sees three clear views of its own store.
     await signIn(page, storeLogin);
+    const assertDemand = async (expected: number[]) => {
+      const response = await tabApi(page).get(
+        `${api}/warehouse-inventory?projection=waiting-demand-v2&search=${token}`,
+      );
+      expect(response.status()).toBe(200);
+      const rows = (await response.json()).data;
+      for (const [index, key] of (['nam', 'nu', 'tre'] as const).entries()) {
+        const row = rows.find((item: { productId: string }) => item.productId === product[key]);
+        expect(row.waitingDemandBags).toBe(expected[index]);
+        expect(row.onHandBags).toBe(row.availableBags + row.reservedBags);
+        expect(row.reservedBags).toBe(row.sharedDeliveryHoldBags + row.waitTicketHoldBags);
+      }
+    };
+    await assertDemand([2, 0, 3]);
     await page.goto('/allocations');
     const tabs = page.getByRole('tablist', { name: 'Nội dung phân bổ hàng hóa' });
     await expect(tabs.getByRole('tab')).toHaveText([
@@ -167,6 +183,7 @@ test('a store reads its wait document, history and results; B → C → D throug
     await expect(panel.locator('.allocation-decision__status > .badge')).toHaveText(
       'Đã xác nhận phân bổ',
     );
+    await assertDemand([2, 0, 3]);
     await page.goto('/allocations?tab=wait-tickets');
     const next = page.locator('.wait-document-card').first();
     await expect(next.locator('h3')).not.toContainText(codeC);
@@ -209,9 +226,88 @@ test('a store reads its wait document, history and results; B → C → D throug
     await dialog.getByLabel('Lý do hủy').fill('Cửa hàng không cần nữa');
     await dialog.getByRole('button', { name: 'Xác nhận hủy phiếu chờ' }).click();
     await expect(page.getByRole('status')).toContainText('Đã hủy phiếu');
+    await assertDemand([0, 0, 0]);
     await page.goto('/allocations?tab=wait-tickets');
     await expect(page.getByText('Không có phiếu chờ đang hoạt động')).toBeVisible();
     expect(tre.id).toBeTruthy();
+  } finally {
+    await client.close();
+  }
+});
+
+test('live warehouse and two PCT documents agree on 3 + 5 = 8 without stock', async ({
+  page,
+}, testInfo) => {
+  const databaseUrl = process.env.DATABASE_URL;
+  test.skip(!databaseUrl, 'Requires isolated PostgreSQL.');
+  const client = createDatabase({ connectionString: databaseUrl, max: 3 });
+  try {
+    const token = randomUUID().slice(0, 8);
+    const sku = `LIVE-DEMAND-${token}`;
+    const [product] = await client.db
+      .insert(products)
+      .values({ sku, slug: sku.toLowerCase(), name: `Nhu cầu chờ ${token}` })
+      .returning();
+    const login = {
+      username: process.env.LIVE_E2E_ADMIN_USERNAME ?? 'ci.admin',
+      password: process.env.LIVE_E2E_ADMIN_PASSWORD ?? 'ci-bootstrap-password-not-for-production',
+    };
+    await signIn(page, login);
+    const request = tabApi(page);
+    const groups = await request.get(`${api}/store-groups?status=ACTIVE&pageSize=100`);
+    const groupId = (await groups.json()).data[0].id;
+    const [admin] = await client.db.select().from(users).where(eq(users.role, 'admin')).limit(1);
+    for (const quantity of [3, 5]) {
+      const response = await request.post(`${api}/stores`, {
+        headers: { 'idempotency-key': randomUUID() },
+        data: {
+          code: `LIVE_D_${quantity}_${token}`,
+          name: `Cửa hàng ${quantity} bao ${token}`,
+          kind: 'RETAIL',
+          groupId,
+        },
+      });
+      expect(response.status()).toBe(201);
+      const store = (await response.json()).data;
+      const fixture = liveFixture(client.db, store.id, admin!.id);
+      await fixture.ticket(product!.id, quantity);
+      await fixture.runEvent();
+    }
+    const canonical = await client.db.execute(
+      sql`select sum(remaining_quantity)::integer as demand from wait_tickets where product_id=${product!.id} and status='active' and deleted_at is null and remaining_quantity>0`,
+    );
+    const response = await request.get(
+      `${api}/warehouse-inventory?projection=waiting-demand-v2&search=${sku}`,
+    );
+    expect(response.status()).toBe(200);
+    const row = (await response.json()).data[0];
+    expect(row.waitingDemandBags).toBe(8);
+    expect(row.waitingDemandBags).toBe(canonical.rows[0]!.demand);
+    expect([row.onHandBags, row.reservedBags, row.waitTicketHoldBags, row.availableBags]).toEqual([
+      0, 0, 0, 0,
+    ]);
+    await page.goto(`/inventory?kt.q=${sku}`);
+    await expect(page.locator('.warehouse-stock-table tbody .table-index')).toHaveText('1');
+    await expect(
+      page.locator('.warehouse-stock-table td[data-label="Đang giữ phiếu chờ"]'),
+    ).toHaveText('8 bao');
+    expect(tableLayoutViolations(await measureTableLayout(page))).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath('live-demand-eight.png'), fullPage: true });
+    await page.goto(`/allocations?tab=wait-tickets&wdProduct=${product!.id}`);
+    const cards = page.locator('.wait-document-card');
+    await expect(cards).toHaveCount(2);
+    await expect(cards.locator('tbody .table-index')).toHaveText(['1', '1']);
+    expect((await cards.allTextContents()).some((text) => text.includes('còn chờ 3 bao'))).toBe(
+      true,
+    );
+    expect((await cards.allTextContents()).some((text) => text.includes('còn chờ 5 bao'))).toBe(
+      true,
+    );
+    expect(tableLayoutViolations(await measureTableLayout(page))).toEqual([]);
+    await page.screenshot({
+      path: testInfo.outputPath('live-demand-two-stores.png'),
+      fullPage: true,
+    });
   } finally {
     await client.close();
   }

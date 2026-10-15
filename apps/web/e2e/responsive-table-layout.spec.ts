@@ -56,7 +56,7 @@ async function mountSyntheticTable(page: Page, columns: number, rows = 3) {
   });
 }
 
-test('short tables keep their content width; wide tables grow then scroll locally', async ({
+test('short tables fill their content box; wide tables remain locally scrollable', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-1440', 'desktop sizing primitive');
@@ -71,10 +71,10 @@ test('short tables keep their content width; wide tables grow then scroll locall
     await page.setViewportSize({ width, height });
     const probe = await mountSyntheticTable(page, 3);
     compact.push(probe);
-    expect(Math.abs(probe.width - probe.natural)).toBeLessThanOrEqual(1);
-    expect(probe.wrapper).toBeLessThan(width / 2);
+    expect(Math.abs(probe.width - probe.wrapper)).toBeLessThanOrEqual(1);
+    expect(probe.width).toBeGreaterThanOrEqual(probe.natural);
   }
-  expect(Math.max(...compact.map((probe) => probe.width))).toBeLessThanOrEqual(
+  expect(Math.max(...compact.map((probe) => probe.width))).toBeGreaterThan(
     Math.min(...compact.map((probe) => probe.width)) + 1,
   );
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -92,7 +92,7 @@ test('short tables keep their content width; wide tables grow then scroll locall
   expect(fitting.length).toBeGreaterThan(3);
   expect(scrolling.length).toBeGreaterThan(0);
   // Before the wrapper limit the table grows with its columns; after it the scrollport stays put.
-  expect(fitting.at(-1)!.width).toBeGreaterThan(fitting[0]!.width * 3);
+  for (const probe of fitting) expect(Math.abs(probe.width - probe.wrapper)).toBeLessThanOrEqual(1);
   for (const probe of scrolling) expect(probe.wrapper).toBe(scrolling[0]!.wrapper);
   await testInfo.attach('table-growth', {
     body: JSON.stringify({ compact, growth }, null, 2),

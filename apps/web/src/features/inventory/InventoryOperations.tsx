@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import {
   keepPreviousData,
   useIsFetching,
@@ -541,6 +542,7 @@ function StoreInventoryPage({ role }: AppOutletContext) {
               <label>
                 Cửa hàng
                 <select
+                  className="store-name"
                   onChange={(event) =>
                     setParams(
                       (current) =>
@@ -557,7 +559,7 @@ function StoreInventoryPage({ role }: AppOutletContext) {
                 >
                   <option value="">Tất cả cửa hàng được phân quyền</option>
                   {stores.map((store) => (
-                    <option key={store.id} value={store.id}>
+                    <option className="store-name" key={store.id} value={store.id}>
                       {store.code} · {store.name}
                     </option>
                   ))}
@@ -655,10 +657,13 @@ function StoreInventoryPage({ role }: AppOutletContext) {
                 />
               ) : (
                 <div className="responsive-table">
-                  <table className="table-density">
+                  <DataTable className="table-density">
                     <thead>
                       <tr>
-                        <th>Mã bao</th>
+                        <th scope="col" className="table-index">
+                          STT
+                        </th>
+                        <th data-primary-column>Mã bao</th>
                         <th>Mặt hàng</th>
                         <th>Cửa hàng</th>
                         <th>Trạng thái</th>
@@ -667,16 +672,21 @@ function StoreInventoryPage({ role }: AppOutletContext) {
                       </tr>
                     </thead>
                     <tbody>
-                      {bags.map((bag) => (
+                      {bags.map((bag, rowIndex) => (
                         <tr key={bag.id}>
-                          <td data-label="Mã bao">
+                          <td className="table-index" data-label="STT">
+                            {rowIndex + 1}
+                          </td>
+                          <td data-primary-column data-label="Mã bao">
                             <strong>{bag.bagCode}</strong>
                             <small>v{bag.version}</small>
                           </td>
                           <td data-label="Mặt hàng">
                             {productNames.get(bag.productId) ?? bag.productId}
                           </td>
-                          <td data-label="Cửa hàng">{storeName(stores, bag.storeId)}</td>
+                          <td data-label="Cửa hàng">
+                            <span className="store-name">{storeName(stores, bag.storeId)}</span>
+                          </td>
                           <td data-label="Trạng thái">
                             <Badge tone={statusCopy[bag.status].tone}>
                               {statusCopy[bag.status].label}
@@ -700,7 +710,7 @@ function StoreInventoryPage({ role }: AppOutletContext) {
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                  </DataTable>
                 </div>
               )}
             </section>
@@ -714,11 +724,12 @@ function StoreInventoryPage({ role }: AppOutletContext) {
               <label className="inventory-ledger__picker">
                 Mã bao
                 <select
+                  className="store-name"
                   onChange={(event) => update({ [KEYS.bag]: event.target.value })}
                   value={effectiveBagId}
                 >
                   {bags.map((bag) => (
-                    <option key={bag.id} value={bag.id}>
+                    <option className="store-name" key={bag.id} value={bag.id}>
                       {bag.bagCode} · {productNames.get(bag.productId) ?? bag.productId} ·{' '}
                       {storeName(stores, bag.storeId)}
                     </option>
@@ -1004,7 +1015,12 @@ export function ProductionOpenBagPage({ role }: AppOutletContext) {
                 <h3>
                   {bag.bagCode} · {productName(bag.productId)}
                 </h3>
-                <p>{role !== 'STORE' ? storeName(stores, bag.storeId) + ' · ' : ''}Chưa khui</p>
+                <p>
+                  <span className="store-name">
+                    {role !== 'STORE' ? storeName(stores, bag.storeId) + ' · ' : ''}
+                  </span>
+                  Chưa khui
+                </p>
                 <p>
                   Kg lúc nhận: {formatKg(bag.receivedWeightKg)} · Còn lại:{' '}
                   {formatKg(bag.remainingWeightKg)}
@@ -1136,6 +1152,11 @@ export function ProductionOpenBagPage({ role }: AppOutletContext) {
           />
         ) : (
           <BagOpeningHistoryTable
+            offset={
+              historyQuery.data
+                ? (historyQuery.data.pagination.page - 1) * historyQuery.data.pagination.pageSize
+                : 0
+            }
             rows={historyQuery.data?.data ?? []}
             stores={stores}
             productName={productName}
@@ -1496,10 +1517,14 @@ export function LegacyOutboundPage({ mode, role }: OutboundPageProps) {
               </div>
               <label>
                 Cửa hàng
-                <select onChange={(event) => setStoreId(event.target.value)} value={storeId}>
+                <select
+                  className="store-name"
+                  onChange={(event) => setStoreId(event.target.value)}
+                  value={storeId}
+                >
                   <option value="">Tất cả cửa hàng được phân quyền</option>
                   {stores.map((store) => (
-                    <option key={store.id} value={store.id}>
+                    <option className="store-name" key={store.id} value={store.id}>
                       {store.code} · {store.name}
                     </option>
                   ))}
@@ -1523,10 +1548,13 @@ export function LegacyOutboundPage({ mode, role }: OutboundPageProps) {
               />
             ) : (
               <div className="responsive-table">
-                <table>
+                <DataTable>
                   <thead>
                     <tr>
-                      <th>Thời gian</th>
+                      <th scope="col" className="table-index">
+                        STT
+                      </th>
+                      <th data-primary-column>Thời gian</th>
                       <th>Mã bao</th>
                       <th>{reasonLabel}</th>
                       <th>Khối lượng</th>
@@ -1537,7 +1565,7 @@ export function LegacyOutboundPage({ mode, role }: OutboundPageProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {displayedOutbounds.map((outbound) => {
+                    {displayedOutbounds.map((outbound, rowIndex) => {
                       const bag = (bagsQuery.data ?? []).find(
                         (candidate) => candidate.id === outbound.inventoryLotId,
                       );
@@ -1545,13 +1573,20 @@ export function LegacyOutboundPage({ mode, role }: OutboundPageProps) {
                       const canReview = role !== 'STORE' && outbound.status === 'PENDING';
                       return (
                         <tr key={outbound.id}>
-                          <td data-label="Thời gian">
+                          <td className="table-index" data-label="STT">
+                            {rowIndex + 1}
+                          </td>
+                          <td data-primary-column data-label="Thời gian">
                             {outbound.code ? <strong>{outbound.code} · </strong> : null}
                             {new Date(outbound.createdAt).toLocaleString('vi-VN')}
                           </td>
                           <td data-label="Mã bao">
                             <strong>{bag?.bagCode ?? outbound.inventoryLotId}</strong>
-                            <small>{storeName(stores, outbound.storeId)}</small>
+                            <small>
+                              <span className="store-name">
+                                {storeName(stores, outbound.storeId)}
+                              </span>
+                            </small>
                           </td>
                           <td data-label={reasonLabel}>{reasonCopy[outbound.reason]}</td>
                           <td data-label="Khối lượng">{formatKg(outbound.weightKg)}</td>
@@ -1618,7 +1653,7 @@ export function LegacyOutboundPage({ mode, role }: OutboundPageProps) {
                       );
                     })}
                   </tbody>
-                </table>
+                </DataTable>
               </div>
             )}
           </section>
@@ -1851,10 +1886,14 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
             <section className="panel inventory-toolbar">
               <label>
                 Cửa hàng
-                <select value={storeId} onChange={(event) => setStoreId(event.target.value)}>
+                <select
+                  className="store-name"
+                  value={storeId}
+                  onChange={(event) => setStoreId(event.target.value)}
+                >
                   <option value="">Tất cả cửa hàng được phân quyền</option>
                   {stores.map((store) => (
-                    <option key={store.id} value={store.id}>
+                    <option className="store-name" key={store.id} value={store.id}>
                       {store.code} · {store.name}
                     </option>
                   ))}
@@ -2090,7 +2129,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
                         <div>
                           <h3>{row.exportNumber}</h3>
                           <small>
-                            {storeName(stores, row.storeId)} ·{' '}
+                            <span className="store-name">{storeName(stores, row.storeId)}</span> ·{' '}
                             {new Date(row.createdAt).toLocaleString('vi-VN')}
                           </small>
                         </div>
@@ -2215,10 +2254,13 @@ function SortingHistoryPanel({
       ) : (
         <>
           <div className="responsive-table" aria-busy={historyQuery.isFetching}>
-            <table className="table-density">
+            <DataTable className="table-density">
               <thead>
                 <tr>
-                  <th>Thời gian</th>
+                  <th scope="col" className="table-index">
+                    STT
+                  </th>
+                  <th data-primary-column>Thời gian</th>
                   {showStore ? <th>Cửa hàng</th> : null}
                   <th>Mã bao</th>
                   <th>Mặt hàng</th>
@@ -2228,13 +2270,18 @@ function SortingHistoryPanel({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
+                {rows.map((row, rowIndex) => (
                   <tr key={row.id}>
-                    <td data-label="Thời gian">
+                    <td className="table-index" data-label="STT">
+                      {(meta ? (meta.page - 1) * meta.pageSize : 0) + rowIndex + 1}
+                    </td>
+                    <td data-primary-column data-label="Thời gian">
                       <time dateTime={row.occurredAt}>{formatSortingTime(row.occurredAt)}</time>
                     </td>
                     {showStore ? (
-                      <td data-label="Cửa hàng">{storeName(stores, row.storeId)}</td>
+                      <td data-label="Cửa hàng">
+                        <span className="store-name">{storeName(stores, row.storeId)}</span>
+                      </td>
                     ) : null}
                     <td data-label="Mã bao">{row.bagCode ?? '—'}</td>
                     <td data-label="Mặt hàng">
@@ -2252,7 +2299,7 @@ function SortingHistoryPanel({
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </DataTable>
           </div>
           {lastPage > 1 ? (
             <nav className="sorting-history__pagination" aria-label="Phân trang lịch sử lọc">
@@ -2406,7 +2453,9 @@ function SaleProductCard({
     <article className="sorted-charity-card">
       <div>
         <h3>{productName}</h3>
-        <small>{sourceStoreName}</small>
+        <small>
+          <span className="store-name">{sourceStoreName}</span>
+        </small>
       </div>
       <strong>{formatKgExact(saleWeightKg)} còn lại</strong>
       {breakdown ? (
@@ -2482,7 +2531,9 @@ function CharityProductCard({
     <article className="sorted-charity-card">
       <div>
         <h3>{productName}</h3>
-        <small>{sourceStoreName}</small>
+        <small>
+          <span className="store-name">{sourceStoreName}</span>
+        </small>
       </div>
       <strong>{formatKgExact(charityWeightKg)} còn lại</strong>
       {editable ? (
@@ -2598,7 +2649,9 @@ function CancelProductCard({
     <article className="sorted-charity-card">
       <div>
         <h3>{productName}</h3>
-        <small>{sourceStoreName}</small>
+        <small>
+          <span className="store-name">{sourceStoreName}</span>
+        </small>
       </div>
       <strong>{formatKgExact(cancelWeightKg)} chờ xử lý</strong>
       {editable ? (

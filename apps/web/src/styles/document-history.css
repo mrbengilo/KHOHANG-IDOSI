@@ -7,7 +7,7 @@
 }
 .document-history table {
   display: table;
-  width: auto;
+  width: 100%;
   min-width: 0;
   table-layout: auto;
   border-collapse: collapse;
@@ -45,7 +45,7 @@
 }
 /* Opt in per measured document: merged cells keep their real column semantics. */
 .document-history--compact table {
-  width: auto;
+  width: 100%;
   min-width: 0;
 }
 .document-history--compact th,

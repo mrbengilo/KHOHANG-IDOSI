@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { RefreshCw } from 'lucide-react';
@@ -249,7 +250,7 @@ export function IdosiSalesSummary({
             <ul>
               {summary.snapshots.map((snapshot) => (
                 <li key={snapshot.storeId}>
-                  {snapshot.payload.store.name} ·{' '}
+                  <span className="store-name">{snapshot.payload.store.name}</span> ·{' '}
                   {new Date(snapshot.lastSyncedAt).toLocaleString('vi-VN', {
                     timeZone: 'Asia/Ho_Chi_Minh',
                   })}
@@ -274,12 +275,13 @@ export function IdosiSalesSummary({
                 <label>
                   Cửa hàng thống kê bán hàng
                   <select
+                    className="store-name"
                     value={storeId ?? 'ALL'}
                     onChange={(event) => filters.onStoreChange(event.target.value)}
                   >
                     {filters.allowAll ? <option value="ALL">Toàn hệ thống</option> : null}
                     {filters.stores.map((store) => (
-                      <option key={store.id} value={store.id}>
+                      <option className="store-name" key={store.id} value={store.id}>
                         {store.name}
                       </option>
                     ))}
@@ -302,10 +304,13 @@ export function IdosiSalesSummary({
           {rows.length ? (
             <>
               <div className="responsive-table">
-                <table className="table-density table-density--metrics">
+                <DataTable className="table-density table-density--metrics">
                   <thead>
                     <tr>
-                      <th>Mặt hàng</th>
+                      <th scope="col" className="table-index">
+                        STT
+                      </th>
+                      <th data-primary-column>Mặt hàng</th>
                       <th>Số lượng bán</th>
                       <th>Khối lượng bán</th>
                       <th>Sale theo cái</th>
@@ -313,9 +318,12 @@ export function IdosiSalesSummary({
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.slice((currentPage - 1) * 15, currentPage * 15).map((item) => (
+                    {rows.slice((currentPage - 1) * 15, currentPage * 15).map((item, rowIndex) => (
                       <tr key={item.productId}>
-                        <td data-label="Mặt hàng">
+                        <td className="table-index" data-label="STT">
+                          {(currentPage - 1) * 15 + rowIndex + 1}
+                        </td>
+                        <td data-primary-column data-label="Mặt hàng">
                           <strong>{item.productName}</strong>
                           <small>{item.productCode ?? item.productId}</small>
                         </td>
@@ -337,7 +345,7 @@ export function IdosiSalesSummary({
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </DataTable>
               </div>
               <div className="idosi-sales-pagination">
                 <Button

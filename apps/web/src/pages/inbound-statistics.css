@@ -17,7 +17,7 @@
 }
 .inbound-panel {
   min-width: 0;
-  border: 1px solid #dce3ee;
+  border: 1px solid var(--content-border);
   border-radius: 14px;
   padding: 20px;
   background: #fff;
@@ -35,7 +35,7 @@
 }
 .inbound-statistics input,
 .inbound-statistics select {
-  border: 1px solid #b9c5d6;
+  border: 1px solid var(--content-border);
   border-radius: 8px;
   min-height: 44px;
   padding: 9px;
@@ -46,7 +46,7 @@
 }
 .inbound-statistics button {
   min-height: 44px;
-  border: 1px solid #bdcadb;
+  border: 1px solid var(--content-border);
   border-radius: 8px;
   padding: 8px 12px;
   background: #f5f8fd;
@@ -142,7 +142,7 @@
   min-width: 95px;
   vertical-align: top;
 }
-.inbound-statistics th:first-child {
+.inbound-statistics th[data-primary-column] {
   text-align: left;
   min-width: 190px;
 }

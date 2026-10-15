@@ -145,8 +145,10 @@ export function AllocationResultNotice({ role }: { readonly role: Role }) {
               <div>
                 <strong>Phiếu {decisionCode(decision)}</strong>
                 <span>
-                  {storeName.get(decision.storeId) ?? 'Cửa hàng'} · Phiên {decision.sessionCode} ·
-                  Ngày {decision.businessDate} · Công bố{' '}
+                  <span className="store-name">
+                    {storeName.get(decision.storeId) ?? 'Cửa hàng'}
+                  </span>{' '}
+                  · Phiên {decision.sessionCode} · Ngày {decision.businessDate} · Công bố{' '}
                   {timeFormatter.format(new Date(decision.createdAt))}
                 </span>
                 <span>

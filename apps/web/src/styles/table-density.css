@@ -2,7 +2,7 @@
 @media (min-width: 821px) {
   /* Keep the opt-in stronger than feature CSS loaded after the app stylesheet. */
   .app-main table.table-density {
-    width: auto;
+    width: 100%;
     min-width: 0;
     max-width: 100%;
     table-layout: auto;
@@ -16,7 +16,7 @@
 
   /* Số liệu căn trái như mọi cột; giữ chữ số cùng bề rộng và không ngắt giữa số. */
   table.table-density .table-number,
-  table.table-density--metrics tr > :not(:first-child):not([colspan]) {
+  table.table-density--metrics td:not([data-primary-column]):not([colspan]) {
     text-align: left;
     font-variant-numeric: tabular-nums;
     max-width: 16rem;
@@ -27,4 +27,38 @@
   .bag-opening-history table.table-density th {
     width: auto;
   }
+}
+
+/* Full content width, including nested PCT tables and document scrollports. */
+.app-main .data-table {
+  width: 100%;
+  table-layout: auto;
+}
+.app-main .data-table thead th {
+  width: auto;
+  max-width: none;
+  white-space: normal;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.app-main .data-table[data-header-wrap='false'] thead th {
+  min-width: var(--header-min-width, 0);
+  white-space: nowrap;
+}
+.app-main .data-table .table-index {
+  width: 1%;
+  min-width: 3rem;
+  max-width: none;
+  font-variant-numeric: tabular-nums;
+}
+.app-main .data-table thead .table-index {
+  white-space: nowrap;
+}
+/* Names retain their meaning when STT becomes the first column. */
+:root .app-main .store-name,
+.dialog .store-name,
+select.store-name,
+option.store-name {
+  color: var(--store-name-color);
+  font-weight: 700;
 }

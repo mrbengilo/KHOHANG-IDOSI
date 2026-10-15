@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import type {
   InboundBreakdown,
   InboundMetric,
@@ -41,14 +42,10 @@ export function BreakdownHeaders() {
     <>
       {['Kho', 'Đối tác khác', 'Tổng nhập'].flatMap((label) => [
         <th className="table-number" key={`${label}-bags`}>
-          {label}
-          <br />
-          bao
+          {label} · bao
         </th>,
         <th className="table-number" key={`${label}-kg`}>
-          {label}
-          <br />
-          kg
+          {label} · kg
         </th>,
       ])}
     </>
@@ -93,10 +90,13 @@ export function InboundProductTable({
   const source = data.selectedSource;
   return (
     <div className="inbound-table-scroll" tabIndex={0} aria-label={label}>
-      <table className="table-density">
+      <DataTable className="table-density">
         <thead>
           <tr>
-            <th>Mã / tên mặt hàng</th>
+            <th scope="col" className="table-index">
+              STT
+            </th>
+            <th data-primary-column>Mã / tên mặt hàng</th>
             {source === 'ALL' ? (
               <BreakdownHeaders />
             ) : (
@@ -110,9 +110,12 @@ export function InboundProductTable({
           </tr>
         </thead>
         <tbody>
-          {data.productRows.map((row) => (
+          {data.productRows.map((row, rowIndex) => (
             <tr key={row.productId}>
-              <th scope="row">
+              <td className="table-index" data-label="STT">
+                {(data.productPagination.page - 1) * data.productPagination.pageSize + rowIndex + 1}
+              </td>
+              <th data-primary-column scope="row">
                 {row.sku}
                 <small>{row.productName}</small>
               </th>
@@ -128,7 +131,7 @@ export function InboundProductTable({
         </tbody>
         <tfoot>
           <tr>
-            <th>{totalLabel}</th>
+            <th colSpan={2}>{totalLabel}</th>
             {source === 'ALL' ? (
               <BreakdownCells value={data.overviewAllSources} />
             ) : (
@@ -150,7 +153,7 @@ export function InboundProductTable({
             </td>
           </tr>
         </tfoot>
-      </table>
+      </DataTable>
     </div>
   );
 }

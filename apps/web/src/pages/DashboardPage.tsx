@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import type {
   ExactIntegerReportMetric,
   InventoryAmount,
@@ -237,6 +238,7 @@ export function buildStoreHealthRows(
 
 interface ActivityItem {
   readonly detail: string;
+  readonly storeName: string;
   readonly id: string;
   readonly occurredAt: string;
   readonly title: string;
@@ -248,7 +250,8 @@ function recentActivity(snapshot: DashboardSnapshot, stores: readonly Store[]): 
     stores.find((store) => store.id === storeId)?.name ?? `Cửa hàng ${storeId.slice(0, 8)}`;
   const items: ActivityItem[] = [
     ...snapshot.receipts.map((receipt): ActivityItem => ({
-      detail: `${storeName(receipt.storeId)} • ${receipt.lines.length} mặt hàng • ${receipt.status}`,
+      storeName: storeName(receipt.storeId),
+      detail: `${receipt.lines.length} mặt hàng • ${receipt.status}`,
       id: `receipt-${receipt.id}`,
       occurredAt: receipt.updatedAt,
       title: `Phiếu nhận ${receipt.receiptNumber}`,
@@ -260,14 +263,16 @@ function recentActivity(snapshot: DashboardSnapshot, stores: readonly Store[]): 
             : 'warning',
     })),
     ...snapshot.waitTickets.map((ticket): ActivityItem => ({
-      detail: `${storeName(ticket.storeId)} • còn ${formatAmount(ticket.remaining)} • ${ticket.priority}`,
+      storeName: storeName(ticket.storeId),
+      detail: `còn ${formatAmount(ticket.remaining)} • ${ticket.priority}`,
       id: `wait-${ticket.id}`,
       occurredAt: ticket.updatedAt,
       title: `Phiếu chờ ${ticket.code ?? ticket.id.slice(0, 8)}`,
       tone: ticket.status === 'FULFILLED' ? 'success' : 'warning',
     })),
     ...snapshot.priorityOffers.map((offer): ActivityItem => ({
-      detail: `${storeName(offer.storeId)} • ${formatAmount(offer.offered)} • hết hạn ${new Date(offer.expiresAt).toLocaleString('vi-VN')}`,
+      storeName: storeName(offer.storeId),
+      detail: `${formatAmount(offer.offered)} • hết hạn ${new Date(offer.expiresAt).toLocaleString('vi-VN')}`,
       id: `offer-${offer.id}`,
       occurredAt: offer.offeredAt,
       title: `Phiếu ưu tiên ${offer.code ?? offer.status}`,
@@ -279,7 +284,8 @@ function recentActivity(snapshot: DashboardSnapshot, stores: readonly Store[]): 
             : 'neutral',
     })),
     ...snapshot.orderRequests.map((request): ActivityItem => ({
-      detail: `${storeName(request.storeId)} • ${request.lines.length} mặt hàng • ${request.status}`,
+      storeName: storeName(request.storeId),
+      detail: `${request.lines.length} mặt hàng • ${request.status}`,
       id: `order-${request.id}`,
       occurredAt: request.submittedAt,
       title: `Phiếu đặt hàng ${request.code ?? request.requestSequence}`,
@@ -553,6 +559,7 @@ function DashboardFilters({
         <label>
           Phạm vi cửa hàng
           <select
+            className="store-name"
             aria-label="Phạm vi cửa hàng dashboard"
             onChange={(event) => onScopeChange(event.target.value)}
             value={scopeValue}
@@ -560,7 +567,7 @@ function DashboardFilters({
             {role === 'ADMIN' ? <option value="ALL">Toàn hệ thống</option> : null}
             {role === 'WHOLESALE' ? <option value="ALL">Tất cả cửa hàng sỉ</option> : null}
             {stores.map((store) => (
-              <option key={store.id} value={store.id}>
+              <option className="store-name" key={store.id} value={store.id}>
                 {store.code} • {store.name}
               </option>
             ))}
@@ -788,7 +795,9 @@ function DashboardContent({
                 <BellRing aria-hidden="true" size={17} />
                 <div>
                   <strong>{item.title}</strong>
-                  <span>{item.detail}</span>
+                  <span>
+                    <span className="store-name">{item.storeName}</span> • {item.detail}
+                  </span>
                 </div>
                 <Badge tone={item.tone}>
                   {new Date(item.occurredAt).toLocaleDateString('vi-VN')}
@@ -814,10 +823,13 @@ function DashboardContent({
           </div>
         ) : (
           <div className="responsive-table">
-            <table className="table-density">
+            <DataTable className="table-density">
               <thead>
                 <tr>
-                  <th>Cửa hàng</th>
+                  <th scope="col" className="table-index">
+                    STT
+                  </th>
+                  <th data-primary-column>Cửa hàng</th>
                   <th>Loại</th>
                   <th className="table-number">Phiếu nhận chờ</th>
                   <th className="table-number">Phiếu chờ</th>
@@ -827,10 +839,15 @@ function DashboardContent({
                 </tr>
               </thead>
               <tbody>
-                {healthRows.map((row) => (
+                {healthRows.map((row, rowIndex) => (
                   <tr key={row.store.id}>
-                    <td data-label="Cửa hàng">
-                      <strong>{row.store.name}</strong>
+                    <td className="table-index" data-label="STT">
+                      {rowIndex + 1}
+                    </td>
+                    <td data-primary-column data-label="Cửa hàng">
+                      <strong>
+                        <span className="store-name">{row.store.name}</span>
+                      </strong>
                       <small>{row.store.code}</small>
                     </td>
                     <td data-label="Loại">
@@ -870,7 +887,7 @@ function DashboardContent({
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </DataTable>
           </div>
         )}
       </section>

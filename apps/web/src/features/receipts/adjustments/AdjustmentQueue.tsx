@@ -95,7 +95,11 @@ export function AdjustmentQueue({
                   <strong>
                     {item.code} · {item.receiptNumber}
                   </strong>
-                  <small>{item.storeName ?? storeNameById.get(item.storeId) ?? 'Cửa hàng'}</small>
+                  <small>
+                    <span className="store-name">
+                      {item.storeName ?? storeNameById.get(item.storeId) ?? 'Cửa hàng'}
+                    </span>
+                  </small>
                 </span>
                 <Badge tone={copy.tone}>{copy.label}</Badge>
                 <span className="adjustment-card__meta">{item.reason}</span>
@@ -116,7 +120,11 @@ export function AdjustmentQueue({
                   <strong>
                     {item.code} · từ {item.adjustmentCode}
                   </strong>
-                  <small>{storeNameById.get(item.storeId) ?? 'Cửa hàng'}</small>
+                  <small>
+                    <span className="store-name">
+                      {storeNameById.get(item.storeId) ?? 'Cửa hàng'}
+                    </span>
+                  </small>
                 </span>
                 <Badge tone={copy.tone}>{copy.label}</Badge>
               </button>

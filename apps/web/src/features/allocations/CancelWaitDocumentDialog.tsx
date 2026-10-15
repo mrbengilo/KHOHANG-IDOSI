@@ -76,8 +76,8 @@ export function CancelWaitDocumentDialog({
           <div>
             <h2 id={titleId}>Hủy phiếu chờ {document.code}</h2>
             <p>
-              {document.storeName}. Mọi mặt hàng còn chờ của phiếu bị hủy; xem kỹ phạm vi trước khi
-              xác nhận. Thao tác được ghi vào lịch sử phiếu.
+              <span className="store-name">{document.storeName}</span>. Mọi mặt hàng còn chờ của
+              phiếu bị hủy; xem kỹ phạm vi trước khi xác nhận. Thao tác được ghi vào lịch sử phiếu.
             </p>
           </div>
           <button

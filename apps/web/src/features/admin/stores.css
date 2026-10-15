@@ -71,7 +71,7 @@
   min-width: 940px;
 }
 
-.store-lifecycle-table td:first-child {
+.store-lifecycle-table td[data-primary-column] {
   max-width: 340px;
 }
 

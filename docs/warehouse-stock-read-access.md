@@ -16,19 +16,25 @@ hàng, giá vốn hay chứng từ, nên không lộ dữ liệu cửa hàng kh�
 
 ## Cột của bảng tồn hiện tại
 
-| Cột                     | Trường API                                          | Ý nghĩa                                                                                                                                        |
-| ----------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Mặt hàng                | `productName`                                       | Chỉ tên, không hiện mã (SKU vẫn có trong API và ô tìm kiếm).                                                                                   |
-| Đang có tại kho         | `availableBags` (số chính), `onHandBags` (dòng phụ) | Khả dụng để cấp phân bổ `H − R`; dòng phụ là tồn thực `H`.                                                                                     |
-| Đang giữ chờ giao chung | `sharedDeliveryHoldBags`                            | Phần `R` giữ cho dòng phân bổ đã cấp còn trong kho: kết quả chờ xác nhận, hàng cấp một phần/ưu tiên giữ để giao cùng đơn thường kế tiếp.       |
-| Đang giữ phiếu chờ      | `waitTicketHoldBags`                                | Phần `R` lượt ưu tiên đang giữ cho phiếu chờ (`daily_priority_offers.stock_held_quantity`), kẹp tối đa `R`.                                    |
-| Tổng đã xuất            | `dispatchedBags`                                    | Lũy kế bút toán `outbound` của sổ kho tổng (xuất theo RE, quyết toán phiếu nhận legacy, nhận dư). Chuyến giao không đổi `H` nên không đếm lại. |
-| Thao tác (chỉ Admin)    | `reshareReconciled`                                 | Mặt hàng nguồn Reshare: nút “Cập nhật tồn Reshare” mở đối chiếu tồn Reshare; mặt hàng khác: “Điều chỉnh tồn”.                                  |
+| Cột                     | Trường API                                          | Ý nghĩa                                                                                                                                                                                     |
+| ----------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mặt hàng                | `productName`                                       | Chỉ tên, không hiện mã (SKU vẫn có trong API và ô tìm kiếm).                                                                                                                                |
+| Đang có tại kho         | `availableBags` (số chính), `onHandBags` (dòng phụ) | Khả dụng để cấp phân bổ `H − R`; dòng phụ là tồn thực `H`.                                                                                                                                  |
+| Đang giữ chờ giao chung | `sharedDeliveryHoldBags`                            | Phần `R` giữ cho dòng phân bổ đã cấp còn trong kho: kết quả chờ xác nhận, hàng cấp một phần/ưu tiên giữ để giao cùng đơn thường kế tiếp.                                                    |
+| Đang giữ phiếu chờ      | `waitingDemandBags`                                 | Tổng `remaining_quantity` của PC active, chưa xóa, còn số lượng, theo productId trên mọi cửa hàng. Đây là nhu cầu chưa được cấp, độc lập với H/R và không cộng thêm hold hoặc hàng pending. |
+| Tổng đã xuất            | `dispatchedBags`                                    | Lũy kế bút toán `outbound` của sổ kho tổng (xuất theo RE, quyết toán phiếu nhận legacy, nhận dư). Chuyến giao không đổi `H` nên không đếm lại.                                              |
+| Thao tác (chỉ Admin)    | `reshareReconciled`                                 | Mặt hàng nguồn Reshare: nút “Cập nhật tồn Reshare” mở đối chiếu tồn Reshare; mặt hàng khác: “Điều chỉnh tồn”.                                                                               |
 
-Bất biến: `onHandBags = availableBags + sharedDeliveryHoldBags + waitTicketHoldBags` và
+Bảng có STT đầu tiên theo pagination mặt hàng thực. API yêu cầu `projection=waiting-demand-v2`;
+tab cũ nhận 409 yêu cầu tải lại. Bundle mới kiểm tra response nghiêm ngặt và báo lỗi phiên bản
+khi rollback về API cũ, không biến trường thiếu thành 0. Xem `table-presentation-waiting-demand.md`.
+
+Bất biến vật lý: `onHandBags = availableBags + sharedDeliveryHoldBags + waitTicketHoldBags` và
 `reservedBags = sharedDeliveryHoldBags + waitTicketHoldBags`. Trước đây `dispatchedBags` cộng
 `dispatched_quantity` của phiếu xuất (chuyến giao); từ khi có đơn RE hàng rời kho lúc xác nhận nên
-số đó chậm hơn sổ kho. Không đổi schema, không migration; chỉ thêm trường đọc.
+số đó chậm hơn sổ kho. `waitTicketHoldBags` vẫn giữ nguyên nghĩa vật lý trong API, nhưng không
+còn là binding của cột nhu cầu chờ. Không lấy ba cột hiển thị cộng lại thành tồn thực.
+Không đổi schema database, không migration; chỉ thêm trường đọc.
 
 ## Thực thi
 
@@ -43,8 +49,8 @@ số đó chậm hơn sổ kho. Không đổi schema, không migration; chỉ th
 
 ## Dữ liệu, migration, rollback
 
-Không đổi schema, không migration, không backfill. Rollback bằng image trước chỉ đóng lại quyền
-đọc; không có dữ liệu mới cần chuyển đổi.
+Không đổi schema, không migration, không backfill. Rollback đồng bộ API/web bằng image trước;
+quyền đọc kho tổng vẫn giữ nguyên. Tab đang mở cần tải lại khi nhận lỗi phiên bản.
 
 ## Kiểm chứng
 

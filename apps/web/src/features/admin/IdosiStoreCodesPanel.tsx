@@ -96,7 +96,7 @@ export function IdosiStoreCodesPanel() {
               <li key={row.storeId}>
                 <div>
                   <strong>
-                    {row.storeCode} · {row.storeName}
+                    {row.storeCode} · <span className="store-name">{row.storeName}</span>
                     <Badge tone={row.source === 'MISSING' ? 'danger' : 'neutral'}>
                       {sourceCopy[row.source]}
                     </Badge>

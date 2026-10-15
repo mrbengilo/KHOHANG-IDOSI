@@ -38,9 +38,11 @@ test('warehouse accepts three bags without a weight field and generates its rece
   ).toBeVisible();
   const row = page.locator('.document-history tbody').filter({ hasText: data.referenceCode });
   await expect(row.locator('tr')).toHaveCount(1);
-  await expect(row.locator('td').nth(4)).toHaveText('3');
-  await expect(row.locator('td').nth(5)).toHaveText('3');
-  await expect(row.locator('td').nth(6)).toHaveText(data.receivedByDisplayName);
+  await expect(row.locator('[data-label="Số lượng (bao)"]')).toHaveText('3');
+  await expect(row.locator('[data-label="Tổng số lượng (bao)"]')).toHaveText('3');
+  await expect(row.locator('[data-label="Người thực hiện"]')).toHaveText(
+    data.receivedByDisplayName,
+  );
   await expect(page.getByText('Chốt chi phí theo hóa đơn', { exact: true })).toHaveCount(0);
   await expect(page.getByLabel('Tổng tiền hàng theo hóa đơn (VND)')).toHaveCount(0);
 });

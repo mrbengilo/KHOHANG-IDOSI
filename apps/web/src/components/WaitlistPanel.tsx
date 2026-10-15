@@ -432,9 +432,11 @@ export function WaitlistPanel({
                     <span>
                       <Clock3 aria-hidden="true" size={14} /> Còn {amountLabel(ticket.remaining)} •{' '}
                       ưu tiên {ticket.priority}
-                      {storeNameById.get(ticket.storeId)
-                        ? ` • ${storeNameById.get(ticket.storeId)}`
-                        : ''}
+                      <span className="store-name">
+                        {storeNameById.get(ticket.storeId)
+                          ? ` • ${storeNameById.get(ticket.storeId)}`
+                          : ''}
+                      </span>
                     </span>
                     {ticket.status === 'CANCELLED' ? <CancellationNote ticket={ticket} /> : null}
                   </div>

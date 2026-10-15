@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CreateStorePartnerInboundRequestSchema, type Store } from '@idosi/contracts';
 import { useRef, useState, type FormEvent } from 'react';
@@ -261,6 +262,7 @@ function PartnerInboundContent() {
                   </span>
                 </span>
                 <select
+                  className="store-name"
                   required
                   aria-label="Cửa hàng nhận hàng"
                   value={storeId}
@@ -270,7 +272,7 @@ function PartnerInboundContent() {
                   }}
                 >
                   {storeOptions.map((store) => (
-                    <option key={store.id} value={store.id}>
+                    <option className="store-name" key={store.id} value={store.id}>
                       {store.code} · {store.name}
                     </option>
                   ))}
@@ -442,10 +444,13 @@ function PartnerInboundContent() {
           </div>
         ) : null}
         <div className="responsive-table">
-          <table>
+          <DataTable>
             <thead>
               <tr>
-                <th>Phiếu</th>
+                <th scope="col" className="table-index">
+                  STT
+                </th>
+                <th data-primary-column>Phiếu</th>
                 <th>Đối tác</th>
                 <th>Mặt hàng</th>
                 <th>Số kiện</th>
@@ -453,9 +458,12 @@ function PartnerInboundContent() {
               </tr>
             </thead>
             <tbody>
-              {(history.data ?? []).map((slip) => (
+              {(history.data ?? []).map((slip, rowIndex) => (
                 <tr key={slip.id}>
-                  <td data-label="Phiếu">
+                  <td className="table-index" data-label="STT">
+                    {rowIndex + 1}
+                  </td>
+                  <td data-primary-column data-label="Phiếu">
                     <strong>{slip.referenceCode}</strong>
                     <small>
                       {new Date(slip.receivedAt).toLocaleString('vi-VN', {
@@ -479,7 +487,7 @@ function PartnerInboundContent() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </DataTable>
         </div>
       </section>
     </>

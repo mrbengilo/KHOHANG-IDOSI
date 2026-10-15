@@ -194,10 +194,12 @@ test('HTKD sees all assigned priority offers, reads central stock and cancels th
       await db.select().from(warehouseBalances).where(eq(warehouseBalances.productId, product!.id))
     )[0]!;
     const apiStock = await tabApi(htkdPage!).get(
-      `${api}/warehouse-inventory?search=${product!.sku}`,
+      `${api}/warehouse-inventory?projection=waiting-demand-v2&search=${product!.sku}`,
     );
     expect(apiStock.status()).toBe(200);
-    expect((await apiStock.json()).data[0].reservedBags).toBe(balances.reservedQuantity);
+    const beforeCancelStock = (await apiStock.json()).data[0];
+    expect(beforeCancelStock.reservedBags).toBe(balances.reservedQuantity);
+    expect(beforeCancelStock.waitingDemandBags).toBe(9);
     expect(
       (
         await tabApi(htkdPage!).post(`${api}/warehouse-adjustments`, {
@@ -228,7 +230,8 @@ test('HTKD sees all assigned priority offers, reads central stock and cancels th
     ).toBe(true);
     await adminPage!.goto(`/allocations?tab=wait-tickets&wt.q=${tickets[1]!.code}`);
     const table = adminPage!.locator('.wait-ticket-table');
-    await expect(table.locator('th')).toHaveCount(9);
+    await expect(table.locator('th')).toHaveCount(10);
+    await expect(table.getByRole('columnheader').first()).toHaveText('STT');
     await expect(table).toContainText('Đã bị hủy');
     await expect(table).toContainText('HTKD hủy theo yêu cầu cửa hàng');
     await adminPage!.reload();
@@ -259,9 +262,10 @@ test('HTKD sees all assigned priority offers, reads central stock and cancels th
     expect((await empty.json()).data).toEqual([]);
     // Store accounts read the same central stock read-only; managing it stays Admin-only.
     const storeStock = await tabApi(storePage!).get(
-      `${api}/warehouse-inventory?search=${product!.sku}`,
+      `${api}/warehouse-inventory?projection=waiting-demand-v2&search=${product!.sku}`,
     );
     expect(storeStock.status()).toBe(200);
+    expect((await storeStock.json()).data[0].waitingDemandBags).toBe(6);
     expect((await storeStock.json()).data[0].reservedBags).toBe(
       (
         await db

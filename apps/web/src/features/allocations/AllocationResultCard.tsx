@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import type { SessionDocument, SessionDocumentSource } from '@idosi/contracts';
 import type { ReactNode } from 'react';
 
@@ -92,7 +93,9 @@ export function AllocationResultCard({
     <article className="panel session-document allocation-summary-card" aria-label={storeName}>
       <header className="allocation-summary-card__header">
         <div className="allocation-summary-card__title">
-          <h3>{storeName}</h3>
+          <h3>
+            <span className="store-name">{storeName}</span>
+          </h3>
           <small>Phân bổ lúc {createdAtText}</small>
           <small className="allocation-summary-card__session">Phiên {sessionText}</small>
         </div>
@@ -112,7 +115,15 @@ export function AllocationResultCard({
         ) : null}
       </header>
       <dl className="allocation-summary">
-        <SummaryRow label={`${storeName} đặt`} total={summary.orderedTotal} tone="ordered">
+        <SummaryRow
+          label={
+            <>
+              <span className="store-name">{storeName}</span> đặt
+            </>
+          }
+          total={summary.orderedTotal}
+          tone="ordered"
+        >
           <ItemChips items={summary.ordered} empty="Không có đơn đặt mới trong phiên này" />
         </SummaryRow>
         <SummaryRow label="Kết quả" total={summary.grantedTotal} tone="granted">
@@ -172,26 +183,32 @@ export function AllocationResultCard({
       <details className="allocation-summary-card__details">
         <summary>Chi tiết · {document.resultCode}</summary>
         <div className="document-history">
-          <table className="table-density table-density--metrics">
+          <DataTable className="table-density table-density--metrics">
             <thead>
               <tr>
-                <th>Mặt hàng</th>
+                <th scope="col" className="table-index">
+                  STT
+                </th>
+                <th data-primary-column>Mặt hàng</th>
                 <th>Đặt</th>
                 <th>Được phân bổ</th>
                 <th>Chờ ưu tiên</th>
               </tr>
             </thead>
             <tbody>
-              {document.lines.map((line) => (
+              {document.lines.map((line, rowIndex) => (
                 <tr key={line.productId}>
-                  <td>{productName(line.productId)}</td>
+                  <td className="table-index" data-label="STT">
+                    {rowIndex + 1}
+                  </td>
+                  <td data-primary-column>{productName(line.productId)}</td>
                   <td>{line.requestedQuantity}</td>
                   <td>{line.allocatedQuantity}</td>
                   <td>{line.waitlistedQuantity}</td>
                 </tr>
               ))}
             </tbody>
-          </table>
+          </DataTable>
         </div>
         <p className="allocation-summary-card__codes">
           Phiếu đặt {document.orderCode} · Phiếu kết quả {document.resultCode} · phiên bản{' '}

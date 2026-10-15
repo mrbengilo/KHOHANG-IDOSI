@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import '../styles/document-history.css';
 import {
   AllocationDecisionStatusSchema,
@@ -232,10 +233,13 @@ export function AllocationPage() {
           />
         ) : (
           <div className="responsive-table">
-            <table>
+            <DataTable>
               <thead>
                 <tr>
-                  <th>Mã phiếu</th>
+                  <th scope="col" className="table-index">
+                    STT
+                  </th>
+                  <th data-primary-column>Mã phiếu</th>
                   <th>Cửa hàng</th>
                   <th>Mặt hàng</th>
                   <th>Nhu cầu</th>
@@ -246,15 +250,20 @@ export function AllocationPage() {
                 </tr>
               </thead>
               <tbody>
-                {visible.map((request) => (
+                {visible.map((request, rowIndex) => (
                   <tr key={request.id}>
-                    <td data-label="Mã phiếu">
+                    <td className="table-index" data-label="STT">
+                      {rowIndex + 1}
+                    </td>
+                    <td data-primary-column data-label="Mã phiếu">
                       <strong>{request.id}</strong>
                       <small>
                         <Clock3 aria-hidden="true" size={13} /> {request.submittedAt}
                       </small>
                     </td>
-                    <td data-label="Cửa hàng">{request.storeName}</td>
+                    <td data-label="Cửa hàng">
+                      <span className="store-name">{request.storeName}</span>
+                    </td>
                     <td data-label="Mặt hàng">{request.product}</td>
                     <td data-label="Nhu cầu">{request.requestedBags} bao</td>
                     <td data-label="Kết quả">
@@ -297,7 +306,7 @@ export function AllocationPage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </DataTable>
           </div>
         )}
       </section>
@@ -1255,6 +1264,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
               <label>
                 Cửa hàng
                 <select
+                  className="store-name"
                   aria-label="Lọc kết quả theo cửa hàng"
                   onChange={(event) => {
                     setAllocationPage(1);
@@ -1264,7 +1274,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                 >
                   <option value="">Tất cả cửa hàng</option>
                   {(storesQuery.data ?? []).map((store) => (
-                    <option key={store.id} value={store.id}>
+                    <option className="store-name" key={store.id} value={store.id}>
                       {store.code} · {store.name}
                     </option>
                   ))}
@@ -1300,8 +1310,11 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
             </div>
             {allocationStoreId && !allocationSessionId ? (
               <p className="allocation-result-scope">
-                Lịch sử phân bổ của {storeNameById.get(allocationStoreId) ?? 'cửa hàng'}, mới nhất
-                trước.
+                Lịch sử phân bổ của{' '}
+                <span className="store-name">
+                  {storeNameById.get(allocationStoreId) ?? 'cửa hàng'}
+                </span>
+                , mới nhất trước.
               </p>
             ) : null}
 
@@ -1482,10 +1495,13 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
             ) : null}
             {sessionsQuery.data && sessionsQuery.data.length > 0 ? (
               <div className="responsive-table">
-                <table className="table-density">
+                <DataTable className="table-density">
                   <thead>
                     <tr>
-                      <th>Phiên</th>
+                      <th scope="col" className="table-index">
+                        STT
+                      </th>
+                      <th data-primary-column>Phiên</th>
                       <th>Nhận đơn</th>
                       <th>Trạng thái</th>
                       <th>Cửa hàng đã đặt</th>
@@ -1494,7 +1510,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                     </tr>
                   </thead>
                   <tbody>
-                    {sessionsQuery.data.map((session) => {
+                    {sessionsQuery.data.map((session, rowIndex) => {
                       const transitions = availableSessionTransitions(
                         session.status,
                         Date.parse(session.requestClosesAt) <= Date.now(),
@@ -1502,7 +1518,10 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                       const openAllowedNow = canOpenSessionNow(session);
                       return (
                         <tr key={session.id}>
-                          <td data-label="Phiên">
+                          <td className="table-index" data-label="STT">
+                            {rowIndex + 1}
+                          </td>
+                          <td data-primary-column data-label="Phiên">
                             <strong>{sessionLabel(session)}</strong>
                             <small>{sessionKindCopy[session.kind]}</small>
                           </td>
@@ -1589,7 +1608,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                       );
                     })}
                   </tbody>
-                </table>
+                </DataTable>
               </div>
             ) : null}
           </section>

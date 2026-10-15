@@ -79,10 +79,10 @@ export function ScopedWaitTicketList({
         {multiStore ? (
           <label>
             Cửa hàng
-            <select name="storeId" defaultValue={filters.storeId ?? ''}>
+            <select className="store-name" name="storeId" defaultValue={filters.storeId ?? ''}>
               <option value="">Tất cả cửa hàng được phân công</option>
               {stores.map((store) => (
-                <option key={store.id} value={store.id}>
+                <option className="store-name" key={store.id} value={store.id}>
                   {store.name}
                 </option>
               ))}

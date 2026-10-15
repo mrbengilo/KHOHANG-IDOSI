@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import {
   CreateStoreGroupRequestSchema,
   CreateStoreRequestSchema,
@@ -952,22 +953,30 @@ function StoreGroupTable({
 }) {
   return (
     <div className="admin-table-wrap">
-      <table className="table-density admin-table store-lifecycle-table">
+      <DataTable className="table-density admin-table store-lifecycle-table">
         <caption className="admin-sr-only">Danh sách nhóm cửa hàng</caption>
         <thead>
           <tr>
-            <th scope="col">Nhóm</th>
+            <th scope="col" className="table-index">
+              STT
+            </th>
+            <th data-primary-column scope="col">
+              Nhóm
+            </th>
             <th scope="col">Trạng thái</th>
             <th scope="col">Phiên bản</th>
             <th scope="col">Thao tác</th>
           </tr>
         </thead>
         <tbody>
-          {groups.map((group) => {
+          {groups.map((group, rowIndex) => {
             const rowBusy = busyAction === `group:${group.id}`;
             return (
               <tr key={group.id}>
-                <td data-label="Nhóm">
+                <td className="table-index" data-label="STT">
+                  {rowIndex + 1}
+                </td>
+                <td data-primary-column data-label="Nhóm">
                   <strong>{group.name}</strong>
                   <small>{group.code}</small>
                 </td>
@@ -1009,7 +1018,7 @@ function StoreGroupTable({
             );
           })}
         </tbody>
-      </table>
+      </DataTable>
     </div>
   );
 }
@@ -1029,11 +1038,16 @@ function StoreTable({
 }) {
   return (
     <div className="admin-table-wrap">
-      <table className="table-density admin-table store-lifecycle-table store-lifecycle-table--stores">
+      <DataTable className="table-density admin-table store-lifecycle-table store-lifecycle-table--stores">
         <caption className="admin-sr-only">Danh sách cửa hàng</caption>
         <thead>
           <tr>
-            <th scope="col">Cửa hàng</th>
+            <th scope="col" className="table-index">
+              STT
+            </th>
+            <th data-primary-column scope="col">
+              Cửa hàng
+            </th>
             <th scope="col">Nhóm / loại hình</th>
             <th scope="col">Trạng thái</th>
             <th scope="col">Phiên bản</th>
@@ -1041,13 +1055,18 @@ function StoreTable({
           </tr>
         </thead>
         <tbody>
-          {stores.map((store) => {
+          {stores.map((store, rowIndex) => {
             const group = groupsById.get(store.groupId);
             const rowBusy = busyAction === `store:${store.id}`;
             return (
               <tr key={store.id}>
-                <td data-label="Cửa hàng">
-                  <strong>{store.name}</strong>
+                <td className="table-index" data-label="STT">
+                  {rowIndex + 1}
+                </td>
+                <td data-primary-column data-label="Cửa hàng">
+                  <strong>
+                    <span className="store-name">{store.name}</span>
+                  </strong>
                   <small>
                     {store.code}
                     {store.address ? ` · ${store.address}` : ''}
@@ -1095,7 +1114,7 @@ function StoreTable({
             );
           })}
         </tbody>
-      </table>
+      </DataTable>
     </div>
   );
 }

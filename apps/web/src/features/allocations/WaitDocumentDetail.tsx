@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import type { StoreWaitDocumentCancelPreview, StoreWaitDocumentDetail } from '@idosi/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, RotateCcw, X } from 'lucide-react';
@@ -183,7 +184,7 @@ export function WaitDocumentDetail({
             Phiếu chờ {document.code}
           </h3>
           <p>
-            {showStore ? `${document.storeName} · ` : ''}
+            <span className="store-name">{showStore ? `${document.storeName} · ` : ''}</span>
             {current ? currentDocumentDetail(document.lines) : waitDocumentLabel(document)}
           </p>
         </div>
@@ -250,11 +251,16 @@ export function WaitDocumentDetail({
       </dl>
 
       <div className="responsive-table wait-document-lines">
-        <table>
+        <DataTable>
           <caption className="sr-only">Mặt hàng của phiếu chờ {document.code}</caption>
           <thead>
             <tr>
-              <th scope="col">Mặt hàng</th>
+              <th scope="col" className="table-index">
+                STT
+              </th>
+              <th data-primary-column scope="col">
+                Mặt hàng
+              </th>
               <th scope="col">
                 {document.predecessor ? `Từ phiếu ${document.predecessor.code}` : 'Từ phiếu trước'}
               </th>
@@ -277,9 +283,12 @@ export function WaitDocumentDetail({
             </tr>
           </thead>
           <tbody>
-            {document.lines.map((line) => (
+            {document.lines.map((line, rowIndex) => (
               <tr key={line.productId}>
-                <th scope="row" data-label="Mặt hàng">
+                <td className="table-index" data-label="STT">
+                  {rowIndex + 1}
+                </td>
+                <th data-primary-column scope="row" data-label="Mặt hàng">
                   {line.productName}
                   <small>
                     {line.sku} · mở phiếu {lineOpenQuantity(line)} bao
@@ -303,7 +312,7 @@ export function WaitDocumentDetail({
               </tr>
             ))}
           </tbody>
-        </table>
+        </DataTable>
       </div>
 
       {current && document.pendingResults.length > 0 ? (

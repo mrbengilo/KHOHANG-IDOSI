@@ -1,5 +1,7 @@
 # Căn giữa và co giãn bảng dữ liệu — kiểm kê và bằng chứng (01/10/2026)
 
+> **Thay thế quy tắc độ rộng ngày 15/10/2026:** bảng và wrapper phủ 100% content box; tiêu đề giữ một dòng nếu tổng độ rộng cần thiết vừa box, sau đó mới wrap và cuộn cục bộ. Mọi bảng có STT đầu, offset theo pagination thực hoặc theo chứng từ với rowspan. Các số đo/quy tắc `fit-content` bên dưới là lịch sử, không còn là acceptance hiện hành. Xem [table-presentation-waiting-demand.md](table-presentation-waiting-demand.md).
+
 Base: `ca3d0c4a207333bd28edbce96ddf278c5248a66f` (HEAD `main` lúc bắt đầu, chưa có commit mới khi tạo nhánh). Nhánh: `fix/responsive-centered-tables`.
 
 ## 1. Yêu cầu đã chốt

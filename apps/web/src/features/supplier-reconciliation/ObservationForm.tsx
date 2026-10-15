@@ -1,3 +1,4 @@
+import { DataTable } from '../../components/DataTable';
 import type { SupplierObservationPreview, SupplierObservationRequest } from '@idosi/contracts';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -283,19 +284,27 @@ export function ObservationForm({
         được và không trừ một đơn hai lần.
       </p>
       <div className="responsive-table supplier-table-scroll supplier-observation-table-wrap">
-        <table className="supplier-table supplier-observation-table">
+        <DataTable className="supplier-table supplier-observation-table">
           <caption className="sr-only">Tổng tồn Reshare theo mặt hàng</caption>
           <thead>
             <tr>
-              <th scope="col">Mặt hàng</th>
+              <th scope="col" className="table-index">
+                STT
+              </th>
+              <th data-primary-column scope="col">
+                Mặt hàng
+              </th>
               <th scope="col">Số đối chiếu trước</th>
               <th scope="col">Tổng Reshare đang cho đặt (bao)</th>
             </tr>
           </thead>
           <tbody>
-            {targets.map((target) => (
+            {targets.map((target, rowIndex) => (
               <tr key={target.productId}>
-                <td data-label="Mặt hàng">
+                <td className="table-index" data-label="STT">
+                  {rowIndex + 1}
+                </td>
+                <td data-primary-column data-label="Mặt hàng">
                   <strong className="supplier-product-name">{target.productName}</strong>
                 </td>
                 <td className="table-number" data-label="Số đối chiếu trước">
@@ -330,7 +339,7 @@ export function ObservationForm({
               </tr>
             ))}
           </tbody>
-        </table>
+        </DataTable>
       </div>
       <fieldset className="supplier-observation__meta" disabled={busy !== null}>
         <label>
@@ -479,7 +488,8 @@ export function ObservationForm({
                               {order.code} · {formatInteger(order.unreflectedQuantity)} bao chưa trừ
                             </strong>
                             <small>
-                              {order.storeName} · lập lúc {formatDocumentTime(order.orderedAt)}
+                              <span className="store-name">{order.storeName}</span> · lập lúc{' '}
+                              {formatDocumentTime(order.orderedAt)}
                             </small>
                           </span>
                           {order.afterObservation ? (

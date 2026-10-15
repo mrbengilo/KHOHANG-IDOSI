@@ -1,3 +1,4 @@
+import { DataTable } from '../components/DataTable';
 import {
   InboundStatisticsQuerySchema,
   type InboundProductRow,
@@ -230,6 +231,7 @@ export function InboundStatisticsPage() {
         <label>
           Cửa hàng
           <select
+            className="store-name"
             value={query.storeId ?? ''}
             onChange={(e) => update({ storeId: e.target.value || undefined })}
           >
@@ -237,7 +239,7 @@ export function InboundStatisticsPage() {
             {storeOptions
               .filter((store) => !query.storeKind || store.kind === query.storeKind)
               .map((store) => (
-                <option key={store.id} value={store.id}>
+                <option className="store-name" key={store.id} value={store.id}>
                   {store.code} · {store.name}
                 </option>
               ))}
@@ -382,22 +384,30 @@ export function InboundStatisticsPage() {
             <h2>Tổng hợp theo loại cửa hàng</h2>
             <p>Trong kỳ và phạm vi báo cáo đang hiển thị; phân loại theo loại cửa hàng hiện tại.</p>
             <div className="inbound-table-scroll" tabIndex={0} aria-label="Bảng loại cửa hàng">
-              <table className="table-density">
+              <DataTable className="table-density">
                 <thead>
                   <tr>
-                    <th>Loại cửa hàng</th>
+                    <th scope="col" className="table-index">
+                      STT
+                    </th>
+                    <th data-primary-column>Loại cửa hàng</th>
                     <BreakdownHeaders />
                   </tr>
                 </thead>
                 <tbody>
-                  {data.groupRows.map((row) => (
+                  {data.groupRows.map((row, rowIndex) => (
                     <tr key={row.kind}>
-                      <th scope="row">{kinds[row.kind]}</th>
+                      <td className="table-index" data-label="STT">
+                        {rowIndex + 1}
+                      </td>
+                      <th data-primary-column scope="row">
+                        {kinds[row.kind]}
+                      </th>
                       <BreakdownCells value={row.amounts} />
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </DataTable>
             </div>
           </section>
 
@@ -417,10 +427,13 @@ export function InboundStatisticsPage() {
               {sources[data.selectedSource]}.
             </p>
             <div className="inbound-table-scroll" tabIndex={0} aria-label="Bảng cửa hàng">
-              <table className="table-density">
+              <DataTable className="table-density">
                 <thead>
                   <tr>
-                    <th>Cửa hàng</th>
+                    <th scope="col" className="table-index">
+                      STT
+                    </th>
+                    <th data-primary-column>Cửa hàng</th>
                     <th>Loại</th>
                     <BreakdownHeaders />
                     <th>Nhiều nhất</th>
@@ -429,15 +442,22 @@ export function InboundStatisticsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.storeRows.map((row) => {
+                  {data.storeRows.map((row, rowIndex) => {
                     const expanded = row.id === expandedStoreId;
                     const panelId = `inbound-store-detail-${row.id}`;
                     return (
                       <Fragment key={row.id}>
                         <tr className={expanded ? 'is-expanded' : undefined}>
-                          <th scope="row">
+                          <td className="table-index" data-label="STT">
+                            {(data.storePagination.page - 1) * data.storePagination.pageSize +
+                              rowIndex +
+                              1}
+                          </td>
+                          <th data-primary-column scope="row">
                             {row.code}
-                            <small>{row.name}</small>
+                            <small>
+                              <span className="store-name">{row.name}</span>
+                            </small>
                           </th>
                           <td>{kinds[row.kind]}</td>
                           <BreakdownCells value={row.amounts} />
@@ -470,14 +490,17 @@ export function InboundStatisticsPage() {
                               <span className="sr-only">
                                 {' '}
                                 {expanded ? 'chi tiết ' : ''}
-                                {row.code} · {row.name}
+                                {row.code} · <span className="store-name">{row.name}</span>
                               </span>
                             </button>
                           </td>
                         </tr>
                         {expanded && (
                           <tr className="inbound-store-detail-row">
-                            <td colSpan={storeTableColumns} className="inbound-store-detail-cell">
+                            <td
+                              colSpan={storeTableColumns + 1}
+                              className="inbound-store-detail-cell"
+                            >
                               <InboundStoreDetails id={panelId} store={row} scope={displayScope} />
                             </td>
                           </tr>
@@ -488,12 +511,12 @@ export function InboundStatisticsPage() {
                 </tbody>
                 <tfoot>
                   <tr>
-                    <th colSpan={2}>Tổng toàn phạm vi</th>
+                    <th colSpan={3}>Tổng toàn phạm vi</th>
                     <BreakdownCells value={data.overviewAllSources} />
                     <td colSpan={3} />
                   </tr>
                 </tfoot>
-              </table>
+              </DataTable>
             </div>
             {data.storeRows.length === 0 && <p>Không có dữ liệu</p>}
             <InboundPagination

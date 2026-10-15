@@ -613,24 +613,6 @@
   color: var(--text-secondary);
   background: var(--surface-soft, var(--surface));
 }
-.bag-opening-history th:nth-child(1) {
-  width: 21%;
-}
-.bag-opening-history th:nth-child(2) {
-  width: 16%;
-}
-.bag-opening-history th:nth-child(3) {
-  width: 13%;
-}
-.bag-opening-history th:nth-child(4) {
-  width: 12%;
-}
-.bag-opening-history th:nth-child(5) {
-  width: 24%;
-}
-.bag-opening-history th:nth-child(6) {
-  width: 14%;
-}
 .bag-opening-history tbody tr:last-child td {
   border-bottom: 0;
 }

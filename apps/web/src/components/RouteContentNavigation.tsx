@@ -49,21 +49,25 @@ export function RouteContentNavigation({ children }: { readonly children: ReactN
           window.scrollTo({ top: saved, behavior: 'instant' });
           return Math.abs(window.scrollY - saved) < 2;
         };
-        if (!restore()) {
-          const observer = new ResizeObserver(() => {
+        let cancelled = false;
+        let observer: ResizeObserver | undefined;
+        const cleanup = () => {
+          cancelled = true;
+          observer?.disconnect();
+          if (restoreCleanup.current === cleanup) restoreCleanup.current = null;
+        };
+        restoreCleanup.current = cleanup;
+        // The page heading can announce readiness before sibling tables finish their layout
+        // effects. Restore after that same commit, so native anchoring cannot shift the saved
+        // offset when measured headers change height. User input/navigation cancels via cleanup.
+        queueMicrotask(() => {
+          if (cancelled || current.current?.key !== location.key) return;
+          if (restore()) return cleanup();
+          observer = new ResizeObserver(() => {
             if (restore()) cleanup();
           });
-          const cleanup = () => {
-            observer.disconnect();
-            for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown'])
-              window.removeEventListener(event, cleanup);
-            restoreCleanup.current = null;
-          };
           observer.observe(document.body);
-          for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown'])
-            window.addEventListener(event, cleanup, { once: true });
-          restoreCleanup.current = cleanup;
-        }
+        });
         return;
       }
       if (!newPage && !tabChanged && !detailChanged && location.hash === prior?.hash) {

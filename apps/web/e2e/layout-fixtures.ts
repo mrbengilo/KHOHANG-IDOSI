@@ -36,6 +36,7 @@ export async function mockLayoutData(page: Page) {
           onHandBags: 1234567,
           reservedBags: 123,
           waitTicketHoldBags: 23,
+          waitingDemandBags: 8,
           sharedDeliveryHoldBags: 100,
           availableBags: 1234444,
           dispatchedBags: 987654,

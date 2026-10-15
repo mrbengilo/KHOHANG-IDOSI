@@ -1,3 +1,4 @@
+import { DataTable } from '../../../components/DataTable';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   CreateReceiptAdjustmentRequest,
@@ -789,10 +790,13 @@ function AdjustmentDetail({
       ) : null}
 
       <div className="responsive-table adjustment-lines">
-        <table>
+        <DataTable>
           <thead>
             <tr>
-              <th>Bao</th>
+              <th scope="col" className="table-index">
+                STT
+              </th>
+              <th data-primary-column>Bao</th>
               <th>Ghi nhận → thực tế</th>
               <th>Kg</th>
               <th>Tiền hàng</th>
@@ -800,9 +804,12 @@ function AdjustmentDetail({
             </tr>
           </thead>
           <tbody>
-            {adjustment.lines.map((line) => (
+            {adjustment.lines.map((line, rowIndex) => (
               <tr key={line.id}>
-                <td data-label="Bao">
+                <td className="table-index" data-label="STT">
+                  {rowIndex + 1}
+                </td>
+                <td data-primary-column data-label="Bao">
                   <span className="adjustment-cell">
                     <strong>Bao {line.receiptBagNumber}</strong>
                     <small>{line.bagDisplayCode}</small>
@@ -854,7 +861,7 @@ function AdjustmentDetail({
               </tr>
             ))}
           </tbody>
-        </table>
+        </DataTable>
       </div>
 
       {adjustment.lines.some((line) => line.blockers.length > 0) ? (

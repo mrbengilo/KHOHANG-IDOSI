@@ -83,13 +83,17 @@ test('inbound history preserves product details, required markers and compact re
   await expect(card).toContainText('Đầm');
   await expect(card).toContainText(products[1].name);
   await expect(card.locator('tbody tr')).toHaveCount(2);
-  await expect(card.locator('tbody tr').first().locator('td').nth(4)).toHaveText('2');
-  await expect(card.locator('tbody tr').first().locator('td').nth(5)).toHaveText('3');
-  await expect(card.locator('tbody tr').first().locator('td').nth(0)).toHaveText(
+  await expect(
+    card.locator('tbody tr').first().locator('[data-label="Số lượng (bao)"]'),
+  ).toHaveText('2');
+  await expect(
+    card.locator('tbody tr').first().locator('[data-label="Tổng số lượng (bao)"]'),
+  ).toHaveText('3');
+  await expect(card.locator('tbody tr').first().locator('[data-label="Thời gian"]')).toHaveText(
     '01:30:00 21/09/2026',
   );
   await expect(card).toContainText('Người nhập khác người xem');
-  await expect(card.locator('tbody [rowspan="2"]')).toHaveCount(5);
+  await expect(card.locator('tbody [rowspan="2"]')).toHaveCount(6);
   await expect(page.getByLabel('Nhà cung cấp', { exact: true })).toHaveAttribute('required', '');
   await expect(
     page
@@ -118,8 +122,8 @@ test('inbound history preserves product details, required markers and compact re
     await expect(card).toHaveCSS('overflow-x', 'auto');
     expect((await card.boundingBox())!.width).toBeLessThanOrEqual(width);
     const firstRow = card.locator('tbody tr').first();
-    const nameBox = (await firstRow.locator('td').nth(3).boundingBox())!;
-    const quantityBox = (await firstRow.locator('td').nth(4).boundingBox())!;
+    const nameBox = (await firstRow.locator('[data-label="Mặt hàng"]').boundingBox())!;
+    const quantityBox = (await firstRow.locator('[data-label="Số lượng (bao)"]').boundingBox())!;
     expect(Math.abs(nameBox.y - quantityBox.y)).toBeLessThan(2);
     if ([375, 768, 1440].includes(width)) {
       await card.screenshot({ path: testInfo.outputPath(`inbound-history-${width}.png`) });
