@@ -12,6 +12,7 @@ hệ thống dùng một khung `.app-main` và một sidebar.
 | 2   | Bảng không xuống dòng, không tràn, không che    | —                                                       | audit 450 route × vai trò × độ rộng: không ô nào xuống dòng thêm, không cuộn/tràn mới       |
 | 3   | Thanh cuộn danh mục chính mảnh lại              | thanh cuộn cổ điển 15–17px có nút mũi tên (Chrome/Edge) | 6px, bo tròn, không nút mũi tên; Firefox `scrollbar-width: thin`                            |
 | 4   | Hộp danh mục chính lớn hơn một chút             | sidebar 224px, nhãn dài xuống 2 dòng                    | sidebar 240px; "Phiếu nhập & giá vốn", "Thống kê nhập hàng" nằm một dòng                    |
+| 6   | Không cuộn ngang; bảng lớn thì xuống dòng       | bảng rộng cuộn ngang cục bộ                             | bảng xuống dòng; ≤1100px bảng lớn thành thẻ có nhãn — xem responsive-table-layout-audit.md  |
 | 5   | Mã chứng từ không bị ngắt (phát hiện khi audit) | `PN00001-27/09/2026` có thể gãy làm 2 dòng              | `summary` trong lịch sử chứng từ `white-space: nowrap` như `time`                           |
 
 ## Thiết kế lề
