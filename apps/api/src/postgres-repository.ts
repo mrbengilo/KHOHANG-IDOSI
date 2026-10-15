@@ -377,6 +377,8 @@ import {
   submitStoreReceipt as submitDatabaseStoreReceipt,
   users,
   warehouseBalances,
+  warehouseLedgerEntries,
+  supplierSourceProducts,
   returnStoreReceiptForCorrection as returnDatabaseStoreReceiptForCorrection,
   PriorityOfferConflictError,
   PriorityOfferNotFoundError,
@@ -507,16 +509,26 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
         reservedBags: sql<number>`coalesce(${warehouseBalances.reservedQuantity}, 0)`.mapWith(
           Number,
         ),
+        // Priority offers hold reserved bags for wait tickets until the 09:00 run converts or
+        // releases them; every other reserved bag belongs to a granted allocation line. Clamped
+        // so the two columns always add up to the reserved balance shown next to them.
+        waitTicketHoldBags:
+          sql<number>`least(coalesce(${warehouseBalances.reservedQuantity}, 0), (select coalesce(sum(${dailyPriorityOffers.stockHeldQuantity}), 0) from ${dailyPriorityOffers} where ${dailyPriorityOffers.productId} = ${products.id} and ${dailyPriorityOffers.stockHeldQuantity} > 0 and ${dailyPriorityOffers.deletedAt} is null))`.mapWith(
+            Number,
+          ),
         availableBags:
           sql<number>`coalesce(${warehouseBalances.onHandQuantity}, 0) - coalesce(${warehouseBalances.reservedQuantity}, 0)`.mapWith(
             Number,
           ),
+        // Bags that left on-hand: RE issuance at acceptance, legacy receipt finalization and
+        // excess receipts. Trip dispatch alone never moves on-hand, so it is not counted twice.
         dispatchedBags:
-          sql<number>`(select coalesce(sum(${outboundRequestLines.dispatchedQuantity}), 0) from ${outboundRequestLines} where ${outboundRequestLines.productId} = ${products.id})`.mapWith(
+          sql<number>`(select coalesce(sum(-${warehouseLedgerEntries.onHandDelta}), 0) from ${warehouseLedgerEntries} where ${warehouseLedgerEntries.productId} = ${products.id} and ${warehouseLedgerEntries.eventType} = 'outbound')`.mapWith(
             Number,
           ),
         balanceVersion: sql<number>`coalesce(${warehouseBalances.version}, 0)`.mapWith(Number),
         productActive: products.isActive,
+        reshareReconciled: sql<boolean>`exists (select 1 from ${supplierSourceProducts} where ${supplierSourceProducts.productId} = ${products.id})`,
       })
       .from(products)
       .leftJoin(warehouseBalances, eq(warehouseBalances.productId, products.id))
@@ -524,7 +536,13 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       .orderBy(asc(products.displayOrder), asc(products.sku))
       .limit(query.pageSize)
       .offset((query.page - 1) * query.pageSize);
-    return { data: rows, pagination: pagination(query.page, query.pageSize, total?.count ?? 0) };
+    return {
+      data: rows.map((row) => ({
+        ...row,
+        sharedDeliveryHoldBags: row.reservedBags - row.waitTicketHoldBags,
+      })),
+      pagination: pagination(query.page, query.pageSize, total?.count ?? 0),
+    };
   }
 
   public async listOrderHistory(

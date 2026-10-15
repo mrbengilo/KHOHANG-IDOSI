@@ -524,6 +524,9 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         sku: product.sku,
         onHandBags,
         reservedBags,
+        // Memory mode never holds stock for priority offers (see priority offer handling).
+        waitTicketHoldBags: 0,
+        sharedDeliveryHoldBags: reservedBags,
         availableBags: onHandBags - reservedBags,
         dispatchedBags: [...this.dispatchedOutbounds.values()]
           .flatMap((outbound) => outbound.lines)
@@ -531,6 +534,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
           .reduce((sum, line) => sum + line.dispatchedUnits, 0),
         balanceVersion: balance?.version ?? 0,
         productActive: product.status === 'ACTIVE',
+        reshareReconciled: false,
       };
     });
     return { data, pagination: pagination(query.page, query.pageSize, values.length) };

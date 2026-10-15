@@ -19,6 +19,14 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+.warehouse-stock-available {
+  color: var(--success);
+  font-size: 15px;
+}
+.warehouse-stock-table td small {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
 .warehouse-stock-panel .inventory-actions {
   align-items: end;
   margin-block: 12px;
@@ -58,6 +66,7 @@
 .warehouse-adjust-button {
   min-height: 40px;
   white-space: nowrap;
+  text-decoration: none;
 }
 .warehouse-adjustment-dialog {
   width: min(100%, 600px);

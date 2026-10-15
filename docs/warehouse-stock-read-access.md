@@ -11,8 +11,24 @@
 
 Invariant cũ: tài khoản cửa hàng/quầy sỉ không đọc được tồn kho tổng (API trả 403, route
 `/inventory` đóng với quầy sỉ). Invariant mới: mọi vai trò đọc cùng một bảng tổng theo mặt hàng
-(đang có, đang giữ/chờ xuất, có thể xuất, đã xuất lũy kế). Bảng không chứa giữ hàng theo từng cửa
+(xem “Cột của bảng tồn hiện tại” bên dưới). Bảng không chứa giữ hàng theo từng cửa
 hàng, giá vốn hay chứng từ, nên không lộ dữ liệu cửa hàng khác.
+
+## Cột của bảng tồn hiện tại
+
+| Cột                     | Trường API                                          | Ý nghĩa                                                                                                                                        |
+| ----------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mặt hàng                | `productName`                                       | Chỉ tên, không hiện mã (SKU vẫn có trong API và ô tìm kiếm).                                                                                   |
+| Đang có tại kho         | `availableBags` (số chính), `onHandBags` (dòng phụ) | Khả dụng để cấp phân bổ `H − R`; dòng phụ là tồn thực `H`.                                                                                     |
+| Đang giữ chờ giao chung | `sharedDeliveryHoldBags`                            | Phần `R` giữ cho dòng phân bổ đã cấp còn trong kho: kết quả chờ xác nhận, hàng cấp một phần/ưu tiên giữ để giao cùng đơn thường kế tiếp.       |
+| Đang giữ phiếu chờ      | `waitTicketHoldBags`                                | Phần `R` lượt ưu tiên đang giữ cho phiếu chờ (`daily_priority_offers.stock_held_quantity`), kẹp tối đa `R`.                                    |
+| Tổng đã xuất            | `dispatchedBags`                                    | Lũy kế bút toán `outbound` của sổ kho tổng (xuất theo RE, quyết toán phiếu nhận legacy, nhận dư). Chuyến giao không đổi `H` nên không đếm lại. |
+| Thao tác (chỉ Admin)    | `reshareReconciled`                                 | Mặt hàng nguồn Reshare: nút “Cập nhật tồn Reshare” mở đối chiếu tồn Reshare; mặt hàng khác: “Điều chỉnh tồn”.                                  |
+
+Bất biến: `onHandBags = availableBags + sharedDeliveryHoldBags + waitTicketHoldBags` và
+`reservedBags = sharedDeliveryHoldBags + waitTicketHoldBags`. Trước đây `dispatchedBags` cộng
+`dispatched_quantity` của phiếu xuất (chuyến giao); từ khi có đơn RE hàng rời kho lúc xác nhận nên
+số đó chậm hơn sổ kho. Không đổi schema, không migration; chỉ thêm trường đọc.
 
 ## Thực thi
 
