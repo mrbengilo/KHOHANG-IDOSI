@@ -1212,10 +1212,11 @@ textarea:focus {
   overflow-wrap: anywhere;
 }
 /*
- * Bảng lớn (7–11 cột: lịch sử chứng từ, phiếu chờ, thống kê nhập, lịch sử khui kiện) ở độ rộng
- * ≤1100px không còn đủ chỗ để đọc thành bảng: mỗi dòng thành một thẻ "nhãn (data-label) ·
- * giá trị", không cuộn ngang. Từ 1101px các bảng này dùng bố cục bảng trong CSS feature của
- * chúng. Bảng số liệu nhỏ (.table-density--metrics) giữ dạng bảng.
+ * Bảng lớn (7–12 cột: lịch sử chứng từ, phiếu chờ, thống kê nhập, lịch sử khui kiện, đơn và tồn
+ * Reshare) ở độ rộng ≤1100px không còn đủ chỗ để đọc thành bảng: mỗi dòng thành một thẻ "nhãn
+ * (data-label) · giá trị", không cuộn ngang. Bảng lớn khác dùng lớp .table-cards-narrow trên
+ * vùng bao. Thẻ chung chỉ đổi ở ≤620px cho mọi bảng nên không đủ cho bảng nhiều cột ở 621–1100px.
+ * Bảng số liệu nhỏ (.table-density--metrics) giữ dạng bảng.
  */
 @media (max-width: 1100px) {
   .app-main
@@ -1223,7 +1224,9 @@ textarea:focus {
       .document-history,
       .wait-ticket-table-scroll,
       .inbound-table-scroll,
-      .bag-opening-history__scroll
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
     ) {
     width: 100%;
     border: 0;
@@ -1234,7 +1237,9 @@ textarea:focus {
       .document-history,
       .wait-ticket-table-scroll,
       .inbound-table-scroll,
-      .bag-opening-history__scroll
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
     )
     > table:not(.table-density--metrics) {
     display: grid;
@@ -1249,7 +1254,9 @@ textarea:focus {
       .document-history,
       .wait-ticket-table-scroll,
       .inbound-table-scroll,
-      .bag-opening-history__scroll
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
     )
     > table:not(.table-density--metrics)
     > thead {
@@ -1264,7 +1271,9 @@ textarea:focus {
       .document-history,
       .wait-ticket-table-scroll,
       .inbound-table-scroll,
-      .bag-opening-history__scroll
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
     )
     > table:not(.table-density--metrics)
     > :is(tbody, tfoot) {
@@ -1276,7 +1285,9 @@ textarea:focus {
       .document-history,
       .wait-ticket-table-scroll,
       .inbound-table-scroll,
-      .bag-opening-history__scroll
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
     )
     > table:not(.table-density--metrics)
     > :is(tbody, tfoot)
@@ -1293,7 +1304,9 @@ textarea:focus {
       .document-history,
       .wait-ticket-table-scroll,
       .inbound-table-scroll,
-      .bag-opening-history__scroll
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
     )
     > table:not(.table-density--metrics)
     > tfoot
@@ -1305,7 +1318,9 @@ textarea:focus {
       .document-history,
       .wait-ticket-table-scroll,
       .inbound-table-scroll,
-      .bag-opening-history__scroll
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
     )
     > table:not(.table-density--metrics)
     > :is(tbody, tfoot)
@@ -1329,7 +1344,9 @@ textarea:focus {
       .document-history,
       .wait-ticket-table-scroll,
       .inbound-table-scroll,
-      .bag-opening-history__scroll
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
     )
     > table:not(.table-density--metrics)
     > :is(tbody, tfoot)
@@ -1345,7 +1362,9 @@ textarea:focus {
       .document-history,
       .wait-ticket-table-scroll,
       .inbound-table-scroll,
-      .bag-opening-history__scroll
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
     )
     > table:not(.table-density--metrics)
     > :is(tbody, tfoot)
@@ -1363,7 +1382,9 @@ textarea:focus {
       .document-history,
       .wait-ticket-table-scroll,
       .inbound-table-scroll,
-      .bag-opening-history__scroll
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
     )
     > table:not(.table-density--metrics)
     > :is(tbody, tfoot)
@@ -1376,7 +1397,9 @@ textarea:focus {
       .document-history,
       .wait-ticket-table-scroll,
       .inbound-table-scroll,
-      .bag-opening-history__scroll
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
     )
     > table:not(.table-density--metrics)
     > :is(tbody, tfoot)
@@ -1389,7 +1412,9 @@ textarea:focus {
       .document-history,
       .wait-ticket-table-scroll,
       .inbound-table-scroll,
-      .bag-opening-history__scroll
+      .bag-opening-history__scroll,
+      .reshare-history,
+      .table-cards-narrow
     )
     > table:not(.table-density--metrics)
     > tfoot

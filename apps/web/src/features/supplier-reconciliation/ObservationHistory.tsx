@@ -32,7 +32,7 @@ export function ObservationHistory({ accountId }: { readonly accountId: string }
         <p className="supplier-empty">Chưa có lần đối chiếu nào.</p>
       ) : (
         <>
-          <div className="responsive-table supplier-table-scroll">
+          <div className="responsive-table supplier-table-scroll table-cards-narrow">
             <table className="supplier-table">
               <thead>
                 <tr>
