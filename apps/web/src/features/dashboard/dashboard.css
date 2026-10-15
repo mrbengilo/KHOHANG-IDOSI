@@ -79,7 +79,7 @@
   border-radius: 10px;
   background: #eff6ff;
   color: #1d4ed8;
-  font-size: 10px;
+  font-size: var(--font-caption);
   line-height: 1.55;
   margin-top: 14px;
   padding: 11px 13px;

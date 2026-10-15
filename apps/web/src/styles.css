@@ -19,6 +19,9 @@
     calc(var(--content-pad) * 3)
   );
   --content-gap: 24px;
+  /* Chữ phụ/nhãn nhỏ: giữ gọn trên desktop, nâng lên mức dễ đọc trên mobile (≤820px). */
+  --font-micro: 9px;
+  --font-caption: 10px;
   --brand: #4f46e5;
   --brand-dark: #4338ca;
   --brand-soft: #eef2ff;
@@ -208,7 +211,7 @@ p {
 
 .sidebar__brand span {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--font-micro);
   font-weight: 700;
 }
 
@@ -761,7 +764,7 @@ textarea:focus {
   align-items: center;
   gap: 7px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 
 .section-heading {
@@ -949,7 +952,7 @@ textarea:focus {
 .flow-card span,
 .flow-card small {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--font-micro);
 }
 
 .flow-card strong {
@@ -980,7 +983,7 @@ textarea:focus {
   border-radius: 8px;
   background: #eff6ff;
   color: #1d4ed8;
-  font-size: 10px;
+  font-size: var(--font-caption);
   line-height: 1.5;
   margin-top: 12px;
   padding: 9px 11px;
@@ -1076,7 +1079,7 @@ textarea:focus {
 .allocation-meter > div {
   display: flex;
   flex-direction: column;
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 .allocation-meter > div span {
   color: var(--muted);
@@ -1102,7 +1105,7 @@ textarea:focus {
 }
 .mini-kpis span {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--font-micro);
 }
 .mini-kpis strong {
   font-size: 16px;
@@ -1313,7 +1316,7 @@ td small {
 }
 
 .priority-offer__eyebrow {
-  font-size: 9px;
+  font-size: var(--font-micro);
   font-weight: 800;
   letter-spacing: 0.08em;
 }
@@ -1322,7 +1325,7 @@ td small {
 }
 .priority-offer__copy > span:last-child {
   color: rgba(255, 255, 255, 0.82);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 .priority-offer__timer {
   display: flex;
@@ -1365,7 +1368,7 @@ td small {
 }
 .priority-offer__decline label,
 .priority-offer__decline span {
-  font-size: 10px;
+  font-size: var(--font-caption);
   font-weight: 700;
 }
 .priority-offer__decline input {
@@ -1443,7 +1446,7 @@ td small {
 }
 .permission-card small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 .quota-card > div,
 .policy-card > div,
@@ -1462,7 +1465,7 @@ td small {
 .conservation-banner span,
 .operation-step p {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
   line-height: 1.45;
 }
 .quota-card .quota-card__session {
@@ -1519,7 +1522,7 @@ td small {
 .timeline-strip span,
 .timeline-strip small {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--font-micro);
 }
 .timeline-strip strong {
   font-size: 12px;
@@ -1624,7 +1627,7 @@ td small {
   border-radius: 5px;
   background: var(--brand-soft);
   color: var(--brand-dark);
-  font-size: 10px;
+  font-size: var(--font-caption);
   font-weight: 700;
   margin-bottom: 5px;
   padding: 2px 6px;
@@ -1652,7 +1655,7 @@ td small {
 
 .allocation-session-actions > span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 
 .allocation-cancel-form {
@@ -1670,7 +1673,7 @@ td small {
 
 .allocation-cancel-form p {
   color: #b91c1c;
-  font-size: 10px;
+  font-size: var(--font-caption);
   line-height: 1.5;
   margin-top: 5px;
 }
@@ -1704,7 +1707,7 @@ td small {
 
 .allocation-result-refreshing {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
   margin: 0 0 10px;
 }
 
@@ -1723,7 +1726,7 @@ td small {
   gap: 12px;
   border-top: 1px solid var(--border);
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
   margin-top: 12px;
   padding-top: 12px;
 }
@@ -1766,7 +1769,7 @@ td small {
 }
 .formula-card span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 .example-grid {
   display: grid;
@@ -1786,7 +1789,7 @@ td small {
 .example-grid span,
 .example-grid small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 .example-grid strong {
   font-size: 16px;
@@ -1870,7 +1873,7 @@ body.dialog-open {
 }
 .dialog__header p {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
   margin-top: 5px;
 }
 .dialog__header button {
@@ -1956,7 +1959,7 @@ body.dialog-open {
   align-items: center;
   gap: 5px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 .waitlist-panel {
   margin-top: 20px;
@@ -2013,7 +2016,7 @@ body.dialog-open {
 }
 .waitlist-dialog__body article span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
   text-align: right;
 }
 .request-line button {
@@ -2079,7 +2082,7 @@ body.dialog-open {
 }
 .request-history-card__details p {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
   margin-top: 8px;
   overflow-wrap: anywhere;
 }
@@ -2099,7 +2102,7 @@ body.dialog-open {
   min-width: 0;
   justify-content: flex-end;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
   overflow-wrap: anywhere;
   text-align: right;
 }
@@ -2168,7 +2171,7 @@ body.dialog-open {
 .choice-grid span,
 .bag-picker span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 .receive-form {
   display: flex;
@@ -2188,7 +2191,7 @@ body.dialog-open {
 }
 .document-summary span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 
 .receipt-create {
@@ -2240,7 +2243,7 @@ body.dialog-open {
   flex-direction: column;
   gap: 6px;
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: var(--font-caption);
   font-weight: 700;
 }
 
@@ -2365,7 +2368,7 @@ body.dialog-open {
 .receipt-review-line small {
   overflow: hidden;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
   line-height: 1.5;
   text-overflow: ellipsis;
 }
@@ -2499,7 +2502,7 @@ body.dialog-open {
   border-radius: 8px;
   background: transparent;
   color: inherit;
-  font-size: 10px;
+  font-size: var(--font-caption);
   font-weight: 700;
   padding: 7px 10px;
   transition:
@@ -2623,14 +2626,14 @@ body.dialog-open {
 }
 .bag-picker aside > span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 .bag-picker aside small,
 .sort-grid aside p,
 .transfer-form aside p,
 .transfer-form aside span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
   line-height: 1.5;
 }
 .bag-picker aside svg {
@@ -2694,7 +2697,7 @@ body.dialog-open {
   grid-template-columns: 90px minmax(0, 1fr) 90px;
   align-items: center;
   gap: 10px;
-  font-size: 10px;
+  font-size: var(--font-caption);
   margin-top: 14px;
 }
 .funnel-row > div {
@@ -2724,7 +2727,7 @@ body.dialog-open {
 }
 .quality-list em {
   color: var(--success);
-  font-size: 10px;
+  font-size: var(--font-caption);
   font-style: normal;
 }
 
@@ -2772,7 +2775,7 @@ body.dialog-open {
 
 .report-controls__source span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
   line-height: 1.45;
 }
 
@@ -2830,7 +2833,7 @@ body.dialog-open {
 .report-period-note span,
 .report-period-note small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 
 .report-stats {
@@ -2902,7 +2905,7 @@ body.dialog-open {
 
 .report-metric small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
@@ -2973,7 +2976,7 @@ body.dialog-open {
 }
 .timeline-list time {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
   font-variant-numeric: tabular-nums;
 }
 .timeline-list article > div {
@@ -2984,7 +2987,7 @@ body.dialog-open {
 .timeline-list article > div span,
 .timeline-list small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 
 .settings-grid {
@@ -3012,7 +3015,7 @@ body.dialog-open {
 }
 .sticky-actions span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 
 .skeleton-grid {
@@ -3108,7 +3111,7 @@ label:has(:required) > .field-label::after {
 }
 .login-brand span {
   color: rgba(255, 255, 255, 0.7);
-  font-size: 9px;
+  font-size: var(--font-micro);
   font-weight: 700;
 }
 .login-visual h1,
@@ -3344,6 +3347,8 @@ label:has(:required) > .field-label::after {
   }
   :root {
     --control-h: 44px;
+    --font-micro: 11px;
+    --font-caption: 12px;
   }
   .button,
   .sidebar__link,
@@ -3492,7 +3497,7 @@ label:has(:required) > .field-label::after {
     flex-direction: column;
     gap: 3px;
     color: var(--muted);
-    font-size: 9px;
+    font-size: var(--font-micro);
     text-align: center;
     /* Viền trong suốt sẵn để mục đang chọn sáng lên mà không làm xô lệch thanh. */
     border: 1.5px solid transparent;
@@ -3503,6 +3508,16 @@ label:has(:required) > .field-label::after {
       border-color 160ms ease,
       box-shadow 160ms ease,
       color 160ms ease;
+  }
+  /* Nhãn dài ("Phiếu nhập & giá vốn") xuống tối đa 2 dòng thay vì thu nhỏ chữ. */
+  .mobile-bottom-nav a > span {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    line-height: 1.15;
+    overflow-wrap: normal;
   }
   .mobile-bottom-nav a:active {
     background: var(--brand-soft);
@@ -3809,7 +3824,7 @@ label:has(:required) > .field-label::after {
   }
   .transfer-timeline > div {
     flex-direction: column;
-    font-size: 8px;
+    font-size: var(--font-micro);
     text-align: center;
   }
   .transfer-timeline > svg {
