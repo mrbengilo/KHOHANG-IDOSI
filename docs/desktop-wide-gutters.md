@@ -6,23 +6,27 @@ hệ thống dùng một khung `.app-main` và một sidebar.
 
 ## Yêu cầu → kết quả
 
-| #   | Yêu cầu                                         | Trước                                                   | Sau                                                                                    |
-| --- | ----------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| 1   | Lề trái/phải vùng làm việc gấp 3 lần hiện tại   | 54px mỗi bên                                            | 162px mỗi bên từ 2070px (vd. màn 2133px); màn hẹp hơn lề nới vừa đủ để bảng không chật |
-| 2   | Bảng không xuống dòng, không tràn, không che    | —                                                       | audit 300 route × vai trò × độ rộng: không ô nào xuống dòng thêm, không cuộn/tràn mới  |
-| 3   | Thanh cuộn danh mục chính mảnh lại              | thanh cuộn cổ điển 15–17px có nút mũi tên (Chrome/Edge) | 6px, bo tròn, không nút mũi tên; Firefox `scrollbar-width: thin`                       |
-| 4   | Hộp danh mục chính lớn hơn một chút             | sidebar 224px, nhãn dài xuống 2 dòng                    | sidebar 240px; "Phiếu nhập & giá vốn", "Thống kê nhập hàng" nằm một dòng               |
-| 5   | Mã chứng từ không bị ngắt (phát hiện khi audit) | `PN00001-27/09/2026` có thể gãy làm 2 dòng              | `summary` trong lịch sử chứng từ `white-space: nowrap` như `time`                      |
+| #   | Yêu cầu                                         | Trước                                                   | Sau                                                                                         |
+| --- | ----------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| 1   | Lề trái/phải vùng làm việc gấp 3 lần hiện tại   | 54px mỗi bên                                            | 162px (3×) từ 2070px; không đủ chỗ thì 108px (2×); hẹp hơn nữa lề vừa đủ để bảng không chật |
+| 2   | Bảng không xuống dòng, không tràn, không che    | —                                                       | audit 450 route × vai trò × độ rộng: không ô nào xuống dòng thêm, không cuộn/tràn mới       |
+| 3   | Thanh cuộn danh mục chính mảnh lại              | thanh cuộn cổ điển 15–17px có nút mũi tên (Chrome/Edge) | 6px, bo tròn, không nút mũi tên; Firefox `scrollbar-width: thin`                            |
+| 4   | Hộp danh mục chính lớn hơn một chút             | sidebar 224px, nhãn dài xuống 2 dòng                    | sidebar 240px; "Phiếu nhập & giá vốn", "Thống kê nhập hàng" nằm một dòng                    |
+| 5   | Mã chứng từ không bị ngắt (phát hiện khi audit) | `PN00001-27/09/2026` có thể gãy làm 2 dòng              | `summary` trong lịch sử chứng từ `white-space: nowrap` như `time`                           |
 
 ## Thiết kế lề
 
-Nguyên tắc: lề chỉ nới rộng bằng phần chỗ mà bảng không cần. `--content-gutter = max(nền, rộng)`:
+Nguyên tắc: bảng không xuống dòng thêm, không tràn. Lề chọn theo bậc:
 
-- `nền = clamp(18px, 10px + (100vw − 821px) × 0.0785, 46px)`: lề cũ trừ 8px (nửa phần sidebar
-  rộng thêm) nên tới 1838px vùng làm việc đúng bằng bản trước.
-- `rộng = min((100vw − sidebar − 1506px) / 2, 162px)`: 1506px là bề rộng tự nhiên (không xuống
-  dòng) của bảng rộng nhất — lịch sử nhập kho tổng — cộng viền panel, đo trên mọi route × vai trò.
-  Phần dư ngoài đó dồn vào lề, tối đa 162px = 3 × 54px.
+1. **Gấp 3** lề cũ (162px) khi vùng làm việc vẫn còn đủ 1506px — từ 2070px
+   (`@media (min-width: 2070px)`; 2070 = sidebar 240 + 1506 + 2 × 162).
+2. Không đủ thì tối đa **gấp 2** (108px), chỉ khi bảng vẫn vừa — từ 1962px.
+3. Hẹp hơn: lề lớn nhất mà bảng vẫn vừa, `min((100vw − sidebar − 1506px) / 2, 108px)`, không
+   nhỏ hơn lề nền `clamp(18px, 10px + (100vw − 821px) × 0.0785, 46px)` = lề cũ trừ 8px (nửa phần
+   sidebar rộng thêm), nên tới 1838px vùng làm việc đúng bằng bản trước.
+
+1506px là bề rộng tự nhiên (không xuống dòng) của bảng rộng nhất — lịch sử nhập kho tổng — cộng
+viền panel, đo trên mọi route × vai trò.
 
 Phương án đã loại (đều đo bằng audit bên dưới):
 
@@ -36,14 +40,15 @@ Phương án đã loại (đều đo bằng audit bên dưới):
 | 1366     | 54 → 46px              | 1034 → 1034px             |
 | 1440     | 54 → 46px              | 1108 → 1108px             |
 | 1920     | 54 → 87px              | 1588 → 1506px             |
-| 2133     | 54 → 162px             | 1801 → 1569px             |
+| 2000     | 54 → 108px (2×)        | 1668 → 1544px             |
+| 2133     | 54 → 162px (3×)        | 1801 → 1569px             |
 | 2560     | 54 → 162px             | 2228 → 1996px             |
 | ≤820     | 16/18px (mobile)       | không đổi                 |
 
 ## Audit bảng (trước/sau)
 
 Bản dựng mock, thanh cuộn thật, 4 vai trò (Admin, HTKD, cửa hàng lẻ, quầy sỉ) × mọi route được
-phép × 1366/1440/1680/1920/2150/2560px = 300 tổ hợp, 4.512 ô bảng. Đếm ô có một đoạn chữ nằm trên
+phép × 1366/1440/1680/1920/1980/2050/2070/2150/2560px = 450 tổ hợp, 6.768 ô bảng. Đếm ô có một đoạn chữ nằm trên
 hơn một dòng, bảng phải cuộn ngang và trang tràn ngang.
 
 - Kết quả: **0 tổ hợp xấu hơn bản trước**; không bảng nào phải cuộn ngang; không trang nào tràn.

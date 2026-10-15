@@ -10,20 +10,21 @@
   --content-pad: 18px;
   /*
    * Lề trái/phải vùng làm việc desktop, đo theo `100vw` (thanh cuộn cổ điển không làm lệch mốc).
-   * Nguyên tắc: lề chỉ nới rộng bằng phần chỗ mà bảng không cần, để bảng không xuống dòng thêm.
-   * - Nền: lề cũ (18 → 54px) trừ 8px = nửa phần sidebar rộng thêm, trong khoảng 18–46px, nên
-   *   vùng làm việc tới 1838px giữ đúng như bản trước.
-   * - Màn rộng: phần dư ngoài `--workspace-min` dồn vào lề, tối đa 162px = 3 × lề 54px trước
-   *   đây (đạt từ 2070px). 1506px là bề rộng tự nhiên của bảng rộng nhất (lịch sử nhập kho tổng)
-   *   cộng viền panel, đo bằng audit mọi route × vai trò (docs/desktop-wide-gutters.md).
-   * ≤820px dùng lề mobile riêng.
+   * Nguyên tắc: bảng không xuống dòng thêm, không tràn. Lề chọn theo bậc:
+   * - Gấp 3 lề cũ (162px) khi vùng làm việc còn đủ `--workspace-min` — từ 2070px (xem @media
+   *   ngay sau :root; 2070 = sidebar 240 + 1506 + 2 × 162).
+   * - Không đủ thì tối đa gấp 2 lề cũ (108px), chỉ khi bảng vẫn vừa (từ 1962px).
+   * - Hẹp hơn: lề lớn nhất mà bảng vẫn vừa, không nhỏ hơn lề nền = lề cũ (18 → 54px) trừ 8px
+   *   (nửa phần sidebar rộng thêm), nên tới 1838px vùng làm việc đúng như bản trước.
+   * 1506px là bề rộng tự nhiên của bảng rộng nhất (lịch sử nhập kho tổng) cộng viền panel, đo bằng
+   * audit mọi route × vai trò (docs/desktop-wide-gutters.md). ≤820px dùng lề mobile riêng.
    */
   --workspace-min: 1506px;
   --content-gutter: max(
     clamp(var(--content-pad), calc(10px + (100vw - 821px) * 0.0785), 46px),
     min(
       calc((100vw - var(--sidebar-width) - var(--workspace-min)) / 2),
-      calc(var(--content-pad) * 9)
+      calc(var(--content-pad) * 6)
     )
   );
   --content-gap: 24px;
@@ -79,6 +80,13 @@
   --shadow-box: 0 1px 3px rgba(15, 23, 42, 0.07);
   /* Chiều cao chuẩn của nút và ô nhập; mobile nâng lên 44px để đủ vùng chạm. */
   --control-h: 38px;
+}
+
+/* Bậc gấp 3 lề cũ: chỉ khi vùng làm việc vẫn còn đủ --workspace-min (240 + 1506 + 2 × 162). */
+@media (min-width: 2070px) {
+  :root {
+    --content-gutter: calc(var(--content-pad) * 9);
+  }
 }
 
 * {
