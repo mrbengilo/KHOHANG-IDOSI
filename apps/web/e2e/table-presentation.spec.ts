@@ -288,17 +288,18 @@ test('discrepancy filters and populated list stay inside the viewport across the
       `viewport ${width}`,
     ).toBeLessThanOrEqual(width + 1);
     const scrollport = page.locator('.adjustment-workspace__table');
-    // Wide tables may scroll locally, but their last action must remain reachable.
-    await scrollport.evaluate((node) => {
-      node.scrollLeft = node.scrollWidth;
-    });
-    const actionBounds = await scrollport.evaluate((node) => {
-      const action = node.querySelector('button')!.getBoundingClientRect();
-      const box = node.getBoundingClientRect();
-      return { left: action.left - box.left, right: action.right - box.right };
-    });
-    expect(actionBounds.left).toBeGreaterThanOrEqual(-1);
-    expect(actionBounds.right).toBeLessThanOrEqual(1);
+    // ResizeObserver can change header widths in the next frame. Scroll and measure in
+    // one layout, allowing that reflow to finish; the page-overflow assertion above stays immediate.
+    await expect
+      .poll(() =>
+        scrollport.evaluate((node) => {
+          node.scrollLeft = node.scrollWidth;
+          const action = node.querySelector('button')!.getBoundingClientRect();
+          const box = node.getBoundingClientRect();
+          return action.left >= box.left - 1 && action.right <= box.right + 1;
+        }),
+      )
+      .toBe(true);
     await scrollport.evaluate((node) => {
       node.scrollLeft = 0;
     });
