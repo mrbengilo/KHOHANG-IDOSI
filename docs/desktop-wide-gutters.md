@@ -8,7 +8,7 @@ hệ thống dùng một khung `.app-main` và một sidebar.
 
 | #   | Yêu cầu                                         | Trước                                                   | Sau                                                                                         |
 | --- | ----------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| 1   | Lề trái/phải vùng làm việc gấp 3 lần hiện tại   | 54px mỗi bên                                            | 162px (3×) từ 2070px; không đủ chỗ thì 108px (2×); hẹp hơn nữa lề vừa đủ để bảng không chật |
+| 1   | Lề trái/phải vùng làm việc gấp 3 lần hiện tại   | 54px mỗi bên                                            | 162px (3×) từ 2090px; không đủ chỗ thì 108px (2×); hẹp hơn nữa lề vừa đủ để bảng không chật |
 | 2   | Bảng không xuống dòng, không tràn, không che    | —                                                       | audit 450 route × vai trò × độ rộng: không ô nào xuống dòng thêm, không cuộn/tràn mới       |
 | 3   | Thanh cuộn danh mục chính mảnh lại              | thanh cuộn cổ điển 15–17px có nút mũi tên (Chrome/Edge) | 6px, bo tròn, không nút mũi tên; Firefox `scrollbar-width: thin`                            |
 | 4   | Hộp danh mục chính lớn hơn một chút             | sidebar 224px, nhãn dài xuống 2 dòng                    | sidebar 240px; "Phiếu nhập & giá vốn", "Thống kê nhập hàng" nằm một dòng                    |
@@ -19,15 +19,15 @@ hệ thống dùng một khung `.app-main` và một sidebar.
 
 Nguyên tắc: bảng không xuống dòng thêm, không tràn. Lề chọn theo bậc:
 
-1. **Gấp 3** lề cũ (162px) khi vùng làm việc vẫn còn đủ 1506px — từ 2070px
-   (`@media (min-width: 2070px)`; 2070 = sidebar 240 + 1506 + 2 × 162).
-2. Không đủ thì tối đa **gấp 2** (108px), chỉ khi bảng vẫn vừa — từ 1962px.
-3. Hẹp hơn: lề lớn nhất mà bảng vẫn vừa, `min((100vw − sidebar − 1506px) / 2, 108px)`, không
+1. **Gấp 3** lề cũ (162px) khi vùng làm việc vẫn còn đủ 1526px — từ 2090px
+   (`@media (min-width: 2090px)`; 2090 = sidebar 240 + 1526 + 2 × 162).
+2. Không đủ thì tối đa **gấp 2** (108px), chỉ khi bảng vẫn vừa — từ 1982px.
+3. Hẹp hơn: lề lớn nhất mà bảng vẫn vừa, `min((100vw − sidebar − 1526px) / 2, 108px)`, không
    nhỏ hơn lề nền `clamp(18px, 10px + (100vw − 821px) × 0.0785, 46px)` = lề cũ trừ 8px (nửa phần
-   sidebar rộng thêm), nên tới 1838px vùng làm việc đúng bằng bản trước.
+   sidebar rộng thêm), nên tới 1858px vùng làm việc đúng bằng bản trước.
 
-1506px là bề rộng tự nhiên (không xuống dòng) của bảng rộng nhất — lịch sử nhập kho tổng — cộng
-viền panel, đo trên mọi route × vai trò.
+1526px là bề rộng tự nhiên (không xuống dòng) của bảng rộng nhất — lịch sử nhập kho tổng — cộng
+viền panel và 15px thanh cuộn dọc cổ điển của Windows (nằm trong `100vw`), đo trên mọi route × vai trò.
 
 Phương án đã loại (đều đo bằng audit bên dưới):
 
@@ -40,7 +40,7 @@ Phương án đã loại (đều đo bằng audit bên dưới):
 | -------- | ---------------------- | ------------------------- |
 | 1366     | 54 → 46px              | 1034 → 1034px             |
 | 1440     | 54 → 46px              | 1108 → 1108px             |
-| 1920     | 54 → 87px              | 1588 → 1506px             |
+| 1920     | 54 → 77px              | 1588 → 1526px             |
 | 2000     | 54 → 108px (2×)        | 1668 → 1544px             |
 | 2133     | 54 → 162px (3×)        | 1801 → 1569px             |
 | 2560     | 54 → 162px             | 2228 → 1996px             |
