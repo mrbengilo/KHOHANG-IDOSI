@@ -157,19 +157,16 @@
   font-variant-numeric: tabular-nums;
 }
 /*
- * Dạng bảng: mã chứng từ (PN…, RE…) và thời gian là một khối, không ngắt giữa chừng. Dạng thẻ
- * (≤1100px): giữ nguyên một khối khi vừa, chỉ ngắt khi mã dài hơn cả thẻ để không tràn ngang.
+ * Thời gian không ngắt trong bảng. Mã chứng từ (PN…, RE…) giữ nguyên một khối khi vừa, chỉ ngắt
+ * khi mã dài hơn cả cột/thẻ — mã do người dùng nhập có thể rất dài, không được đẩy bảng tràn ngang.
  */
 @media (min-width: 1101px) {
-  .document-history summary,
   .document-history time {
     white-space: nowrap;
   }
 }
-@media (max-width: 1100px) {
-  .document-history summary {
-    overflow-wrap: anywhere;
-  }
+.document-history summary {
+  overflow-wrap: anywhere;
 }
 @media (min-width: 1101px) {
   .transfer-list .document-history td:last-child {
