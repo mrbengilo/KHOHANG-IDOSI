@@ -10,6 +10,7 @@ import {
   type OperationalSettingsVersion,
   type OrderSession,
   type OrderSessionStatus,
+  type StoreOrderRequest,
   type TransitionOrderSessionRequest,
   type WorkerStatus,
 } from '@idosi/contracts';
@@ -53,11 +54,10 @@ import { WaitlistPanel } from '../components/WaitlistPanel';
 import { getAdminOperationalSettings, getAllocationWorkerStatus } from '../features/admin/adminApi';
 import { HeldAllocationsPanel } from '../features/receipts/HeldAllocationsPanel';
 import { AllocationDecisionPanel } from '../features/allocations/AllocationDecisionPanel';
+import { AllocationResultCard } from '../features/allocations/AllocationResultCard';
 import {
   allocationDecisionKeys,
-  decisionCode,
   decisionStatusLabel,
-  decisionStatusTone,
   getAllocationDecision,
 } from '../features/allocations/allocationDecisionApi';
 import { useAllocationDecisionResponder } from '../features/allocations/useAllocationDecisionResponder';
@@ -81,11 +81,6 @@ import {
   sessionKindCopy,
   sessionLabel,
 } from '../lib/session-label';
-import {
-  formatRequestSubmittedAt,
-  orderRequestStatusCopy,
-  sessionRequestRows,
-} from '../lib/session-request-rows';
 import { allocationRequests as seed } from '../lib/data';
 import type { AllocationRequest } from '../lib/types';
 
@@ -352,16 +347,6 @@ function allocationReasonText(reasonCode: string): string {
   return allocationReasonCopy[reasonCode] ?? reasonCode;
 }
 
-const allocationResultStatusTone: Record<
-  AllocationResultStatus,
-  'neutral' | 'success' | 'warning' | 'danger'
-> = {
-  ALLOCATED: 'success',
-  PARTIAL: 'warning',
-  WAITLISTED: 'danger',
-  SKIPPED: 'neutral',
-};
-
 const allocationResultPageSize = 20;
 const allocationTimestampFormatter = new Intl.DateTimeFormat('vi-VN', {
   dateStyle: 'short',
@@ -370,6 +355,33 @@ const allocationTimestampFormatter = new Intl.DateTimeFormat('vi-VN', {
 });
 
 export type AllocationResultsViewState = 'LOADING' | 'ERROR' | 'EMPTY' | 'READY';
+
+/** Results grouped by session in the order the API returned them (newest first). */
+export function groupBySession<T extends { readonly sessionId: string }>(
+  documents: readonly T[],
+): { sessionId: string; documents: T[] }[] {
+  const groups: { sessionId: string; documents: T[] }[] = [];
+  for (const document of documents) {
+    const last = groups.at(-1);
+    if (last?.sessionId === document.sessionId) last.documents.push(document);
+    else groups.push({ sessionId: document.sessionId, documents: [document] });
+  }
+  return groups;
+}
+
+/** How many distinct stores still have a live (not cancelled) order in each session. */
+export function storesPerSession(
+  requests: readonly Pick<StoreOrderRequest, 'sessionId' | 'storeId' | 'status'>[],
+): Map<string, number> {
+  const stores = new Map<string, Set<string>>();
+  for (const request of requests) {
+    if (request.status === 'CANCELLED') continue;
+    const set = stores.get(request.sessionId) ?? new Set<string>();
+    set.add(request.storeId);
+    stores.set(request.sessionId, set);
+  }
+  return new Map([...stores].map(([sessionId, set]) => [sessionId, set.size]));
+}
 
 export function allocationResultsViewState(input: {
   readonly hasError: boolean;
@@ -641,7 +653,6 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
     });
   const [allocationPage, setAllocationPage] = useState(1);
   const [allocationSessionId, setAllocationSessionId] = useState('');
-  const [allocationStatus, setAllocationStatus] = useState<'' | AllocationResultStatus>('');
   const [allocationStoreId, setAllocationStoreId] = useState('');
   const [allocationDecisionStatus, setAllocationDecisionStatus] = useState<
     '' | AllocationDecisionStatus
@@ -698,22 +709,10 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
     queryKey: ['order-requests', 'accessible', SESSION_TABLE_DAYS],
     retry: false,
   });
-  const sessionRows = useMemo(
-    () =>
-      sessionRequestRows(
-        sessionsQuery.data ?? [],
-        orderRequestsQuery.data ?? [],
-        storesQuery.data ?? [],
-      ),
-    [sessionsQuery.data, orderRequestsQuery.data, storesQuery.data],
+  const storesBySession = useMemo(
+    () => storesPerSession(orderRequestsQuery.data ?? []),
+    [orderRequestsQuery.data],
   );
-  const sessionRowSpans = useMemo(() => {
-    const spans = new Map<string, number>();
-    for (const row of sessionRows) {
-      spans.set(row.session.id, (spans.get(row.session.id) ?? 0) + 1);
-    }
-    return spans;
-  }, [sessionRows]);
   const workerStatusQuery = useQuery({
     enabled: role === 'ADMIN',
     queryFn: getAllocationWorkerStatus,
@@ -735,7 +734,6 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
         pageSize: allocationResultPageSize,
         includeDecision: true,
         ...(allocationSessionId ? { sessionId: allocationSessionId } : {}),
-        ...(allocationStatus ? { status: allocationStatus } : {}),
         ...(allocationStoreId ? { storeId: allocationStoreId } : {}),
         ...(allocationDecisionStatus ? { decisionStatus: allocationDecisionStatus } : {}),
       }),
@@ -743,7 +741,6 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
       'allocation-results',
       allocationPage,
       allocationSessionId,
-      allocationStatus,
       allocationStoreId,
       allocationDecisionStatus,
       accountKey,
@@ -815,11 +812,10 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
     if (activeTab !== 'sessions') selectTab('sessions');
     setAllocationPage(1);
     setAllocationSessionId(sessionId);
-    setAllocationStatus('');
     setAllocationStoreId(storeId);
     setAllocationDecisionStatus('');
     void queryClient.invalidateQueries({
-      queryKey: ['allocation-results', 1, sessionId, '', storeId],
+      queryKey: ['allocation-results', 1, sessionId, storeId],
     });
     setResultsFocusRequest((current) => current + 1);
   };
@@ -836,7 +832,6 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
   const clearAllocationFilters = () => {
     setAllocationPage(1);
     setAllocationSessionId('');
-    setAllocationStatus('');
     setAllocationStoreId('');
     setAllocationDecisionStatus('');
   };
@@ -1221,238 +1216,6 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
               ) : null}
             </section>
           ) : null}
-          <HeldAllocationsPanel
-            audience="OPERATIONS"
-            productNameById={productNameById}
-            storeNameById={storeNameById}
-          />
-
-          <section
-            aria-labelledby="order-session-heading"
-            className="panel allocation-session-console"
-          >
-            <div className="section-heading section-heading--compact">
-              <div>
-                <h2 id="order-session-heading">Phiên nhận đơn và phân bổ</h2>
-                <p>
-                  Admin vận hành trạng thái có khóa phiên bản; HTKD và cửa hàng theo dõi dữ liệu
-                  đúng phạm vi được cấp.
-                </p>
-              </div>
-              {role === 'ADMIN' ? (
-                <Badge tone="success">Có quyền vận hành</Badge>
-              ) : (
-                <Badge tone="neutral">Chỉ đọc</Badge>
-              )}
-            </div>
-
-            {sessionsQuery.isPending ? (
-              <p aria-live="polite" className="allocation-session-state">
-                Đang tải phiên từ backend…
-              </p>
-            ) : null}
-            {sessionsQuery.isError ? (
-              <div
-                className="allocation-session-state allocation-session-state--error"
-                role="alert"
-              >
-                <span>Không thể tải danh sách phiên.</span>
-                <Button onClick={() => void sessionsQuery.refetch()} tone="secondary">
-                  <RotateCcw aria-hidden="true" size={16} /> Thử lại
-                </Button>
-              </div>
-            ) : null}
-            {sessionsQuery.data?.length === 0 ? (
-              <EmptyState
-                detail={
-                  role === 'ADMIN'
-                    ? 'Tạo phiên đầu tiên để cửa hàng có thể gửi yêu cầu đặt hàng.'
-                    : 'Admin chưa tạo phiên nhận đơn.'
-                }
-                title="Chưa có phiên vận hành"
-              />
-            ) : null}
-            {orderRequestsQuery.isError ? (
-              <div
-                className="allocation-session-state allocation-session-state--error"
-                role="alert"
-              >
-                <span>Không thể tải yêu cầu đặt hàng; bảng chỉ hiện thông tin phiên.</span>
-                <Button onClick={() => void orderRequestsQuery.refetch()} tone="secondary">
-                  <RotateCcw aria-hidden="true" size={16} /> Thử lại
-                </Button>
-              </div>
-            ) : null}
-            {sessionsQuery.data && sessionsQuery.data.length > 0 ? (
-              <div className="responsive-table">
-                <table className="table-density">
-                  <thead>
-                    <tr>
-                      <th>Thời gian</th>
-                      <th>Cửa hàng</th>
-                      <th>Nhận đơn</th>
-                      <th>Phân bổ</th>
-                      <th>Trạng thái</th>
-                      <th>Kết quả</th>
-                      {role === 'ADMIN' ? <th>Thao tác</th> : null}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sessionRows.map(
-                      ({ dayLabel, firstOfDay, firstOfSession, key, request, session, store }) => {
-                        const transitions = availableSessionTransitions(
-                          session.status,
-                          Date.parse(session.requestClosesAt) <= Date.now(),
-                        );
-                        const openAllowedNow = canOpenSessionNow(session);
-                        const submitted = request
-                          ? formatRequestSubmittedAt(request.submittedAt)
-                          : null;
-                        return (
-                          <tr
-                            className={firstOfDay ? 'session-request-row--day-start' : undefined}
-                            key={key}
-                          >
-                            <td data-label="Thời gian">
-                              <div className="session-request-time">
-                                {firstOfDay ? (
-                                  <span className="session-request-day">Ngày {dayLabel}</span>
-                                ) : null}
-                                {submitted ? (
-                                  <>
-                                    <strong>
-                                      {submitted.time} · {submitted.date}
-                                    </strong>
-                                    <small>
-                                      Phiên {session.code ? `${session.code} · ` : ''}
-                                      {formatBusinessDate(session.businessDate)} ·{' '}
-                                      {sessionKindCopy[session.kind]}
-                                    </small>
-                                  </>
-                                ) : (
-                                  <>
-                                    <strong>Chưa có yêu cầu</strong>
-                                    <small>
-                                      Phiên {session.code ? `${session.code} · ` : ''}
-                                      {formatBusinessDate(session.businessDate)} ·{' '}
-                                      {sessionKindCopy[session.kind]}
-                                    </small>
-                                  </>
-                                )}
-                              </div>
-                            </td>
-                            <td data-label="Cửa hàng">
-                              {request ? (
-                                <>
-                                  <strong>{store?.name ?? 'Cửa hàng ngoài phạm vi'}</strong>
-                                  <small>
-                                    {store ? `${store.code} · ` : ''}
-                                    {orderRequestStatusCopy[request.status]}
-                                  </small>
-                                </>
-                              ) : (
-                                <small>—</small>
-                              )}
-                            </td>
-                            <td data-label="Nhận đơn">
-                              <strong>{formatSessionTime(session.requestOpensAt)}</strong>
-                              <small>đến {formatSessionTime(session.requestClosesAt)}</small>
-                            </td>
-                            <td data-label="Phân bổ">
-                              <strong>{formatSessionTime(session.allocationStartsAt)}</strong>
-                              <small>giờ Việt Nam</small>
-                            </td>
-                            <td data-label="Trạng thái">
-                              <Badge tone={sessionStatusTone[session.status]}>
-                                {sessionStatusCopy[session.status]}
-                              </Badge>
-                            </td>
-                            <td data-label="Kết quả">
-                              <button
-                                aria-label={
-                                  store
-                                    ? `Xem kết quả phiên ${sessionLabel(session)} của ${store.name}`
-                                    : `Xem kết quả phiên ${sessionLabel(session)}`
-                                }
-                                className="link-button"
-                                onClick={() =>
-                                  showSessionResults(session.id, request?.storeId ?? '')
-                                }
-                                type="button"
-                              >
-                                <Eye aria-hidden="true" size={15} /> Xem kết quả
-                              </button>
-                            </td>
-                            {role === 'ADMIN' && firstOfSession ? (
-                              <td
-                                className="allocation-session-action-cell"
-                                data-label="Thao tác"
-                                rowSpan={sessionRowSpans.get(session.id) ?? 1}
-                              >
-                                <div className="allocation-session-actions">
-                                  {transitions.includes('OPEN') ? (
-                                    <button
-                                      aria-busy={pendingAction === `${session.id}:OPEN`}
-                                      aria-label={`Mở nhận đơn phiên ${sessionLabel(session)}`}
-                                      className="link-button"
-                                      disabled={!openAllowedNow || Boolean(pendingAction)}
-                                      onClick={() => void transition(session, 'OPEN')}
-                                      title={
-                                        openAllowedNow
-                                          ? undefined
-                                          : 'Chỉ mở được trong khung giờ nhận đơn đã cấu hình'
-                                      }
-                                      type="button"
-                                    >
-                                      <Play aria-hidden="true" size={15} />
-                                      {pendingAction === `${session.id}:OPEN`
-                                        ? 'Đang mở…'
-                                        : sessionActionLabel('OPEN')}
-                                    </button>
-                                  ) : null}
-                                  {transitions.includes('CLOSED') ? (
-                                    <button
-                                      aria-busy={pendingAction === `${session.id}:CLOSED`}
-                                      aria-label={`Đóng nhận đơn phiên ${sessionLabel(session)}`}
-                                      className="link-button"
-                                      disabled={Boolean(pendingAction)}
-                                      onClick={() => void transition(session, 'CLOSED')}
-                                      type="button"
-                                    >
-                                      <LockKeyhole aria-hidden="true" size={15} />
-                                      {pendingAction === `${session.id}:CLOSED`
-                                        ? 'Đang đóng…'
-                                        : sessionActionLabel('CLOSED')}
-                                    </button>
-                                  ) : null}
-                                  {transitions.includes('CANCELLED') ? (
-                                    <button
-                                      aria-label={`Hủy phiên ${sessionLabel(session)}`}
-                                      className="link-button link-button--danger"
-                                      disabled={Boolean(pendingAction)}
-                                      onClick={() => beginCancel(session)}
-                                      type="button"
-                                    >
-                                      <Ban aria-hidden="true" size={15} />{' '}
-                                      {sessionActionLabel('CANCELLED')}
-                                    </button>
-                                  ) : null}
-                                  {transitions.length === 0 ? (
-                                    <span>Không còn thao tác</span>
-                                  ) : null}
-                                </div>
-                              </td>
-                            ) : null}
-                          </tr>
-                        );
-                      },
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
-          </section>
-
           <section
             aria-labelledby="allocation-results-heading"
             className="panel allocation-results-console"
@@ -1460,14 +1223,10 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
             <div className="section-heading section-heading--compact">
               <div>
                 <h2 id="allocation-results-heading" ref={allocationResultsHeadingRef} tabIndex={-1}>
-                  Kết quả phân bổ đã lưu
+                  Kết quả phân bổ
                 </h2>
-                <p>
-                  Dữ liệu đọc trực tiếp từ từng dòng phân bổ và luôn giới hạn theo phạm vi cửa hàng
-                  của tài khoản.
-                </p>
+                <p>Mỗi cửa hàng: được phân bổ gì và còn chờ ưu tiên gì trong phiên.</p>
               </div>
-              <Badge tone="info">{allocationQuery.data?.pagination.totalItems ?? 0} kết quả</Badge>
             </div>
 
             <div
@@ -1502,7 +1261,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                   }}
                   value={allocationStoreId}
                 >
-                  <option value="">Tất cả cửa hàng được phép xem</option>
+                  <option value="">Tất cả cửa hàng</option>
                   {(storesQuery.data ?? []).map((store) => (
                     <option key={store.id} value={store.id}>
                       {store.code} · {store.name}
@@ -1511,27 +1270,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                 </select>
               </label>
               <label>
-                Trạng thái
-                <select
-                  aria-label="Lọc kết quả theo trạng thái"
-                  onChange={(event) => {
-                    setAllocationPage(1);
-                    setAllocationStatus(event.target.value as '' | AllocationResultStatus);
-                  }}
-                  value={allocationStatus}
-                >
-                  <option value="">Tất cả trạng thái</option>
-                  {(Object.keys(allocationResultStatusCopy) as AllocationResultStatus[]).map(
-                    (status) => (
-                      <option key={status} value={status}>
-                        {allocationResultStatusCopy[status]}
-                      </option>
-                    ),
-                  )}
-                </select>
-              </label>
-              <label>
-                Xác nhận của cửa hàng
+                Xác nhận
                 <select
                   aria-label="Lọc kết quả theo xác nhận của cửa hàng"
                   onChange={(event) => {
@@ -1551,22 +1290,23 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                 </select>
               </label>
               <Button
-                disabled={
-                  !allocationSessionId &&
-                  !allocationStoreId &&
-                  !allocationStatus &&
-                  !allocationDecisionStatus
-                }
+                disabled={!allocationSessionId && !allocationStoreId && !allocationDecisionStatus}
                 onClick={clearAllocationFilters}
                 tone="secondary"
               >
                 <RotateCcw aria-hidden="true" size={16} /> Xóa bộ lọc
               </Button>
             </div>
+            {allocationStoreId && !allocationSessionId ? (
+              <p className="allocation-result-scope">
+                Lịch sử phân bổ của {storeNameById.get(allocationStoreId) ?? 'cửa hàng'}, mới nhất
+                trước.
+              </p>
+            ) : null}
 
             {allocationViewState === 'LOADING' ? (
               <p aria-live="polite" className="allocation-session-state">
-                Đang tải kết quả phân bổ từ backend…
+                Đang tải kết quả phân bổ…
               </p>
             ) : null}
             {allocationViewState === 'ERROR' ? (
@@ -1574,9 +1314,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                 className="allocation-session-state allocation-session-state--error"
                 role="alert"
               >
-                <span>
-                  Không thể tải kết quả phân bổ. Dữ liệu phiên và phiếu chờ vẫn được giữ lại.
-                </span>
+                <span>Không thể tải kết quả phân bổ.</span>
                 <Button onClick={() => void allocationQuery.refetch()} tone="secondary">
                   <RotateCcw aria-hidden="true" size={16} /> Thử lại
                 </Button>
@@ -1587,10 +1325,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                 className="allocation-session-state allocation-session-state--error"
                 role="alert"
               >
-                <span>
-                  Không thể cập nhật kết quả mới nhất. Bảng bên dưới vẫn là dữ liệu đã xác nhận gần
-                  nhất.
-                </span>
+                <span>Không thể cập nhật kết quả mới nhất; đang hiện dữ liệu gần nhất.</span>
                 <Button onClick={() => void allocationQuery.refetch()} tone="secondary">
                   <RotateCcw aria-hidden="true" size={16} /> Thử lại
                 </Button>
@@ -1609,200 +1344,251 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                     Đang cập nhật kết quả…
                   </p>
                 ) : null}
-                {allocationQuery.data.data.map((document) => (
-                  <article
-                    className="panel session-document"
-                    key={document.id}
-                    aria-label={'Chứng từ ' + document.id}
-                  >
-                    <h3>
-                      {storeNameById.get(document.storeId) ?? 'Chưa xác định cửa hàng'} · Phiên{' '}
-                      {sessionById.get(document.sessionId)
-                        ? sessionLabel(sessionById.get(document.sessionId)!)
-                        : document.sessionId}
-                    </h3>
-                    <p>
-                      Phiên bản chính thức {document.version} · Đã phân bổ ·{' '}
-                      {allocationTimestampFormatter.format(new Date(document.createdAt))}
-                    </p>
-                    {document.decision ? (
-                      <div className="session-document__decision">
-                        <Badge tone={decisionStatusTone[document.decision.status]}>
-                          {decisionStatusLabel[document.decision.status]}
-                        </Badge>
-                        <span>Phiếu {decisionCode(document.decision)}</span>
-                        <Button
-                          aria-label={`${
-                            document.decision.canRespond ? 'Xác nhận' : 'Xem'
-                          } phiếu ${decisionCode(document.decision)}`}
-                          onClick={() => openDecision(document.decision!.id)}
-                          tone={document.decision.canRespond ? 'primary' : 'secondary'}
-                        >
-                          {document.decision.canRespond ? 'Xác nhận phiếu' : 'Xem phiếu'}
-                        </Button>
-                      </div>
-                    ) : null}
-                    {document.hasPrioritySource ? (
-                      <Badge tone="priority">Có gộp phiếu ưu tiên</Badge>
-                    ) : null}
-                    <details>
-                      <summary>Phiếu đặt hàng tổng hợp · {document.orderCode}</summary>
-                      <div className="document-history">
-                        <table className="table-density table-density--metrics">
-                          <thead>
-                            <tr>
-                              <th>Mặt hàng</th>
-                              <th>Nhu cầu (bao)</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {document.lines.map((line) => (
-                              <tr key={line.productId}>
-                                <td>{productNameById.get(line.productId) ?? line.productId}</td>
-                                <td>{line.requestedQuantity}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                          <tfoot>
-                            <tr>
-                              <th>Tổng</th>
-                              <td>
-                                {document.lines.reduce(
-                                  (sum, line) => sum + line.requestedQuantity,
-                                  0,
-                                )}
-                              </td>
-                            </tr>
-                          </tfoot>
-                        </table>
-                      </div>
-                    </details>
-                    <h4>Phiếu kết quả phân bổ · {document.resultCode}</h4>
-                    <div className="document-history">
-                      <table className="table-density table-density--metrics">
-                        <thead>
-                          <tr>
-                            <th>Mặt hàng</th>
-                            <th>Nhu cầu (bao)</th>
-                            <th>Cấp mới trong phiên</th>
-                            <th>Còn chờ</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {document.lines.map((line) => (
-                            <tr key={line.productId}>
-                              <td>{productNameById.get(line.productId) ?? line.productId}</td>
-                              <td>{line.requestedQuantity}</td>
-                              <td>{line.allocatedQuantity}</td>
-                              <td>{line.waitlistedQuantity}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                        <tfoot>
-                          <tr>
-                            <th>Tổng</th>
-                            <td>
-                              {document.lines.reduce(
-                                (sum, line) => sum + line.requestedQuantity,
-                                0,
-                              )}
-                            </td>
-                            <td>
-                              {document.lines.reduce(
-                                (sum, line) => sum + line.allocatedQuantity,
-                                0,
-                              )}
-                            </td>
-                            <td>
-                              {document.lines.reduce(
-                                (sum, line) => sum + line.waitlistedQuantity,
-                                0,
-                              )}
-                            </td>
-                          </tr>
-                        </tfoot>
-                      </table>
-                    </div>
-                    {document.carriedAllocations.length ? (
-                      <details>
-                        <summary>
-                          Hàng đã cấp ở phiên trước, giao chung ·{' '}
-                          {document.carriedAllocations.reduce(
-                            (sum, line) => sum + line.quantity,
-                            0,
-                          )}{' '}
-                          bao
-                        </summary>
-                        <p>Không cộng vào nhu cầu hoặc lượng cấp mới của phiên này.</p>
-                        {document.carriedAllocations.map((line) => (
-                          <p key={line.allocationLineId}>
-                            {productNameById.get(line.productId) ?? line.productId}: {line.quantity}{' '}
-                            bao · Nguồn phân bổ {line.allocationRunId}
-                          </p>
+                {groupBySession(allocationQuery.data.data).map(({ sessionId, documents }) => {
+                  const session = sessionById.get(sessionId);
+                  return (
+                    <section
+                      aria-label={`Phiên ${session ? sessionLabel(session) : sessionId}`}
+                      className="allocation-summary-group"
+                      key={sessionId}
+                    >
+                      <h3 className="allocation-summary-group__title">
+                        Phiên {session ? sessionLabel(session) : sessionId}
+                        <span>{documents.length} cửa hàng</span>
+                      </h3>
+                      <div className="allocation-summary-list">
+                        {documents.map((document) => (
+                          <AllocationResultCard
+                            key={document.id}
+                            document={document}
+                            storeName={
+                              storeNameById.get(document.storeId) ?? 'Chưa xác định cửa hàng'
+                            }
+                            createdAtText={allocationTimestampFormatter.format(
+                              new Date(document.createdAt),
+                            )}
+                            productName={(productId) => productNameById.get(productId) ?? productId}
+                            sourceText={(source) =>
+                              [
+                                source.orderRequestCode ?? 'Nguồn phiếu chờ',
+                                productNameById.get(source.result.productId) ??
+                                  source.result.productId,
+                                `đặt ${source.result.requestedQuantity}, cấp ${source.result.allocatedQuantity}, chờ ${source.result.waitlistedQuantity}`,
+                                `ưu tiên ${source.result.appliedPriority ?? source.result.priority}`,
+                                allocationRoundText(source.result),
+                                allocationResultStatusCopy[source.result.status],
+                                allocationReasonText(source.result.reasonCode),
+                              ]
+                                .filter(Boolean)
+                                .join(' · ')
+                            }
+                            onOpenDecision={openDecision}
+                          />
                         ))}
-                      </details>
-                    ) : null}
-                    <details>
-                      <summary>Phiếu nguồn và các vòng phân bổ</summary>
-                      {document.sources.map((source) => (
-                        <div key={source.result.id}>
-                          <p>
-                            {source.orderRequestCode ?? source.waitTicketId} ·{' '}
-                            {source.submittedAt
-                              ? allocationTimestampFormatter.format(new Date(source.submittedAt))
-                              : 'Nguồn phiếu chờ'}{' '}
-                            ·{' '}
-                            {productNameById.get(source.result.productId) ??
-                              source.result.productId}
-                          </p>
-                          <p>
-                            Nhu cầu {source.result.requestedQuantity} · Cấp{' '}
-                            {source.result.allocatedQuantity} · Chờ{' '}
-                            {source.result.waitlistedQuantity} · Nguồn {source.result.priority} · Áp
-                            dụng {source.result.appliedPriority ?? 'Chưa ghi nhận'}
-                          </p>
-                          <Badge tone={allocationResultStatusTone[source.result.status]}>
-                            {allocationResultStatusCopy[source.result.status]}
-                          </Badge>
-                          <p>
-                            {allocationRoundText(source.result)} ·{' '}
-                            {allocationReasonText(source.result.reasonCode)}
-                          </p>
-                        </div>
-                      ))}
-                    </details>
-                  </article>
-                ))}
-                <div className="allocation-result-pagination">
-                  <span>
-                    Trang {allocationQuery.data.pagination.page} /{' '}
-                    {Math.max(1, allocationQuery.data.pagination.totalPages)} ·{' '}
-                    {allocationQuery.data.pagination.totalItems} phiếu kết quả
-                  </span>
-                  <div>
-                    <Button
-                      disabled={
-                        allocationQuery.data.pagination.page <= 1 || allocationQuery.isFetching
-                      }
-                      onClick={() => setAllocationPage((current) => Math.max(1, current - 1))}
-                      tone="secondary"
-                    >
-                      <ChevronLeft aria-hidden="true" size={16} /> Trang trước
-                    </Button>
-                    <Button
-                      disabled={
-                        allocationQuery.isFetching ||
-                        allocationQuery.data.pagination.page >=
-                          allocationQuery.data.pagination.totalPages
-                      }
-                      onClick={() => setAllocationPage((current) => current + 1)}
-                      tone="secondary"
-                    >
-                      Trang sau <ChevronRight aria-hidden="true" size={16} />
-                    </Button>
+                      </div>
+                    </section>
+                  );
+                })}
+                {allocationQuery.data.pagination.totalPages > 1 ? (
+                  <div className="allocation-result-pagination">
+                    <span>
+                      Trang {allocationQuery.data.pagination.page} /{' '}
+                      {allocationQuery.data.pagination.totalPages} ·{' '}
+                      {allocationQuery.data.pagination.totalItems} kết quả
+                    </span>
+                    <div>
+                      <Button
+                        disabled={
+                          allocationQuery.data.pagination.page <= 1 || allocationQuery.isFetching
+                        }
+                        onClick={() => setAllocationPage((current) => Math.max(1, current - 1))}
+                        tone="secondary"
+                      >
+                        <ChevronLeft aria-hidden="true" size={16} /> Trang trước
+                      </Button>
+                      <Button
+                        disabled={
+                          allocationQuery.isFetching ||
+                          allocationQuery.data.pagination.page >=
+                            allocationQuery.data.pagination.totalPages
+                        }
+                        onClick={() => setAllocationPage((current) => current + 1)}
+                        tone="secondary"
+                      >
+                        Trang sau <ChevronRight aria-hidden="true" size={16} />
+                      </Button>
+                    </div>
                   </div>
-                </div>
+                ) : null}
               </>
+            ) : null}
+          </section>
+
+          <HeldAllocationsPanel
+            audience="OPERATIONS"
+            productNameById={productNameById}
+            storeNameById={storeNameById}
+          />
+
+          <section
+            aria-labelledby="order-session-heading"
+            className="panel allocation-session-console"
+          >
+            <div className="section-heading section-heading--compact">
+              <div>
+                <h2 id="order-session-heading">Phiên nhận đơn và phân bổ</h2>
+                <p>{SESSION_TABLE_DAYS} ngày gần nhất, mới nhất trước.</p>
+              </div>
+            </div>
+
+            {sessionsQuery.isPending ? (
+              <p aria-live="polite" className="allocation-session-state">
+                Đang tải phiên từ backend…
+              </p>
+            ) : null}
+            {sessionsQuery.isError ? (
+              <div
+                className="allocation-session-state allocation-session-state--error"
+                role="alert"
+              >
+                <span>Không thể tải danh sách phiên.</span>
+                <Button onClick={() => void sessionsQuery.refetch()} tone="secondary">
+                  <RotateCcw aria-hidden="true" size={16} /> Thử lại
+                </Button>
+              </div>
+            ) : null}
+            {sessionsQuery.data?.length === 0 ? (
+              <EmptyState
+                detail={
+                  role === 'ADMIN'
+                    ? 'Tạo phiên đầu tiên để cửa hàng có thể gửi yêu cầu đặt hàng.'
+                    : 'Admin chưa tạo phiên nhận đơn.'
+                }
+                title="Chưa có phiên vận hành"
+              />
+            ) : null}
+            {orderRequestsQuery.isError ? (
+              <div
+                className="allocation-session-state allocation-session-state--error"
+                role="alert"
+              >
+                <span>Không thể tải số cửa hàng đã đặt; bảng chỉ hiện thông tin phiên.</span>
+                <Button onClick={() => void orderRequestsQuery.refetch()} tone="secondary">
+                  <RotateCcw aria-hidden="true" size={16} /> Thử lại
+                </Button>
+              </div>
+            ) : null}
+            {sessionsQuery.data && sessionsQuery.data.length > 0 ? (
+              <div className="responsive-table">
+                <table className="table-density">
+                  <thead>
+                    <tr>
+                      <th>Phiên</th>
+                      <th>Nhận đơn</th>
+                      <th>Trạng thái</th>
+                      <th>Cửa hàng đã đặt</th>
+                      <th>Kết quả</th>
+                      {role === 'ADMIN' ? <th>Thao tác</th> : null}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sessionsQuery.data.map((session) => {
+                      const transitions = availableSessionTransitions(
+                        session.status,
+                        Date.parse(session.requestClosesAt) <= Date.now(),
+                      );
+                      const openAllowedNow = canOpenSessionNow(session);
+                      return (
+                        <tr key={session.id}>
+                          <td data-label="Phiên">
+                            <strong>{sessionLabel(session)}</strong>
+                            <small>{sessionKindCopy[session.kind]}</small>
+                          </td>
+                          <td data-label="Nhận đơn">
+                            <strong>
+                              {formatClock(session.requestOpensAt)}–
+                              {formatClock(session.requestClosesAt)}
+                            </strong>
+                            <small>phân bổ {formatClock(session.allocationStartsAt)}</small>
+                          </td>
+                          <td data-label="Trạng thái">
+                            <Badge tone={sessionStatusTone[session.status]}>
+                              {sessionStatusCopy[session.status]}
+                            </Badge>
+                          </td>
+                          <td data-label="Cửa hàng đã đặt">
+                            {storesBySession.get(session.id) ?? 0}
+                          </td>
+                          <td data-label="Kết quả">
+                            <button
+                              aria-label={`Xem kết quả phiên ${sessionLabel(session)}`}
+                              className="link-button"
+                              onClick={() => showSessionResults(session.id)}
+                              type="button"
+                            >
+                              <Eye aria-hidden="true" size={15} /> Xem kết quả
+                            </button>
+                          </td>
+                          {role === 'ADMIN' ? (
+                            <td className="allocation-session-action-cell" data-label="Thao tác">
+                              <div className="allocation-session-actions">
+                                {transitions.includes('OPEN') ? (
+                                  <button
+                                    aria-busy={pendingAction === `${session.id}:OPEN`}
+                                    aria-label={`Mở nhận đơn phiên ${sessionLabel(session)}`}
+                                    className="link-button"
+                                    disabled={!openAllowedNow || Boolean(pendingAction)}
+                                    onClick={() => void transition(session, 'OPEN')}
+                                    title={
+                                      openAllowedNow
+                                        ? undefined
+                                        : 'Chỉ mở được trong khung giờ nhận đơn đã cấu hình'
+                                    }
+                                    type="button"
+                                  >
+                                    <Play aria-hidden="true" size={15} />
+                                    {pendingAction === `${session.id}:OPEN`
+                                      ? 'Đang mở…'
+                                      : sessionActionLabel('OPEN')}
+                                  </button>
+                                ) : null}
+                                {transitions.includes('CLOSED') ? (
+                                  <button
+                                    aria-busy={pendingAction === `${session.id}:CLOSED`}
+                                    aria-label={`Đóng nhận đơn phiên ${sessionLabel(session)}`}
+                                    className="link-button"
+                                    disabled={Boolean(pendingAction)}
+                                    onClick={() => void transition(session, 'CLOSED')}
+                                    type="button"
+                                  >
+                                    <LockKeyhole aria-hidden="true" size={15} />
+                                    {pendingAction === `${session.id}:CLOSED`
+                                      ? 'Đang đóng…'
+                                      : sessionActionLabel('CLOSED')}
+                                  </button>
+                                ) : null}
+                                {transitions.includes('CANCELLED') ? (
+                                  <button
+                                    aria-label={`Hủy phiên ${sessionLabel(session)}`}
+                                    className="link-button link-button--danger"
+                                    disabled={Boolean(pendingAction)}
+                                    onClick={() => beginCancel(session)}
+                                    type="button"
+                                  >
+                                    <Ban aria-hidden="true" size={15} />{' '}
+                                    {sessionActionLabel('CANCELLED')}
+                                  </button>
+                                ) : null}
+                                {transitions.length === 0 ? <span>—</span> : null}
+                              </div>
+                            </td>
+                          ) : null}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             ) : null}
           </section>
 

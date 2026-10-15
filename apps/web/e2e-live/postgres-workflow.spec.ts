@@ -246,18 +246,17 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   const allocationPayload = (await allocationResponse.json()) as { data: unknown[] };
   expect(allocationPayload.data.length).toBeGreaterThan(0);
   await expect(page.getByRole('heading', { name: 'Giám sát phân bổ hàng hóa' })).toBeVisible();
-  const allocationResults = page.getByRole('region', { name: 'Kết quả phân bổ đã lưu' });
-  await expect(allocationResults.getByRole('table').first()).toBeVisible();
+  const allocationResults = page.getByRole('region', { name: 'Kết quả phân bổ', exact: true });
+  // Each store's card leads with what it got and what still waits for priority.
+  const firstResult = allocationResults.locator('.session-document').first();
+  await expect(firstResult).toContainText('Được phân bổ');
+  await expect(firstResult).toContainText('Đang chờ ưu tiên');
   // Mã lý do mặc định của vòng chia ưu tiên bị ẩn vì trùng nghĩa với nhãn trạng thái.
   await expect(allocationResults.getByText('ALLOCATED_BY_PRIORITY_ROUND_ROBIN')).toHaveCount(0);
-  // Source audit is explicitly expandable beneath the complete result document.
-  await allocationResults
-    .getByText('Phiếu nguồn và các vòng phân bổ', { exact: true })
-    .first()
-    .click();
-  await expect(allocationResults.locator('.session-document').first()).toContainText(
-    'Phiếu kết quả phân bổ',
-  );
+  // Codes, sources and rounds stay one click away for audit.
+  await firstResult.locator('summary').first().click();
+  await expect(firstResult.getByText('Phiếu nguồn và các vòng phân bổ')).toBeVisible();
+  await expect(firstResult).toContainText('Phiếu kết quả');
 
   const createSessionTab = page.getByRole('tab', { name: 'Tạo phiên mới' });
   await createSessionTab.click();
@@ -295,7 +294,7 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   });
   await sessionResultsButton.click();
   expect((await scopedResultsPromise).status()).toBe(200);
-  await expect(page.getByRole('heading', { name: 'Kết quả phân bổ đã lưu' })).toBeFocused();
+  await expect(page.getByRole('heading', { name: 'Kết quả phân bổ', exact: true })).toBeFocused();
   await expect(page.getByText('Chưa có kết quả phân bổ phù hợp')).toBeVisible();
   const repeatedScopedResultsPromise = page.waitForResponse(
     (response) =>
@@ -545,7 +544,7 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
     .click();
   expect((await storeAllocationResponsePromise).status()).toBe(200);
   await expect(page.getByRole('heading', { name: 'Giám sát phân bổ hàng hóa' })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Kết quả phân bổ đã lưu' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Kết quả phân bổ', exact: true })).toBeVisible();
   await page.goto('/users');
   await expect(page).toHaveURL(/\/$/u);
   await expect(page.getByRole('heading', { name: 'Tổng quan cửa hàng' })).toBeVisible();
@@ -562,23 +561,15 @@ test('production allocation results remain usable at 390px', async ({ page }) =>
   await page.goto('/allocations');
   expect((await initialResultsPromise).status()).toBe(200);
 
-  const allocationResults = page.getByRole('region', { name: 'Kết quả phân bổ đã lưu' });
+  const allocationResults = page.getByRole('region', { name: 'Kết quả phân bổ', exact: true });
   await expect(allocationResults).toBeVisible();
-  const filteredResultsPromise = page.waitForResponse(
-    (response) =>
-      response.url().includes(`${apiOrigin}/api/v1/session-documents?`) &&
-      response.url().includes('status=ALLOCATED') &&
-      response.request().method() === 'GET',
+  const firstResult = allocationResults.locator('.session-document').first();
+  await expect(firstResult).toContainText('Được phân bổ');
+  await firstResult.locator('summary').first().click();
+  await expect(firstResult.getByText('Phiếu nguồn và các vòng phân bổ')).toBeVisible();
+  await expect(firstResult.locator('.allocation-summary-card__sources li').first()).toContainText(
+    /Đã cấp đủ|Cấp một phần|Chuyển phiếu chờ|Không xử lý/u,
   );
-  await allocationResults.getByLabel('Lọc kết quả theo trạng thái').selectOption('ALLOCATED');
-  expect((await filteredResultsPromise).status()).toBe(200);
-  await allocationResults
-    .getByText('Phiếu nguồn và các vòng phân bổ', { exact: true })
-    .first()
-    .click();
-  await expect(
-    allocationResults.locator('.badge').filter({ hasText: 'Đã cấp đủ' }).first(),
-  ).toBeVisible();
   await expect
     .poll(() => page.evaluate(() => document.body.scrollWidth <= window.innerWidth))
     .toBe(true);

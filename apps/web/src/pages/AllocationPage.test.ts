@@ -8,6 +8,8 @@ import {
   allocationResultsViewState,
   availableSessionTransitions,
   defaultOrderSessionDraft,
+  groupBySession,
+  storesPerSession,
   orderSessionInputFromDraft,
   overdueAllocationSessions,
   workerStatusNotice,
@@ -269,5 +271,31 @@ describe('allocation worker notice', () => {
       'early-b',
       'late',
     ]);
+  });
+});
+
+describe('simplified allocation results', () => {
+  it('groups results by session in API order so the newest session reads first', () => {
+    const groups = groupBySession([
+      { id: 'a', sessionId: 's2' },
+      { id: 'b', sessionId: 's2' },
+      { id: 'c', sessionId: 's1' },
+    ]);
+    expect(groups.map((group) => [group.sessionId, group.documents.map((doc) => doc.id)])).toEqual([
+      ['s2', ['a', 'b']],
+      ['s1', ['c']],
+    ]);
+  });
+
+  it('counts each store once per session and ignores cancelled orders', () => {
+    const counts = storesPerSession([
+      { sessionId: 's1', storeId: 'A', status: 'SUBMITTED' },
+      { sessionId: 's1', storeId: 'A', status: 'MERGED' },
+      { sessionId: 's1', storeId: 'B', status: 'CANCELLED' },
+      { sessionId: 's2', storeId: 'B', status: 'SUBMITTED' },
+    ]);
+    expect(counts.get('s1')).toBe(1);
+    expect(counts.get('s2')).toBe(1);
+    expect(counts.get('s3')).toBeUndefined();
   });
 });
