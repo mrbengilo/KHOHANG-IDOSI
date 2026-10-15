@@ -48,6 +48,11 @@
     text-align: left;
     white-space: nowrap;
   }
+  /* Long headers ("Đang giữ chờ giao chung") wrap so they never widen the numeric columns. */
+  .warehouse-stock-table th:not(:first-child) {
+    width: 7rem;
+    white-space: normal;
+  }
 }
 .shortage-check-actions {
   display: flex;

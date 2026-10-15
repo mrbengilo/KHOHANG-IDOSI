@@ -114,18 +114,14 @@ function WarehouseStock({
     <section className="panel warehouse-stock-panel" aria-label="Tồn kho tổng theo mặt hàng">
       <h2>Tồn kho hiện tại theo mặt hàng</h2>
       <p>
-        <strong>Đang có tại kho</strong> là số bao còn khả dụng để cấp phân bổ. Hàng đã cấp nhưng
-        chưa rời kho nằm ở hai cột giữ: <strong>chờ giao chung</strong> (kết quả phân bổ chờ xác
-        nhận, hàng cấp một phần giữ để giao cùng đơn kế tiếp) và <strong>phiếu chờ</strong> (lượt ưu
-        tiên đang giữ cho phiếu chờ). Tồn thực = khả dụng + hai cột giữ. Tổng đã xuất là số bao lũy
-        kế đã ghi sổ xuất khỏi kho tổng.
+        Đang có tại kho = số bao còn cấp phân bổ được. Hai cột giữ là hàng đã cấp nhưng chưa rời
+        kho; tồn thực = khả dụng + hai cột giữ.
       </p>
       {!readOnly ? (
         <p className="supplier-inventory-note">
-          Mặt hàng nguồn Reshare: khả dụng là phần còn phân bổ được theo{' '}
-          <Link to="/supplier-reconciliation?tab=reconcile">cập nhật tồn Reshare</Link> (đã trừ hàng
-          đã cấp nhưng chưa đặt Reshare); muốn khớp số với Reshare thì cập nhật tồn Reshare, không
-          điều chỉnh tồn thủ công.
+          Mặt hàng nguồn Reshare: khớp số bằng{' '}
+          <Link to="/supplier-reconciliation?tab=reconcile">cập nhật tồn Reshare</Link>, không điều
+          chỉnh tồn thủ công.
         </p>
       ) : null}
       {notice ? (
@@ -170,8 +166,10 @@ function WarehouseStock({
                 <tr>
                   <th>Mặt hàng</th>
                   <th>Đang có tại kho</th>
-                  <th>Đang giữ chờ giao chung</th>
-                  <th>Đang giữ phiếu chờ</th>
+                  <th title="Kết quả phân bổ chờ xác nhận, hàng cấp một phần giữ để giao cùng đơn kế tiếp">
+                    Đang giữ chờ giao chung
+                  </th>
+                  <th title="Lượt ưu tiên đang giữ hàng cho phiếu chờ">Đang giữ phiếu chờ</th>
                   <th>Tổng đã xuất</th>
                   {!readOnly ? <th>Thao tác</th> : null}
                 </tr>
@@ -186,7 +184,7 @@ function WarehouseStock({
                       <strong className="warehouse-stock-available">
                         {formatInteger(row.availableBags)} bao
                       </strong>
-                      <small>khả dụng · tồn thực {formatInteger(row.onHandBags)}</small>
+                      <small>tồn thực {formatInteger(row.onHandBags)}</small>
                     </td>
                     <td data-label="Đang giữ chờ giao chung">
                       {formatInteger(row.sharedDeliveryHoldBags)} bao
