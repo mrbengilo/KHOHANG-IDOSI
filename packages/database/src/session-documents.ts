@@ -61,6 +61,8 @@ export interface SessionWaitDocumentSnapshot {
   }[];
 }
 
+export type SessionWaitRemovalReason = 'PRIORITY_RESPONSE_TIMEOUT' | 'SYSTEM_ADJUSTMENT';
+
 export interface SessionWaitDocuments {
   /** The store's wait document just before the run ("phiếu chờ cũ"). */
   readonly before: SessionWaitDocumentSnapshot | null;
@@ -68,6 +70,15 @@ export interface SessionWaitDocuments {
   readonly after: SessionWaitDocumentSnapshot | null;
   /** The run closed/opened the store's document; false when it left the open demand unchanged. */
   readonly changed: boolean;
+  /**
+   * Bags of the old document the run took off without granting them, so
+   * before − this run's wait-ticket grants − removed + this session's waiting bags = after.
+   */
+  readonly removed: readonly {
+    readonly productId: string;
+    readonly quantity: number;
+    readonly reason: SessionWaitRemovalReason;
+  }[];
 }
 
 /** Bags per product. */
@@ -210,6 +221,9 @@ async function loadRunWaitDocuments(
           carriedIn: storeWaitDocumentLines.carriedInQuantity,
           added: storeWaitDocumentLines.addedQuantity,
           pending: storeWaitDocumentLines.openingPendingQuantity,
+          confirmed: storeWaitDocumentLines.confirmedQuantity,
+          cancelled: storeWaitDocumentLines.cancelledQuantity,
+          adjusted: storeWaitDocumentLines.adjustedQuantity,
         })
         .from(storeWaitDocumentLines)
         .where(
@@ -339,20 +353,44 @@ async function loadRunWaitDocuments(
     for (const [productId, quantity] of grants ?? []) addQuantity(before, productId, -quantity);
     return before;
   };
+  // The document a run closed records, per product, what that run resolved. The run declares only
+  // the tickets it cancelled because their full priority offer went unanswered; anything else it
+  // dropped was recorded as an undeclared adjustment (store-wait-documents.ts). Grants are never
+  // resolutions (they keep the open demand), so these are exactly the bags that left the document.
+  const removedBy = (document: Document | undefined) =>
+    (document ? linesOf(document) : []).flatMap((line) => [
+      ...((line.cancelled ?? 0) > 0
+        ? [
+            {
+              productId: line.productId,
+              quantity: line.cancelled ?? 0,
+              reason: 'PRIORITY_RESPONSE_TIMEOUT' as const,
+            },
+          ]
+        : []),
+      ...((line.confirmed ?? 0) + (line.adjusted ?? 0) > 0
+        ? [
+            {
+              productId: line.productId,
+              quantity: (line.confirmed ?? 0) + (line.adjusted ?? 0),
+              reason: 'SYSTEM_ADJUSTMENT' as const,
+            },
+          ]
+        : []),
+    ]);
   for (const header of headers) {
     const headerKey = key(header.allocationRunId, header.storeId);
     const grants = ticketGrants.get(headerKey);
     const eventId = eventByHeader.get(headerKey);
     if (eventId) {
+      const before = documents.find((document) => document.closedEventId === eventId);
       const after = documents.find((document) => document.openedEventId === eventId);
       const afterPending = openingPending(after);
       result.set(headerKey, {
-        before: snapshot(
-          documents.find((document) => document.closedEventId === eventId),
-          withoutGrants(afterPending, grants),
-        ),
+        before: snapshot(before, withoutGrants(afterPending, grants)),
         after: snapshot(after, afterPending),
         changed: true,
+        removed: removedBy(before),
       });
       continue;
     }
@@ -362,6 +400,7 @@ async function loadRunWaitDocuments(
       before: snapshot(window?.document, withoutGrants(afterPending, grants)),
       after: snapshot(window?.document, afterPending),
       changed: false,
+      removed: [],
     });
   }
   return result;
