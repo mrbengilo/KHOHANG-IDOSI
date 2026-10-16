@@ -66,8 +66,10 @@ function WaitDocumentLabel({
 
 /**
  * One store in one session, read top to bottom like the store says it: what it ordered, what it
- * got, what waits for priority, the wait document before the run and the one after it. Codes,
- * sources and rounds stay one click away for audit, not on the face of the card.
+ * got, what waits for priority, the wait document before the run and the one after it. Both wait
+ * documents list only bags still waiting for allocation, so new = old − granted to old tickets +
+ * new waiting; granted bags awaiting the store's answer are noted apart. Codes, sources and rounds
+ * stay one click away for audit, not on the face of the card.
  */
 export function AllocationResultCard({
   document,
@@ -144,7 +146,16 @@ export function AllocationResultCard({
               total={wait.before?.total ?? 0}
               tone="previous"
             >
-              <ItemChips items={wait.before?.items ?? []} empty="Không có phiếu chờ cũ" />
+              <ItemChips
+                items={wait.before?.items ?? []}
+                empty={wait.before ? 'Không có hàng chờ phân bổ' : 'Không có phiếu chờ cũ'}
+              />
+              {wait.before && wait.before.pendingTotal > 0 ? (
+                <p className="allocation-summary__note">
+                  Ngoài ra {wait.before.pendingTotal} bao đã cấp ở phiên trước, chờ xác nhận phân
+                  bổ: {summaryText(wait.before.pendingItems, '')}
+                </p>
+              ) : null}
             </SummaryRow>
           ) : null}
         </div>
@@ -161,15 +172,19 @@ export function AllocationResultCard({
             total={wait.after?.total ?? 0}
             tone="next"
           >
-            <ItemChips items={wait.after?.items ?? []} empty="Không còn phiếu chờ" />
-            {wait.after && !wait.changed ? (
+            <ItemChips
+              items={wait.after?.items ?? []}
+              empty={wait.after ? 'Không còn hàng chờ phân bổ' : 'Không còn phiếu chờ'}
+            />
+            {wait.after && !wait.changed && summary.grantedForWait.length === 0 ? (
               <p className="allocation-summary__note">
                 Phiên này không làm đổi phiếu chờ của cửa hàng.
               </p>
             ) : null}
             {wait.after && wait.after.pendingTotal > 0 ? (
               <p className="allocation-summary__note">
-                Trong đó {wait.after.pendingTotal} bao đã được cấp, chờ xác nhận phân bổ.
+                Không gồm {wait.after.pendingTotal} bao đã cấp, chờ xác nhận phân bổ:{' '}
+                {summaryText(wait.after.pendingItems, '')}
               </p>
             ) : null}
           </SummaryRow>

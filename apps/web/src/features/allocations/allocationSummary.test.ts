@@ -8,6 +8,9 @@ const names: Record<string, string> = {
   jeans: 'Jeans',
   ao: 'Áo',
   quan: 'Quần',
+  short: 'Quần short',
+  dam: 'Đầm',
+  bo: 'Đồ bộ',
 };
 const productName = (id: string) => names[id] ?? id;
 
@@ -94,6 +97,75 @@ describe('summarizeAllocation', () => {
     expect(summaryText(summary.grantedForWait, '—')).toBe('1 Áo');
     expect(summary.waiting).toEqual([]);
     expect(summary.waitDocuments?.changed).toBe(false);
+  });
+
+  it('DS TH 16/10: the new wait document is the old one minus its grants plus new waiting', () => {
+    const summary = summarizeAllocation(
+      {
+        sources: [
+          source('dam', 2, 2, 0),
+          source('bo', 2, 1, 1),
+          source('nam', 1, 1, 0, 'ticket-nam'),
+          source('short', 1, 1, 0, 'ticket-short'),
+          source('nu', 1, 1, 0, 'ticket-nu'),
+        ],
+        carriedAllocations: [{ productId: 'nu', quantity: 1 }],
+        waitDocuments: {
+          before: {
+            id: 'b',
+            code: 'PCT-000012',
+            lines: [line('nam', 3), line('short', 1), line('nu', 1)],
+          },
+          after: {
+            id: 'c',
+            code: 'PCT-000014',
+            lines: [line('nam', 3, 1), line('bo', 1), line('short', 1, 1), line('nu', 1, 1)],
+          },
+          changed: true,
+        },
+      },
+      productName,
+    );
+    expect(summaryText(summary.ordered, '—')).toBe('2 Đầm, 2 Đồ bộ');
+    expect(summaryText(summary.grantedForWait, '—')).toBe('1 Nam, 1 Quần short, 1 Nữ');
+    expect(summaryText(summary.waiting, '—')).toBe('1 Đồ bộ');
+    const wait = summary.waitDocuments!;
+    expect(summaryText(wait.before!.items, '—')).toBe('3 Nam, 1 Quần short, 1 Nữ');
+    expect(wait.before!.total).toBe(5);
+    expect(wait.before!.pendingTotal).toBe(0);
+    expect(summaryText(wait.after!.items, '—')).toBe('2 Nam, 1 Đồ bộ');
+    expect(wait.after!.total).toBe(3);
+    expect(summaryText(wait.after!.pendingItems, '—')).toBe('1 Nam, 1 Quần short, 1 Nữ');
+    expect(wait.after!.pendingTotal).toBe(3);
+  });
+
+  it('DS TH 15/10: a grant from the old wait document leaves it but no longer waits', () => {
+    const summary = summarizeAllocation(
+      {
+        sources: [source('nu', 1, 1, 0, 'ticket-nu')],
+        carriedAllocations: [],
+        waitDocuments: {
+          before: {
+            id: 'a',
+            code: 'PCT-000005',
+            lines: [line('nam', 3), line('short', 1), line('nu', 2)],
+          },
+          after: {
+            id: 'a',
+            code: 'PCT-000005',
+            lines: [line('nam', 3), line('short', 1), line('nu', 2, 1)],
+          },
+          changed: false,
+        },
+      },
+      productName,
+    );
+    const wait = summary.waitDocuments!;
+    expect(summaryText(wait.before!.items, '—')).toBe('3 Nam, 1 Quần short, 2 Nữ');
+    expect(wait.before!.total).toBe(6);
+    expect(summaryText(wait.after!.items, '—')).toBe('3 Nam, 1 Quần short, 1 Nữ');
+    expect(wait.after!.total).toBe(5);
+    expect(summaryText(wait.after!.pendingItems, '—')).toBe('1 Nữ');
   });
 
   it('omits zero quantities, sums carried goods and flags runs older than wait documents', () => {

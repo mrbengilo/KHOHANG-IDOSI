@@ -12,16 +12,24 @@ export interface SummaryItem {
 
 export interface WaitDocumentSummary {
   readonly code: string;
+  /** Bags still waiting for allocation at that moment: what the store's wait document lists. */
   readonly items: readonly SummaryItem[];
   readonly total: number;
-  /** Bags of the document already granted and awaiting the store's answer. */
+  /**
+   * Bags of the document already granted and awaiting the store's answer. They no longer wait
+   * for allocation, so they are kept apart from `items` (a grant is never also a waiting bag).
+   */
+  readonly pendingItems: readonly SummaryItem[];
   readonly pendingTotal: number;
 }
 
 export interface WaitDocumentChange {
   /** "Phiếu chờ cũ": the store's wait document just before this run. */
   readonly before: WaitDocumentSummary | null;
-  /** "Phiếu chờ mới": the store's wait document right after this run. */
+  /**
+   * "Phiếu chờ mới": the store's wait document right after this run. What still waits is the old
+   * document's waiting bags minus what this run granted them, plus this session's waiting bags.
+   */
   readonly after: WaitDocumentSummary | null;
   /** False when the run left the store's open demand (and so its document) unchanged. */
   readonly changed: boolean;
@@ -83,14 +91,20 @@ function waitDocumentSummary(
   productName: (productId: string) => string,
 ): WaitDocumentSummary | null {
   if (!snapshot) return null;
-  const totals: Totals = new Map();
-  for (const line of snapshot.lines) add(totals, line.productId, line.quantity);
-  const list = items(totals, productName);
+  const waiting: Totals = new Map();
+  const pending: Totals = new Map();
+  for (const line of snapshot.lines) {
+    add(waiting, line.productId, line.remainingQuantity);
+    add(pending, line.productId, line.pendingQuantity);
+  }
+  const waitingItems = items(waiting, productName);
+  const pendingItems = items(pending, productName);
   return {
     code: snapshot.code,
-    items: list,
-    total: total(list),
-    pendingTotal: snapshot.lines.reduce((sum, line) => sum + line.pendingQuantity, 0),
+    items: waitingItems,
+    total: total(waitingItems),
+    pendingItems,
+    pendingTotal: total(pendingItems),
   };
 }
 
