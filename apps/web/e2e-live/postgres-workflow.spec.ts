@@ -148,7 +148,7 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   );
   await storeEditor.getByRole('button', { name: 'Tạo cửa hàng' }).click();
   expect((await createStoreResponse).status()).toBe(201);
-  await expect(page.getByText(`Đã tạo cửa hàng ${storeCode}.`)).toBeVisible();
+  await expect(page.getByText(`Đã tạo cửa hàng ${storeName}.`)).toBeVisible();
 
   // Other integration scenarios also create stores. Locate this fixture through
   // the real server-side filter rather than assuming it is on the first page.
@@ -157,8 +157,9 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
     .locator('.store-lifecycle-filters--stores')
     .getByRole('button', { name: 'Lọc', exact: true })
     .click();
-  let storeRow = page.getByRole('row').filter({ hasText: storeCode });
-  await storeRow.getByRole('button', { name: `Chỉnh sửa cửa hàng ${storeCode}` }).click();
+  // The list shows the store by name only; the server-side search still matches its code.
+  let storeRow = page.getByRole('row').filter({ hasText: storeName });
+  await storeRow.getByRole('button', { name: `Chỉnh sửa cửa hàng ${storeName}` }).click();
   await page.locator('#store-editor').getByLabel('Tên cửa hàng').fill(updatedStoreName);
   const updateStoreResponse = page.waitForResponse(
     (response) =>
@@ -167,9 +168,11 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   );
   await page.locator('#store-editor').getByRole('button', { name: 'Lưu thay đổi' }).click();
   expect((await updateStoreResponse).status()).toBe(200);
-  await expect(page.getByText(`Đã cập nhật cửa hàng ${storeCode} lên phiên bản 1.`)).toBeVisible();
+  await expect(
+    page.getByText(`Đã cập nhật cửa hàng ${updatedStoreName} lên phiên bản 1.`),
+  ).toBeVisible();
 
-  storeRow = page.getByRole('row').filter({ hasText: storeCode });
+  storeRow = page.getByRole('row').filter({ hasText: updatedStoreName });
   const disableStoreResponse = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname.startsWith('/api/v1/stores/') &&
@@ -177,13 +180,13 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   );
   const confirmStoreDeactivation = page.waitForEvent('dialog').then(async (dialog) => {
     expect(dialog.type()).toBe('confirm');
-    expect(dialog.message()).toContain(storeCode);
+    expect(dialog.message()).toContain(updatedStoreName);
     await dialog.accept();
   });
-  await storeRow.getByRole('button', { name: `Ngừng cửa hàng ${storeCode}` }).click();
+  await storeRow.getByRole('button', { name: `Ngừng cửa hàng ${updatedStoreName}` }).click();
   await confirmStoreDeactivation;
   expect((await disableStoreResponse).status()).toBe(200);
-  await expect(page.getByText(`Cửa hàng ${storeCode}: ngừng hoạt động.`)).toBeVisible();
+  await expect(page.getByText(`Cửa hàng ${updatedStoreName}: ngừng hoạt động.`)).toBeVisible();
 
   groupRow = page.getByRole('row').filter({ hasText: groupCode });
   const disableGroupResponse = page.waitForResponse(
@@ -357,10 +360,13 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   await htkdRow.getByRole('button', { name: 'Phân công cửa hàng' }).click();
   await expect(page.getByRole('heading', { name: 'Phân công cửa hàng HTKD' })).toBeVisible();
   // Integration fixtures can push reference stores off the first page of choices.
-  for (const storeCode of ['DS_BMT', 'DS_CT']) {
+  for (const [storeCode, assignedName] of [
+    ['DS_BMT', 'DS BMT'],
+    ['DS_CT', 'DS CT'],
+  ] as const) {
     await page.getByLabel('Tìm cửa hàng').fill(storeCode);
     await page.getByRole('button', { name: 'Tìm', exact: true }).click();
-    await page.getByRole('checkbox', { name: new RegExp(storeCode, 'u') }).check();
+    await page.getByRole('checkbox', { name: assignedName, exact: true }).check();
   }
   await page.getByLabel('Lý do thay đổi').fill('Kiểm thử phân công HTKD với PostgreSQL');
   const assignResponsePromise = page.waitForResponse(
@@ -412,7 +418,7 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
     await accountForm.getByLabel('Tên hiển thị').fill('Live PostgreSQL Store');
     await accountForm.getByLabel('Vai trò').selectOption('STORE');
     // Ô "Vai trò" có lựa chọn "Cửa hàng sỉ" nên phải neo nhãn ở đầu chuỗi.
-    await accountForm.getByLabel(/^Cửa hàng/).selectOption({ label: 'DS_BMT · DS BMT' });
+    await accountForm.getByLabel(/^Cửa hàng/).selectOption({ label: 'DS BMT' });
     await accountForm.getByLabel('Mật khẩu ban đầu').fill(storePassword);
     await accountForm.getByLabel('Nhập lại mật khẩu').fill(storePassword);
     const accountResponsePromise = page.waitForResponse(

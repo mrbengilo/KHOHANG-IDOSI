@@ -287,7 +287,7 @@ const toggle = (page: Page, store: InboundStore) => storeRow(page, store).getByR
 const detailRows = (page: Page) =>
   storeTable(page).locator(':scope > table > tbody > tr.inbound-store-detail-row');
 const detailRegion = (page: Page, store: InboundStore) =>
-  page.getByRole('region', { name: `Chi tiết cửa hàng ${store.code} · ${store.name}` });
+  page.getByRole('region', { name: `Chi tiết cửa hàng ${store.name}` });
 const storeFilter = (page: Page) => page.getByRole('combobox', { name: 'Cửa hàng', exact: true });
 const select = (page: Page, name: string, value: string) =>
   page.getByRole('combobox', { name, exact: true }).selectOption(value);
@@ -355,7 +355,7 @@ test('Xem chi tiết opens inline, keeps the store list and collapses again', as
 
   const alphaToggle = toggle(page, alpha);
   await expect(alphaToggle).toHaveAttribute('aria-expanded', 'true');
-  await expect(alphaToggle).toHaveAccessibleName('Thu gọn chi tiết ALP · Cửa hàng Alpha');
+  await expect(alphaToggle).toHaveAccessibleName('Thu gọn chi tiết Cửa hàng Alpha');
   const region = detailRegion(page, alpha);
   await expect(region).toHaveAttribute('id', (await alphaToggle.getAttribute('aria-controls'))!);
   await expect(detailRows(page)).toHaveCount(1);
@@ -378,7 +378,7 @@ test('Xem chi tiết opens inline, keeps the store list and collapses again', as
   await alphaToggle.click();
   await expect(detailRows(page)).toHaveCount(0);
   await expect(alphaToggle).toHaveAttribute('aria-expanded', 'false');
-  await expect(alphaToggle).toHaveAccessibleName('Xem chi tiết ALP · Cửa hàng Alpha');
+  await expect(alphaToggle).toHaveAccessibleName('Xem chi tiết Cửa hàng Alpha');
   await expect(alphaToggle).toBeFocused();
   expect(await parentSnapshot(page)).toEqual(before);
 
@@ -445,7 +445,7 @@ test('detail keeps parent paging, searches and sort; it pages on its own', async
     }),
   ]);
   const detailPager = region.getByRole('navigation', {
-    name: 'Phân trang mặt hàng của cửa hàng ALP',
+    name: 'Phân trang mặt hàng của cửa hàng Cửa hàng Alpha',
   });
   await expect(detailPager).toContainText('12 dòng · Trang 1/2');
   await detailPager.getByRole('button', { name: 'Sau', exact: true }).click();
@@ -496,7 +496,7 @@ test('late, failed and refreshed detail responses stay in their own scope', asyn
   let release = hold(alpha.id);
   await toggle(page, alpha).click();
   await expect(detailRegion(page, alpha).getByRole('status')).toContainText(
-    'Đang tải chi tiết cửa hàng ALP',
+    'Đang tải chi tiết cửa hàng Cửa hàng Alpha',
   );
   await toggle(page, alpha).click();
   await expect(detailRows(page)).toHaveCount(0);
@@ -541,7 +541,9 @@ test('late, failed and refreshed detail responses stay in their own scope', asyn
   state.failStoreId = beta.id;
   await toggle(page, beta).click();
   const alert = betaRegion.getByRole('alert');
-  await expect(alert).toContainText('Không tải được chi tiết cửa hàng BET', { timeout: 15000 });
+  await expect(alert).toContainText('Không tải được chi tiết cửa hàng Cửa hàng Beta', {
+    timeout: 15000,
+  });
   await expect(parentStoreRows(page)).toHaveCount(12);
   await expect(page.locator('.inbound-results')).not.toHaveAttribute('inert', '');
   await toggle(page, beta).click();
@@ -584,9 +586,7 @@ test('detail empty, incomplete, source, period and store-kind scopes', async ({ 
 
   await toggle(page, emptyStore).click();
   const emptyRegion = detailRegion(page, emptyStore);
-  await expect(emptyRegion).toContainText(
-    'Cửa hàng TRG · Cửa hàng Trống không có dữ liệu nhập trong kỳ',
-  );
+  await expect(emptyRegion).toContainText('Cửa hàng Cửa hàng Trống không có dữ liệu nhập trong kỳ');
   await expect(emptyRegion).toContainText('nguồn Tất cả');
   await expect(emptyRegion.locator('table')).toHaveCount(0);
   state.incompleteStoreId = undefined;

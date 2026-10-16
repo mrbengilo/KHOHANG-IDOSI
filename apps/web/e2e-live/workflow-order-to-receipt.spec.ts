@@ -206,9 +206,7 @@ test('an order approved by the 09:00 allocation reaches the store and can be rec
     await page.getByRole('button', { name: 'Đăng nhập' }).click();
     await expect(page).not.toHaveURL(/\/login/);
     await page.goto('/receive');
-    await page
-      .locator('.receipt-scope select')
-      .selectOption({ label: `UI_RCV_${token} · Cửa hàng nhận ${token}` });
+    await page.locator('.receipt-scope select').selectOption({ label: `Cửa hàng nhận ${token}` });
     const review = page.locator('.receipt-detail');
     await page.locator('.receipt-card').first().click();
     await expect(review).toBeFocused();
@@ -373,14 +371,14 @@ test('a wholesale store orders, receives, is finalized and reports a discrepancy
       ).status(),
     ).toBe(200);
     await page.request.post(`${api}/auth/logout`);
-    const labelA = `${storeA.code} · ${storeA.name}`;
-    const labelB = `${storeB.code} · ${storeB.name}`;
+    const labelA = storeA.name;
+    const labelB = storeB.name;
 
     // 1. The desk orders for store A on the same form a retail store uses, notes included.
     await signIn(page, deskLogin);
     await page.goto('/requests');
     await expect(page.getByRole('heading', { name: 'Đặt hàng & kết quả' })).toBeVisible();
-    await page.getByLabel('Cửa hàng').selectOption({ label: `${storeA.code} • ${storeA.name}` });
+    await page.getByLabel('Cửa hàng').selectOption({ label: storeA.name });
     await expect(page.locator('.quota-card')).toContainText('0 / 2 phiếu');
     await page.getByRole('checkbox', { name: productName }).check();
     await page.getByRole('button', { name: `Tăng số bao ${productName}` }).click();

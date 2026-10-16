@@ -229,7 +229,9 @@ test('store administration stays responsive with visible button feedback at 390p
   await page.goto('/stores');
 
   await expect(page.getByRole('heading', { name: 'Cửa hàng & nhóm' })).toBeVisible();
-  await expect(page.getByText('DS_Q1')).toBeVisible();
+  // The list shows the store by name only; its code stays in the edit form.
+  await expect(page.getByText(mockStore.name, { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('DS_Q1')).toHaveCount(0);
   const addGroup = page.getByRole('button', { name: 'Thêm nhóm' });
   const addStore = page.getByRole('button', { name: 'Thêm cửa hàng' });
   await expect(addGroup).toBeVisible();
@@ -281,7 +283,7 @@ test('store administration stays responsive with visible button feedback at 390p
   expect(undersizedTargets).toEqual([]);
 
   await page.getByRole('button', { name: 'Đóng biểu mẫu' }).click();
-  await page.getByRole('button', { name: `Chỉnh sửa cửa hàng ${mockStore.code}` }).click();
+  await page.getByRole('button', { name: `Chỉnh sửa cửa hàng ${mockStore.name}` }).click();
   const storeEditor = page.locator('#store-editor');
   await expect(storeEditor).toBeInViewport();
   await expect(storeEditor.getByLabel('Tên cửa hàng')).toBeFocused();
@@ -289,7 +291,7 @@ test('store administration stays responsive with visible button feedback at 390p
   const dangerousSave = storeEditor.getByRole('button', { name: 'Xác nhận ngừng' });
   await expect(dangerousSave).toHaveClass(/button--danger/u);
   const dismissedConfirmation = page.waitForEvent('dialog').then(async (dialog) => {
-    expect(dialog.message()).toContain(mockStore.code);
+    expect(dialog.message()).toContain(mockStore.name);
     await dialog.dismiss();
   });
   await dangerousSave.click();
