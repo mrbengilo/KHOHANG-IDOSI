@@ -196,7 +196,7 @@ function uuid(): string {
 
 function storeName(stores: readonly Store[], storeId: string): string {
   const store = stores.find((candidate) => candidate.id === storeId);
-  return store ? `${store.code} · ${store.name}` : storeId;
+  return store ? store.name : storeId;
 }
 
 function downloadInventoryCsv(
@@ -560,7 +560,7 @@ function StoreInventoryPage({ role }: AppOutletContext) {
                   <option value="">Tất cả cửa hàng được phân quyền</option>
                   {stores.map((store) => (
                     <option className="store-name" key={store.id} value={store.id}>
-                      {store.code} · {store.name}
+                      {store.name}
                     </option>
                   ))}
                 </select>
@@ -928,7 +928,7 @@ export function ProductionOpenBagPage({ role }: AppOutletContext) {
                 <option value="">Tất cả cửa hàng được phân quyền</option>
                 {stores.map((s) => (
                   <option value={s.id} key={s.id}>
-                    {s.code} · {s.name}
+                    {s.name}
                   </option>
                 ))}
               </select>
@@ -1525,7 +1525,7 @@ export function LegacyOutboundPage({ mode, role }: OutboundPageProps) {
                   <option value="">Tất cả cửa hàng được phân quyền</option>
                   {stores.map((store) => (
                     <option className="store-name" key={store.id} value={store.id}>
-                      {store.code} · {store.name}
+                      {store.name}
                     </option>
                   ))}
                 </select>
@@ -1894,7 +1894,7 @@ function SortedStockWorkspace({ mode, role }: OutboundPageProps) {
                   <option value="">Tất cả cửa hàng được phân quyền</option>
                   {stores.map((store) => (
                     <option className="store-name" key={store.id} value={store.id}>
-                      {store.code} · {store.name}
+                      {store.name}
                     </option>
                   ))}
                 </select>

@@ -308,7 +308,8 @@ test('Admin runs three independent sessions on one day; history and results neve
       .getByLabel('Cửa hàng')
       .selectOption(storeA.id);
     await expect(page).toHaveURL(new RegExp(`ls\\.store=${storeA.id}`, 'u'));
-    const rows = history.locator('tbody tr');
+    // One tbody per original request; its product lines are rows inside it.
+    const rows = history.locator('tbody');
     await expect(rows).toHaveCount(3);
     await expect(rows.nth(0)).toContainText(a3.code);
     await expect(rows.nth(0)).toContainText(s2.code);
@@ -319,14 +320,14 @@ test('Admin runs three independent sessions on one day; history and results neve
     await expect(rows.nth(2)).toContainText('1 bao');
     await expect(rows.nth(2)).toContainText('Đã gộp');
     await page.reload();
-    await expect(history.locator('tbody tr')).toHaveCount(3);
+    await expect(history.locator('tbody')).toHaveCount(3);
 
     for (const width of [360, 390, 412, 768, 1366, 1440, 1920]) {
       await page.setViewportSize({ width, height: 900 });
       await expect
         .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
         .toBe(true);
-      const table = await history.locator('.responsive-table').evaluate((element) => ({
+      const table = await history.locator('.order-history__scroll').evaluate((element) => ({
         client: element.clientWidth,
         right: element.getBoundingClientRect().right,
       }));
@@ -359,7 +360,7 @@ test('Admin runs three independent sessions on one day; history and results neve
     await expect(page.getByRole('tab', { name: 'Tạo phiên mới' })).toHaveCount(0);
     const htkdRows = page
       .getByRole('region', { name: 'Lịch sử đặt hàng theo cửa hàng' })
-      .locator('tbody tr');
+      .locator('tbody');
     await expect(htkdRows).toHaveCount(1);
     await expect(htkdRows.first()).toContainText(a3.code);
     await expect(page.getByText(b1.code)).toHaveCount(0);

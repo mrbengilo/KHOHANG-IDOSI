@@ -27,7 +27,7 @@ import { formatDocumentTime as formatOpeningTime } from '../../lib/business-time
 const weight = (value: string | null) => (value === null ? unknown : formatKgExact(value));
 const storeLabel = (stores: readonly Store[], id: string) => {
   const store = stores.find((s) => s.id === id);
-  return store ? `${store.code} · ${store.name}` : unknown;
+  return store ? store.name : unknown;
 };
 
 export function BagOpeningHistoryTable({

@@ -273,7 +273,7 @@ test('AC01: Reshare shows 3, A granted 3, C re-observes 3 → nothing more is al
       'aria-expanded',
       'true',
     );
-    await expect(summary).toContainText(store!.code);
+    await expect(summary).toContainText(store!.name);
     await expect(summary).toContainText(sessionCode);
     await expect(summary).toContainText('Chưa đặt Reshare');
     for (const width of [390, 1440]) {

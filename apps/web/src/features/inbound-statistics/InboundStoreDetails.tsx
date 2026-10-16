@@ -39,7 +39,7 @@ export function InboundStoreDetails({
   });
   const headingId = `${id}-heading`;
   const headingRef = useContentReveal<HTMLHeadingElement>(store.id, false);
-  const storeLabel = `${store.code} · ${store.name}`;
+  const storeLabel = store.name;
   const period = scope.periodType === 'DAY' ? scope.date : scope.month;
   const source = inboundSourceLabels[scope.source];
   const sort = `${scope.sortBy === 'bags' ? 'số bao' : 'khối lượng'} ${
@@ -64,11 +64,11 @@ export function InboundStoreDetails({
           Kỳ: {period} · Nguồn: {source} · Sắp xếp: {sort} · Asia/Ho_Chi_Minh
         </p>
       </div>
-      {detail.isPending && <p role="status">Đang tải chi tiết cửa hàng {store.code}…</p>}
+      {detail.isPending && <p role="status">Đang tải chi tiết cửa hàng {store.name}…</p>}
       {detail.isError && (
         <div role="alert" className="inbound-warning inbound-store-detail-error">
           <span>
-            Không tải được chi tiết cửa hàng {store.code}. {detail.error.message}
+            Không tải được chi tiết cửa hàng {store.name}. {detail.error.message}
           </span>
           <button type="button" onClick={() => void detail.refetch()} disabled={detail.isFetching}>
             Thử lại
@@ -83,7 +83,7 @@ export function InboundStoreDetails({
       )}
       {data && !complete && (
         <p role="status" className="inbound-warning">
-          Dữ liệu của cửa hàng {store.code} chưa đầy đủ. Số có ghi “đã biết” chưa phải tổng đầy đủ;
+          Dữ liệu của cửa hàng {store.name} chưa đầy đủ. Số có ghi “đã biết” chưa phải tổng đầy đủ;
           tỷ trọng liên quan chưa xác định.
         </p>
       )}
@@ -104,11 +104,11 @@ export function InboundStoreDetails({
         <>
           <InboundProductTable
             data={data}
-            label={`Mặt hàng nhập của cửa hàng ${store.code}`}
+            label={`Mặt hàng nhập của cửa hàng ${store.name}`}
             totalLabel="Tổng cửa hàng"
           />
           <InboundPagination
-            label={`mặt hàng của cửa hàng ${store.code}`}
+            label={`mặt hàng của cửa hàng ${store.name}`}
             value={data.productPagination}
             onChange={setProductPage}
           />

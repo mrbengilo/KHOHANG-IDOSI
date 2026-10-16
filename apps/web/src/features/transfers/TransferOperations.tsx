@@ -87,7 +87,7 @@ function errorMessage(error: unknown): string {
 
 function storeLabel(stores: readonly Store[], storeId: string): string {
   const store = stores.find((candidate) => candidate.id === storeId);
-  return store ? `${store.code} · ${store.name}` : storeId;
+  return store ? store.name : storeId;
 }
 
 function transferTimeline(status: StoreTransferStatus) {

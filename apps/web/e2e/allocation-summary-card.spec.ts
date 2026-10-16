@@ -118,6 +118,58 @@ const sessionDocument = {
   ],
 };
 
+const historySession = {
+  id: sessionId,
+  code: 'PDH-000042',
+  kind: 'DEFAULT',
+  businessDate: '2026-10-15',
+  status: 'ALLOCATED',
+  requestOpensAt: '2026-10-14T01:00:00.000Z',
+  requestClosesAt: '2026-10-15T01:00:00.000Z',
+  allocationStartsAt: '2026-10-15T02:00:00.000Z',
+  completedAt: time,
+};
+
+function historyEntry(
+  n: number,
+  status: 'SUBMITTED' | 'ALLOCATED' | 'PARTIALLY_ALLOCATED' | 'WAITLISTED',
+  quantities: readonly number[],
+) {
+  return {
+    id: id(200 + n),
+    code: `PDT-00012${n}`,
+    requestSequence: 1,
+    status,
+    storeId,
+    storeCode: 'CH-A',
+    storeName: 'Cửa hàng A — chi nhánh trung tâm thành phố',
+    session: historySession,
+    submittedAt: time,
+    submittedBy: { accountId: id(210), displayName: 'Nhân viên cửa hàng A' },
+    cancelledAt: null,
+    cancellationReason: null,
+    mergedDocument:
+      status === 'SUBMITTED'
+        ? null
+        : { sessionId, storeId, mergedOrderId: id(220 + n), version: 1 },
+    lines: quantities.map((quantity, index) => ({
+      id: id(230 + n * 10 + index),
+      productId: layoutProducts[index]!.id,
+      sku: `SKU-HIDDEN-${index}`,
+      productName: layoutProducts[index]!.name,
+      unit: 'BAG',
+      requestedQuantity: quantity,
+      matchesFilter: true,
+    })),
+  };
+}
+
+const orderHistory = [
+  historyEntry(1, 'SUBMITTED', [1, 1, 2, 1]),
+  historyEntry(2, 'PARTIALLY_ALLOCATED', [2, 2]),
+  historyEntry(3, 'ALLOCATED', [1]),
+];
+
 async function mockApi(page: Page) {
   const requests: string[] = [];
   await page.route('**/api/v1/**', (route) => {
@@ -150,6 +202,11 @@ async function mockApi(page: Page) {
       return json({
         data: [sessionDocument],
         pagination: { ...emptyPage, totalItems: 1, totalPages: 1 },
+      });
+    if (path === '/order-history')
+      return json({
+        data: orderHistory,
+        pagination: { ...emptyPage, totalItems: 3, totalPages: 1 },
       });
     if (path === '/held-allocations' || path === '/store-sorted-stocks') return json({ data: [] });
     return json({ data: [], pagination: emptyPage });
@@ -197,9 +254,16 @@ test('allocation result card reads order, result, waiting and old ⇒ new wait d
     expect(box!.x + box!.width).toBeLessThanOrEqual(width);
     await card.screenshot({ path: testInfo.outputPath(`allocation-card-${width}.png`) });
   }
+  // Only a plain button on the card face; long internal codes never reach the screen.
+  const details = card.locator('summary');
+  await expect(details).toHaveText('Xem chi tiết');
+  await expect(card.getByText(/KQ-|TH-/u)).toHaveCount(0);
   // Opening at desktop first sets header minimum widths. The details grid item must still
   // shrink when the viewport changes, so the observer can re-evaluate those widths.
-  await card.locator('summary').click();
+  await details.click();
+  await expect(details).toHaveText('Ẩn chi tiết');
+  await expect(card.getByText(/KQ-|TH-|phiên bản/u)).toHaveCount(0);
+  await expect(card.getByText('Nguồn đặt hàng và các vòng phân bổ')).toBeVisible();
   const detailTable = card.locator('details table');
   await expect(detailTable.locator('th').first()).toHaveText('STT');
   for (const width of [360, 390, 412, 1440]) {
@@ -209,6 +273,7 @@ test('allocation result card reads order, result, waiting and old ⇒ new wait d
     const cardBox = await card.boundingBox();
     expect(detailBox!.x + detailBox!.width).toBeLessThanOrEqual(cardBox!.x + cardBox!.width);
     await expect(detailTable.locator('tbody tr')).toHaveCount(sessionDocument.lines.length);
+    await card.screenshot({ path: testInfo.outputPath(`allocation-card-details-${width}.png`) });
   }
 });
 
@@ -235,5 +300,53 @@ test('warehouse stock shows available, both holds, total dispatched and the acti
     await page.setViewportSize({ width, height: 900 });
     await expectNoHorizontalOverflow(page);
     await page.screenshot({ path: testInfo.outputPath(`warehouse-stock-${width}.png`) });
+  }
+});
+
+test('order history: store name only, separate order/store and product/quantity columns', async ({
+  page,
+}, testInfo) => {
+  await mockApi(page);
+  await page.goto('/allocations?tab=history');
+  const table = page.locator('.order-history__table');
+  await expect(table.locator('tbody')).toHaveCount(orderHistory.length);
+  for (const header of ['Phiếu đặt hàng', 'Cửa hàng', 'Mặt hàng', 'Số lượng', 'Trạng thái']) {
+    await expect(table.getByRole('columnheader', { name: header, exact: true })).toBeAttached();
+  }
+  await expect(page.getByText('CH-A', { exact: false })).toHaveCount(0);
+  await expect(page.getByText('SKU-HIDDEN', { exact: false })).toHaveCount(0);
+  const firstOrder = table.locator('tbody').first();
+  await expect(firstOrder.locator('tr')).toHaveCount(4);
+  for (const width of [1366, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    // Each product sits on the same line as its quantity.
+    const products = firstOrder.locator('td.order-history__product');
+    const quantities = firstOrder.locator('td.order-history__quantity');
+    for (let index = 0; index < 4; index += 1) {
+      const product = await products.nth(index).boundingBox();
+      const quantity = await quantities.nth(index).boundingBox();
+      expect(Math.abs(product!.y - quantity!.y)).toBeLessThanOrEqual(1);
+    }
+    // Status badges start at one left edge whatever their label length.
+    const badges = await table
+      .locator('.order-history__status .badge')
+      .evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().left)));
+    expect(new Set(badges).size).toBe(1);
+    const storeSize = await table
+      .locator('.order-history__store')
+      .first()
+      .evaluate((node) => parseFloat(getComputedStyle(node).fontSize));
+    const cellSize = await firstOrder
+      .locator('td.order-history__product')
+      .first()
+      .evaluate((node) => parseFloat(getComputedStyle(node).fontSize));
+    expect(storeSize).toBeGreaterThan(cellSize);
+  }
+  for (const width of widths) {
+    await page.setViewportSize({ width, height: 900 });
+    await expectNoHorizontalOverflow(page);
+    await page
+      .locator('.order-history')
+      .screenshot({ path: testInfo.outputPath(`order-history-${width}.png`) });
   }
 });

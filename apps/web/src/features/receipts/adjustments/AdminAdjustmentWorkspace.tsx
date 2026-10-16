@@ -255,7 +255,7 @@ export function AdminAdjustmentWorkspace() {
               <option value="">Mọi cửa hàng</option>
               {stores.map((store) => (
                 <option className="store-name" key={store.id} value={store.id}>
-                  {store.code} · {store.name}
+                  {store.name}
                 </option>
               ))}
             </select>
@@ -336,10 +336,7 @@ export function AdminAdjustmentWorkspace() {
           <ClipboardList aria-hidden="true" size={16} />
           <span>
             Đang xem:{' '}
-            {describeAdjustmentFilters(
-              filters,
-              selectedStore ? `${selectedStore.code} · ${selectedStore.name}` : null,
-            )}
+            {describeAdjustmentFilters(filters, selectedStore ? selectedStore.name : null)}
             {page ? ` · ${page.pagination.totalItems} hồ sơ` : ''}
           </span>
         </p>

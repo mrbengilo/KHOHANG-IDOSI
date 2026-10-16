@@ -42,44 +42,54 @@
   margin-top: 2px;
 }
 .order-history__table td .link-button {
-  margin-top: 6px;
   min-height: 36px;
 }
-.order-history__lines {
-  display: grid;
-  gap: 4px;
-  margin: 0 0 4px;
-  padding: 0;
-  list-style: none;
+/* Tên cửa hàng là thông tin nhận diện chính của phiếu: lớn hơn chữ trong bảng. */
+.order-history__table .order-history__store {
+  font-size: 15px;
+  line-height: 1.35;
 }
-.order-history__lines li {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: 2px 12px;
+.order-history__table td.order-history__product {
+  font-weight: 400;
 }
-.order-history__lines li > span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.order-history__lines li small {
-  display: inline;
-  color: var(--muted);
-}
-.order-history__lines strong {
+.order-history__table td.order-history__quantity {
   font-variant-numeric: tabular-nums;
+  font-weight: 700;
   white-space: nowrap;
 }
-.order-history__line--match {
-  border-radius: 6px;
+.order-history__table td.order-history__line--match {
   background: var(--brand-soft);
-  padding: 2px 6px;
+}
+/* Nhãn trạng thái và nút chứng từ xếp dọc, canh trái: mọi dòng thẳng một mép dù nhãn dài ngắn. */
+.order-history__status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+.order-history__status .badge {
+  white-space: nowrap;
+}
+.order-history__status small {
+  margin: 0;
 }
 @media (min-width: 1101px) {
-  .order-history__table th[data-column='products'],
-  .order-history__table td[data-label='Mặt hàng và số lượng đặt'] {
-    min-width: 16rem;
+  .order-history__table td.order-history__product {
+    min-width: 9rem;
+  }
+  /* Số lượng ngắn: cột vừa nội dung, nhường chỗ cho tên mặt hàng. */
+  .order-history__table td.order-history__quantity {
+    width: 1%;
+  }
+  .order-history__table td:last-child {
+    min-width: 11rem;
+  }
+}
+/* Dạng thẻ (≤1100px): thông tin phiếu và trạng thái ở đầu thẻ, các cặp mặt hàng · số lượng ở sau. */
+@media (max-width: 1100px) {
+  .order-history__table td:is(.order-history__product, .order-history__quantity) {
+    order: 1;
   }
 }
 .allocation-tabs {

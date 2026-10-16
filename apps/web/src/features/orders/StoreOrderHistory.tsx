@@ -135,7 +135,7 @@ export function StoreOrderHistory({
             <option value="">Tất cả cửa hàng được phép xem</option>
             {stores.map((store) => (
               <option className="store-name" key={store.id} value={store.id}>
-                {store.code} · {store.name}
+                {store.name}
               </option>
             ))}
           </select>
@@ -266,32 +266,32 @@ export function StoreOrderHistory({
               Đang cập nhật lịch sử…
             </p>
           ) : null}
-          <div className="responsive-table">
+          <div className="document-history order-history__scroll">
             <DataTable className="table-density order-history__table">
               <thead>
                 <tr>
                   <th scope="col" className="table-index">
                     STT
                   </th>
-                  <th data-primary-column>Thời gian gửi</th>
-                  <th>Phiếu / cửa hàng</th>
-                  <th>Phiên</th>
-                  <th data-column="products">Mặt hàng và số lượng đặt</th>
-                  <th>Trạng thái</th>
+                  <th scope="col">Thời gian gửi</th>
+                  <th scope="col">Phiếu đặt hàng</th>
+                  <th scope="col">Cửa hàng</th>
+                  <th scope="col">Phiên</th>
+                  <th scope="col">Mặt hàng</th>
+                  <th scope="col">Số lượng</th>
+                  <th scope="col">Trạng thái</th>
                 </tr>
               </thead>
-              <tbody>
-                {data.data.map((entry, rowIndex) => (
-                  <OrderHistoryRow
-                    rowNumber={(data.pagination.page - 1) * data.pagination.pageSize + rowIndex + 1}
-                    entry={entry}
-                    filteredProduct={Boolean(filters.productId)}
-                    key={entry.id}
-                    onFilterSession={() => update({ sessionId: entry.session.id })}
-                    onOpenDocument={onOpenDocument}
-                  />
-                ))}
-              </tbody>
+              {data.data.map((entry, rowIndex) => (
+                <OrderHistoryRows
+                  rowNumber={(data.pagination.page - 1) * data.pagination.pageSize + rowIndex + 1}
+                  entry={entry}
+                  filteredProduct={Boolean(filters.productId)}
+                  key={entry.id}
+                  onFilterSession={() => update({ sessionId: entry.session.id })}
+                  onOpenDocument={onOpenDocument}
+                />
+              ))}
             </DataTable>
           </div>
           <div className="allocation-result-pagination">
@@ -322,7 +322,11 @@ export function StoreOrderHistory({
   );
 }
 
-function OrderHistoryRow({
+/**
+ * One order = one tbody: a row per product line so "Mặt hàng" and "Số lượng" stay on the same
+ * line, the order-level cells span every line. Under 1100px the tbody becomes one card.
+ */
+function OrderHistoryRows({
   rowNumber,
   entry,
   filteredProduct,
@@ -336,83 +340,96 @@ function OrderHistoryRow({
   readonly onOpenDocument: (sessionId: string, storeId: string) => void;
 }) {
   const document = entry.mergedDocument;
+  // A legacy order without lines still renders one row so the order itself stays visible.
+  const lines = entry.lines.length > 0 ? entry.lines : [null];
+  const span = lines.length;
   return (
-    <tr>
-      <td className="table-index" data-label="STT">
-        {rowNumber}
-      </td>
-      <td data-label="Thời gian gửi">
-        <strong>{formatDateTime(entry.submittedAt)}</strong>
-        {entry.submittedBy ? <small>Người gửi: {entry.submittedBy.displayName}</small> : null}
-      </td>
-      <td data-label="Phiếu / cửa hàng">
-        <strong>{entry.code}</strong>
-        <small>
-          {entry.storeCode} · <span className="store-name">{entry.storeName}</span>
-        </small>
-        <small>Lượt {entry.requestSequence}/2 của phiên</small>
-      </td>
-      <td data-label="Phiên">
-        <button
-          aria-label={`Lọc theo phiên ${sessionLabel(entry.session)}`}
-          className="link-button"
-          onClick={onFilterSession}
-          type="button"
-        >
-          {entry.session.code}
-        </button>
-        <small>
-          {sessionKindCopy[entry.session.kind]} · ngày nghiệp vụ{' '}
-          {formatBusinessDate(entry.session.businessDate)}
-        </small>
-        <small>
-          Chốt nhận {formatClock(entry.session.requestClosesAt)} · phân bổ{' '}
-          {formatClock(entry.session.allocationStartsAt)}
-        </small>
-      </td>
-      <td data-label="Mặt hàng và số lượng đặt">
-        <ul className="order-history__lines">
-          {entry.lines.map((line) => (
-            <li
-              className={
-                filteredProduct && line.matchesFilter ? 'order-history__line--match' : undefined
-              }
-              key={line.id}
+    <tbody className="order-history__group">
+      {lines.map((line, lineIndex) => {
+        const highlighted = Boolean(line && filteredProduct && line.matchesFilter);
+        return (
+          <tr key={line?.id ?? 'empty'}>
+            {lineIndex === 0 ? (
+              <>
+                <td className="table-index" data-label="STT" rowSpan={span}>
+                  {rowNumber}
+                </td>
+                <td data-label="Thời gian gửi" rowSpan={span}>
+                  <strong>{formatDateTime(entry.submittedAt)}</strong>
+                  {entry.submittedBy ? (
+                    <small>Người gửi: {entry.submittedBy.displayName}</small>
+                  ) : null}
+                </td>
+                <td data-label="Phiếu đặt hàng" rowSpan={span}>
+                  <strong>{entry.code}</strong>
+                  <small>Lượt {entry.requestSequence}/2 của phiên</small>
+                  <small>
+                    {entry.lines.length} mặt hàng · tổng đặt {requestTotals(entry)}
+                  </small>
+                </td>
+                <td data-label="Cửa hàng" rowSpan={span}>
+                  <span className="store-name order-history__store">{entry.storeName}</span>
+                </td>
+                <td data-label="Phiên" rowSpan={span}>
+                  <button
+                    aria-label={`Lọc theo phiên ${sessionLabel(entry.session)}`}
+                    className="link-button"
+                    onClick={onFilterSession}
+                    type="button"
+                  >
+                    {entry.session.code}
+                  </button>
+                  <small>
+                    {sessionKindCopy[entry.session.kind]} · ngày nghiệp vụ{' '}
+                    {formatBusinessDate(entry.session.businessDate)}
+                  </small>
+                  <small>
+                    Chốt nhận {formatClock(entry.session.requestClosesAt)} · phân bổ{' '}
+                    {formatClock(entry.session.allocationStartsAt)}
+                  </small>
+                </td>
+              </>
+            ) : null}
+            <td
+              className={`order-history__product${highlighted ? ' order-history__line--match' : ''}`}
+              data-label="Mặt hàng"
             >
-              <span>
-                {line.productName} <small>{line.sku}</small>
-              </span>
-              <strong>
-                {line.requestedQuantity.toLocaleString('vi-VN')} {unitLabel(line.unit)}
-              </strong>
-              {filteredProduct && line.matchesFilter ? (
-                <span className="sr-only"> (khớp bộ lọc mặt hàng)</span>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-        <small>
-          {entry.lines.length} mặt hàng · tổng đặt {requestTotals(entry)}
-        </small>
-      </td>
-      <td data-label="Trạng thái">
-        <Badge tone={orderHistoryStatusTone[entry.status]}>
-          {orderHistoryStatusCopy[entry.status]}
-        </Badge>
-        {entry.status === 'CANCELLED' && entry.cancellationReason ? (
-          <small>Lý do: {entry.cancellationReason}</small>
-        ) : null}
-        {document ? (
-          <button
-            aria-label={`Xem chứng từ phiên ${entry.session.code} của ${entry.storeName}`}
-            className="link-button"
-            onClick={() => onOpenDocument(document.sessionId, document.storeId)}
-            type="button"
-          >
-            <FileText aria-hidden="true" size={15} /> Xem chứng từ phiên
-          </button>
-        ) : null}
-      </td>
-    </tr>
+              {line ? line.productName : 'Không có mặt hàng'}
+              {highlighted ? <span className="sr-only"> (khớp bộ lọc mặt hàng)</span> : null}
+            </td>
+            <td
+              className={`order-history__quantity${highlighted ? ' order-history__line--match' : ''}`}
+              data-label="Số lượng"
+            >
+              {line
+                ? `${line.requestedQuantity.toLocaleString('vi-VN')} ${unitLabel(line.unit)}`
+                : '—'}
+            </td>
+            {lineIndex === 0 ? (
+              <td data-label="Trạng thái" rowSpan={span}>
+                <div className="order-history__status">
+                  <Badge tone={orderHistoryStatusTone[entry.status]}>
+                    {orderHistoryStatusCopy[entry.status]}
+                  </Badge>
+                  {entry.status === 'CANCELLED' && entry.cancellationReason ? (
+                    <small>Lý do: {entry.cancellationReason}</small>
+                  ) : null}
+                  {document ? (
+                    <button
+                      aria-label={`Xem chứng từ phiên ${entry.session.code} của ${entry.storeName}`}
+                      className="link-button"
+                      onClick={() => onOpenDocument(document.sessionId, document.storeId)}
+                      type="button"
+                    >
+                      <FileText aria-hidden="true" size={15} /> Xem chứng từ phiên
+                    </button>
+                  ) : null}
+                </div>
+              </td>
+            ) : null}
+          </tr>
+        );
+      })}
+    </tbody>
   );
 }

@@ -729,7 +729,9 @@ test('Admin updates Reshare stock: re-observing frees nothing, RE coverage is ex
     'aria-expanded',
     'true',
   );
-  await expect(page.getByText('CH-GOVAP')).toBeVisible();
+  // The store is shown by name only; its code never reaches the screen.
+  await expect(page.getByText('Cửa hàng Gò Vấp', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('CH-GOVAP')).toHaveCount(0);
   await expect(page.getByText(/Reshare còn đặt được 2 bao/u)).toBeVisible();
 
   await row.getByRole('button', { name: 'Đối chiếu' }).click();

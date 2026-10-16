@@ -119,6 +119,36 @@ describe('store order history', () => {
     expect(html.match(/aria-label="Xem chứng từ phiên/g)).toHaveLength(1);
   });
 
+  it('shows the store by name only, with order, store, product and quantity in their own columns', () => {
+    const html = render('/allocation?tab=history', page([entry({})]));
+    const headers = [...html.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((match) => match[1]);
+    expect(headers).toEqual([
+      'STT',
+      'Thời gian gửi',
+      'Phiếu đặt hàng',
+      'Cửa hàng',
+      'Phiên',
+      'Mặt hàng',
+      'Số lượng',
+      'Trạng thái',
+    ]);
+    expect(html).toContain('<span class="store-name order-history__store">Cửa hàng Một</span>');
+    // Neither the store code nor the product SKU reaches the screen.
+    expect(html).not.toContain('CH01');
+    expect(html).not.toContain('AO-NAM');
+    expect(html).not.toContain('QUAN-NU');
+    // One tbody per order, one row per product line, order cells spanning both lines.
+    expect(html.match(/<tbody/g)).toHaveLength(1);
+    expect(html.match(/<tr>/g)).toHaveLength(3);
+    expect(html).toContain('<td class="table-index" data-label="STT" rowSpan="2">1</td>');
+    expect(html).toContain('data-label="Mặt hàng">Áo nam</td>');
+    expect(html).toContain('data-label="Số lượng">2 bao</td>');
+    expect(html).toContain('data-label="Mặt hàng">Quần nữ</td>');
+    expect(html).toContain('data-label="Số lượng">3 bao</td>');
+    // Status badge and document button stack in one column so every row lines up.
+    expect(html).toContain('<div class="order-history__status"><span class="badge');
+  });
+
   it('separates loading, empty and filtered-empty states', () => {
     expect(render('/allocation?tab=history')).toContain('Đang tải lịch sử đặt hàng');
     expect(render('/allocation?tab=history', page([]))).toContain('Chưa có cửa hàng nào');

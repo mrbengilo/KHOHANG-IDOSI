@@ -101,7 +101,7 @@ function PartnerInboundContent() {
     : (principal?.storeId ?? '');
   const storeLabel = (id: string) => {
     const store = storeOptions.find((candidate) => candidate.id === id);
-    return store ? `${store.code} · ${store.name}` : '';
+    return store ? store.name : '';
   };
   const catalog = useQuery({ queryKey: ['catalog'], queryFn: listCatalog, retry: false });
   const history = useQuery({
@@ -273,7 +273,7 @@ function PartnerInboundContent() {
                 >
                   {storeOptions.map((store) => (
                     <option className="store-name" key={store.id} value={store.id}>
-                      {store.code} · {store.name}
+                      {store.name}
                     </option>
                   ))}
                 </select>

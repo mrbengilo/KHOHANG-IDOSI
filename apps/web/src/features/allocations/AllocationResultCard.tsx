@@ -1,6 +1,6 @@
 import { DataTable } from '../../components/DataTable';
 import type { SessionDocument, SessionDocumentSource } from '@idosi/contracts';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import { Badge } from '../../components/Badge';
 import './allocation-summary.css';
@@ -68,8 +68,8 @@ function WaitDocumentLabel({
  * One store in one session, read top to bottom like the store says it: what it ordered, what it
  * got, what waits for priority, the wait document before the run and the one after it. Both wait
  * documents list only bags still waiting for allocation, so new = old − granted to old tickets +
- * new waiting; granted bags awaiting the store's answer are noted apart. Codes, sources and rounds
- * stay one click away for audit, not on the face of the card.
+ * new waiting; granted bags awaiting the store's answer are noted apart. Lines, sources and rounds
+ * stay behind "Xem chi tiết"; internal document identifiers are never shown to the user.
  */
 export function AllocationResultCard({
   document,
@@ -91,6 +91,7 @@ export function AllocationResultCard({
   const summary = summarizeAllocation(document, productName);
   const decision = document.decision ?? null;
   const wait = summary.waitDocuments;
+  const [detailsOpen, setDetailsOpen] = useState(false);
   return (
     <article className="panel session-document allocation-summary-card" aria-label={storeName}>
       <header className="allocation-summary-card__header">
@@ -195,8 +196,13 @@ export function AllocationResultCard({
           </SummaryRow>
         ) : null}
       </dl>
-      <details className="allocation-summary-card__details">
-        <summary>Chi tiết · {document.resultCode}</summary>
+      <details
+        className="allocation-summary-card__details"
+        onToggle={(event) => setDetailsOpen(event.currentTarget.open)}
+      >
+        <summary aria-label={`${detailsOpen ? 'Ẩn' : 'Xem'} chi tiết phân bổ của ${storeName}`}>
+          {detailsOpen ? 'Ẩn chi tiết' : 'Xem chi tiết'}
+        </summary>
         <div className="document-history">
           <DataTable className="table-density table-density--metrics">
             <thead>
@@ -225,11 +231,7 @@ export function AllocationResultCard({
             </tbody>
           </DataTable>
         </div>
-        <p className="allocation-summary-card__codes">
-          Phiếu đặt {document.orderCode} · Phiếu kết quả {document.resultCode} · phiên bản{' '}
-          {document.version}
-        </p>
-        <h4>Phiếu nguồn và các vòng phân bổ</h4>
+        <h4>Nguồn đặt hàng và các vòng phân bổ</h4>
         <ul className="allocation-summary-card__sources">
           {document.sources.map((source) => (
             <li key={source.result.id}>{sourceText(source)}</li>

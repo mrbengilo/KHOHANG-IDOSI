@@ -84,6 +84,17 @@ function text(html: string) {
 }
 
 describe('AllocationResultCard', () => {
+  it('hides internal document identifiers behind a plain "Xem chi tiết" button', () => {
+    const html = render(undefined);
+    expect(html).toContain(
+      '<summary aria-label="Xem chi tiết phân bổ của Cửa hàng A">Xem chi tiết</summary>',
+    );
+    expect(html).not.toContain('KQ-1');
+    expect(html).not.toContain('TH-1');
+    expect(html).not.toContain('phiên bản');
+    expect(html).toContain('Nguồn đặt hàng và các vòng phân bổ');
+  });
+
   it('reads like the store talks: session, order, result, waiting, old and new wait document', () => {
     const html = render({
       before: {

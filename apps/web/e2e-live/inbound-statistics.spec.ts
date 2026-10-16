@@ -64,14 +64,15 @@ test('Admin browser to API to PostgreSQL reconciles original warehouse and partn
     const parentRows = storeTable.locator(':scope > table > tbody > tr > th[scope="row"]');
     await expect(parentRows).toHaveCount(3);
     const overview = await page.locator('.inbound-overview').innerText();
-    const toggleFor = (code: string) =>
+    // Rows are labelled by store name only; the server-side search still matches the code.
+    const toggleFor = (name: string) =>
       storeTable
         .getByRole('row')
-        .filter({ has: page.getByRole('rowheader', { name: code }) })
+        .filter({ has: page.getByRole('rowheader', { name, exact: true }) })
         .getByRole('button');
     const [storeA, , storeC] = fixture.stores;
-    await toggleFor(storeA!.code).click();
-    const detailA = page.getByRole('region', { name: `Chi tiết cửa hàng ${storeA!.code}` });
+    await toggleFor(storeA!.name).click();
+    const detailA = page.getByRole('region', { name: `Chi tiết cửa hàng ${storeA!.name}` });
     await expect(detailA).toContainText('58 bao · 700 kg');
     await expect(detailA).toContainText('Kho 50 bao · 600 kg');
     await expect(detailA).toContainText('Đối tác khác 8 bao · 100 kg');
@@ -88,13 +89,13 @@ test('Admin browser to API to PostgreSQL reconciles original warehouse and partn
     await expect(detailA.locator('tfoot')).toContainText(
       String(detailData.overviewAllSources.total.bagQuantity),
     );
-    await toggleFor(storeC!.code).click();
-    const detailC = page.getByRole('region', { name: `Chi tiết cửa hàng ${storeC!.code}` });
+    await toggleFor(storeC!.name).click();
+    const detailC = page.getByRole('region', { name: `Chi tiết cửa hàng ${storeC!.name}` });
     await expect(detailC).toContainText('30 bao · 500 kg');
     await expect(detailA).toHaveCount(0);
-    await toggleFor(storeC!.code).click();
+    await toggleFor(storeC!.name).click();
     await expect(detailC).toHaveCount(0);
-    await expect(toggleFor(storeC!.code)).toHaveAttribute('aria-expanded', 'false');
+    await expect(toggleFor(storeC!.name)).toHaveAttribute('aria-expanded', 'false');
     await expect(parentRows).toHaveCount(3);
     await page.getByLabel('Tìm cửa hàng', { exact: true }).fill('');
 

@@ -34,13 +34,13 @@ export function IdosiStoreCodesPanel() {
     try {
       const saved = await setIdosiStoreCode(row.storeId, {
         idosiStoreCode: draft || null,
-        reason: `Admin cập nhật mã IDOSI của cửa hàng ${row.storeCode}`,
+        reason: `Admin cập nhật mã IDOSI của cửa hàng ${row.storeName}`,
       });
       setMessage({
         kind: 'success',
         text: saved.idosiStoreCode
-          ? `${row.storeCode} dùng mã IDOSI ${saved.idosiStoreCode} từ lần đồng bộ kế tiếp.`
-          : `${row.storeCode} bỏ mã riêng, dùng lại cấu hình máy chủ hoặc mã cửa hàng.`,
+          ? `${row.storeName} dùng mã IDOSI ${saved.idosiStoreCode} từ lần đồng bộ kế tiếp.`
+          : `${row.storeName} bỏ mã riêng, dùng lại cấu hình máy chủ hoặc mã cửa hàng.`,
       });
       setDrafts(({ [row.storeId]: _removed, ...rest }) => rest);
       await queryClient.invalidateQueries({ queryKey });
@@ -80,7 +80,7 @@ export function IdosiStoreCodesPanel() {
       {missing.length > 0 ? (
         <p className="settings-feedback settings-feedback--error" role="alert">
           {missing.length} cửa hàng chưa có mã IDOSI nên chưa đồng bộ được doanh số:{' '}
-          {missing.map((row) => row.storeCode).join(', ')}.
+          {missing.map((row) => row.storeName).join(', ')}.
         </p>
       ) : null}
       {codesQuery.isPending ? (
@@ -96,7 +96,7 @@ export function IdosiStoreCodesPanel() {
               <li key={row.storeId}>
                 <div>
                   <strong>
-                    {row.storeCode} · <span className="store-name">{row.storeName}</span>
+                    <span className="store-name">{row.storeName}</span>
                     <Badge tone={row.source === 'MISSING' ? 'danger' : 'neutral'}>
                       {sourceCopy[row.source]}
                     </Badge>
@@ -105,7 +105,7 @@ export function IdosiStoreCodesPanel() {
                 </div>
                 <div className="settings-link-actions">
                   <input
-                    aria-label={`Mã IDOSI của ${row.storeCode}`}
+                    aria-label={`Mã IDOSI của ${row.storeName}`}
                     disabled={busyId !== null}
                     maxLength={100}
                     onChange={(event) =>

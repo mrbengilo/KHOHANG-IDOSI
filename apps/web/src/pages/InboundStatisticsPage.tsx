@@ -240,7 +240,7 @@ export function InboundStatisticsPage() {
               .filter((store) => !query.storeKind || store.kind === query.storeKind)
               .map((store) => (
                 <option className="store-name" key={store.id} value={store.id}>
-                  {store.code} · {store.name}
+                  {store.name}
                 </option>
               ))}
           </select>
@@ -454,10 +454,7 @@ export function InboundStatisticsPage() {
                               1}
                           </td>
                           <th data-primary-column scope="row">
-                            {row.code}
-                            <small>
-                              <span className="store-name">{row.name}</span>
-                            </small>
+                            <span className="store-name">{row.name}</span>
                           </th>
                           <td data-label="Loại">{kinds[row.kind]}</td>
                           <BreakdownCells value={row.amounts} />
@@ -490,7 +487,7 @@ export function InboundStatisticsPage() {
                               <span className="sr-only">
                                 {' '}
                                 {expanded ? 'chi tiết ' : ''}
-                                {row.code} · <span className="store-name">{row.name}</span>
+                                <span className="store-name">{row.name}</span>
                               </span>
                             </button>
                           </td>
