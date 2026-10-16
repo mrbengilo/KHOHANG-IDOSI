@@ -27,7 +27,7 @@ const SessionWaitDocumentSnapshotSchema = z
   .object({
     id: EntityIdSchema,
     code: z.string(),
-    /** Opening snapshot per product: open bags, split waiting / granted awaiting the answer. */
+    /** Open bags per product at that moment: still waiting / granted awaiting the answer. */
     lines: z.array(
       z
         .object({

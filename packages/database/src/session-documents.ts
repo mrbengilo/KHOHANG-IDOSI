@@ -6,6 +6,7 @@ import {
   getTableColumns,
   eq,
   inArray,
+  isNotNull,
   isNull,
   ne,
   or,
@@ -51,7 +52,7 @@ export interface ListSessionDocumentsInput extends ListAllocationResultsInput {
 export interface SessionWaitDocumentSnapshot {
   readonly id: string;
   readonly code: string;
-  /** Opening snapshot of each product: total open bags, split waiting / granted awaiting answer. */
+  /** Open bags of each product at that moment, split waiting / granted awaiting the answer. */
   readonly lines: readonly {
     readonly productId: string;
     readonly quantity: number;
@@ -69,16 +70,62 @@ export interface SessionWaitDocuments {
   readonly changed: boolean;
 }
 
+/** Bags per product. */
+type ProductQuantities = ReadonlyMap<string, number>;
+
+function addQuantity(totals: Map<string, number>, productId: string, quantity: number) {
+  totals.set(productId, (totals.get(productId) ?? 0) + quantity);
+}
+
+/** Bags each (run, store) granted from the store's wait tickets (P0A lines). */
+function ticketGrantsByHeader(
+  sources: readonly {
+    readonly line: {
+      readonly allocationRunId: string;
+      readonly storeId: string;
+      readonly productId: string;
+      readonly waitTicketId: string | null;
+      readonly allocatedQuantity: number;
+    };
+  }[],
+): Map<string, Map<string, number>> {
+  const grants = new Map<string, Map<string, number>>();
+  for (const { line } of sources) {
+    if (line.waitTicketId === null || line.allocatedQuantity === 0) continue;
+    const headerKey = `${line.allocationRunId}:${line.storeId}`;
+    const totals = grants.get(headerKey) ?? new Map<string, number>();
+    addQuantity(totals, line.productId, line.allocatedQuantity);
+    grants.set(headerKey, totals);
+  }
+  return grants;
+}
+
+const runTimeSql = sql<Date>`coalesce(${allocationRuns.finishedAt}, ${allocationRuns.createdAt})`;
+
 /**
- * The store wait documents around each (run, store) document. A run that changed a store's open
- * demand wrote one immutable `allocation_run` event: the document it closed is the old one and the
- * document it opened is the new one. A run that left the open demand unchanged wrote nothing, so
- * the document current when the run finished is both. Documents are immutable snapshots, so the
- * answer never drifts with later events. Runs older than 0045 find no document at all.
+ * The store wait documents around each (run, store) document, each as the store's open demand at
+ * that moment: bags still waiting for allocation and bags already granted awaiting the store's
+ * answer.
+ *
+ * A run that changed a store's open demand wrote one immutable `allocation_run` event: the
+ * document it closed is the old one and the document it opened is the new one. A run that left the
+ * open demand unchanged wrote nothing, so the document current when the run finished is both.
+ * Runs older than 0045 find no document at all.
+ *
+ * A document's lines are an opening snapshot, but granting bags from wait tickets only moves them
+ * from waiting to awaiting the answer, which never closes the document (the open demand is the
+ * same). So the split at the run is derived, never read from a stale opening:
+ * - after a changing run, the opened document's opening is exact (the run reconciled last);
+ * - after an unchanged run, the opening plus every wait-ticket grant of the store's runs since the
+ *   document opened (this one included), minus grants of results moved back to waiting since;
+ * - before the run, the after split minus this run's own wait-ticket grants, since a run grants
+ *   and never answers results.
+ * Every input is immutable history, so the answer never drifts with later events.
  */
 async function loadRunWaitDocuments(
   tx: Transaction,
   headers: readonly { readonly allocationRunId: string; readonly storeId: string }[],
+  ticketGrants: ReadonlyMap<string, ProductQuantities>,
 ): Promise<Map<string, SessionWaitDocuments>> {
   const key = (runId: string, storeId: string) => `${runId}:${storeId}`;
   const result = new Map<string, SessionWaitDocuments>();
@@ -113,9 +160,7 @@ async function loadRunWaitDocuments(
     ? await tx
         .select({
           id: allocationRuns.id,
-          at: sql<Date>`coalesce(${allocationRuns.finishedAt}, ${allocationRuns.createdAt})`.mapWith(
-            (value: string | Date) => new Date(value),
-          ),
+          at: runTimeSql.mapWith((value: string | Date) => new Date(value)),
         })
         .from(allocationRuns)
         .where(inArray(allocationRuns.id, [...new Set(unchanged.map((h) => h.allocationRunId))]))
@@ -148,8 +193,13 @@ async function loadRunWaitDocuments(
           closedEventId: storeWaitDocuments.closedEventId,
           openedAt: storeWaitDocuments.openedAt,
           closedAt: storeWaitDocuments.closedAt,
+          openedRunId: storeWaitDocumentEvents.allocationRunId,
         })
         .from(storeWaitDocuments)
+        .innerJoin(
+          storeWaitDocumentEvents,
+          eq(storeWaitDocumentEvents.id, storeWaitDocuments.openedEventId),
+        )
         .where(or(...documentPredicates))
     : [];
   const lines = documents.length
@@ -159,7 +209,6 @@ async function loadRunWaitDocuments(
           productId: storeWaitDocumentLines.productId,
           carriedIn: storeWaitDocumentLines.carriedInQuantity,
           added: storeWaitDocumentLines.addedQuantity,
-          remaining: storeWaitDocumentLines.openingRemainingQuantity,
           pending: storeWaitDocumentLines.openingPendingQuantity,
         })
         .from(storeWaitDocumentLines)
@@ -171,45 +220,147 @@ async function loadRunWaitDocuments(
         )
         .orderBy(asc(storeWaitDocumentLines.productId))
     : [];
+  type Document = (typeof documents)[number];
+  const linesOf = (document: Document) => lines.filter((line) => line.documentId === document.id);
+  const openingPending = (document: Document | undefined): ProductQuantities =>
+    new Map(document ? linesOf(document).map((line) => [line.productId, line.pending]) : []);
+
+  // Unchanged runs: what moved between waiting and awaiting the answer while their document was
+  // current, read once for every such (store, document) and filtered per header below.
+  const windows = unchanged.flatMap((header) => {
+    const at = runTime.get(header.allocationRunId);
+    const document = at
+      ? documents.find(
+          (candidate) =>
+            candidate.storeId === header.storeId &&
+            candidate.openedAt <= at &&
+            (candidate.closedAt === null || candidate.closedAt > at),
+        )
+      : undefined;
+    return at && document ? [{ header, at, document }] : [];
+  });
+  const windowStoreIds = [...new Set(windows.map((window) => window.header.storeId))];
+  const windowFrom = new Date(Math.min(...windows.map((window) => +window.document.openedAt)));
+  const windowTo = new Date(Math.max(...windows.map((window) => +window.at)));
+  const windowGrants = windows.length
+    ? await tx
+        .select({
+          allocationRunId: allocationLines.allocationRunId,
+          storeId: allocationLines.storeId,
+          productId: allocationLines.productId,
+          quantity: allocationLines.allocatedQuantity,
+          at: runTimeSql.mapWith((value: string | Date) => new Date(value)),
+        })
+        .from(allocationLines)
+        .innerJoin(allocationRuns, eq(allocationRuns.id, allocationLines.allocationRunId))
+        .where(
+          and(
+            inArray(allocationLines.storeId, windowStoreIds),
+            isNotNull(allocationLines.waitTicketId),
+            sql`${allocationLines.allocatedQuantity} > 0`,
+            eq(allocationRuns.status, 'completed'),
+            isNull(allocationRuns.deletedAt),
+            sql`${runTimeSql} > ${windowFrom}`,
+            sql`${runTimeSql} <= ${windowTo}`,
+          ),
+        )
+    : [];
+  const windowReturns = windows.length
+    ? await tx
+        .select({
+          storeId: allocationLines.storeId,
+          productId: allocationLines.productId,
+          quantity: allocationLines.allocatedQuantity,
+          at: allocationResultDecisions.respondedAt,
+        })
+        .from(allocationResultDecisions)
+        .innerJoin(
+          allocationLines,
+          and(
+            eq(allocationLines.allocationRunId, allocationResultDecisions.allocationRunId),
+            eq(allocationLines.storeId, allocationResultDecisions.storeId),
+          ),
+        )
+        .where(
+          and(
+            inArray(allocationResultDecisions.storeId, windowStoreIds),
+            eq(allocationResultDecisions.status, 'waitlisted'),
+            isNotNull(allocationLines.waitTicketId),
+            sql`${allocationLines.allocatedQuantity} > 0`,
+            sql`${allocationResultDecisions.respondedAt} > ${windowFrom}`,
+            sql`${allocationResultDecisions.respondedAt} <= ${windowTo}`,
+          ),
+        )
+    : [];
+  const unchangedPending = new Map<string, ProductQuantities>();
+  for (const { header, at, document } of windows) {
+    const pending = new Map(openingPending(document));
+    const inWindow = (time: Date | null) => time !== null && time > document.openedAt && time <= at;
+    for (const grant of windowGrants) {
+      if (
+        grant.storeId === header.storeId &&
+        grant.allocationRunId !== document.openedRunId &&
+        inWindow(grant.at)
+      )
+        addQuantity(pending, grant.productId, grant.quantity);
+    }
+    for (const returned of windowReturns) {
+      if (returned.storeId === header.storeId && inWindow(returned.at))
+        addQuantity(pending, returned.productId, -returned.quantity);
+    }
+    unchangedPending.set(key(header.allocationRunId, header.storeId), pending);
+  }
+
   const snapshot = (
-    document: (typeof documents)[number] | undefined,
+    document: Document | undefined,
+    pending: ProductQuantities,
   ): SessionWaitDocumentSnapshot | null =>
     document
       ? {
           id: document.id,
           code: document.code,
-          lines: lines
-            .filter((line) => line.documentId === document.id)
-            .map((line) => ({
+          lines: linesOf(document).map((line) => {
+            const quantity = line.carriedIn + line.added;
+            const pendingQuantity = Math.min(
+              quantity,
+              Math.max(0, pending.get(line.productId) ?? 0),
+            );
+            return {
               productId: line.productId,
-              quantity: line.carriedIn + line.added,
-              remainingQuantity: line.remaining,
-              pendingQuantity: line.pending,
-            })),
+              quantity,
+              remainingQuantity: quantity - pendingQuantity,
+              pendingQuantity,
+            };
+          }),
         }
       : null;
+  const withoutGrants = (pending: ProductQuantities, grants: ProductQuantities | undefined) => {
+    const before = new Map(pending);
+    for (const [productId, quantity] of grants ?? []) addQuantity(before, productId, -quantity);
+    return before;
+  };
   for (const header of headers) {
-    const eventId = eventByHeader.get(key(header.allocationRunId, header.storeId));
+    const headerKey = key(header.allocationRunId, header.storeId);
+    const grants = ticketGrants.get(headerKey);
+    const eventId = eventByHeader.get(headerKey);
     if (eventId) {
-      result.set(key(header.allocationRunId, header.storeId), {
-        before: snapshot(documents.find((document) => document.closedEventId === eventId)),
-        after: snapshot(documents.find((document) => document.openedEventId === eventId)),
+      const after = documents.find((document) => document.openedEventId === eventId);
+      const afterPending = openingPending(after);
+      result.set(headerKey, {
+        before: snapshot(
+          documents.find((document) => document.closedEventId === eventId),
+          withoutGrants(afterPending, grants),
+        ),
+        after: snapshot(after, afterPending),
         changed: true,
       });
       continue;
     }
-    const at = runTime.get(header.allocationRunId);
-    const current = at
-      ? documents.find(
-          (document) =>
-            document.storeId === header.storeId &&
-            document.openedAt <= at &&
-            (document.closedAt === null || document.closedAt > at),
-        )
-      : undefined;
-    result.set(key(header.allocationRunId, header.storeId), {
-      before: snapshot(current),
-      after: snapshot(current),
+    const window = windows.find((candidate) => candidate.header === header);
+    const afterPending = unchangedPending.get(headerKey) ?? new Map<string, number>();
+    result.set(headerKey, {
+      before: snapshot(window?.document, withoutGrants(afterPending, grants)),
+      after: snapshot(window?.document, afterPending),
       changed: false,
     });
   }
@@ -347,7 +498,7 @@ export async function listSessionDocuments(database: Database, input: ListSessio
         ? await loadAllocationDecisionsForResults(tx, selected)
         : [];
       const waitDocuments = input.includeWaitDocuments
-        ? await loadRunWaitDocuments(tx, selected)
+        ? await loadRunWaitDocuments(tx, selected, ticketGrantsByHeader(sources))
         : null;
       return {
         data: selected.map((header) => ({
