@@ -350,10 +350,13 @@ const allocationReasonCopy: Record<string, string> = {
   ALLOCATED_BY_PRIORITY_ROUND_ROBIN: '',
   PARTIAL_SNAPSHOT_STOCK: 'Tồn đầu kỳ chỉ đủ một phần',
   INSUFFICIENT_SNAPSHOT_STOCK: 'Tồn đầu kỳ không đủ',
+  INSUFFICIENT_STOCK: 'Tồn không đủ',
+  INSUFFICIENT_INVENTORY: 'Tồn không đủ',
 };
 
+/** Mã chưa biết không hiện nguyên chuỗi kỹ thuật cho người dùng; nhãn trạng thái đã nói kết quả. */
 function allocationReasonText(reasonCode: string): string {
-  return allocationReasonCopy[reasonCode] ?? reasonCode;
+  return allocationReasonCopy[reasonCode] ?? '';
 }
 
 const allocationResultPageSize = 20;
@@ -1219,7 +1222,9 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                   canReceive={role === 'STORE' || role === 'WHOLESALE'}
                   decision={decisionQuery.data}
                   onClose={() => openDecision(null)}
-                  productName={(productId) => productNameById.get(productId) ?? productId}
+                  productName={(productId) =>
+                    productNameById.get(productId) ?? 'Mặt hàng chưa xác định'
+                  }
                   responder={responder}
                   storeName={storeNameById.get(decisionQuery.data.storeId) ?? 'Cửa hàng'}
                 />
@@ -1275,7 +1280,7 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                   <option value="">Tất cả cửa hàng</option>
                   {(storesQuery.data ?? []).map((store) => (
                     <option className="store-name" key={store.id} value={store.id}>
-                      {store.code} · {store.name}
+                      {store.name}
                     </option>
                   ))}
                 </select>
@@ -1360,14 +1365,19 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                 ) : null}
                 {groupBySession(allocationQuery.data.data).map(({ sessionId, documents }) => {
                   const session = sessionById.get(sessionId);
+                  // A session outside the loaded window falls back to its readable code, never its id.
+                  const sessionText = session
+                    ? sessionLabel(session)
+                    : (documents.find((document) => document.decision)?.decision?.sessionCode ??
+                      'chưa xác định');
                   return (
                     <section
-                      aria-label={`Phiên ${session ? sessionLabel(session) : sessionId}`}
+                      aria-label={`Phiên ${sessionText}`}
                       className="allocation-summary-group"
                       key={sessionId}
                     >
                       <h3 className="allocation-summary-group__title">
-                        Phiên {session ? sessionLabel(session) : sessionId}
+                        Phiên {sessionText}
                         <span>{documents.length} cửa hàng</span>
                       </h3>
                       <div className="allocation-summary-list">
@@ -1378,17 +1388,23 @@ function ProductionAllocationOversight({ role }: Pick<AppOutletContext, 'role'>)
                             storeName={
                               storeNameById.get(document.storeId) ?? 'Chưa xác định cửa hàng'
                             }
-                            sessionText={session ? sessionLabel(session) : sessionId}
+                            sessionText={sessionText}
                             createdAtText={allocationTimestampFormatter.format(
                               new Date(document.createdAt),
                             )}
-                            productName={(productId) => productNameById.get(productId) ?? productId}
+                            productName={(productId) =>
+                              productNameById.get(productId) ?? 'Mặt hàng chưa xác định'
+                            }
                             sourceText={(source) =>
                               [
-                                source.orderRequestCode ?? 'Nguồn phiếu chờ',
                                 productNameById.get(source.result.productId) ??
-                                  source.result.productId,
-                                `đặt ${source.result.requestedQuantity}, cấp ${source.result.allocatedQuantity}, chờ ${source.result.waitlistedQuantity}`,
+                                  'Mặt hàng chưa xác định',
+                                source.orderRequestCode
+                                  ? `Phiếu ${source.orderRequestCode}`
+                                  : source.priorityOfferId
+                                    ? 'Lượt ưu tiên'
+                                    : 'Phiếu chờ',
+                                `đặt ${source.result.requestedQuantity}, được cấp ${source.result.allocatedQuantity}, còn chờ ${source.result.waitlistedQuantity}`,
                                 `ưu tiên ${source.result.appliedPriority ?? source.result.priority}`,
                                 allocationRoundText(source.result),
                                 allocationResultStatusCopy[source.result.status],
