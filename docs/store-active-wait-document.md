@@ -136,6 +136,17 @@ hàng ngừng hoạt động; HTKD cần phân công còn hiệu lực). Ngoại
   nhận (không giữ dòng 0); lịch sử giữ đủ mặt hàng với mở / xác nhận / hủy / chuyển tiếp.
 - Chi tiết: nguồn tạo phiếu, từ phiếu trước / bổ sung mới, kết quả chờ xác nhận với nút **Mở kết quả**,
   dòng thời gian B → C → D, PC vận hành, nút **Hủy phiếu chờ** (hộp thoại xem trước).
+- Thẻ kết quả phân bổ (“Phiếu chờ cũ ⇒ Phiếu chờ mới”) đọc phiếu tổng **tại đúng lượt phân bổ**
+  và chỉ liệt kê hàng **còn chờ phân bổ**: phiếu mới = phiếu cũ − phần cấp cho phiếu chờ cũ + hàng
+  chờ mới của phiên (− phần hủy do hết hạn). Hàng đã cấp chờ xác nhận ghi chú riêng (“Không gồm N
+  bao đã cấp, chờ xác nhận phân bổ”, phiếu cũ: “Ngoài ra N bao đã cấp ở phiên trước…”). Vì cấp từ
+  PC chỉ chuyển bao từ còn chờ sang chờ xác nhận (không đổi nhu cầu mở, không đóng phiếu), số tách
+  không đọc từ snapshot lúc mở phiếu mà suy ra từ lịch sử bất biến: sau lượt có sự kiện = snapshot
+  mở của phiếu mới; sau lượt không đổi phiếu = snapshot mở + các lượt cấp PC của cửa hàng từ khi
+  phiếu mở (kể cả lượt này) − kết quả PC đã chuyển phiếu chờ trong khoảng đó; trước lượt = sau lượt
+  − phần cấp PC của chính lượt đó. Ví dụ DS TH: 15/10 phiếu cũ 3 nam + 1 short + 2 nữ, cấp 1 nữ →
+  phiếu mới 3 nam + 1 short + 1 nữ; 16/10 phiếu cũ 3 nam + 1 short + 1 nữ, cấp 1 nam + 1 short +
+  1 nữ, chờ mới 1 đồ bộ → phiếu mới 2 nam + 1 đồ bộ.
 - “Dòng theo mặt hàng (mã PC)” giữ danh sách PC cũ (tìm PC/PUT, lý do hủy, lịch sử ưu tiên); liên kết
   cũ có `wt.*` vẫn mở danh sách này. URL giữ bộ lọc/phiếu đang mở (`wd*`, `wdOpen`).
 - Responsive 360–1440 px (bảng thành thẻ trên mobile, nút 44 px), ảnh E2E trong CI artifact.

@@ -15,7 +15,13 @@ const runId = id(71);
 const emptyPage = { page: 1, pageSize: 20, totalItems: 0, totalPages: 0 };
 const [nam, nu, jeans, ao, quan] = layoutProducts.map((product) => product.id);
 
-function source(n: number, productId: string, requested: number, allocated: number) {
+function source(
+  n: number,
+  productId: string,
+  requested: number,
+  allocated: number,
+  waitTicketId: string | null = null,
+) {
   return {
     result: {
       id: id(100 + n),
@@ -24,8 +30,8 @@ function source(n: number, productId: string, requested: number, allocated: numb
       mergedOrderId: null,
       storeId,
       productId,
-      priority: 'P1',
-      appliedPriority: 'P1',
+      priority: waitTicketId ? 'P0A' : 'P1',
+      appliedPriority: waitTicketId ? 'P0A' : 'P1',
       roundNumber: 1,
       sequenceInRound: n,
       rounds: allocated ? [{ roundNumber: 1, allocatedQuantity: allocated }] : [],
@@ -36,20 +42,20 @@ function source(n: number, productId: string, requested: number, allocated: numb
       reasonCode: 'ROUND_ROBIN',
       createdAt: time,
     },
-    orderRequestId: id(80),
-    orderRequestCode: 'PDH-000042',
-    orderRequestItemId: id(90 + n),
-    submittedAt: time,
-    waitTicketId: null,
-    priorityOfferId: null,
+    orderRequestId: waitTicketId ? null : id(80),
+    orderRequestCode: waitTicketId ? null : 'PDH-000042',
+    orderRequestItemId: waitTicketId ? null : id(90 + n),
+    submittedAt: waitTicketId ? null : time,
+    waitTicketId,
+    priorityOfferId: waitTicketId ? id(95 + n) : null,
   };
 }
 
-const line = (productId: string, quantity: number) => ({
+const line = (productId: string, quantity: number, pendingQuantity = 0) => ({
   productId,
   quantity,
-  remainingQuantity: quantity,
-  pendingQuantity: 0,
+  remainingQuantity: quantity - pendingQuantity,
+  pendingQuantity,
 });
 
 const sessionDocument = {
@@ -63,7 +69,13 @@ const sessionDocument = {
   createdAt: time,
   hasPrioritySource: false,
   carriedAllocations: [],
-  sources: [source(1, nam!, 3, 2), source(2, nu!, 2, 0), source(3, jeans!, 4, 1)],
+  // The run also grants the 1 Áo of the old wait document: it leaves the waiting bags.
+  sources: [
+    source(1, nam!, 3, 2),
+    source(2, nu!, 2, 0),
+    source(3, jeans!, 4, 1),
+    source(4, ao!, 1, 1, id(60)),
+  ],
   decision: {
     id: id(72),
     allocationRunId: runId,
@@ -94,7 +106,7 @@ const sessionDocument = {
     after: {
       id: id(74),
       code: 'PCT-000012',
-      lines: [line(nam!, 1), line(nu!, 5), line(ao!, 1), line(quan!, 2), line(jeans!, 3)],
+      lines: [line(nam!, 1), line(nu!, 5), line(ao!, 1, 1), line(quan!, 2), line(jeans!, 3)],
     },
     changed: true,
   },
@@ -102,6 +114,7 @@ const sessionDocument = {
     { productId: nam, requestedQuantity: 3, allocatedQuantity: 2, waitlistedQuantity: 1 },
     { productId: nu, requestedQuantity: 2, allocatedQuantity: 0, waitlistedQuantity: 2 },
     { productId: jeans, requestedQuantity: 4, allocatedQuantity: 1, waitlistedQuantity: 3 },
+    { productId: ao, requestedQuantity: 1, allocatedQuantity: 1, waitlistedQuantity: 0 },
   ],
 };
 
@@ -168,11 +181,15 @@ test('allocation result card reads order, result, waiting and old ⇒ new wait d
   const terms = summary.getByRole('term');
   await expect(terms).toHaveText([
     /đặt\s*9 bao$/u,
-    /^Kết quả\s*3 bao$/u,
+    /^Kết quả\s*4 bao$/u,
     /^Chờ ưu tiên\s*6 bao$/u,
     /^Phiếu chờ cũ\s*PCT-000011\s*6 bao$/u,
-    /^⇒ Phiếu chờ mới\s*PCT-000012\s*12 bao$/u,
+    // 6 old − 1 Áo granted + 6 new waiting: the granted Áo awaits the answer, noted apart.
+    /^⇒ Phiếu chờ mới\s*PCT-000012\s*11 bao$/u,
   ]);
+  await expect(
+    card.getByText('Không gồm 1 bao đã cấp, chờ xác nhận phân bổ', { exact: false }),
+  ).toBeVisible();
   for (const width of widths) {
     await page.setViewportSize({ width, height: 900 });
     await expectNoHorizontalOverflow(page);

@@ -321,6 +321,141 @@ describePostgres('store wait documents (phiếu chờ tổng)', () => {
     expect((await read(false)).every((document) => !('waitDocuments' in document))).toBe(true);
   });
 
+  it('session documents split each wait document at the run: still waiting vs granted awaiting the answer', async () => {
+    // DS TH: day 15 waits 3 nam + 1 short + 2 nữ; the run grants 1 nữ from the ticket. Day 16
+    // orders 2 đầm + 2 đồ bộ; the run grants 1 nam + 1 short + 1 nữ from the tickets and queues
+    // 1 đồ bộ. "Phiếu chờ mới" of day 16 is what still waits: 2 nam + 1 đồ bộ.
+    const store = await createStore();
+    const nam = await createTicket(store.id, fx.nam, 3);
+    const short = await createTicket(store.id, fx.short, 1);
+    const nu = await createTicket(store.id, fx.nu, 2);
+    await reconcile(store.id, 'allocation_run', `run:${randomUUID()}`);
+    const day15Document = await currentDocument(store.id);
+
+    const day15 = await publishTicketResult(store.id, [
+      { ticketId: nu.id, productId: fx.nu, quantity: 1 },
+    ]);
+    await markRunFinished(day15.runId);
+    await reconcileRun(store.id, day15);
+    expect((await currentDocument(store.id)).id).toBe(day15Document.id);
+    await respondAllocationDecision(db, {
+      decisionId: day15.decisionId,
+      action: 'ACCEPT',
+      expectedVersion: 1,
+      actorUserId: store.userId,
+      idempotencyKey: randomUUID(),
+      requestHash: 'accept',
+    });
+    const day16Document = await currentDocument(store.id);
+    expect(lineSummaryTotals(day16Document)).toEqual({ [fx.nam]: 3, [fx.short]: 1, [fx.nu]: 1 });
+
+    const day16 = await publishTicketResult(store.id, [
+      { ticketId: nam.id, productId: fx.nam, quantity: 1 },
+      { ticketId: short.id, productId: fx.short, quantity: 1 },
+      { ticketId: nu.id, productId: fx.nu, quantity: 1 },
+    ]);
+    await createTicket(store.id, fx.bo, 1);
+    await markRunFinished(day16.runId);
+    await reconcileRun(store.id, day16);
+    const afterDay16 = await currentDocument(store.id);
+    expect(afterDay16.id).not.toBe(day16Document.id);
+
+    const byRun = await waitDocumentsByRun(store.id);
+    expect(byRun.get(day15.runId)).toEqual({
+      before: {
+        id: day15Document.id,
+        code: day15Document.code,
+        lines: split({ [fx.nam]: [3, 0], [fx.short]: [1, 0], [fx.nu]: [2, 0] }),
+      },
+      after: {
+        id: day15Document.id,
+        code: day15Document.code,
+        lines: split({ [fx.nam]: [3, 0], [fx.short]: [1, 0], [fx.nu]: [1, 1] }),
+      },
+      changed: false,
+    });
+    expect(byRun.get(day16.runId)).toEqual({
+      before: {
+        id: day16Document.id,
+        code: day16Document.code,
+        lines: split({ [fx.nam]: [3, 0], [fx.short]: [1, 0], [fx.nu]: [1, 0] }),
+      },
+      after: {
+        id: afterDay16.id,
+        code: afterDay16.code,
+        lines: split({ [fx.nam]: [2, 1], [fx.short]: [0, 1], [fx.nu]: [0, 1], [fx.bo]: [1, 0] }),
+      },
+      changed: true,
+    });
+  });
+
+  it('session documents keep earlier unanswered grants apart across runs that leave the document unchanged', async () => {
+    const store = await createStore();
+    const nam = await createTicket(store.id, fx.nam, 3);
+    const nu = await createTicket(store.id, fx.nu, 2);
+    await reconcile(store.id, 'allocation_run', `run:${randomUUID()}`);
+    const document = await currentDocument(store.id);
+
+    // Day 1 grants 1 nữ, never answered; day 2 grants 1 nam. Neither changes the open demand.
+    const first = await publishTicketResult(store.id, [
+      { ticketId: nu.id, productId: fx.nu, quantity: 1 },
+    ]);
+    await markRunFinished(first.runId);
+    await reconcileRun(store.id, first);
+    const second = await publishTicketResult(store.id, [
+      { ticketId: nam.id, productId: fx.nam, quantity: 1 },
+    ]);
+    await markRunFinished(second.runId);
+    await reconcileRun(store.id, second);
+    expect((await currentDocument(store.id)).id).toBe(document.id);
+
+    const byRun = await waitDocumentsByRun(store.id);
+    expect(byRun.get(second.runId)).toMatchObject({
+      before: { id: document.id, lines: split({ [fx.nam]: [3, 0], [fx.nu]: [1, 1] }) },
+      after: { id: document.id, lines: split({ [fx.nam]: [2, 1], [fx.nu]: [1, 1] }) },
+      changed: false,
+    });
+    // History never drifts: the first run still reads as it was when it ran.
+    expect(byRun.get(first.runId)).toMatchObject({
+      before: { lines: split({ [fx.nam]: [3, 0], [fx.nu]: [2, 0] }) },
+      after: { lines: split({ [fx.nam]: [3, 0], [fx.nu]: [1, 1] }) },
+    });
+  });
+
+  it('session documents count a grant moved back to waiting as waiting again', async () => {
+    const store = await createStore();
+    const nam = await createTicket(store.id, fx.nam, 3);
+    const nu = await createTicket(store.id, fx.nu, 2);
+    await reconcile(store.id, 'allocation_run', `run:${randomUUID()}`);
+
+    const first = await publishTicketResult(store.id, [
+      { ticketId: nu.id, productId: fx.nu, quantity: 1 },
+    ]);
+    await markRunFinished(first.runId);
+    await reconcileRun(store.id, first);
+    await respondAllocationDecision(db, {
+      decisionId: first.decisionId,
+      action: 'WAITLIST',
+      expectedVersion: 1,
+      actorUserId: store.userId,
+      idempotencyKey: randomUUID(),
+      requestHash: 'waitlist',
+    });
+    const document = await currentDocument(store.id);
+    const second = await publishTicketResult(store.id, [
+      { ticketId: nam.id, productId: fx.nam, quantity: 1 },
+    ]);
+    await markRunFinished(second.runId);
+    await reconcileRun(store.id, second);
+    expect((await currentDocument(store.id)).id).toBe(document.id);
+
+    expect((await waitDocumentsByRun(store.id)).get(second.runId)).toMatchObject({
+      before: { id: document.id, lines: split({ [fx.nam]: [3, 0], [fx.nu]: [2, 0] }) },
+      after: { id: document.id, lines: split({ [fx.nam]: [2, 1], [fx.nu]: [2, 0] }) },
+      changed: false,
+    });
+  });
+
   it('a document whose open demand only awaits an answer stays open; no empty successor', async () => {
     const store = await createStore();
     const nam = await createTicket(store.id, fx.nam, 1);
@@ -685,6 +820,59 @@ describePostgres('store wait documents (phiếu chờ tổng)', () => {
   });
 
   // ---------------------------------------------------------------------------------------------
+
+  async function markRunFinished(runId: string) {
+    await db
+      .update(allocationRuns)
+      .set({ finishedAt: new Date() })
+      .where(eq(allocationRuns.id, runId));
+  }
+
+  /** The run's own reconciliation, as the worker writes it last in the run transaction. */
+  async function reconcileRun(storeId: string, run: { sessionId: string; runId: string }) {
+    await withSerializableTransaction(db, (tx) =>
+      reconcileStoreWaitDocumentsInTransaction(tx, [
+        {
+          storeId,
+          event: {
+            kind: 'allocation_run',
+            sourceKey: `allocation-run:${run.runId}`,
+            actorUserId: null,
+            occurredAt: new Date(),
+            orderSessionId: run.sessionId,
+            allocationRunId: run.runId,
+          },
+        },
+      ]),
+    );
+  }
+
+  async function waitDocumentsByRun(storeId: string) {
+    const page = await listSessionDocuments(db, {
+      page: 1,
+      pageSize: 20,
+      storeIds: [storeId],
+      includeWaitDocuments: true,
+    });
+    return new Map(
+      page.data.map((document) => [
+        document.allocationRunId,
+        'waitDocuments' in document ? document.waitDocuments : undefined,
+      ]),
+    );
+  }
+
+  /** Expected snapshot lines from { product: [still waiting, granted awaiting the answer] }. */
+  function split(byProduct: Record<string, readonly [number, number]>) {
+    return expect.arrayContaining(
+      Object.entries(byProduct).map(([productId, [remainingQuantity, pendingQuantity]]) => ({
+        productId,
+        quantity: remainingQuantity + pendingQuantity,
+        remainingQuantity,
+        pendingQuantity,
+      })),
+    );
+  }
 
   async function reconcile(storeId: string, kind: 'allocation_run', sourceKey: string) {
     await withSerializableTransaction(db, (tx) =>
@@ -1081,5 +1269,7 @@ async function createFixture() {
     nam: await createProduct('nam'),
     nu: await createProduct('nu'),
     tre: await createProduct('tre'),
+    short: await createProduct('short'),
+    bo: await createProduct('bo'),
   };
 }
