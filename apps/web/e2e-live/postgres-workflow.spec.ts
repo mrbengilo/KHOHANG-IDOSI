@@ -257,10 +257,13 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   await expect(firstResult).toContainText('Phiếu chờ mới');
   // Mã lý do mặc định của vòng chia ưu tiên bị ẩn vì trùng nghĩa với nhãn trạng thái.
   await expect(allocationResults.getByText('ALLOCATED_BY_PRIORITY_ROUND_ROBIN')).toHaveCount(0);
-  // Codes, sources and rounds stay one click away for audit.
-  await firstResult.locator('summary').first().click();
-  await expect(firstResult.getByText('Phiếu nguồn và các vòng phân bổ')).toBeVisible();
-  await expect(firstResult).toContainText('Phiếu kết quả');
+  // Lines, sources and rounds stay behind "Xem chi tiết"; internal codes never show.
+  const details = firstResult.locator('summary').first();
+  await expect(details).toHaveText('Xem chi tiết');
+  await details.click();
+  await expect(details).toHaveText('Ẩn chi tiết');
+  await expect(firstResult.getByText('Nguồn đặt hàng và các vòng phân bổ')).toBeVisible();
+  await expect(firstResult).not.toContainText('Phiếu kết quả');
 
   const createSessionTab = page.getByRole('tab', { name: 'Tạo phiên mới' });
   await createSessionTab.click();
@@ -573,7 +576,7 @@ test('production allocation results remain usable at 390px', async ({ page }) =>
   const firstResult = allocationResults.locator('.session-document').first();
   await expect(firstResult).toContainText('Kết quả');
   await firstResult.locator('summary').first().click();
-  await expect(firstResult.getByText('Phiếu nguồn và các vòng phân bổ')).toBeVisible();
+  await expect(firstResult.getByText('Nguồn đặt hàng và các vòng phân bổ')).toBeVisible();
   await expect(firstResult.locator('.allocation-summary-card__sources li').first()).toContainText(
     /Đã cấp đủ|Cấp một phần|Chuyển phiếu chờ|Không xử lý/u,
   );
