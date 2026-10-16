@@ -100,6 +100,16 @@
   background: var(--surface);
 }
 
+.allocation-summary__row--removed {
+  border-style: dashed;
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+}
+
+.allocation-summary__row--removed dt {
+  color: var(--danger);
+}
+
 .allocation-summary__row--next {
   border-color: var(--brand);
   background: var(--brand-soft);
@@ -149,6 +159,11 @@
   margin: 0.35rem 0 0;
   color: var(--text-secondary);
   font-size: 0.85rem;
+}
+
+.allocation-summary__note--alert {
+  color: var(--danger);
+  font-weight: 600;
 }
 
 .allocation-summary__row--granted dt {

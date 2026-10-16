@@ -342,6 +342,14 @@ describePostgres('allocation result decisions through the API on PostgreSQL', ()
       const waitDocuments = withWait.json().data[0].waitDocuments;
       assert.equal(typeof waitDocuments.changed, 'boolean');
       assert.ok('before' in waitDocuments && 'after' in waitDocuments);
+      // Bags the run removed from the old wait document are opt-in on top of it.
+      assert.equal('removed' in waitDocuments, false);
+      const withRemovals = await get(
+        fx.tokens.storeA,
+        `/api/v1/session-documents?sessionId=${resultA.sessionId}&includeWaitDocuments=true&includeWaitRemovals=true`,
+      );
+      assert.equal(withRemovals.statusCode, 200, withRemovals.body);
+      assert.ok(Array.isArray(withRemovals.json().data[0].waitDocuments.removed));
 
       // Locking the account takes effect at once, even for a retry of its own key.
       const keyB = randomUUID();

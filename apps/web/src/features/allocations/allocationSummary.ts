@@ -1,7 +1,9 @@
 import type {
+  AllocationDecision,
   AllocationResult,
   SessionWaitDocuments,
   SessionWaitDocumentSnapshot,
+  SessionWaitRemovalReason,
 } from '@idosi/contracts';
 
 export interface SummaryItem {
@@ -34,10 +36,21 @@ export interface WaitDocumentChange {
   /** False when the run left the store's open demand (and so its document) unchanged. */
   readonly changed: boolean;
   /**
+   * Bags the run took off the old document without granting them, per reason, so that
+   * new = old − granted to old − removed + new waiting holds on the card.
+   */
+  readonly removed: readonly WaitRemoval[];
+  /**
    * True when this session queued bags but no wait document exists: the run predates the store
    * wait documents (0045), so old/new documents cannot be shown honestly.
    */
   readonly untracked: boolean;
+}
+
+export interface WaitRemoval {
+  readonly reason: SessionWaitRemovalReason;
+  readonly items: readonly SummaryItem[];
+  readonly total: number;
 }
 
 export interface AllocationSummary {
@@ -84,6 +97,25 @@ function items(totals: Totals, productName: (productId: string) => string): Summ
 
 function total(list: readonly SummaryItem[]): number {
   return list.reduce((sum, item) => sum + item.quantity, 0);
+}
+
+const removalReasons: readonly SessionWaitRemovalReason[] = [
+  'PRIORITY_RESPONSE_TIMEOUT',
+  'SYSTEM_ADJUSTMENT',
+];
+
+function waitRemovals(
+  removed: SessionWaitDocuments['removed'],
+  productName: (productId: string) => string,
+): WaitRemoval[] {
+  return removalReasons.flatMap((reason) => {
+    const totals: Totals = new Map();
+    for (const line of removed ?? []) {
+      if (line.reason === reason) add(totals, line.productId, line.quantity);
+    }
+    const list = items(totals, productName);
+    return list.length ? [{ reason, items: list, total: total(list) }] : [];
+  });
 }
 
 function waitDocumentSummary(
@@ -150,6 +182,7 @@ export function summarizeAllocation(
       before: waitDocumentSummary(waitDocuments.before, productName),
       after: waitDocumentSummary(waitDocuments.after, productName),
       changed: waitDocuments.changed,
+      removed: waitRemovals(waitDocuments.removed, productName),
       untracked:
         waitDocuments.before === null && waitDocuments.after === null && total(waitingItems) > 0,
     },
@@ -159,4 +192,42 @@ export function summarizeAllocation(
 /** "2 Nam, 2 Nữ, 2 Đầm" — the wording stores use when they talk about a result. */
 export function summaryText(list: readonly SummaryItem[], empty: string): string {
   return list.length === 0 ? empty : list.map((item) => `${item.quantity} ${item.name}`).join(', ');
+}
+
+/** What became of the bags granted in the run, as the store's answer and later cancellations left it. */
+export interface ResultOutcome {
+  /** Granted bags taken back because their wait ticket was cancelled before the answer. */
+  readonly revoked: readonly SummaryItem[];
+  readonly revokedTotal: number;
+  /** Granted bags still standing (granted − revoked). */
+  readonly actionableTotal: number;
+  /** "Chuyển phiếu chờ": the standing bags went back to the warehouse and the demand to waiting. */
+  readonly movedToWaiting: boolean;
+}
+
+/**
+ * "Kết quả" is what the run granted and never changes; this is what happened to it since, so the
+ * card never shows granted bags as if they were still coming after they were revoked or moved
+ * back to waiting.
+ */
+export function resultOutcome(
+  decision: Pick<
+    AllocationDecision,
+    'status' | 'grantedQuantity' | 'actionableQuantity' | 'actionableLines'
+  > | null,
+  productName: (productId: string) => string,
+): ResultOutcome | null {
+  if (!decision || decision.grantedQuantity === 0) return null;
+  const revoked: Totals = new Map();
+  for (const line of decision.actionableLines ?? []) {
+    add(revoked, line.productId, line.revokedQuantity);
+  }
+  const revokedItems = items(revoked, productName);
+  const outcome = {
+    revoked: revokedItems,
+    revokedTotal: total(revokedItems),
+    actionableTotal: decision.actionableQuantity ?? decision.grantedQuantity,
+    movedToWaiting: decision.status === 'WAITLISTED',
+  };
+  return outcome.revokedTotal > 0 || outcome.movedToWaiting ? outcome : null;
 }

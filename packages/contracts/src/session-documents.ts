@@ -43,6 +43,17 @@ const SessionWaitDocumentSnapshotSchema = z
 export type SessionWaitDocumentSnapshot = z.infer<typeof SessionWaitDocumentSnapshotSchema>;
 
 /**
+ * Why a run took bags off the old wait document without granting them. The 09:00 run cancels a
+ * wait ticket whose full priority offer (08:00) was left unanswered; any other drop the run caused
+ * is a system adjustment.
+ */
+export const SessionWaitRemovalReasonSchema = z.enum([
+  'PRIORITY_RESPONSE_TIMEOUT',
+  'SYSTEM_ADJUSTMENT',
+]);
+export type SessionWaitRemovalReason = z.infer<typeof SessionWaitRemovalReasonSchema>;
+
+/**
  * The store's wait document (PCT) just before and right after the document's allocation run.
  * `changed` is false when the run left the store's open demand unchanged (both are the same
  * document). Both are null when the store had no open demand, or for runs older than 0045.
@@ -52,6 +63,22 @@ export const SessionWaitDocumentsSchema = z
     before: SessionWaitDocumentSnapshotSchema.nullable(),
     after: SessionWaitDocumentSnapshotSchema.nullable(),
     changed: z.boolean(),
+    /**
+     * Bags of the old document the run removed without granting them, so old − granted to old −
+     * removed + new waiting = new. Present only with includeWaitRemovals=true, so bundles that
+     * validate the older shape keep working.
+     */
+    removed: z
+      .array(
+        z
+          .object({
+            productId: EntityIdSchema,
+            quantity: z.number().int().positive().safe(),
+            reason: SessionWaitRemovalReasonSchema,
+          })
+          .strict(),
+      )
+      .optional(),
   })
   .strict();
 export type SessionWaitDocuments = z.infer<typeof SessionWaitDocumentsSchema>;
@@ -113,6 +140,11 @@ export const ListSessionDocumentsQuerySchema = PaginationQuerySchema.extend({
     .optional(),
   /** Opt-in: attach the store wait documents before and after each document's run. */
   includeWaitDocuments: z
+    .enum(['true', 'false'])
+    .transform((value) => value === 'true')
+    .optional(),
+  /** Opt-in: list the bags each run removed from the old wait document (needs includeWaitDocuments). */
+  includeWaitRemovals: z
     .enum(['true', 'false'])
     .transform((value) => value === 'true')
     .optional(),

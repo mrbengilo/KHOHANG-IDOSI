@@ -391,7 +391,10 @@ export async function listSessionDocuments(filters: SessionDocumentFilters = {})
     query.set('includeDecision', 'true');
     query.set('includeWaitlist', 'true');
   }
-  if (filters.includeWaitDocuments) query.set('includeWaitDocuments', 'true');
+  if (filters.includeWaitDocuments) {
+    query.set('includeWaitDocuments', 'true');
+    query.set('includeWaitRemovals', 'true');
+  }
   if (filters.decisionStatus) query.set('decisionStatus', filters.decisionStatus);
   return ListSessionDocumentsResponseSchema.parse(await request('/session-documents?' + query));
 }

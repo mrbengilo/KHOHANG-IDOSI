@@ -1906,6 +1906,9 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
                   before: waitDocumentSnapshotDto(header.waitDocuments.before),
                   after: waitDocumentSnapshotDto(header.waitDocuments.after),
                   changed: header.waitDocuments.changed,
+                  ...(query.includeWaitRemovals
+                    ? { removed: header.waitDocuments.removed.map((line) => ({ ...line })) }
+                    : {}),
                 },
               }
             : {}),

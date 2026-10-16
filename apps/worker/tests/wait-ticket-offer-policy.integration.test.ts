@@ -6,6 +6,7 @@ import {
   cancelWaitTicket,
   previewWaitTicketCancellation,
   createDatabase,
+  listSessionDocuments,
   dailyPriorityOffers,
   listPriorityOffers,
   orderRequestItems,
@@ -469,6 +470,9 @@ describePostgres('priority wait policy across sessions (worker + PostgreSQL)', (
       new Date(now - 7 * MINUTE),
     );
     await stock(item.id, 5, new Date(now - 5 * MINUTE));
+    // The silent store also orders another product in the session, so its result card exists.
+    const other = await product('full-other');
+    await stock(other.id, 1, new Date(now - 5 * MINUTE));
     // Each store's waiting demand is on its wait document before the 08:00 offers.
     await syncAllStoreWaitDocuments(db());
     const documentBefore = new Map(
@@ -539,6 +543,20 @@ describePostgres('priority wait policy across sessions (worker + PostgreSQL)', (
     await db()
       .insert(orderRequestItems)
       .values({ orderRequestId: order!.id, productId: item.id, requestedQuantity: 4 });
+    const [silentOrder] = await db()
+      .insert(orderRequests)
+      .values({
+        orderSessionId: s1.row.id,
+        storeId: silent.id,
+        requestNumber: 1,
+        status: 'submitted',
+        submittedAt: new Date(now - 30_000),
+        requestedByUserId: adminId,
+      })
+      .returning();
+    await db()
+      .insert(orderRequestItems)
+      .values({ orderRequestId: silentOrder!.id, productId: other.id, requestedQuantity: 1 });
 
     await worker.expireOffersAndFinalizeAllocation(
       s1.scheduled,
@@ -569,6 +587,21 @@ describePostgres('priority wait policy across sessions (worker + PostgreSQL)', (
       status: 'cancelled',
       kind: 'allocation_run',
       cancelled: 2,
+    });
+    // Its result card explains why the old wait document's bags are gone: not granted, but
+    // removed because the full offer went unanswered.
+    const silentCards = await listSessionDocuments(db(), {
+      page: 1,
+      pageSize: 20,
+      storeIds: [silent.id],
+      includeWaitDocuments: true,
+    });
+    expect(silentCards.data).toHaveLength(1);
+    expect(silentCards.data[0]!.waitDocuments).toMatchObject({
+      before: { id: documentBefore.get(silent.id) },
+      after: null,
+      changed: true,
+      removed: [{ productId: item.id, quantity: 2, reason: 'PRIORITY_RESPONSE_TIMEOUT' }],
     });
     expect(await currentDocument(accepting.id)).toBe(documentBefore.get(accepting.id));
     // The accepted full offer is allocated and its ticket fulfilled, never cancelled.

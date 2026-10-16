@@ -310,6 +310,7 @@ describePostgres('store wait documents (phiếu chờ tổng)', () => {
         ]),
       },
       changed: true,
+      removed: [],
     });
     const unchanged = byRun.get(quiet.runId)!;
     expect('waitDocuments' in unchanged && unchanged.waitDocuments).toMatchObject({
@@ -373,6 +374,7 @@ describePostgres('store wait documents (phiếu chờ tổng)', () => {
         lines: split({ [fx.nam]: [3, 0], [fx.short]: [1, 0], [fx.nu]: [1, 1] }),
       },
       changed: false,
+      removed: [],
     });
     expect(byRun.get(day16.runId)).toEqual({
       before: {
@@ -386,6 +388,7 @@ describePostgres('store wait documents (phiếu chờ tổng)', () => {
         lines: split({ [fx.nam]: [2, 1], [fx.short]: [0, 1], [fx.nu]: [0, 1], [fx.bo]: [1, 0] }),
       },
       changed: true,
+      removed: [],
     });
   });
 
@@ -453,6 +456,73 @@ describePostgres('store wait documents (phiếu chờ tổng)', () => {
       before: { id: document.id, lines: split({ [fx.nam]: [3, 0], [fx.nu]: [2, 0] }) },
       after: { id: document.id, lines: split({ [fx.nam]: [2, 1], [fx.nu]: [2, 0] }) },
       changed: false,
+    });
+  });
+
+  it('session documents list what a run removed without granting: an unanswered full offer', async () => {
+    // DS CT waits 1 nam + 1 short. Its 1 short had a full priority offer nobody answered, so the
+    // 09:00 run cancels that ticket while it queues 1 đồ bộ from today's order. Old − removed +
+    // new waiting = new: 1 nam + 1 short − 1 short + 1 đồ bộ = 1 nam + 1 đồ bộ.
+    const store = await createStore();
+    await createTicket(store.id, fx.nam, 1);
+    const short = await createTicket(store.id, fx.short, 1);
+    await reconcile(store.id, 'allocation_run', `run:${randomUUID()}`);
+    const old = await currentDocument(store.id);
+
+    const run = await publishOrderResult(store.id, fx.nu, 1);
+    await db
+      .update(waitTickets)
+      .set({ status: 'cancelled', resolvedAt: new Date() })
+      .where(eq(waitTickets.id, short.id));
+    await createTicket(store.id, fx.bo, 1);
+    await markRunFinished(run.runId);
+    await withSerializableTransaction(db, (tx) =>
+      reconcileStoreWaitDocumentsInTransaction(tx, [
+        {
+          storeId: store.id,
+          declared: [{ productId: fx.short, category: 'cancelled', quantity: 1 }],
+          event: {
+            kind: 'allocation_run',
+            sourceKey: `allocation-run:${run.runId}`,
+            actorUserId: null,
+            occurredAt: new Date(),
+            orderSessionId: run.sessionId,
+            allocationRunId: run.runId,
+          },
+        },
+      ]),
+    );
+    const next = await currentDocument(store.id);
+
+    expect((await waitDocumentsByRun(store.id)).get(run.runId)).toEqual({
+      before: {
+        id: old.id,
+        code: old.code,
+        lines: split({ [fx.nam]: [1, 0], [fx.short]: [1, 0] }),
+      },
+      after: { id: next.id, code: next.code, lines: split({ [fx.nam]: [1, 0], [fx.bo]: [1, 0] }) },
+      changed: true,
+      removed: [{ productId: fx.short, quantity: 1, reason: 'PRIORITY_RESPONSE_TIMEOUT' }],
+    });
+  });
+
+  it('session documents report an undeclared drop of a run as a system adjustment', async () => {
+    const store = await createStore();
+    const nam = await createTicket(store.id, fx.nam, 2);
+    await reconcile(store.id, 'allocation_run', `run:${randomUUID()}`);
+
+    const run = await publishOrderResult(store.id, fx.nu, 1);
+    // A drop no writer declared (as left by a writer without documents).
+    await db
+      .update(waitTickets)
+      .set({ remainingQuantity: 1, fulfilledQuantity: 1 })
+      .where(eq(waitTickets.id, nam.id));
+    await markRunFinished(run.runId);
+    await reconcileRun(store.id, run);
+
+    expect((await waitDocumentsByRun(store.id)).get(run.runId)).toMatchObject({
+      changed: true,
+      removed: [{ productId: fx.nam, quantity: 1, reason: 'SYSTEM_ADJUSTMENT' }],
     });
   });
 

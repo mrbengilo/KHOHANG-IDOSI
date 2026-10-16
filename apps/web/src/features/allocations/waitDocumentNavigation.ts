@@ -240,3 +240,26 @@ export function waitDocumentEventDescription(event: StoreWaitDocumentEvent): str
       return 'Khởi tạo từ phiếu chờ đang có';
   }
 }
+
+/**
+ * The closing event of a document, with what the 09:00 run resolved on it. A run never confirms
+ * anything: the only bags it declares cancelled are wait tickets whose full priority offer went
+ * unanswered, and any other drop it records as an adjustment. Without this the history would show
+ * "Phân bổ 09:00" next to cancelled bags and leave the store guessing why.
+ */
+export function waitDocumentClosingDescription(
+  document: Pick<StoreWaitDocument, 'lines'> & { readonly closedEvent: StoreWaitDocumentEvent },
+): string {
+  const description = waitDocumentEventDescription(document.closedEvent);
+  if (document.closedEvent.kind !== 'ALLOCATION_RUN') return description;
+  const totals = waitDocumentTotals(document);
+  const notes = [
+    totals.cancelled > 0
+      ? `hủy ${totals.cancelled} bao do quá hạn phản hồi đề nghị nhận đủ hàng`
+      : null,
+    totals.confirmed + totals.adjusted > 0
+      ? `điều chỉnh ${totals.confirmed + totals.adjusted} bao`
+      : null,
+  ].filter((note): note is string => note !== null);
+  return notes.length ? `${description} · ${notes.join(' · ')}` : description;
+}

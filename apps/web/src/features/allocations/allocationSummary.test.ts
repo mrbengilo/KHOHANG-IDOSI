@@ -11,6 +11,8 @@ const names: Record<string, string> = {
   short: 'Quần short',
   dam: 'Đầm',
   bo: 'Đồ bộ',
+  dai: 'Áo dài',
+  tienich: 'Sản phẩm tiện ích',
 };
 const productName = (id: string) => names[id] ?? id;
 
@@ -37,6 +39,52 @@ function line(productId: string, quantity: number, pendingQuantity = 0) {
 }
 
 describe('summarizeAllocation', () => {
+  it('groups bags the run removed from the old wait document by reason', () => {
+    // Old 1 nam + 1 tiện ích; the run grants 1 áo dài, queues 1 đồ bộ and cancels the tiện ích
+    // ticket whose full offer went unanswered: new = 1 nam + 1 đồ bộ.
+    const summary = summarizeAllocation(
+      {
+        sources: [source('dai', 1, 1, 0), source('bo', 1, 0, 1)],
+        carriedAllocations: [],
+        waitDocuments: {
+          before: { id: 'b', code: 'PCT-000017', lines: [line('nam', 1), line('tienich', 1)] },
+          after: { id: 'c', code: 'PCT-000021', lines: [line('nam', 1), line('bo', 1)] },
+          changed: true,
+          removed: [
+            { productId: 'tienich', quantity: 1, reason: 'PRIORITY_RESPONSE_TIMEOUT' },
+            { productId: 'nam', quantity: 1, reason: 'SYSTEM_ADJUSTMENT' },
+          ],
+        },
+      },
+      productName,
+    );
+    const wait = summary.waitDocuments!;
+    expect(wait.removed).toEqual([
+      {
+        reason: 'PRIORITY_RESPONSE_TIMEOUT',
+        items: [{ productId: 'tienich', name: 'Sản phẩm tiện ích', quantity: 1 }],
+        total: 1,
+      },
+      {
+        reason: 'SYSTEM_ADJUSTMENT',
+        items: [{ productId: 'nam', name: 'Nam', quantity: 1 }],
+        total: 1,
+      },
+    ]);
+  });
+
+  it('reads no removals from a response without them (older API)', () => {
+    const summary = summarizeAllocation(
+      {
+        sources: [],
+        carriedAllocations: [],
+        waitDocuments: { before: null, after: null, changed: false },
+      },
+      productName,
+    );
+    expect(summary.waitDocuments?.removed).toEqual([]);
+  });
+
   it('reads the owner example: ordered, result, waiting, old and new wait documents', () => {
     const summary = summarizeAllocation(
       {

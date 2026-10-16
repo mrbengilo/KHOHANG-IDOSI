@@ -102,13 +102,15 @@ const sessionDocument = {
     shipment: null,
   },
   waitDocuments: {
-    before: { id: id(73), code: 'PCT-000011', lines: [line(ao!, 1), line(quan!, 2), line(nu!, 3)] },
+    // 1 Quần of the old document had a full offer nobody answered: the run cancelled it.
+    before: { id: id(73), code: 'PCT-000011', lines: [line(ao!, 1), line(quan!, 3), line(nu!, 3)] },
     after: {
       id: id(74),
       code: 'PCT-000012',
       lines: [line(nam!, 1), line(nu!, 5), line(ao!, 1, 1), line(quan!, 2), line(jeans!, 3)],
     },
     changed: true,
+    removed: [{ productId: quan!, quantity: 1, reason: 'PRIORITY_RESPONSE_TIMEOUT' }],
   },
   lines: [
     { productId: nam, requestedQuantity: 3, allocatedQuantity: 2, waitlistedQuantity: 1 },
@@ -231,6 +233,7 @@ test('allocation result card reads order, result, waiting and old ⇒ new wait d
   const card = page.getByRole('article', { name: 'Cửa hàng A — chi nhánh trung tâm thành phố' });
   await expect(card).toBeVisible();
   expect(requests.some((entry) => entry.includes('includeWaitDocuments=true'))).toBe(true);
+  expect(requests.some((entry) => entry.includes('includeWaitRemovals=true'))).toBe(true);
   await expect(card.getByText('Phân bổ lúc', { exact: false })).toBeVisible();
   await expect(card.getByText('Đã xác nhận phân bổ')).toBeVisible();
   await expect(card.getByRole('button', { name: /Xem phiếu/u })).toBeVisible();
@@ -240,8 +243,10 @@ test('allocation result card reads order, result, waiting and old ⇒ new wait d
     /đặt\s*9 bao$/u,
     /^Kết quả\s*4 bao$/u,
     /^Chờ ưu tiên\s*6 bao$/u,
-    /^Phiếu chờ cũ\s*PCT-000011\s*6 bao$/u,
-    // 6 old − 1 Áo granted + 6 new waiting: the granted Áo awaits the answer, noted apart.
+    /^Phiếu chờ cũ\s*PCT-000011\s*7 bao$/u,
+    /^Hủy khỏi phiếu chờ\s*1 bao$/u,
+    // 7 old − 1 Áo granted − 1 Quần cancelled + 6 new waiting: the granted Áo awaits the
+    // answer, noted apart.
     /^⇒ Phiếu chờ mới\s*PCT-000012\s*11 bao$/u,
   ]);
   await expect(

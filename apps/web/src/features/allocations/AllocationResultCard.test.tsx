@@ -5,7 +5,14 @@ import { describe, expect, it } from 'vitest';
 import { AllocationResultCard } from './AllocationResultCard';
 import { testDecision } from './testDecision';
 
-const names: Record<string, string> = { nam: 'Nam', nu: 'Nữ', jeans: 'Jeans', ao: 'Áo' };
+const names: Record<string, string> = {
+  nam: 'Nam',
+  nu: 'Nữ',
+  jeans: 'Jeans',
+  ao: 'Áo',
+  bo: 'Đồ bộ',
+  tienich: 'Sản phẩm tiện ích',
+};
 
 type Source = SessionDocument['sources'][number];
 
@@ -43,6 +50,11 @@ const orderSources = [source('nam', 3, 2, 1), source('nu', 2, 0, 2), source('jea
 function document(
   waitDocuments: SessionDocument['waitDocuments'],
   sources: readonly Source[],
+  decision: SessionDocument['decision'] = testDecision({
+    status: 'ACCEPTED',
+    canRespond: false,
+    allowedActions: [],
+  }),
 ): SessionDocument {
   // Only the fields the card reads; the full contract is covered by the API tests.
   return {
@@ -51,7 +63,7 @@ function document(
     resultCode: 'KQ-1',
     version: 1,
     carriedAllocations: [],
-    decision: testDecision({ status: 'ACCEPTED', canRespond: false, allowedActions: [] }),
+    decision,
     sources,
     lines: [],
     ...(waitDocuments === undefined ? {} : { waitDocuments }),
@@ -61,11 +73,12 @@ function document(
 function renderCard(
   waitDocuments: SessionDocument['waitDocuments'],
   sources: readonly Source[] = orderSources,
+  decision?: SessionDocument['decision'],
 ) {
   return renderToStaticMarkup(
     <AllocationResultCard
       createdAtText="09:00 15/10/26"
-      document={document(waitDocuments, sources)}
+      document={document(waitDocuments, sources, decision)}
       onOpenDecision={() => undefined}
       productName={(id) => names[id] ?? id}
       sessionText="PDH-000042 · 15/10/2026 · chốt 09:00 · phân bổ 09:00"
@@ -180,6 +193,78 @@ describe('AllocationResultCard', () => {
     expect(html).toContain('Phiếu chờ cũPCT-0000052 bao');
     expect(html).toContain('⇒ Phiếu chờ mớiPCT-0000051 bao');
     expect(html).toContain('Không gồm 1 bao đã cấp, chờ xác nhận phân bổ: 1 Nữ');
+  });
+
+  it('shows bags the run removed from the old wait document, so old ⇒ new adds up', () => {
+    const html = text(
+      renderCard(
+        {
+          before: {
+            id: 'b',
+            code: 'PCT-000017',
+            lines: [
+              { productId: 'nam', quantity: 1, remainingQuantity: 1, pendingQuantity: 0 },
+              { productId: 'tienich', quantity: 1, remainingQuantity: 1, pendingQuantity: 0 },
+            ],
+          },
+          after: {
+            id: 'c',
+            code: 'PCT-000021',
+            lines: [
+              { productId: 'nam', quantity: 1, remainingQuantity: 1, pendingQuantity: 0 },
+              { productId: 'bo', quantity: 1, remainingQuantity: 1, pendingQuantity: 0 },
+            ],
+          },
+          changed: true,
+          removed: [{ productId: 'tienich', quantity: 1, reason: 'PRIORITY_RESPONSE_TIMEOUT' }],
+        },
+        [source('ao', 1, 1, 0), source('bo', 1, 0, 1)],
+      ),
+    );
+    expect(html).toContain('Phiếu chờ cũPCT-0000172 bao');
+    expect(html).toContain('Hủy khỏi phiếu chờ1 bao1 Sản phẩm tiện ích');
+    expect(html).toContain('Đề nghị nhận đủ hàng không được phản hồi trước giờ chốt phân bổ');
+    expect(html).toContain('⇒ Phiếu chờ mớiPCT-0000212 bao');
+    // The removal row sits between the old and the new document.
+    expect(html.indexOf('Hủy khỏi phiếu chờ')).toBeGreaterThan(html.indexOf('Phiếu chờ cũ'));
+    expect(html.indexOf('Hủy khỏi phiếu chờ')).toBeLessThan(html.indexOf('⇒ Phiếu chờ mới'));
+    expect(html).not.toContain('Điều chỉnh phiếu chờ');
+  });
+
+  it('never shows revoked or moved-back bags as still coming', () => {
+    const revoked = text(
+      renderCard(
+        undefined,
+        orderSources,
+        testDecision({
+          status: 'PENDING',
+          grantedQuantity: 3,
+          actionableQuantity: 2,
+          revokedQuantity: 1,
+          actionableLines: [
+            { productId: 'nam', grantedQuantity: 2, revokedQuantity: 1, actionableQuantity: 1 },
+            { productId: 'jeans', grantedQuantity: 1, revokedQuantity: 0, actionableQuantity: 1 },
+          ],
+        }),
+      ),
+    );
+    expect(revoked).toContain('Đã thu hồi 1 bao do hủy phiếu chờ: 1 Nam. Còn hiệu lực 2 bao.');
+    expect(revoked).not.toContain('Đã chuyển phiếu chờ:');
+
+    const moved = text(
+      renderCard(
+        undefined,
+        orderSources,
+        testDecision({ status: 'WAITLISTED', canRespond: false, allowedActions: [] }),
+      ),
+    );
+    expect(moved).toContain('Đã chuyển phiếu chờ: 3 bao trả lại kho tổng');
+    expect(moved).not.toContain('Đã thu hồi');
+
+    // An accepted result without revocations reads as before.
+    const accepted = text(render(undefined));
+    expect(accepted).not.toContain('Đã thu hồi');
+    expect(accepted).not.toContain('Đã chuyển phiếu chờ:');
   });
 
   it('says when the run left the wait document unchanged or had none', () => {

@@ -18,6 +18,7 @@ import {
   lineOpenQuantity,
   readOpenWaitDocument,
   readWaitDocumentFilters,
+  waitDocumentClosingDescription,
   waitDocumentEventDescription,
   waitDocumentLabel,
   waitDocumentStatusFilterLabel,
@@ -428,7 +429,12 @@ function WaitDocumentCard({
             </button>
           ) : null}
           <small>
-            {waitDocumentEventDescription(document.closedEvent ?? document.openedEvent)}
+            {document.closedEvent
+              ? waitDocumentClosingDescription({
+                  lines: document.lines,
+                  closedEvent: document.closedEvent,
+                })
+              : waitDocumentEventDescription(document.openedEvent)}
           </small>
         </span>
         <Button

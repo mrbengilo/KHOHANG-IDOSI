@@ -147,6 +147,15 @@ hàng ngừng hoạt động; HTKD cần phân công còn hiệu lực). Ngoại
   − phần cấp PC của chính lượt đó. Ví dụ DS TH: 15/10 phiếu cũ 3 nam + 1 short + 2 nữ, cấp 1 nữ →
   phiếu mới 3 nam + 1 short + 1 nữ; 16/10 phiếu cũ 3 nam + 1 short + 1 nữ, cấp 1 nam + 1 short +
   1 nữ, chờ mới 1 đồ bộ → phiếu mới 2 nam + 1 đồ bộ.
+- Hàng **bị bỏ khỏi phiếu cũ mà không được cấp** trong lượt phân bổ hiện thành dòng riêng giữa phiếu
+  cũ và phiếu mới, nên phiếu mới = phiếu cũ − cấp cho phiếu chờ cũ − **hàng bị bỏ** + hàng chờ mới.
+  Lượt 09:00 chỉ tự bỏ một loại: PC có **đề nghị nhận đủ** (lượt ưu tiên FULL) không được phản hồi
+  trước giờ chốt bị hủy (`full_offer_timeout`, khai báo `cancelled` của sự kiện `allocation_run`) —
+  dòng “Hủy khỏi phiếu chờ”; phần giảm không khai báo (`adjusted`) hiện “Điều chỉnh phiếu chờ”. Số
+  đọc từ snapshot đóng (bất biến) của phiếu cũ do chính lượt đó đóng; API trả `waitDocuments.removed`
+  khi có thêm opt-in `includeWaitRemovals=true` (bundle cũ giữ shape). Ví dụ DS CT: phiếu cũ
+  PCT-000017 = 1 Quần áo nam + 1 Sản phẩm tiện ích (đề nghị nhận đủ quá hạn), đặt 1 Áo dài + 1 Đồ bộ,
+  cấp 1 Áo dài → hủy 1 Sản phẩm tiện ích, phiếu mới PCT-000021 = 1 Quần áo nam + 1 Đồ bộ.
 - “Dòng theo mặt hàng (mã PC)” giữ danh sách PC cũ (tìm PC/PUT, lý do hủy, lịch sử ưu tiên); liên kết
   cũ có `wt.*` vẫn mở danh sách này. URL giữ bộ lọc/phiếu đang mở (`wd*`, `wdOpen`).
 - Responsive 360–1440 px (bảng thành thẻ trên mobile, nút 44 px), ảnh E2E trong CI artifact.
