@@ -6,7 +6,24 @@ import { Badge } from '../../components/Badge';
 import './allocation-summary.css';
 import { Button } from '../../components/Button';
 import { decisionCode, decisionStatusLabel, decisionStatusTone } from './allocationDecisionApi';
-import { summarizeAllocation, summaryText, type SummaryItem } from './allocationSummary';
+import {
+  summarizeAllocation,
+  summaryText,
+  type SummaryItem,
+  type WaitRemoval,
+} from './allocationSummary';
+
+/** Why bags left the old wait document in this run without being granted. */
+const removalLabel: Record<WaitRemoval['reason'], { title: string; note: string }> = {
+  PRIORITY_RESPONSE_TIMEOUT: {
+    title: 'Hủy khỏi phiếu chờ',
+    note: 'Đề nghị nhận đủ hàng không được phản hồi trước giờ chốt phân bổ nên phiếu chờ của mặt hàng này tự hủy; hàng đã giữ được trả lại kho.',
+  },
+  SYSTEM_ADJUSTMENT: {
+    title: 'Điều chỉnh phiếu chờ',
+    note: 'Hệ thống đối soát lại nhu cầu chờ trong lượt phân bổ này; xem chi tiết ở mục Phiếu chờ.',
+  },
+};
 
 function ItemChips({
   items,
@@ -35,7 +52,7 @@ function SummaryRow({
 }: {
   readonly label: ReactNode;
   readonly total?: number;
-  readonly tone: 'ordered' | 'granted' | 'waiting' | 'previous' | 'next' | 'neutral';
+  readonly tone: 'ordered' | 'granted' | 'waiting' | 'previous' | 'removed' | 'next' | 'neutral';
   readonly children: ReactNode;
 }) {
   return (
@@ -67,8 +84,8 @@ function WaitDocumentLabel({
 /**
  * One store in one session, read top to bottom like the store says it: what it ordered, what it
  * got, what waits for priority, the wait document before the run and the one after it. Both wait
- * documents list only bags still waiting for allocation, so new = old − granted to old tickets +
- * new waiting; granted bags awaiting the store's answer are noted apart. Lines, sources and rounds
+ * documents list only bags still waiting for allocation, so new = old − granted to old tickets −
+ * removed by the run + new waiting; granted bags awaiting the store's answer are noted apart. Lines, sources and rounds
  * stay behind "Xem chi tiết"; internal document identifiers are never shown to the user.
  */
 export function AllocationResultCard({
@@ -160,6 +177,19 @@ export function AllocationResultCard({
             </SummaryRow>
           ) : null}
         </div>
+        {wait && !wait.untracked
+          ? wait.removed.map((removal) => (
+              <SummaryRow
+                key={removal.reason}
+                label={removalLabel[removal.reason].title}
+                total={removal.total}
+                tone="removed"
+              >
+                <ItemChips items={removal.items} empty="" />
+                <p className="allocation-summary__note">{removalLabel[removal.reason].note}</p>
+              </SummaryRow>
+            ))
+          : null}
         {wait && wait.untracked ? (
           <SummaryRow label="Phiếu chờ" tone="neutral">
             <span className="allocation-summary__empty">

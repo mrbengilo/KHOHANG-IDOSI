@@ -5,7 +5,14 @@ import { describe, expect, it } from 'vitest';
 import { AllocationResultCard } from './AllocationResultCard';
 import { testDecision } from './testDecision';
 
-const names: Record<string, string> = { nam: 'Nam', nu: 'Nữ', jeans: 'Jeans', ao: 'Áo' };
+const names: Record<string, string> = {
+  nam: 'Nam',
+  nu: 'Nữ',
+  jeans: 'Jeans',
+  ao: 'Áo',
+  bo: 'Đồ bộ',
+  tienich: 'Sản phẩm tiện ích',
+};
 
 type Source = SessionDocument['sources'][number];
 
@@ -180,6 +187,42 @@ describe('AllocationResultCard', () => {
     expect(html).toContain('Phiếu chờ cũPCT-0000052 bao');
     expect(html).toContain('⇒ Phiếu chờ mớiPCT-0000051 bao');
     expect(html).toContain('Không gồm 1 bao đã cấp, chờ xác nhận phân bổ: 1 Nữ');
+  });
+
+  it('shows bags the run removed from the old wait document, so old ⇒ new adds up', () => {
+    const html = text(
+      renderCard(
+        {
+          before: {
+            id: 'b',
+            code: 'PCT-000017',
+            lines: [
+              { productId: 'nam', quantity: 1, remainingQuantity: 1, pendingQuantity: 0 },
+              { productId: 'tienich', quantity: 1, remainingQuantity: 1, pendingQuantity: 0 },
+            ],
+          },
+          after: {
+            id: 'c',
+            code: 'PCT-000021',
+            lines: [
+              { productId: 'nam', quantity: 1, remainingQuantity: 1, pendingQuantity: 0 },
+              { productId: 'bo', quantity: 1, remainingQuantity: 1, pendingQuantity: 0 },
+            ],
+          },
+          changed: true,
+          removed: [{ productId: 'tienich', quantity: 1, reason: 'PRIORITY_RESPONSE_TIMEOUT' }],
+        },
+        [source('ao', 1, 1, 0), source('bo', 1, 0, 1)],
+      ),
+    );
+    expect(html).toContain('Phiếu chờ cũPCT-0000172 bao');
+    expect(html).toContain('Hủy khỏi phiếu chờ1 bao1 Sản phẩm tiện ích');
+    expect(html).toContain('Đề nghị nhận đủ hàng không được phản hồi trước giờ chốt phân bổ');
+    expect(html).toContain('⇒ Phiếu chờ mớiPCT-0000212 bao');
+    // The removal row sits between the old and the new document.
+    expect(html.indexOf('Hủy khỏi phiếu chờ')).toBeGreaterThan(html.indexOf('Phiếu chờ cũ'));
+    expect(html.indexOf('Hủy khỏi phiếu chờ')).toBeLessThan(html.indexOf('⇒ Phiếu chờ mới'));
+    expect(html).not.toContain('Điều chỉnh phiếu chờ');
   });
 
   it('says when the run left the wait document unchanged or had none', () => {

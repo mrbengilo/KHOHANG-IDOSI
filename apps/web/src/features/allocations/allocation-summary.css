@@ -100,6 +100,16 @@
   background: var(--surface);
 }
 
+.allocation-summary__row--removed {
+  border-style: dashed;
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+}
+
+.allocation-summary__row--removed dt {
+  color: var(--danger);
+}
+
 .allocation-summary__row--next {
   border-color: var(--brand);
   background: var(--brand-soft);

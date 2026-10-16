@@ -2,6 +2,7 @@ import type {
   AllocationResult,
   SessionWaitDocuments,
   SessionWaitDocumentSnapshot,
+  SessionWaitRemovalReason,
 } from '@idosi/contracts';
 
 export interface SummaryItem {
@@ -34,10 +35,21 @@ export interface WaitDocumentChange {
   /** False when the run left the store's open demand (and so its document) unchanged. */
   readonly changed: boolean;
   /**
+   * Bags the run took off the old document without granting them, per reason, so that
+   * new = old − granted to old − removed + new waiting holds on the card.
+   */
+  readonly removed: readonly WaitRemoval[];
+  /**
    * True when this session queued bags but no wait document exists: the run predates the store
    * wait documents (0045), so old/new documents cannot be shown honestly.
    */
   readonly untracked: boolean;
+}
+
+export interface WaitRemoval {
+  readonly reason: SessionWaitRemovalReason;
+  readonly items: readonly SummaryItem[];
+  readonly total: number;
 }
 
 export interface AllocationSummary {
@@ -84,6 +96,25 @@ function items(totals: Totals, productName: (productId: string) => string): Summ
 
 function total(list: readonly SummaryItem[]): number {
   return list.reduce((sum, item) => sum + item.quantity, 0);
+}
+
+const removalReasons: readonly SessionWaitRemovalReason[] = [
+  'PRIORITY_RESPONSE_TIMEOUT',
+  'SYSTEM_ADJUSTMENT',
+];
+
+function waitRemovals(
+  removed: SessionWaitDocuments['removed'],
+  productName: (productId: string) => string,
+): WaitRemoval[] {
+  return removalReasons.flatMap((reason) => {
+    const totals: Totals = new Map();
+    for (const line of removed ?? []) {
+      if (line.reason === reason) add(totals, line.productId, line.quantity);
+    }
+    const list = items(totals, productName);
+    return list.length ? [{ reason, items: list, total: total(list) }] : [];
+  });
 }
 
 function waitDocumentSummary(
@@ -150,6 +181,7 @@ export function summarizeAllocation(
       before: waitDocumentSummary(waitDocuments.before, productName),
       after: waitDocumentSummary(waitDocuments.after, productName),
       changed: waitDocuments.changed,
+      removed: waitRemovals(waitDocuments.removed, productName),
       untracked:
         waitDocuments.before === null && waitDocuments.after === null && total(waitingItems) > 0,
     },
