@@ -17,6 +17,7 @@ import {
   readOpenWaitDocument,
   readWaitDocumentFilters,
   readWaitTicketTabView,
+  waitDocumentClosingDescription,
   waitDocumentEventDescription,
   waitDocumentLabel,
   withWaitDocumentFilters,
@@ -228,6 +229,45 @@ describe('wait document navigation', () => {
     ).toBe('Xác nhận phân bổ kết quả phiên PDH-000042 · đơn RE-000012');
     expect(
       waitDocumentEventDescription(event({ kind: 'WAIT_DOCUMENT_CANCELLED', reason: 'Không cần' })),
+    ).toBe('Hủy phiếu chờ · lý do: Không cần');
+  });
+
+  it('says why the 09:00 run took bags off a document it closed', () => {
+    // DS CT: PCT-000017 = 1 nam + 1 tiện ích; the tiện ích ticket's full offer went unanswered.
+    const closed = (values: { cancelled: number; adjusted: number }) => ({
+      closedEvent: event(),
+      lines: [
+        line(nam, 'Nam', {
+          carriedInQuantity: 1,
+          confirmedQuantity: 0,
+          cancelledQuantity: 0,
+          adjustedQuantity: values.adjusted,
+          carriedOutQuantity: 1 - values.adjusted,
+        }),
+        line(tre, 'Tiện ích', {
+          carriedInQuantity: 1,
+          confirmedQuantity: 0,
+          cancelledQuantity: values.cancelled,
+          adjustedQuantity: 0,
+          carriedOutQuantity: 1 - values.cancelled,
+        }),
+      ],
+    });
+    expect(waitDocumentClosingDescription(closed({ cancelled: 1, adjusted: 0 }))).toBe(
+      'Phân bổ 09:00 phiên PDH-000042 · hủy 1 bao do quá hạn phản hồi đề nghị nhận đủ hàng',
+    );
+    expect(waitDocumentClosingDescription(closed({ cancelled: 0, adjusted: 1 }))).toBe(
+      'Phân bổ 09:00 phiên PDH-000042 · điều chỉnh 1 bao',
+    );
+    expect(waitDocumentClosingDescription(closed({ cancelled: 0, adjusted: 0 }))).toBe(
+      'Phân bổ 09:00 phiên PDH-000042',
+    );
+    // Other events already name what they did; their cancelled bags need no run explanation.
+    expect(
+      waitDocumentClosingDescription({
+        ...closed({ cancelled: 1, adjusted: 0 }),
+        closedEvent: event({ kind: 'WAIT_DOCUMENT_CANCELLED', reason: 'Không cần' }),
+      }),
     ).toBe('Hủy phiếu chờ · lý do: Không cần');
   });
 });

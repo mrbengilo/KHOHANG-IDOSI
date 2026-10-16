@@ -7,6 +7,7 @@ import './allocation-summary.css';
 import { Button } from '../../components/Button';
 import { decisionCode, decisionStatusLabel, decisionStatusTone } from './allocationDecisionApi';
 import {
+  resultOutcome,
   summarizeAllocation,
   summaryText,
   type SummaryItem,
@@ -108,6 +109,7 @@ export function AllocationResultCard({
   const summary = summarizeAllocation(document, productName);
   const decision = document.decision ?? null;
   const wait = summary.waitDocuments;
+  const outcome = resultOutcome(decision, productName);
   const [detailsOpen, setDetailsOpen] = useState(false);
   return (
     <article className="panel session-document allocation-summary-card" aria-label={storeName}>
@@ -151,6 +153,18 @@ export function AllocationResultCard({
           {summary.grantedForWait.length > 0 ? (
             <p className="allocation-summary__note">
               Trong đó cấp cho phiếu chờ cũ: {summaryText(summary.grantedForWait, '')}
+            </p>
+          ) : null}
+          {outcome && outcome.revokedTotal > 0 ? (
+            <p className="allocation-summary__note allocation-summary__note--alert">
+              Đã thu hồi {outcome.revokedTotal} bao do hủy phiếu chờ:{' '}
+              {summaryText(outcome.revoked, '')}. Còn hiệu lực {outcome.actionableTotal} bao.
+            </p>
+          ) : null}
+          {outcome?.movedToWaiting ? (
+            <p className="allocation-summary__note allocation-summary__note--alert">
+              Đã chuyển phiếu chờ: {outcome.actionableTotal} bao trả lại kho tổng, nhu cầu quay về
+              phiếu chờ của cửa hàng.
             </p>
           ) : null}
         </SummaryRow>

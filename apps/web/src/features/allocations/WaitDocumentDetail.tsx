@@ -14,6 +14,7 @@ import {
   currentDocumentDetail,
   lineOpenQuantity,
   waitDocumentActor,
+  waitDocumentClosingDescription,
   waitDocumentEventDescription,
   waitDocumentLabel,
   waitDocumentTone,
@@ -236,8 +237,11 @@ export function WaitDocumentDetail({
             <dt>Xử lý</dt>
             <dd>
               {formatDateTime(document.closedAt)} ·{' '}
-              {waitDocumentEventDescription(document.closedEvent)} ·{' '}
-              {waitDocumentActor(document.closedEvent)}
+              {waitDocumentClosingDescription({
+                lines: document.lines,
+                closedEvent: document.closedEvent,
+              })}{' '}
+              · {waitDocumentActor(document.closedEvent)}
             </dd>
           </div>
         ) : null}

@@ -161,6 +161,11 @@
   font-size: 0.85rem;
 }
 
+.allocation-summary__note--alert {
+  color: var(--danger);
+  font-weight: 600;
+}
+
 .allocation-summary__row--granted dt {
   color: var(--success);
 }
