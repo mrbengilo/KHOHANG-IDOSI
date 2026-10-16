@@ -94,10 +94,7 @@ export function CommitmentTable({
                     </td>
                   ) : null}
                   <td data-primary-column data-label="Cửa hàng">
-                    <strong>{row.storeCode}</strong>
-                    <small>
-                      <span className="store-name">{row.storeName}</span>
-                    </small>
+                    <strong className="store-name">{row.storeName}</strong>
                     {row.htkdNames.length > 0 ? (
                       <small>HTKD: {row.htkdNames.join(', ')}</small>
                     ) : null}

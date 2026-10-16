@@ -989,10 +989,7 @@ function HtkdAssignmentsForm({
                     type="checkbox"
                   />
                   <span>
-                    <strong>{store.code}</strong>
-                    <small>
-                      <span className="store-name">{store.name}</span>
-                    </small>
+                    <strong className="store-name">{store.name}</strong>
                   </span>
                 </label>
               );
@@ -1160,7 +1157,7 @@ function CreateAccountForm({
               <option value="">Chọn cửa hàng</option>
               {stores.map((store) => (
                 <option className="store-name" key={store.id} value={store.id}>
-                  {store.code} · {store.name}
+                  {store.name}
                 </option>
               ))}
             </select>
@@ -1386,5 +1383,5 @@ function AdminLoadError({
 function storeLabel(storeId: string | null, stores: ReadonlyMap<string, Store>): string {
   if (!storeId) return 'Chưa gán cửa hàng';
   const store = stores.get(storeId);
-  return store ? `${store.code} · ${store.name}` : storeId;
+  return store ? store.name : storeId;
 }

@@ -86,7 +86,7 @@ export function storeLabel(store: {
   readonly code: string | null;
   readonly name: string | null;
 }): string {
-  if (store.code && store.name) return `${store.code} · ${store.name}`;
+  // Only the name is shown; the code is a fallback for a legacy row that lost its name.
   if (store.name || store.code) return (store.name ?? store.code)!;
   return store.storeId
     ? `Cửa hàng ${shortId(store.storeId)} · ${NO_LONGER_AVAILABLE}`

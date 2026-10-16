@@ -74,7 +74,7 @@ function confirmGroupDeactivation(group: StoreGroup): boolean {
 
 function confirmStoreDeactivation(store: Store): boolean {
   return window.confirm(
-    `Ngừng cửa hàng ${store.code}? Các thao tác bán lẻ sẽ bị chặn ngay lập tức.`,
+    `Ngừng cửa hàng ${store.name}? Các thao tác bán lẻ sẽ bị chặn ngay lập tức.`,
   );
 }
 
@@ -374,8 +374,8 @@ function AdminStoresContent() {
           ? await updateAdminStore(store.id, parsed.input as UpdateStoreRequest, key)
           : await createAdminStore(parsed.input as CreateStoreRequest, key);
         return store
-          ? `Đã cập nhật cửa hàng ${saved.code} lên phiên bản ${saved.version}.`
-          : `Đã tạo cửa hàng ${saved.code}.`;
+          ? `Đã cập nhật cửa hàng ${saved.name} lên phiên bản ${saved.version}.`
+          : `Đã tạo cửa hàng ${saved.name}.`;
       },
       true,
     );
@@ -403,7 +403,7 @@ function AdminStoresContent() {
     const fingerprint = JSON.stringify({ input, storeId: store.id });
     await runMutation(`store:${store.id}`, fingerprint, async (key) => {
       const updated = await updateAdminStore(store.id, input, key);
-      return `Cửa hàng ${updated.code}: ${storeStatusLabel[updated.status].toLocaleLowerCase('vi-VN')}.`;
+      return `Cửa hàng ${updated.name}: ${storeStatusLabel[updated.status].toLocaleLowerCase('vi-VN')}.`;
     });
   };
 
@@ -830,7 +830,7 @@ function StoreEditor({
             : 'Cửa hàng mới được kích hoạt và ghi nhật ký sau khi backend xác nhận.'
         }
         onCancel={onCancel}
-        title={store ? `Sửa cửa hàng ${store.code}` : 'Tạo cửa hàng'}
+        title={store ? `Sửa cửa hàng ${store.name}` : 'Tạo cửa hàng'}
       />
       <form className="admin-form-grid" onSubmit={submit}>
         <label className="admin-field">
@@ -1067,10 +1067,7 @@ function StoreTable({
                   <strong>
                     <span className="store-name">{store.name}</span>
                   </strong>
-                  <small>
-                    {store.code}
-                    {store.address ? ` · ${store.address}` : ''}
-                  </small>
+                  {store.address ? <small>{store.address}</small> : null}
                 </td>
                 <td data-label="Nhóm / loại">
                   <strong>{group ? group.name : 'Nhóm chưa tải'}</strong>
@@ -1085,7 +1082,7 @@ function StoreTable({
                 <td data-label="Thao tác">
                   <div className="admin-row-actions">
                     <button
-                      aria-label={`Chỉnh sửa cửa hàng ${store.code}`}
+                      aria-label={`Chỉnh sửa cửa hàng ${store.name}`}
                       className="admin-action admin-action--secondary"
                       disabled={busyAction !== null}
                       onClick={() => onEdit(store)}
@@ -1094,7 +1091,7 @@ function StoreTable({
                       <Pencil aria-hidden="true" size={15} /> Sửa
                     </button>
                     <button
-                      aria-label={`${store.status === 'ACTIVE' ? 'Ngừng' : 'Kích hoạt'} cửa hàng ${store.code}`}
+                      aria-label={`${store.status === 'ACTIVE' ? 'Ngừng' : 'Kích hoạt'} cửa hàng ${store.name}`}
                       aria-busy={rowBusy}
                       className={
                         store.status === 'ACTIVE'

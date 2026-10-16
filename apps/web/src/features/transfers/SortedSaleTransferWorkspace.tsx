@@ -219,7 +219,7 @@ export function SortedSaleTransferWorkspace({
   );
   const storeName = (id: string) => {
     const store = stores.find((item) => item.id === id);
-    return store ? `${store.code} · ${store.name}` : id;
+    return store ? store.name : id;
   };
 
   return (
@@ -269,7 +269,7 @@ export function SortedSaleTransferWorkspace({
                 ) : null}
                 {destinations.map((store) => (
                   <option className="store-name" key={store.id} value={store.id}>
-                    {store.code} · {store.name}
+                    {store.name}
                   </option>
                 ))}
               </select>

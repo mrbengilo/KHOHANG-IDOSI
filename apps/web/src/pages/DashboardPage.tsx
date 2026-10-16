@@ -568,7 +568,7 @@ function DashboardFilters({
             {role === 'WHOLESALE' ? <option value="ALL">Tất cả cửa hàng sỉ</option> : null}
             {stores.map((store) => (
               <option className="store-name" key={store.id} value={store.id}>
-                {store.code} • {store.name}
+                {store.name}
               </option>
             ))}
           </select>
@@ -848,7 +848,6 @@ function DashboardContent({
                       <strong>
                         <span className="store-name">{row.store.name}</span>
                       </strong>
-                      <small>{row.store.code}</small>
                     </td>
                     <td data-label="Loại">
                       <Badge tone={row.store.kind === 'RETAIL' ? 'info' : 'neutral'}>

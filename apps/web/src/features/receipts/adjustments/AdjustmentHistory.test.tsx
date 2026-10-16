@@ -125,7 +125,7 @@ describe('adjustment history timeline', () => {
     const positions = order.map((label) => html.indexOf(label));
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
-    expect(html.replace(/<[^>]+>/g, '')).toContain('HTKD Lan · HTKD · Q1 · Cửa hàng Quận 1');
+    expect(html.replace(/<[^>]+>/g, '')).toContain('HTKD Lan · HTKD · Cửa hàng Quận 1');
     expect(html).toContain('Admin Minh · Admin');
     expect(html).toContain('Ghi chú: Đồng ý');
     expect(html).toContain('Đã xử lý');

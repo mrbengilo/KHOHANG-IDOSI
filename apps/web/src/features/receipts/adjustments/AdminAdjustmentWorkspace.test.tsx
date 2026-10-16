@@ -185,7 +185,8 @@ describe('admin discrepancy workspace', () => {
     expect(html).toContain('Đang xem: Chờ HTKD duyệt (hồ sơ cũ) · Mọi cửa hàng · 1 hồ sơ');
     expect(html).toContain('PSL-000001');
     expect(html).toContain('Phiếu nhận PNH-000001');
-    expect(html).toContain('Q1 · Cửa hàng Quận 1');
+    expect(html).toContain('Cửa hàng Quận 1');
+    expect(html).not.toContain('Q1 · Cửa hàng Quận 1');
     expect(html).toContain('Cửa hàng Q1');
     expect(html).toContain('HTKD Lan');
     expect(html).toContain('Tạm tính, chưa hiệu lực');

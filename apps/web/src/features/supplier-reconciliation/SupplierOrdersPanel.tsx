@@ -178,7 +178,7 @@ export function SupplierOrdersPanel({
                 <option value="">Tất cả cửa hàng trong phạm vi</option>
                 {(stores.data?.data ?? []).map((store) => (
                   <option className="store-name" key={store.id} value={store.id}>
-                    {store.code} — {store.name}
+                    {store.name}
                     {store.isActive ? '' : ' (ngừng hoạt động)'}
                   </option>
                 ))}

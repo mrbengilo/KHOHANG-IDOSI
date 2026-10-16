@@ -124,13 +124,16 @@ describe('IDOSI workspace source isolation', () => {
               id: '20000000-0000-4000-8000-000000000002',
               kind: 'WHOLESALE',
               code: 'TEST_WHOLESALE',
+              name: 'Cửa hàng sỉ kiểm thử',
             },
           ],
         }),
       ),
     );
-    expect(html).toContain('TEST_RETAIL');
-    expect(html).not.toContain('TEST_WHOLESALE');
+    // Only the store name is shown; the code never reaches the UI.
+    expect(html).toContain('Cửa hàng kiểm thử');
+    expect(html).not.toContain('TEST_RETAIL');
+    expect(html).not.toContain('Cửa hàng sỉ kiểm thử');
     expect(html).toContain('Doanh thu &amp; hàng đã bán');
     expect(
       client

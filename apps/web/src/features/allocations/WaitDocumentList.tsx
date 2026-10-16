@@ -179,7 +179,7 @@ export function WaitDocumentList({
               <option value="">Tất cả cửa hàng được phép xem</option>
               {stores.map((store) => (
                 <option className="store-name" key={store.id} value={store.id}>
-                  {store.code} · {store.name}
+                  {store.name}
                 </option>
               ))}
             </select>

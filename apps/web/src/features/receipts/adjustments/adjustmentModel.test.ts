@@ -188,7 +188,7 @@ describe('receipt adjustment preview', () => {
     expect(accountLabel({ accountId: null, displayName: null, username: null })).toBe(
       'Chưa ghi nhận',
     );
-    expect(storeLabel({ storeId: accountId, code: 'Q1', name: 'Quận 1' })).toBe('Q1 · Quận 1');
+    expect(storeLabel({ storeId: accountId, code: 'Q1', name: 'Quận 1' })).toBe('Quận 1');
     expect(storeLabel({ storeId: accountId, code: null, name: null })).toBe(
       'Cửa hàng 00000000… · Không còn thông tin',
     );
