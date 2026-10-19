@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, eq, isNull } from 'drizzle-orm';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  applyWarehouseMovement,
   closeDatabase,
   db,
   orderRequests,
@@ -16,10 +17,12 @@ import {
   ensureDailyOrderingSession,
   transitionOrderSession,
   OrderSessionConflictError,
+  withSerializableTransaction,
 } from '../src/index.js';
 import {
   countOrderingQuota,
   OrderRequestAuthorizationError,
+  ProductOutOfStockError,
   RequestLimitExceededError,
 } from '../src/order-requests.js';
 
@@ -223,6 +226,52 @@ describePostgres('24/7 ordering and allocation-completion quota', () => {
     expect(await db.transaction((tx) => countOrderingQuota(tx, store.id, next.id))).toBe(1);
   });
 
+  it('refuses products without free central-warehouse stock and keeps the key reusable', async () => {
+    const { admin, store, product: stocked } = await createFixture();
+    const neverStocked = await createProduct('EMPTY', 0);
+    // On-hand alone is not enough: bags already held for allocations are not orderable.
+    const fullyHeld = await createProduct('HELD', 4);
+    await moveStock(fullyHeld.id, 'reservation', 0, 4);
+    const context = await prepareOrderingContext(db, admin.id, store.id, randomUUID());
+    sessionIds.add(context.session.id);
+    const idempotencyKey = randomUUID();
+    const submit = (productIds: readonly string[]) =>
+      submitOrderRequest(db, {
+        orderSessionId: context.session.id,
+        storeId: store.id,
+        requestedByUserId: admin.id,
+        items: productIds.map((productId) => ({ productId, quantity: 2 })),
+        idempotencyKey,
+        requestHash: productIds.join(','),
+      });
+
+    const rejected = await submit([stocked.id, neverStocked.id, fullyHeld.id]).catch(
+      (error: unknown) => error,
+    );
+    expect(rejected).toBeInstanceOf(ProductOutOfStockError);
+    expect((rejected as ProductOutOfStockError).products).toEqual(
+      [neverStocked, fullyHeld]
+        .map((product) => ({ productId: product.id, productName: product.name }))
+        .sort((left, right) => left.productId.localeCompare(right.productId)),
+    );
+    const stored = await db
+      .select({ id: orderRequests.id })
+      .from(orderRequests)
+      .where(eq(orderRequests.storeId, store.id));
+    expect(stored).toHaveLength(0);
+
+    // The rejected attempt left no idempotency record; the same key succeeds once stock frees.
+    await moveStock(fullyHeld.id, 'reservation_release', 0, -1);
+    await moveStock(neverStocked.id, 'opening_balance', 1, 0);
+    const accepted = await submit([stocked.id, neverStocked.id, fullyHeld.id]);
+    if (accepted.replayed) throw new Error('A rejected attempt must not be replayed.');
+    const items = await db
+      .select({ productId: orderRequestItems.productId })
+      .from(orderRequestItems)
+      .where(eq(orderRequestItems.orderRequestId, accepted.value.id));
+    expect(items).toHaveLength(3);
+  });
+
   it('gives a cancelled request slot back to the store', async () => {
     const { admin, store, product } = await createFixture();
     const [session] = await db
@@ -331,9 +380,9 @@ async function createFixture() {
     .orderBy(asc(users.createdAt))
     .limit(1);
   const [group] = await db.select().from(storeGroups).limit(1);
-  const [product] = await db.select().from(products).where(eq(products.isActive, true)).limit(1);
-  if (!admin || !group || !product)
-    throw new Error('Reference data and bootstrap admin are required.');
+  if (!admin || !group) throw new Error('Reference data and bootstrap admin are required.');
+  // Ordering needs free central-warehouse stock, so every fixture owns a stocked product.
+  const product = await createProduct('CYCLE', 100);
   const [store] = await db
     .insert(stores)
     .values({
@@ -344,4 +393,36 @@ async function createFixture() {
     })
     .returning();
   return { admin, store: store!, product };
+}
+
+async function createProduct(prefix: string, openingBags: number) {
+  const token = randomUUID().replaceAll('-', '');
+  const [product] = await db
+    .insert(products)
+    .values({
+      sku: `${prefix}-${token}`,
+      slug: `${prefix.toLowerCase()}-${token}`,
+      name: `${prefix} ${token.slice(0, 6)}`,
+    })
+    .returning();
+  if (openingBags > 0) await moveStock(product!.id, 'opening_balance', openingBags, 0);
+  return product!;
+}
+
+async function moveStock(
+  productId: string,
+  eventType: 'opening_balance' | 'reservation' | 'reservation_release',
+  onHandDelta: number,
+  reservedDelta: number,
+) {
+  await withSerializableTransaction(db, (tx) =>
+    applyWarehouseMovement(tx, {
+      productId,
+      eventType,
+      onHandDelta,
+      reservedDelta,
+      sourceType: 'ordering_stock_test',
+      sourceId: randomUUID(),
+    }),
+  );
 }

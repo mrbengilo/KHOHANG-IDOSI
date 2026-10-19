@@ -8,6 +8,12 @@ interface ProductBagPickerProps {
   disabled?: boolean;
   required?: boolean;
   max?: number;
+  /** Products whose pick is being checked (e.g. against stock); their checkbox waits. */
+  checkingIds?: ReadonlySet<string>;
+  /** Products that cannot be picked (e.g. out of stock): greyed out; an already picked one can only be removed. */
+  unavailableIds?: ReadonlySet<string>;
+  /** Blocking message shown under a product, e.g. why it could not be picked. */
+  messages?: Readonly<Record<string, string>>;
   onSelect: (id: string, selected: boolean) => void;
   onQuantityChange: (id: string, quantity: number) => void;
   renderDetails?: (id: string) => ReactNode;
@@ -19,6 +25,9 @@ export function ProductBagPicker({
   disabled = false,
   required = false,
   max = 2000,
+  checkingIds,
+  unavailableIds,
+  messages,
   onSelect,
   onQuantityChange,
   renderDetails,
@@ -42,13 +51,24 @@ export function ProductBagPicker({
         const selected = Object.hasOwn(quantities, product.id);
         const quantity = quantities[product.id] ?? 1;
         const inputId = `${prefix}-${product.id}`;
+        const messageId = `${inputId}-message`;
+        const checking = checkingIds?.has(product.id) ?? false;
+        const message = messages?.[product.id];
+        const unavailable = unavailableIds?.has(product.id) ?? false;
         return (
-          <div className="bag-picker__item" key={product.id}>
+          <div
+            className={`bag-picker__item${unavailable ? ' bag-picker__item--unavailable' : ''}`}
+            key={product.id}
+          >
             <div className="bag-picker__row">
               <label className="bag-picker__choice">
                 <input
                   type="checkbox"
-                  checked={selected}
+                  // Shows the click at once; the parent decides once the check answers.
+                  checked={selected || checking}
+                  disabled={checking || (unavailable && !selected)}
+                  aria-busy={checking || undefined}
+                  aria-describedby={message ? messageId : undefined}
                   onChange={(event) => onSelect(product.id, event.target.checked)}
                 />
                 <span>
@@ -63,6 +83,11 @@ export function ProductBagPicker({
                   ) : null}
                 </span>
               </label>
+              {checking ? (
+                <small className="bag-picker__checking" role="status">
+                  Đang kiểm tra tồn kho tổng…
+                </small>
+              ) : null}
               {selected ? (
                 <div className="bag-picker__stepper">
                   <label className="sr-only" htmlFor={inputId}>
@@ -106,6 +131,16 @@ export function ProductBagPicker({
                 </div>
               ) : null}
             </div>
+            {message ? (
+              // A standing note of an unavailable product is not announced; a fresh refusal is.
+              <p
+                className="bag-picker__message"
+                id={messageId}
+                role={unavailable ? undefined : 'alert'}
+              >
+                {message}
+              </p>
+            ) : null}
             {selected && renderDetails ? (
               <div className="bag-picker__details">{renderDetails(product.id)}</div>
             ) : null}

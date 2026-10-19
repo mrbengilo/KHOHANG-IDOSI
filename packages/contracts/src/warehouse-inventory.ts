@@ -8,6 +8,8 @@ import {
 
 export const WarehouseInventoryQuerySchema = PaginationQuerySchema.extend({
   search: z.string().trim().max(120).optional(),
+  /** One product's row, e.g. the stock check when a product is picked for an order. */
+  productId: EntityIdSchema.optional(),
   projection: z.literal('waiting-demand-v2').optional(),
 }).strict();
 export type WarehouseInventoryQuery = z.infer<typeof WarehouseInventoryQuerySchema>;

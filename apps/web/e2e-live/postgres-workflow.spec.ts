@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { createProductWithStock } from './ordering-stock';
 import { tabApi } from './tab-api';
 
 const apiOrigin = 'http://127.0.0.1:3100';
@@ -434,6 +435,11 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
     await expect(page.getByText(`Đã tạo tài khoản ${storeUsername}.`)).toBeVisible();
   }
   const openSessionId = await ensureOpenOrderSession(page);
+  const [orderedProduct, toggledProduct] = await Promise.all(
+    ['A', 'B'].map((suffix) =>
+      createProductWithStock(`Hàng đặt PostgreSQL ${suffix} ${runSuffix}-${testInfo.retry}`, 10),
+    ),
+  );
 
   const logoutResponsePromise = page.waitForResponse(
     (response) =>
@@ -451,20 +457,23 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
     page.getByRole('heading', { exact: true, name: 'Đặt hàng & kết quả' }),
   ).toBeVisible();
   const lineNote = `REF-${runSuffix}-${testInfo.retry}-${'X'.repeat(180)}`;
-  await page.getByRole('checkbox').first().check();
+  const orderedCheckbox = page.getByRole('checkbox', { name: orderedProduct!.name });
+  await orderedCheckbox.check();
   await expect(page.getByRole('button', { name: /^Giảm số bao/ })).toBeDisabled();
   await page.getByRole('button', { name: /^Tăng số bao/ }).click();
   await page.getByLabel(/^Ghi chú mặt hàng/).fill(lineNote);
   await expect(page.getByText(`2 bao • ${lineNote}`)).toBeVisible();
-  await page.getByRole('checkbox').nth(1).check();
-  await page.getByRole('checkbox').nth(1).uncheck();
+  const toggledCheckbox = page.getByRole('checkbox', { name: toggledProduct!.name });
+  await toggledCheckbox.check();
+  await expect(page.getByRole('spinbutton')).toHaveCount(2);
+  await toggledCheckbox.uncheck();
   await expect(page.getByRole('spinbutton')).toHaveCount(1);
   for (const width of [360, 390, 768, 1366, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await expect
       .poll(() => page.evaluate(() => document.body.scrollWidth <= innerWidth))
       .toBe(true);
-    const checkbox = (await page.getByRole('checkbox').first().boundingBox())!;
+    const checkbox = (await orderedCheckbox.boundingBox())!;
     const quantity = (await page.getByRole('spinbutton').boundingBox())!;
     expect(
       Math.abs(checkbox.y + checkbox.height / 2 - quantity.y - quantity.height / 2),

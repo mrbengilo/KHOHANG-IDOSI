@@ -167,6 +167,7 @@ describe('KHOHANG-IDOSI API', () => {
       storeId: MEMORY_SEED_IDS.nvtStore,
       items: [{ productId: await firstProductId(storeCookie), quantity: 1 }],
     };
+    await stockWarehouse(payload.items[0].productId);
     const submit = (key) =>
       app.inject({
         method: 'POST',
@@ -1296,6 +1297,7 @@ describe('KHOHANG-IDOSI API', () => {
   test('replays the same idempotency key and rejects reuse with another payload', async () => {
     const cookie = cookieOf(await login('ds_nvt'));
     const productId = await firstProductId(cookie);
+    await stockWarehouse(productId);
     const payload = orderPayload(productId, 2);
     const first = await submitOrder(cookie, 'same-request-key', payload);
     const replay = await submitOrder(cookie, 'same-request-key', payload);
@@ -1312,6 +1314,7 @@ describe('KHOHANG-IDOSI API', () => {
   test('limits order request lists to a submitted-from window', async () => {
     const cookie = cookieOf(await login('ds_nvt'));
     const productId = await firstProductId(cookie);
+    await stockWarehouse(productId);
     const created = await submitOrder(cookie, 'window-request-key', orderPayload(productId, 1));
     assert.equal(created.statusCode, 201);
     const list = (submittedFrom) =>
@@ -1333,6 +1336,7 @@ describe('KHOHANG-IDOSI API', () => {
     const storeCookie = cookieOf(await login('ds_nvt'));
     const adminCookie = cookieOf(await login('admin'));
     const productId = await firstProductId(storeCookie);
+    await stockWarehouse(productId);
     const first = await submitOrder(storeCookie, 'request-with-note', {
       ...orderPayload(productId, 2),
       items: [{ productId, quantity: 2, note: 'Ưu tiên kiện loại A' }],
@@ -1413,6 +1417,7 @@ describe('KHOHANG-IDOSI API', () => {
     assert.ok(session);
 
     const productId = await firstProductId(storeCookie);
+    await stockWarehouse(productId);
     const created = await submitOrder(
       storeCookie,
       'cutoff-cancellation-request',
@@ -1447,6 +1452,7 @@ describe('KHOHANG-IDOSI API', () => {
   test('keeps the maximum-two invariant under concurrent submissions', async () => {
     const cookie = cookieOf(await login('ds_nvt'));
     const productId = await firstProductId(cookie);
+    await stockWarehouse(productId);
     const responses = await Promise.all(
       ['parallel-key-1', 'parallel-key-2', 'parallel-key-3'].map((key, index) =>
         submitOrder(cookie, key, orderPayload(productId, index + 1)),
@@ -1458,6 +1464,59 @@ describe('KHOHANG-IDOSI API', () => {
       responses.find((response) => response.statusCode === 409)?.json().error.code,
       'REQUEST_LIMIT_REACHED',
     );
+  });
+
+  test('rejects ordering a product whose central-warehouse stock is zero', async () => {
+    const cookie = cookieOf(await login('ds_nvt'));
+    const htkdCookie = cookieOf(await login('htkd'));
+    const products = await app.inject({
+      method: 'GET',
+      url: '/api/v1/products?pageSize=100',
+      headers: { cookie },
+    });
+    const [stocked, empty] = products.json().data;
+    await stockWarehouse(stocked.id, 3);
+    // The picker's stock check reads one product row; every ordering role may read it.
+    for (const reader of [cookie, htkdCookie]) {
+      assert.equal((await warehouseRow(reader, stocked.id)).availableBags, 3);
+      assert.equal((await warehouseRow(reader, empty.id)).availableBags, 0);
+    }
+
+    for (const [actor, label] of [
+      [cookie, 'store'],
+      [htkdCookie, 'htkd'],
+    ]) {
+      const rejected = await submitOrder(actor, `out-of-stock-${label}`, {
+        ...orderPayload(stocked.id, 1),
+        items: [
+          { productId: stocked.id, quantity: 1 },
+          { productId: empty.id, quantity: 2 },
+        ],
+      });
+      assert.equal(rejected.statusCode, 409, rejected.body);
+      assert.equal(rejected.json().error.code, 'INSUFFICIENT_STOCK');
+      assert.deepEqual(rejected.json().error.details.productIds, [empty.id]);
+      assert.match(rejected.json().error.message, new RegExp(`${empty.name}.*tồn = 0`));
+    }
+    const listed = await app.inject({
+      method: 'GET',
+      url: `/api/v1/order-requests?storeId=${MEMORY_SEED_IDS.nvtStore}&page=1&pageSize=20`,
+      headers: { cookie },
+    });
+    assert.equal(listed.json().pagination.totalItems, 0);
+
+    // A product with stock is ordered without notice; the same key works once stock arrives.
+    const accepted = await submitOrder(cookie, 'in-stock-order', orderPayload(stocked.id, 5));
+    assert.equal(accepted.statusCode, 201, accepted.body);
+    await stockWarehouse(empty.id, 1);
+    const retried = await submitOrder(cookie, 'out-of-stock-store', {
+      ...orderPayload(stocked.id, 1),
+      items: [
+        { productId: stocked.id, quantity: 1 },
+        { productId: empty.id, quantity: 2 },
+      ],
+    });
+    assert.equal(retried.statusCode, 201, retried.body);
   });
 
   test('exposes exact conversions and replaces one with an immutable version', async () => {
@@ -4326,6 +4385,37 @@ describe('KHOHANG-IDOSI API', () => {
       headers: { cookie },
     });
     return response.json().data[0].id;
+  }
+
+  /** Orders need free central-warehouse stock; memory seeds every product at zero. */
+  async function stockWarehouse(productId, quantity = 20) {
+    const cookie = cookieOf(await login('admin'));
+    const row = await warehouseRow(cookie, productId);
+    const adjusted = await app.inject({
+      method: 'POST',
+      url: '/api/v1/warehouse-adjustments',
+      headers: { cookie, 'idempotency-key': `stock-${productId}-${row.balanceVersion}` },
+      payload: {
+        productId,
+        direction: 'INCREASE',
+        quantity,
+        reasonCode: 'COUNT_CORRECTION',
+        reason: 'Chuẩn bị tồn kho tổng cho kiểm thử đặt hàng',
+        expectedVersion: row.balanceVersion,
+      },
+    });
+    assert.equal(adjusted.statusCode, 201, adjusted.body);
+  }
+
+  async function warehouseRow(cookie, productId) {
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/warehouse-inventory?projection=waiting-demand-v2&productId=${productId}`,
+      headers: { cookie },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.json().data.length, 1);
+    return response.json().data[0];
   }
 
   async function submitOrder(cookie, idempotencyKey, payload) {

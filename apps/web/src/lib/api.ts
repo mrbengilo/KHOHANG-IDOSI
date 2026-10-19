@@ -58,6 +58,7 @@ import {
   TransitionOrderSessionRequestSchema,
   WaitTicketHistoryResponseSchema,
   WaitTicketResponseSchema,
+  WarehouseInventoryResponseSchema,
   type CancelWaitTicketRequest,
   type CancelStoreOrderRequest,
   type AllocationDecisionStatus,
@@ -541,6 +542,33 @@ export async function listStoreOrderHistory(
     new URLSearchParams({ storeId, submittedFrom }),
     (payload) => ListStoreOrderRequestsResponseSchema.parse(payload),
   );
+}
+
+/**
+ * Free central-warehouse bags ("Đang có tại kho", on-hand − reserved) of every product, keyed by
+ * product id, so the ordering form can grey out products the warehouse has run out of.
+ */
+export async function listWarehouseAvailableBags(): Promise<ReadonlyMap<string, number>> {
+  const rows = await listAllPages(
+    '/warehouse-inventory',
+    new URLSearchParams({ projection: 'waiting-demand-v2' }),
+    (payload) => WarehouseInventoryResponseSchema.parse(payload),
+  );
+  return new Map(rows.map((row) => [row.productId, row.availableBags]));
+}
+
+/**
+ * Free central-warehouse bags of one product ("Đang có tại kho", on-hand − reserved), read fresh
+ * when the product is picked for an order. A product the API does not return counts as zero.
+ */
+export async function loadWarehouseAvailableBags(productId: string): Promise<number> {
+  const payload = await request(
+    `/warehouse-inventory?${new URLSearchParams({ productId, page: '1', pageSize: '1', projection: 'waiting-demand-v2' })}`,
+  );
+  const row = WarehouseInventoryResponseSchema.parse(payload).data.find(
+    (candidate) => candidate.productId === productId,
+  );
+  return row?.availableBags ?? 0;
 }
 
 export async function submitStoreOrderRequest(

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
+import { createProductWithStock, OUT_OF_STOCK_NOTE } from './ordering-stock';
 
 test('HTKD sees assigned stores, selects bags inline and persists two ordinary requests', async ({
   page,
@@ -15,6 +16,10 @@ test('HTKD sees assigned stores, selects bags inline and persists two ordinary r
   const groups = await page.request.get(`${api}/store-groups?status=ACTIVE&pageSize=100`);
   const groupId = (await groups.json()).data[0].id;
   const token = randomUUID().slice(0, 8);
+  const [productA, productB, productC] = await Promise.all(
+    ['A', 'B', 'C'].map((suffix) => createProductWithStock(`Hàng đặt 24/7 ${suffix} ${token}`, 20)),
+  );
+  const emptyProduct = await createProductWithStock(`Hàng hết kho 24/7 ${token}`, 0);
   const stores: { id: string; code: string }[] = [];
   for (const index of [1, 2]) {
     const created = await page.request.post(`${api}/stores`, {
@@ -68,7 +73,7 @@ test('HTKD sees assigned stores, selects bags inline and persists two ordinary r
   const selector = page.getByRole('combobox', { name: 'Cửa hàng', exact: true });
   await expect(selector.locator('option')).toHaveCount(2);
   await selector.selectOption(stores[1]!.id);
-  const first = page.getByRole('checkbox').first();
+  const first = page.getByRole('checkbox', { name: productA.name });
   await expect(first).toBeEnabled();
   await first.check();
   await page.getByRole('button', { name: /^Tăng số bao/ }).click();
@@ -90,8 +95,35 @@ test('HTKD sees assigned stores, selects bags inline and persists two ordinary r
     animations: 'disabled',
     fullPage: true,
   });
-  await page.getByRole('checkbox').nth(1).check();
-  await page.getByRole('checkbox').nth(2).check();
+  // A product the central warehouse has run out of is greyed out and cannot be ticked.
+  const empty = page.getByRole('checkbox', { name: emptyProduct.name });
+  await expect(empty).toBeDisabled();
+  await expect(empty).not.toBeChecked();
+  const emptyItem = page.locator('.bag-picker__item').filter({ has: empty });
+  await expect(emptyItem).toHaveClass(/bag-picker__item--unavailable/);
+  await expect(emptyItem.locator('.bag-picker__message')).toHaveText(OUT_OF_STOCK_NOTE);
+  await expect(empty).toHaveAccessibleDescription(OUT_OF_STOCK_NOTE);
+  await expect(
+    page
+      .locator('.bag-picker__item')
+      .filter({ has: page.getByRole('checkbox', { name: productB.name }) })
+      .locator('.bag-picker__message'),
+  ).toHaveCount(0);
+  await expect(page.getByRole('spinbutton')).toHaveCount(1);
+  for (const width of [360, 1366]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect
+      .poll(() => page.evaluate(() => document.body.scrollWidth <= innerWidth))
+      .toBe(true);
+  }
+  await page.screenshot({
+    path: testInfo.outputPath('htkd-order-out-of-stock.png'),
+    animations: 'disabled',
+    fullPage: true,
+  });
+  await page.getByRole('checkbox', { name: productB.name }).check();
+  await page.getByRole('checkbox', { name: productC.name }).check();
+  await expect(page.getByRole('spinbutton')).toHaveCount(3);
   const send = page.getByRole('button', { name: 'Gửi yêu cầu đặt hàng' });
   const responsePromise = page.waitForResponse(
     (response) =>
