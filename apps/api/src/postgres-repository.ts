@@ -343,6 +343,7 @@ import {
   OrderSessionConflictError,
   OrderSessionNotFoundError,
   OrderSessionUnavailableError,
+  ProductOutOfStockError,
   OrderSessionScheduleConflictError,
   OrderSessionValidationError,
   pool,
@@ -474,6 +475,7 @@ import {
   canAccessStore,
   isReshareManager,
   pagination,
+  productOutOfStock,
   slicePage,
   WAREHOUSE_INVENTORY_READ_ROLES,
 } from './repository.js';
@@ -502,6 +504,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       throw forbidden('Tài khoản này không được xem tồn kho tổng.');
     const filter = and(
       isNull(products.deletedAt),
+      query.productId === undefined ? undefined : eq(products.id, query.productId),
       query.search
         ? or(ilike(products.name, `%${query.search}%`), ilike(products.sku, `%${query.search}%`))
         : undefined,
@@ -3104,6 +3107,7 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
       if (error instanceof ActiveWaitTicketExistsError) {
         throw conflict('Cửa hàng đã có yêu cầu chờ đang hoạt động cho mặt hàng này');
       }
+      if (error instanceof ProductOutOfStockError) throw productOutOfStock(error.products);
       throw error;
     }
   }

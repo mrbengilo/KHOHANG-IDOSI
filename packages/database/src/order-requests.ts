@@ -11,6 +11,7 @@ import {
   stores,
   users,
   waitTickets,
+  warehouseBalances,
   type JsonObject,
 } from './schema.js';
 import { withAdvisoryLock, type Transaction } from './transaction.js';
@@ -77,6 +78,25 @@ export class ActiveWaitTicketExistsError extends Error {
       `Store "${storeId}" already has an active wait ticket for product(s): ${productIds.join(', ')}.`,
     );
     this.name = 'ActiveWaitTicketExistsError';
+  }
+}
+
+/** A product whose free central-warehouse stock (on-hand − reserved) is zero at submission. */
+export interface OutOfStockProduct {
+  readonly productId: string;
+  readonly productName: string;
+}
+
+export class ProductOutOfStockError extends Error {
+  public readonly code = 'PRODUCT_OUT_OF_STOCK';
+
+  public constructor(public readonly products: readonly OutOfStockProduct[]) {
+    super(
+      `Central warehouse has no available stock for product(s): ${products
+        .map((product) => product.productId)
+        .join(', ')}.`,
+    );
+    this.name = 'ProductOutOfStockError';
   }
 }
 
@@ -162,6 +182,10 @@ export async function createOrderRequest(
       throw new RequestLimitExceededError(input.orderSessionId, input.storeId);
     }
     await assertProductsAreActive(
+      tx,
+      input.items.map((item) => item.productId),
+    );
+    await assertProductsInWarehouseStock(
       tx,
       input.items.map((item) => item.productId),
     );
@@ -384,6 +408,38 @@ async function assertNoActiveWaitTickets(
       storeId,
       activeWaits.map((wait) => wait.productId).sort(),
     );
+  }
+}
+
+/**
+ * A product the central warehouse has run out of cannot be ordered: the "Đang có tại kho" figure
+ * every role reads (on-hand − reserved, which for Reshare-reconciled products is the free source
+ * F) must be above zero. Submission reserves nothing, so this is a gate on the current figure,
+ * read without locking the balance rows that allocation and inbound writers hold.
+ */
+async function assertProductsInWarehouseStock(
+  tx: Transaction,
+  productIds: readonly string[],
+): Promise<void> {
+  const rows = await tx
+    .select({
+      productId: products.id,
+      productName: products.name,
+      availableQuantity:
+        sql<number>`coalesce(${warehouseBalances.onHandQuantity} - ${warehouseBalances.reservedQuantity}, 0)`.mapWith(
+          Number,
+        ),
+    })
+    .from(products)
+    .leftJoin(warehouseBalances, eq(warehouseBalances.productId, products.id))
+    .where(inArray(products.id, [...productIds]));
+
+  const outOfStock = rows
+    .filter((row) => row.availableQuantity <= 0)
+    .map(({ productId, productName }) => ({ productId, productName }))
+    .sort((left, right) => left.productId.localeCompare(right.productId));
+  if (outOfStock.length > 0) {
+    throw new ProductOutOfStockError(outOfStock);
   }
 }
 

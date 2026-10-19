@@ -186,7 +186,7 @@ import type {
   UpdateStoreRequest,
 } from '@idosi/contracts';
 
-import { forbidden } from './errors.js';
+import { ApiError, forbidden } from './errors.js';
 
 export interface RequestContext {
   readonly requestId: string;
@@ -263,6 +263,22 @@ export const WAREHOUSE_INVENTORY_READ_ROLES: readonly AuthenticatedPrincipal['ro
   'STORE',
   'WHOLESALE',
 ];
+
+/**
+ * An order line names a product whose central-warehouse stock ("Đang có tại kho",
+ * on-hand − reserved) is zero. Shared so both repositories answer with the same code and copy.
+ */
+export function productOutOfStock(
+  products: readonly { readonly productId: string; readonly productName: string }[],
+): ApiError {
+  const names = products.map((product) => product.productName).join(', ');
+  return new ApiError(
+    'INSUFFICIENT_STOCK',
+    `Mặt hàng ${names} ở kho tổng đang hết hàng (tồn = 0), chưa thể đặt. Bỏ chọn mặt hàng này để gửi phiếu.`,
+    409,
+    { productIds: products.map((product) => product.productId) },
+  );
+}
 
 export const RETAIL_STORE_OPERATION_FORBIDDEN_MESSAGE =
   'Nghiệp vụ này chỉ dành cho cửa hàng bán lẻ đang hoạt động';

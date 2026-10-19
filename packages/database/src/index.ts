@@ -82,6 +82,7 @@ export {
   isRequestDeadlineClosed,
   OrderRequestAuthorizationError,
   OrderSessionUnavailableError,
+  ProductOutOfStockError,
   RequestLimitExceededError,
   submitOrderRequest,
 } from './order-requests.js';
@@ -89,6 +90,7 @@ export type {
   CreatedOrderRequest,
   CreateOrderRequestInput,
   CreateOrderRequestItemInput,
+  OutOfStockProduct,
   SubmitOrderRequestInput,
 } from './order-requests.js';
 

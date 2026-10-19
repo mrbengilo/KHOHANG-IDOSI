@@ -239,6 +239,7 @@ import {
   RESHARE_MANAGER_FORBIDDEN_MESSAGE,
   reshareStoreScope,
   pagination,
+  productOutOfStock,
   slicePage,
   WAREHOUSE_INVENTORY_READ_ROLES,
 } from './repository.js';
@@ -524,6 +525,7 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       }
     }
     const values = [...this.products.values()]
+      .filter((product) => query.productId === undefined || product.id === query.productId)
       .filter((product) =>
         `${product.name} ${product.sku}`.toLocaleLowerCase('vi-VN').includes(search),
       )
@@ -3569,6 +3571,17 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
       if (!product || product.status !== 'ACTIVE')
         throw notFound('Có mặt hàng không tồn tại hoặc đã ngừng dùng');
     }
+    const outOfStock = input.items
+      .filter((item) => {
+        const balance = this.warehouseBalances.get(item.productId);
+        return (balance?.onHandQuantity ?? 0) - (balance?.reservedQuantity ?? 0) <= 0;
+      })
+      .map((item) => ({
+        productId: item.productId,
+        productName: this.products.get(item.productId)?.name ?? item.productId,
+      }))
+      .sort((left, right) => left.productId.localeCompare(right.productId));
+    if (outOfStock.length > 0) throw productOutOfStock(outOfStock);
 
     // No await occurs between counting and insertion: this is one atomic event-loop turn.
     const existing = [...this.orderRequests.values()].filter(
