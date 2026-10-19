@@ -25,7 +25,7 @@ hàng, giá vốn hay chứng từ, nên không lộ dữ liệu cửa hàng kh�
 | Tổng đã xuất            | `dispatchedBags`                                    | Lũy kế bút toán `outbound` của sổ kho tổng (xuất theo RE, quyết toán phiếu nhận legacy, nhận dư). Chuyến giao không đổi `H` nên không đếm lại.                                              |
 | Thao tác (chỉ Admin)    | `reshareReconciled`                                 | Mặt hàng nguồn Reshare: nút “Cập nhật tồn Reshare” mở đối chiếu tồn Reshare; mặt hàng khác: “Điều chỉnh tồn”.                                                                               |
 
-Bảng có STT đầu tiên theo pagination mặt hàng thực. API yêu cầu `projection=waiting-demand-v2`;
+Tham số tùy chọn `productId` trả đúng một dòng (màn đặt hàng đọc lại tồn khi tick, xem `order-warehouse-stock-gate.md`). Bảng có STT đầu tiên theo pagination mặt hàng thực. API yêu cầu `projection=waiting-demand-v2`;
 tab cũ nhận 409 yêu cầu tải lại. Bundle mới kiểm tra response nghiêm ngặt và báo lỗi phiên bản
 khi rollback về API cũ, không biến trường thiếu thành 0. Xem `table-presentation-waiting-demand.md`.
 
