@@ -40,6 +40,32 @@
   flex: 0 0 22px;
   accent-color: #4f46e5;
 }
+.bag-picker__item--unavailable {
+  background: var(--surface-muted);
+}
+/* Dims the product itself; the note under it stays fully readable. */
+.bag-picker__item--unavailable .bag-picker__row {
+  opacity: 0.5;
+}
+.bag-picker__item--unavailable .bag-picker__choice {
+  cursor: not-allowed;
+}
+.bag-picker__checking {
+  color: var(--muted);
+  font-size: 13px;
+  min-width: 0;
+}
+.bag-picker__message {
+  margin: 0 8px 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--danger-border);
+  border-radius: 6px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
 .bag-picker__details {
   display: grid;
   gap: 10px;

@@ -18,6 +18,7 @@ import {
   listCatalog,
   prepareOrderingContext,
   listStoreOrderRequests,
+  listWarehouseAvailableBags,
   mockModeEnabled,
   submitStoreOrderRequest,
 } from '../lib/api';
@@ -31,6 +32,7 @@ import { sessionKindCopy, sessionLabel } from '../lib/session-label';
 import '../styles/document-history.css';
 import { productConversions } from '../lib/data';
 import { ProductBagPicker } from '../components/ProductBagPicker';
+import { checkOrderStock, isOutOfStock, OUT_OF_STOCK_NOTE } from '../features/orders/orderStock';
 
 interface RequestDraft {
   product: string;
@@ -225,6 +227,13 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
     retry: false,
   });
   const catalogQuery = useQuery({ queryFn: listCatalog, queryKey: ['catalog'], retry: false });
+  // Free central-warehouse stock per product: products at zero are greyed out in the form.
+  const stockQuery = useQuery({
+    queryFn: listWarehouseAvailableBags,
+    queryKey: ['warehouse-inventory', 'ordering-availability'],
+    retry: false,
+    refetchInterval: 30_000,
+  });
   const [selectedStoreId, setSelectedStoreId] = useState('');
   const [selectedSessionId, setSelectedSessionId] = useState('');
   const [draftLines, setDraftLines] = useState<ProductionDraftLine[]>([]);
@@ -234,6 +243,10 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
   const [cancelReason, setCancelReason] = useState('');
   const [cancellingRequestId, setCancellingRequestId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [checkingStockIds, setCheckingStockIds] = useState<ReadonlySet<string>>(new Set());
+  const [stockMessages, setStockMessages] = useState<Readonly<Record<string, string>>>({});
+  // Bumped whenever the draft is discarded, so a stock check answered later is not added to it.
+  const draftGeneration = useRef(0);
   const idempotencyKey = useRef<string | null>(null);
   const submittedInput = useRef<CreateStoreOrderRequest | null>(null);
   const cancellationKeys = useRef(new Map<string, { key: string; reason: string }>());
@@ -268,6 +281,22 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
   const submittedRequests = requestsQuery.data ?? [];
   const usedSlots = sessionsQuery.data?.usedSlots ?? submittedRequests.length;
   const remainingSlots = Math.max(0, 2 - usedSlots);
+  const outOfStockIds = useMemo(
+    () =>
+      new Set(
+        activeProducts
+          .filter((product) => isOutOfStock(stockQuery.data, product.id))
+          .map((product) => product.id),
+      ),
+    [activeProducts, stockQuery.data],
+  );
+  const pickerMessages = useMemo(
+    () => ({
+      ...stockMessages,
+      ...Object.fromEntries([...outOfStockIds].map((id) => [id, OUT_OF_STOCK_NOTE])),
+    }),
+    [outOfStockIds, stockMessages],
+  );
   const productNameById = useMemo(
     () => new Map(catalogProducts.map((product) => [product.id, product.name])),
     [catalogProducts],
@@ -294,6 +323,54 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
     setNotice(null);
   };
 
+  const discardDraft = () => {
+    draftGeneration.current += 1;
+    setDraftLines([]);
+    setCheckingStockIds(new Set());
+    setStockMessages({});
+    resetMutationKey();
+  };
+
+  const setStockMessage = (productId: string, message: string | null) =>
+    setStockMessages((current) => {
+      const next = { ...current };
+      if (message === null) delete next[productId];
+      else next[productId] = message;
+      return next;
+    });
+
+  // A product is added to the draft only after the central warehouse confirms free stock.
+  const pickProduct = async (productId: string) => {
+    if (checkingStockIds.has(productId) || outOfStockIds.has(productId)) return;
+    const generation = draftGeneration.current;
+    setCheckingStockIds((current) => new Set(current).add(productId));
+    setStockMessage(productId, null);
+    const check = await checkOrderStock(
+      productId,
+      productNameById.get(productId) ?? 'mặt hàng này',
+    );
+    if (generation !== draftGeneration.current) return;
+    setCheckingStockIds((current) => {
+      const next = new Set(current);
+      next.delete(productId);
+      return next;
+    });
+    if (check.kind !== 'available') {
+      setStockMessage(productId, check.message);
+      // Once the stock list is fresh it carries the note itself (or the product is orderable
+      // again), so this pick's own message would only go stale.
+      if (check.kind === 'out-of-stock' && (await stockQuery.refetch()).isSuccess)
+        setStockMessage(productId, null);
+      return;
+    }
+    setDraftLines((current) =>
+      current.some((line) => line.productId === productId)
+        ? current
+        : [...current, { productId, quantity: 1, note: '' }],
+    );
+    resetMutationKey();
+  };
+
   const submit = async () => {
     if (
       !activeSession ||
@@ -318,6 +395,16 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
       });
       return;
     }
+    const emptyLines = draftLines.filter((line) => outOfStockIds.has(line.productId));
+    if (emptyLines.length > 0) {
+      setNotice({
+        kind: 'error',
+        message: `Kho tổng đã hết hàng (tồn = 0): ${emptyLines
+          .map((line) => productNameById.get(line.productId) ?? line.productId)
+          .join(', ')}. Bỏ chọn mặt hàng này để gửi phiếu.`,
+      });
+      return;
+    }
     setSubmitting(true);
     setNotice(null);
     idempotencyKey.current ??= crypto.randomUUID();
@@ -339,8 +426,16 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
         kind: 'success',
         message: 'Đã gửi yêu cầu. Kho chỉ giữ hàng sau khi chạy phân bổ.',
       });
-      await Promise.all([requestsQuery.refetch(), sessionsQuery.refetch(), historyQuery.refetch()]);
+      await Promise.all([
+        requestsQuery.refetch(),
+        sessionsQuery.refetch(),
+        historyQuery.refetch(),
+        stockQuery.refetch(),
+      ]);
     } catch (cause) {
+      if (cause instanceof ApiClientError && cause.code === 'INSUFFICIENT_STOCK') {
+        void stockQuery.refetch();
+      }
       if (cause instanceof ApiClientError && cause.code === 'SESSION_NOT_OPEN') {
         idempotencyKey.current = null;
         submittedInput.current = null;
@@ -410,6 +505,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
     void sessionQuery.refetch();
     void storesQuery.refetch();
     void catalogQuery.refetch();
+    void stockQuery.refetch();
     if (effectiveStoreId) void sessionsQuery.refetch();
     if (effectiveStoreId && activeSession) void requestsQuery.refetch();
     if (effectiveStoreId) void historyQuery.refetch();
@@ -445,8 +541,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
               disabled={formDisabled}
               onChange={(event) => {
                 setSelectedStoreId(event.target.value);
-                setDraftLines([]);
-                resetMutationKey();
+                discardDraft();
               }}
               value={effectiveStoreId}
             >
@@ -470,8 +565,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
                 disabled={formDisabled}
                 onChange={(event) => {
                   setSelectedSessionId(event.target.value);
-                  setDraftLines([]);
-                  resetMutationKey();
+                  discardDraft();
                 }}
                 value={activeSession?.id ?? ''}
               >
@@ -503,8 +597,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
               disabled={formDisabled}
               onChange={(event) => {
                 setSelectedSessionId(event.target.value);
-                setDraftLines([]);
-                resetMutationKey();
+                discardDraft();
               }}
               value={activeSession?.id ?? ''}
             >
@@ -563,12 +656,15 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
             )}
             max={100000}
             disabled={formDisabled || !effectiveStoreId || !activeSession || remainingSlots === 0}
+            checkingIds={checkingStockIds}
+            unavailableIds={outOfStockIds}
+            messages={pickerMessages}
             onSelect={(productId, selected) => {
-              setDraftLines((current) =>
-                selected
-                  ? [...current, { productId, quantity: 1, note: '' }]
-                  : current.filter((line) => line.productId !== productId),
-              );
+              if (selected) {
+                void pickProduct(productId);
+                return;
+              }
+              setDraftLines((current) => current.filter((line) => line.productId !== productId));
               resetMutationKey();
             }}
             onQuantityChange={(productId, quantity) => {
@@ -604,7 +700,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
           <div className="section-heading section-heading--compact">
             <div>
               <h2>Phiếu đang soạn</h2>
-              <p>Hệ thống chưa kiểm tồn và chưa giữ hàng lúc gửi.</p>
+              <p>Chỉ đặt được mặt hàng kho tổng còn tồn; kho chưa giữ hàng lúc gửi.</p>
             </div>
           </div>
           {draftLines.length === 0 ? <p>Chưa có mặt hàng.</p> : null}
