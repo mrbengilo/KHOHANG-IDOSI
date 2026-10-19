@@ -17,16 +17,9 @@ test('HTKD sees assigned stores, selects bags inline and persists two ordinary r
   const groupId = (await groups.json()).data[0].id;
   const token = randomUUID().slice(0, 8);
   const [productA, productB, productC] = await Promise.all(
-    ['A', 'B', 'C'].map((suffix) =>
-      createProductWithStock(page.request, api, `Hàng đặt 24/7 ${suffix} ${token}`, 20),
-    ),
+    ['A', 'B', 'C'].map((suffix) => createProductWithStock(`Hàng đặt 24/7 ${suffix} ${token}`, 20)),
   );
-  const emptyProduct = await createProductWithStock(
-    page.request,
-    api,
-    `Hàng hết kho 24/7 ${token}`,
-    0,
-  );
+  const emptyProduct = await createProductWithStock(`Hàng hết kho 24/7 ${token}`, 0);
   const stores: { id: string; code: string }[] = [];
   for (const index of [1, 2]) {
     const created = await page.request.post(`${api}/stores`, {

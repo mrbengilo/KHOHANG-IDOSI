@@ -437,12 +437,7 @@ test('production UI persists operations in PostgreSQL and enforces the store rol
   const openSessionId = await ensureOpenOrderSession(page);
   const [orderedProduct, toggledProduct] = await Promise.all(
     ['A', 'B'].map((suffix) =>
-      createProductWithStock(
-        tabApi(page),
-        `${apiOrigin}/api/v1`,
-        `Hàng đặt PostgreSQL ${suffix} ${runSuffix}-${testInfo.retry}`,
-        10,
-      ),
+      createProductWithStock(`Hàng đặt PostgreSQL ${suffix} ${runSuffix}-${testInfo.retry}`, 10),
     ),
   );
 
