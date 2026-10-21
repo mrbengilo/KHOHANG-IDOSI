@@ -330,6 +330,13 @@
       "when": 1792051256318,
       "tag": "0046_store_sorted_cancel_bucket",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1792130000000,
+      "tag": "0047_receipt_discrepancy_finalization",
+      "breakpoints": true
     }
   ]
 }
