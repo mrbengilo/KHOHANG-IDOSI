@@ -96,29 +96,37 @@ export function isStatementTimeoutError(error: unknown): boolean {
   return hasPostgresErrorCode(error, STATEMENT_TIMEOUT_SQLSTATES);
 }
 
-/** Drizzle wraps driver errors, so the SQLSTATE may sit several `cause` links deep. */
 function hasPostgresErrorCode(error: unknown, codes: ReadonlySet<string>): boolean {
+  const code = postgresErrorCode(error);
+  return code !== null && codes.has(code);
+}
+
+/**
+ * The SQLSTATE of a PostgreSQL error, or null. Drizzle wraps driver errors, so the code may sit
+ * several `cause` links deep. A SQLSTATE carries no row data, so it is safe to log.
+ */
+export function postgresErrorCode(error: unknown): string | null {
   let current = error;
   const visited = new Set<object>();
 
   for (let depth = 0; depth < MAX_ERROR_CAUSE_DEPTH; depth += 1) {
     if (typeof current !== 'object' || current === null || visited.has(current)) {
-      return false;
+      return null;
     }
     visited.add(current);
 
     try {
       const code = Reflect.get(current, 'code');
-      if (typeof code === 'string' && codes.has(code)) {
-        return true;
+      if (typeof code === 'string' && /^[0-9A-Z]{5}$/u.test(code)) {
+        return code;
       }
       current = Reflect.get(current, 'cause');
     } catch {
-      return false;
+      return null;
     }
   }
 
-  return false;
+  return null;
 }
 
 async function waitBeforeTransactionRetry(failedAttempt: number): Promise<void> {

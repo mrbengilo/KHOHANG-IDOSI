@@ -266,6 +266,26 @@ describe('initial migration invariants', () => {
     expect(snapshot.prevId).toBe(previous.id);
   });
 
+  it('relaxes only the stale receipt-discrepancy predicates of the finalization trigger', () => {
+    const migration = readFileSync(
+      new URL('../migrations/0047_receipt_discrepancy_finalization.sql', import.meta.url),
+      'utf8',
+    );
+    expect(migration).toContain('CREATE OR REPLACE FUNCTION validate_store_receipt_finalization()');
+    expect(migration).toContain("a.action = 'SUPPLIER_RECEIPT_EXCESS_NEEDS_RECONCILIATION'");
+    expect(migration).toContain(
+      'l.priority_queued_quantity <> l.approved_quantity - l.received_quantity',
+    );
+    expect(migration).not.toMatch(/UPDATE |DELETE FROM|DROP /i);
+    const snapshot = JSON.parse(
+      readFileSync(new URL('../migrations/meta/0047_snapshot.json', import.meta.url), 'utf8'),
+    ) as { prevId: string };
+    const previous = JSON.parse(
+      readFileSync(new URL('../migrations/meta/0046_snapshot.json', import.meta.url), 'utf8'),
+    ) as { id: string };
+    expect(snapshot.prevId).toBe(previous.id);
+  });
+
   it('adds an optional, unique IDOSI store code without touching existing stores', () => {
     const migration = readFileSync(
       new URL('../migrations/0029_store_idosi_code.sql', import.meta.url),
@@ -426,7 +446,11 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(47);
+    expect(journal.entries).toHaveLength(48);
+    expect(journal.entries[47]).toMatchObject({
+      tag: '0047_receipt_discrepancy_finalization',
+      breakpoints: true,
+    });
     expect(journal.entries[46]).toMatchObject({
       tag: '0046_store_sorted_cancel_bucket',
       breakpoints: true,

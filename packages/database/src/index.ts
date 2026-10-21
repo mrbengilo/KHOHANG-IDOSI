@@ -411,6 +411,7 @@ export {
   isLockTimeoutError,
   isRetryableTransactionError,
   isStatementTimeoutError,
+  postgresErrorCode,
 } from './transaction.js';
 export type {
   RetryableTransactionOptions,

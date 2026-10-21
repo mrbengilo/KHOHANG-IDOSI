@@ -5,6 +5,7 @@ import {
   isLockTimeoutError,
   isRetryableTransactionError,
   isStatementTimeoutError,
+  postgresErrorCode,
   withSerializableTransaction,
   type Transaction,
 } from '../src/transaction.js';
@@ -90,5 +91,14 @@ describe('PostgreSQL timeout classification', () => {
     expect(isStatementTimeoutError(wrapped('55P03'))).toBe(false);
     expect(isLockTimeoutError(null)).toBe(false);
     expect(isStatementTimeoutError('57014')).toBe(false);
+  });
+
+  it('reads the wrapped SQLSTATE for logs and ignores non-PostgreSQL codes', () => {
+    expect(postgresErrorCode(wrapped('23514'))).toBe('23514');
+    expect(postgresErrorCode(Object.assign(new Error('socket'), { code: 'ECONNRESET' }))).toBe(
+      null,
+    );
+    expect(postgresErrorCode(new Error('plain'))).toBe(null);
+    expect(postgresErrorCode(undefined)).toBe(null);
   });
 });

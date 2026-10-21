@@ -335,3 +335,22 @@ Phiếu VAT thủ công cũ giữ số gốc và ghi chênh lệch mới; NULL l
 Báo cáo dùng chênh lệch tiền hàng thuần sau hàng trả; số hàng trả riêng chỉ để đối soát.
 Cơ chế tự hoàn tất tại VERIFY, sửa phân loại/giao nhầm, hold kiểm kê, quyền nhận bù và
 trả legacy tiếp tục như mô tả trên. Không cộng/trừ tồn thêm lần nữa vì thay đổi VAT.
+
+## Chốt phiếu có chênh lệch khai nhận (migration 0047)
+
+Lỗi: HTKD nhập giá/kg, phí và bấm “Chốt giá & nhập kho” cho phiếu có hàng nhận dư, thiếu hoặc
+sai mặt hàng thì nhận 500 “Lỗi hệ thống ngoài dự kiến”; phiếu nhận đủ vẫn chốt được. Nguyên nhân
+nằm ở trigger `validate_store_receipt_finalization` (bản 0042) còn đòi hai điều kiện mà code hiện
+hành đã thay đổi đúng nghiệp vụ, nên giao dịch bị rollback với SQLSTATE `23514`:
+
+| Trường hợp                                                                                              | Code (đúng)                                                                                                                 | Trigger 0042 (cũ)                                             | Trigger 0047                                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hàng dư thuộc mặt hàng đã bật đối chiếu Reshare                                                         | Không trừ A (B đã tính), ghi tồn cửa hàng, SKU chuyển “cần đối chiếu”, audit `SUPPLIER_RECEIPT_EXCESS_NEEDS_RECONCILIATION` | Bắt buộc có dòng sổ `store_receipt_excess` → từ chối          | Đúng **một** trong hai bằng chứng: dòng sổ trừ A **hoặc** audit cần đối chiếu; có cả hai/không có gì → từ chối                                 |
+| Hàng thiếu mà phiếu chờ P0B (tạo lúc cửa hàng gửi) đã được phân bổ, bị hủy hoặc gộp trước khi HTKD chốt | Không xếp chờ lại, không hồi sinh nhu cầu đã hủy                                                                            | Bắt buộc còn phiếu chờ `active` cùng cửa hàng × SKU → từ chối | Dòng phiếu phải ghi `priority_queued_quantity = duyệt − nhận` và phần thiếu đã vào phiếu chờ của cửa hàng × SKU (mọi trạng thái, chưa xóa mềm) |
+
+Các điều kiện khác của trigger giữ nguyên. Migration chỉ `CREATE OR REPLACE FUNCTION`, không đổi
+dữ liệu; phiếu đã chốt không bị ảnh hưởng. Phiếu đang `pending_htkd` bị lỗi trước đó chỉ cần HTKD
+chốt lại sau deploy (giao dịch cũ đã rollback, không phát sinh tồn/ledger). Rollback: forward-fix;
+nếu buộc phải quay lại, chạy lại thân hàm của 0042 (code cũ vẫn tương thích, chỉ mất hai trường hợp
+trên). Log lỗi 500 của API giờ ghi thêm `databaseCode` (SQLSTATE, không chứa dữ liệu) để truy vết.
+Test: `packages/database/tests/receipt-discrepancy-finalization.integration.test.ts`.

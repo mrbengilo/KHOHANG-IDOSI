@@ -44,6 +44,7 @@ import {
   isLockTimeoutError,
   isRetryableTransactionError,
   isStatementTimeoutError,
+  postgresErrorCode,
   SupplierReconciliationError,
 } from '@idosi/database';
 import {
@@ -457,6 +458,7 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     request.log.error(
       {
         errorType: error instanceof Error ? error.constructor.name : 'NonError',
+        databaseCode: postgresErrorCode(error),
         requestId: request.id,
       },
       'request failed',
