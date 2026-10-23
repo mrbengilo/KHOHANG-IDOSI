@@ -29,6 +29,9 @@ const AllocationPage = lazy(() =>
 const CatalogPage = lazy(() =>
   import('./pages/CatalogPage').then((module) => ({ default: module.CatalogPage })),
 );
+const PriorityOrdersPage = lazy(() =>
+  import('./pages/PriorityOrdersPage').then((module) => ({ default: module.PriorityOrdersPage })),
+);
 const RequestsPage = lazy(() =>
   import('./pages/RequestsPage').then((module) => ({ default: module.RequestsPage })),
 );
@@ -96,6 +99,11 @@ export const router = createBrowserRouter([
     element: <AppShell />,
     errorElement: pageError,
     children: [
+      {
+        path: 'priority-orders',
+        element: suspense(<PriorityOrdersPage />),
+        errorElement: pageError,
+      },
       {
         // A failed screen (render error, chunk that could not load) stays inside the shell.
         errorElement: <RouteErrorBoundary layout="workspace" />,

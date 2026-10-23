@@ -6,6 +6,7 @@ import { withIdempotency, type IdempotencyResult } from './idempotency.js';
 import {
   allocationResultDecisions,
   auditLogs,
+  emergencyPriorityOrders,
   htkdAssignments,
   outboundRequestLines,
   outboundRequests,
@@ -225,6 +226,7 @@ export async function dispatchWarehouseOutboundRequest(
  * store a general right to dispatch.
  */
 export type WarehouseOutboundDispatcher =
+  | { readonly kind: 'emergency'; readonly orderId: string; readonly userId: string }
   | { readonly kind: 'user'; readonly userId: string }
   | {
       readonly kind: 'system';
@@ -279,11 +281,13 @@ export async function dispatchWarehouseOutboundInTransaction(
       .limit(1);
     if (!outbound) throw new WarehouseOutboundNotFoundError();
     const dispatcherRole =
-      input.dispatcher.kind === 'user'
-        ? await assertDispatcherMayAccessStore(tx, input.dispatcher.userId, outbound.storeId)
-        : input.dispatcher.kind === 'allocation-decision'
-          ? await assertAcceptedDecisionReleasesShipment(tx, input.dispatcher, outbound)
-          : null;
+      input.dispatcher.kind === 'emergency'
+        ? await assertEmergencyDispatcher(tx, input.dispatcher, outbound)
+        : input.dispatcher.kind === 'user'
+          ? await assertDispatcherMayAccessStore(tx, input.dispatcher.userId, outbound.storeId)
+          : input.dispatcher.kind === 'allocation-decision'
+            ? await assertAcceptedDecisionReleasesShipment(tx, input.dispatcher, outbound)
+            : null;
     if (outbound.status !== 'reserved' || outbound.version !== input.expectedVersion) {
       throw new WarehouseOutboundConflictError(
         'Warehouse outbound is stale or is not ready for dispatch.',
@@ -302,7 +306,7 @@ export async function dispatchWarehouseOutboundInTransaction(
     if (
       lines.some(
         (line) =>
-          line.allocationLineId === null ||
+          (line.allocationLineId === null && input.dispatcher.kind !== 'emergency') ||
           line.approvedQuantity <= 0 ||
           line.reservedQuantity !== line.approvedQuantity ||
           line.dispatchedQuantity !== 0 ||
@@ -359,7 +363,10 @@ export async function dispatchWarehouseOutboundInTransaction(
       .update(outboundRequests)
       .set({
         status: 'dispatched',
-        dispatchedByUserId: input.dispatcher.kind === 'user' ? input.dispatcher.userId : null,
+        dispatchedByUserId:
+          input.dispatcher.kind === 'user' || input.dispatcher.kind === 'emergency'
+            ? input.dispatcher.userId
+            : null,
         dispatchedAt,
         notes: dispatchNote ?? outbound.notes,
         version: outbound.version + 1,
@@ -406,7 +413,7 @@ export async function dispatchWarehouseOutboundInTransaction(
       ...(input.auditId === undefined ? {} : { id: input.auditId }),
       requestId: input.requestId ?? null,
       actorUserId:
-        input.dispatcher.kind === 'user'
+        input.dispatcher.kind === 'user' || input.dispatcher.kind === 'emergency'
           ? input.dispatcher.userId
           : input.dispatcher.kind === 'allocation-decision'
             ? input.dispatcher.acceptedByUserId
@@ -609,4 +616,33 @@ function outboundAuditSnapshot(
       dispatchedQuantity: line.dispatchedQuantity,
     })),
   };
+}
+
+async function assertEmergencyDispatcher(
+  tx: Transaction,
+  dispatcher: Extract<WarehouseOutboundDispatcher, { kind: 'emergency' }>,
+  outbound: typeof outboundRequests.$inferSelect,
+): Promise<'admin' | 'htkd'> {
+  const [row] = await tx
+    .select({ actor: users, order: emergencyPriorityOrders })
+    .from(emergencyPriorityOrders)
+    .innerJoin(users, eq(users.id, emergencyPriorityOrders.actorUserId))
+    .where(
+      and(
+        eq(emergencyPriorityOrders.id, dispatcher.orderId),
+        eq(emergencyPriorityOrders.outboundRequestId, outbound.id),
+        eq(emergencyPriorityOrders.storeId, outbound.storeId),
+        eq(users.id, dispatcher.userId),
+        eq(users.status, 'active'),
+        isNull(users.deletedAt),
+      ),
+    );
+  if (
+    !row ||
+    (row.actor.role !== 'admin' && row.actor.role !== 'htkd') ||
+    outbound.allocationRunId !== null ||
+    outbound.orderSessionId !== null
+  )
+    throw new WarehouseOutboundAuthorizationError();
+  return row.actor.role;
 }

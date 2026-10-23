@@ -5,6 +5,7 @@ import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
 import { reconcileReceiptStoreWaitDocument } from './store-wait-documents.js';
 import {
+  emergencyPriorityOrders,
   auditLogs,
   htkdAssignments,
   outboundRequestLines,
@@ -432,6 +433,15 @@ export async function submitStoreReceiptInTransaction(
       );
     }
 
+    const [emergency] = await tx
+      .select({ id: emergencyPriorityOrders.id })
+      .from(emergencyPriorityOrders)
+      .innerJoin(
+        storeReceipts,
+        eq(storeReceipts.outboundRequestId, emergencyPriorityOrders.outboundRequestId),
+      )
+      .where(eq(storeReceipts.id, receipt.id))
+      .limit(1);
     const declaringRole = await assertStoreAccountMayDeclare(
       tx,
       input.submittedByUserId,
@@ -489,7 +499,9 @@ export async function submitStoreReceiptInTransaction(
             receivedQuantity: suppliedLine.receivedQuantity,
             shortageDeclaredAt: persistedLine.updatedAt,
           });
-          const queuedQuantity = persistedLine.approvedQuantity - suppliedLine.receivedQuantity;
+          const queuedQuantity = emergency
+            ? 0
+            : persistedLine.approvedQuantity - suppliedLine.receivedQuantity;
           if (queuedQuantity > 0 && queuedQuantity !== persistedLine.priorityQueuedQuantity) {
             const [ticket] = await tx
               .select({
@@ -572,8 +584,7 @@ export async function submitStoreReceiptInTransaction(
             .update(storeReceiptLines)
             .set({
               receivedQuantity: suppliedLine.receivedQuantity,
-              priorityQueuedQuantity:
-                persistedLine.approvedQuantity - suppliedLine.receivedQuantity,
+              priorityQueuedQuantity: queuedQuantity,
               shortageReason:
                 suppliedLine.receivedQuantity < persistedLine.approvedQuantity
                   ? discrepancyNote
@@ -642,7 +653,7 @@ export async function submitStoreReceiptInTransaction(
               productId: line.productId,
               approvedQuantity: line.approvedQuantity,
               receivedQuantity: line.receivedQuantity,
-              priorityQueuedQuantity: line.approvedQuantity - line.receivedQuantity,
+              priorityQueuedQuantity: emergency ? 0 : line.approvedQuantity - line.receivedQuantity,
             })),
           },
         });

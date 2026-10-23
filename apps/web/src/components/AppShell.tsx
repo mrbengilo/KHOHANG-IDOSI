@@ -50,6 +50,7 @@ const navGroupLabel: Record<NavGroup, string> = {
 };
 
 const navEntries: NavEntry[] = [
+  { to: '/priority-orders', label: 'Đơn ưu tiên khẩn cấp', icon: ClipboardCheck },
   { to: '/', label: 'Tổng quan', icon: LayoutDashboard },
   { to: '/warehouse-inbound', label: 'Nhập kho tổng', icon: PackageCheck },
   { to: '/supplier-reconciliation', label: 'Đơn & tồn Reshare', icon: Scale },

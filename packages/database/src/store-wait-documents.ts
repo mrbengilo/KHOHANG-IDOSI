@@ -10,6 +10,7 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 
 import type { Database } from './client.js';
 import {
+  emergencyPriorityOrders,
   storeReceipts,
   stores,
   storeWaitDocumentEvents,
@@ -430,6 +431,16 @@ export async function reconcileReceiptStoreWaitDocument(
   actorUserId: string | null,
   requestId: string | null,
 ): Promise<void> {
+  const [emergency] = await tx
+    .select({ id: emergencyPriorityOrders.id })
+    .from(emergencyPriorityOrders)
+    .innerJoin(
+      storeReceipts,
+      eq(storeReceipts.outboundRequestId, emergencyPriorityOrders.outboundRequestId),
+    )
+    .where(eq(storeReceipts.id, receiptId))
+    .limit(1);
+  if (emergency) return;
   const [receipt] = await tx
     .select({ storeId: storeReceipts.storeId })
     .from(storeReceipts)

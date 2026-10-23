@@ -41,12 +41,16 @@ test('Admin persists VAT, sees its audit history and a responsive configuration 
   try {
     await page.goto('/settings');
     const rate = page.getByLabel('Thuế suất (%)');
-    await expect(rate).toHaveValue(String(initial.vatRatePercent));
+    // The shared integration fixtures also populate the catalog panels on this
+    // page. CI traces show successful API responses before their render completes;
+    // allow hydration time after navigation without relaxing the value assertions.
+    const hydrationTimeout = 15_000;
+    await expect(rate).toHaveValue(String(initial.vatRatePercent), { timeout: hydrationTimeout });
     await rate.fill('10');
     await page.getByRole('button', { name: 'Lưu phiên bản mới' }).click();
     await expect(page.getByText(/Đã lưu cấu hình phiên bản/)).toBeVisible();
     await page.reload();
-    await expect(rate).toHaveValue('10');
+    await expect(rate).toHaveValue('10', { timeout: hydrationTimeout });
     await expect(page.getByRole('region', { name: 'Lịch sử phiên bản' })).toContainText('10%');
     for (const width of [360, 390, 412, 768, 1366, 1440]) {
       await page.setViewportSize({ width, height: 900 });
@@ -63,7 +67,7 @@ test('Admin persists VAT, sees its audit history and a responsive configuration 
     }
     expect((await update(0)).status()).toBe(200);
     await page.reload();
-    await expect(rate).toHaveValue('0');
+    await expect(rate).toHaveValue('0', { timeout: hydrationTimeout });
   } finally {
     expect((await update(initial.vatRatePercent)).status()).toBe(200);
   }

@@ -585,6 +585,7 @@ export type StoreReceiptSourceLine = z.infer<typeof StoreReceiptSourceLineSchema
 export const StoreReceiptSourceSchema = z
   .object({
     id: EntityIdSchema,
+    priorityOrderCode: z.string().nullable().optional(),
     requestNumber: z.string().trim().min(1).max(100),
     storeId: EntityIdSchema,
     dispatchedAt: IsoDateTimeSchema,

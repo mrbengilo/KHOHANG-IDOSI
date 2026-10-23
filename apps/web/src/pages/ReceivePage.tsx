@@ -1018,6 +1018,9 @@ function CreateReceiptForm({
                   >
                     <span className="receipt-source-card__heading">
                       <strong>{source.requestNumber}</strong>
+                      {source.priorityOrderCode && (
+                        <span>Đơn ưu tiên khẩn cấp · {source.priorityOrderCode}</span>
+                      )}
                       <span>{source.lines.length} mặt hàng</span>
                     </span>
                     <span className="receipt-source-card__meta">

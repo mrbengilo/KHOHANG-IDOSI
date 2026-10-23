@@ -1,3 +1,4 @@
+import type { PriorityOrderRepository } from './repository.js';
 import type {
   UpdateReshareOrderStatusRequest,
   ReshareOrderStatusUpdate,
@@ -395,6 +396,31 @@ interface MemoryReshareOrder {
 
 /** Deterministic in-memory adapter for inject tests and local demos. Never used by default in production. */
 export class MemoryWarehouseRepository implements WarehouseRepository {
+  // Inventory issuance must use PostgreSQL; the demo adapter never simulates a successful issue.
+  public readonly priorityOrders: PriorityOrderRepository = {
+    context: async () => {
+      throw conflict('Đơn khẩn cấp yêu cầu PostgreSQL.');
+    },
+    availability: async () => {
+      throw conflict('Đơn khẩn cấp yêu cầu PostgreSQL.');
+    },
+    preview: async () => {
+      throw conflict('Đơn khẩn cấp yêu cầu PostgreSQL.');
+    },
+    submit: async () => {
+      throw conflict('Đơn khẩn cấp yêu cầu PostgreSQL.');
+    },
+    list: async (_actor, query) => ({
+      data: [],
+      pagination: { ...query, totalItems: 0, totalPages: 0 },
+    }),
+    get: async () => {
+      throw notFound('Không tìm thấy đơn.');
+    },
+    status: async () => {
+      throw conflict('Đơn khẩn cấp yêu cầu PostgreSQL.');
+    },
+  };
   // Reshare supplier reconciliation: the in-memory fixture has no supplier source configured,
   // so reads are empty and commands fail exactly as a fresh PostgreSQL system would.
 

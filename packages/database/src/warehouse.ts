@@ -175,6 +175,7 @@ export async function applyWarehouseMovement(
  */
 export const SUPPLIER_CONSISTENT_SOURCE_TYPES: ReadonlySet<string> = new Set([
   'priority_offer',
+  'emergency_priority_order',
   'allocation_run',
   'allocation_result_decision',
   // Issuing an RE order lowers on-hand and reserved together (H - R unchanged) while the issued
