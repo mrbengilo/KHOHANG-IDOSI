@@ -1,4 +1,4 @@
-import { useOutletContext, useSearchParams } from 'react-router-dom';
+import { Link, useOutletContext, useSearchParams } from 'react-router-dom';
 import { useState } from 'react';
 import { DraftScope } from '../lib/draft-guard';
 
@@ -63,6 +63,11 @@ export function SupplierReconciliationPage() {
   return (
     <>
       <PageHeader title="Đơn đặt và tồn Reshare" description={DESCRIPTION} />
+      <p>
+        <Link to="/priority-orders">
+          Đơn Reshare từ đơn ưu tiên khẩn cấp — xem đơn và trạng thái đặt
+        </Link>
+      </p>
       <p className="supplier-hint supplier-role-hint">{ROLE_HINT[role]}</p>
       {tabs.length > 1 ? (
         <Tabs

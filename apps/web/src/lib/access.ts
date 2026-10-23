@@ -14,6 +14,7 @@ export interface RouteAccessPolicy {
 export const routeAccessPolicies = {
   '/': { roles: ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE'] },
   '/allocations': { roles: ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE'] },
+  '/priority-orders': { roles: ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE'] },
   '/requests': { roles: ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE'] },
   '/warehouse-inbound': { roles: ['ADMIN', 'HTKD'] },
   // Admin reconciles Reshare stock; HTKD records Reshare orders for its stores; store and

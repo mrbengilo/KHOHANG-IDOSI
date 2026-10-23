@@ -1,3 +1,13 @@
+import {
+  getPriorityContext,
+  getPriorityAvailability,
+  previewPriorityOrder,
+  submitPriorityOrder,
+  listPriorityOrders,
+  getPriorityOrder,
+  updatePriorityReshareStatus,
+} from '@idosi/database';
+import type { PriorityOrderRepository } from './repository.js';
 import { UpdateReshareOrderStatusResponseSchema as ReshareStatusResponseSchema } from '@idosi/contracts';
 import { updateReshareOrderStatus as updateDatabaseReshareOrderStatus } from '@idosi/database';
 import {
@@ -496,6 +506,22 @@ function waitDocumentSnapshotDto(snapshot: SessionWaitDocumentSnapshot | null) {
 const SESSION_LAST_SEEN_RESOLUTION_MS = 60_000;
 
 export class PostgresWarehouseRepository implements WarehouseRepository {
+  public readonly priorityOrders: PriorityOrderRepository = {
+    context: (actor, storeId, page) => getPriorityContext(db, actor.accountId, storeId, page),
+    availability: (actor, storeId, productId) =>
+      getPriorityAvailability(db, actor.accountId, storeId, productId),
+    preview: (actor, input) => previewPriorityOrder(db, actor.accountId, input),
+    submit: (actor, input, key, requestId) =>
+      submitPriorityOrder(db, actor.accountId, input, key, requestId).catch(
+        throwPriorityIdempotencyError,
+      ),
+    list: (actor, query) => listPriorityOrders(db, actor.accountId, query),
+    get: (actor, id) => getPriorityOrder(db, actor.accountId, id),
+    status: (actor, id, input, key) =>
+      updatePriorityReshareStatus(db, actor.accountId, id, input, key).catch(
+        throwPriorityIdempotencyError,
+      ),
+  };
   public async listWarehouseInventory(
     actor: AuthenticatedPrincipal,
     query: WarehouseInventoryQuery,
@@ -5369,6 +5395,7 @@ function receiptSourceDto(source: StoreReceiptSourceRecord): StoreReceiptSource 
   return {
     id: source.id,
     requestNumber: source.requestNumber,
+    ...(source.priorityOrderCode ? { priorityOrderCode: source.priorityOrderCode } : {}),
     storeId: source.storeId,
     dispatchedAt: source.dispatchedAt.toISOString(),
     lines: source.lines.map((line) => ({
@@ -7320,4 +7347,12 @@ function safeVnd(value: bigint): number {
   const converted = Number(value);
   if (!Number.isSafeInteger(converted)) throw new Error('Revenue exceeds safe VND response range');
   return converted;
+}
+
+function throwPriorityIdempotencyError(error: unknown): never {
+  if (error instanceof IdempotencyConflictError)
+    throw new ApiError('IDEMPOTENCY_CONFLICT', 'Khóa yêu cầu đã được dùng cho nội dung khác.', 409);
+  if (error instanceof IdempotencyInProgressError)
+    throw conflict('Yêu cầu cùng khóa đang được xử lý.');
+  throw error;
 }

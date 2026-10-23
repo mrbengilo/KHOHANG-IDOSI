@@ -37,6 +37,8 @@ Không đánh đổi tính đúng đắn của tồn kho để lấy cảm giác
 
 ## 3. Ràng buộc nghiệp vụ kho IDOSI
 
+Đơn ưu tiên khẩn cấp: xem `docs/emergency-priority-orders.md`. ADMIN/HTKD được tạo cho mọi cửa hàng đang hoạt động trong riêng chức năng này. Gửi phải duyệt, xuất kho và lập RE nguyên tử; nguồn issued cũ không xuất lại. Không tạo phiên/decision giả hoặc sửa phiếu chờ. Nhận thiếu của shipment UK giữ discrepancy/check nhưng không tự sinh nhu cầu chờ.
+
 Các invariant sau là bắt buộc, trừ khi task mới thay đổi rõ ràng yêu cầu:
 
 - Hệ thống có ba phạm vi vai trò chính: Admin, HTKD và Tài khoản cửa hàng.

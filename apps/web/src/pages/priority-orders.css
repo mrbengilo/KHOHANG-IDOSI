@@ -1,0 +1,91 @@
+.priority-workspace {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.priority-workspace > .button {
+  justify-self: start;
+}
+.priority-card {
+  border: 1px solid var(--border, #d5dce5);
+  border-radius: 16px;
+  background: var(--surface, #fff);
+  padding: 20px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.priority-card fieldset {
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+.priority-card label:not(.priority-source) {
+  display: grid;
+  gap: 6px;
+}
+.priority-card select,
+.priority-card input[type='number'],
+.priority-card textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #9aa8b8;
+  border-radius: 8px;
+  box-sizing: border-box;
+  font: inherit;
+}
+.priority-source {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid #e6e9ee;
+}
+.priority-source small {
+  display: block;
+  color: #475569;
+}
+.priority-add {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(80px, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+.priority-added,
+.priority-actions,
+.priority-workspace nav {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.priority-added {
+  justify-content: space-between;
+}
+.priority-tag {
+  display: inline-block;
+  background: #fff0dc;
+  color: #7a3500;
+  border: 1px solid #efb75c;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-weight: 700;
+}
+.priority-total {
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+.priority-actions {
+  margin-top: 16px;
+}
+@media (max-width: 640px) {
+  .priority-add {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .priority-card {
+    padding: 14px;
+  }
+  .priority-actions .button {
+    width: 100%;
+  }
+}

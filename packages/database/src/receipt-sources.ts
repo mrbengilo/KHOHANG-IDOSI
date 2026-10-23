@@ -19,6 +19,7 @@ import {
 import type { Database } from './client.js';
 import { SHIPPABLE_DECISION_STATUSES } from './allocation-decision-gate.js';
 import {
+  emergencyPriorityOrders,
   allocationLines,
   allocationResultDecisions,
   outboundRequestLines,
@@ -46,6 +47,7 @@ export interface StoreReceiptSourceLineRecord {
 export interface StoreReceiptSourceRecord {
   readonly id: string;
   readonly requestNumber: string;
+  readonly priorityOrderCode?: string | null;
   readonly storeId: string;
   readonly dispatchedAt: Date;
   readonly lines: readonly StoreReceiptSourceLineRecord[];
@@ -64,6 +66,7 @@ export interface StoreReceiptSourcePage {
 interface StoreReceiptSourceHeaderRow {
   readonly id: string;
   readonly requestNumber: string;
+  readonly priorityOrderCode?: string | null;
   readonly storeId: string;
   readonly dispatchedAt: Date | null;
 }
@@ -138,10 +141,15 @@ export function buildStoreReceiptSourcePageQueries(
       .select({
         id: outboundRequests.id,
         requestNumber: outboundRequests.requestNumber,
+        priorityOrderCode: emergencyPriorityOrders.code,
         storeId: outboundRequests.storeId,
         dispatchedAt: outboundRequests.dispatchedAt,
       })
       .from(outboundRequests)
+      .leftJoin(
+        emergencyPriorityOrders,
+        eq(emergencyPriorityOrders.outboundRequestId, outboundRequests.id),
+      )
       .where(predicate)
       .orderBy(desc(outboundRequests.dispatchedAt), desc(outboundRequests.id))
       .limit(pagination.pageSize)
@@ -182,6 +190,7 @@ export function assembleStoreReceiptSources(
     return {
       id: header.id,
       requestNumber: header.requestNumber,
+      ...(header.priorityOrderCode ? { priorityOrderCode: header.priorityOrderCode } : {}),
       storeId: header.storeId,
       dispatchedAt: header.dispatchedAt,
       lines,

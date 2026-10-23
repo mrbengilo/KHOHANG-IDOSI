@@ -5,9 +5,9 @@ import { idosiProductSaleGrams, idosiItemsForProduct } from './store-sale-sync.j
 import { idosiNormalSaleGrams } from './store-normal-sale-sync.js';
 import { resetLinkSignature } from './reset-sale-boundary.js';
 
-/** Reviewed PostgreSQL 17 catalog built by migrations 0000..0047 in the isolated fixture. */
+/** Reviewed PostgreSQL 17 catalog built by migrations 0000..0048 in the isolated fixture. */
 export const EXPECTED_RESET_SCHEMA_HASH =
-  'e2e8064fa8a734ff411c83f4fd184451ef3b96c971a859aea3f65700a7c911b5';
+  '9de3f35f54476f382f1790291257afce3e3037bee864bfe85fa5cba45167c293';
 
 /** Only this reviewed set can ever be passed to TRUNCATE. No SQL comes from a manifest. */
 export const RESET_PURGE_TABLES = [
@@ -66,6 +66,8 @@ export const RESET_PURGE_TABLES = [
   'supplier_observation_event_coverage',
   // Internal Reshare (RE) orders: documents and issuance lineage of the purged stock movements.
   // The RE code counter lives in document_code_counters (kept), so codes are never reused.
+  'emergency_priority_orders',
+  'emergency_priority_sources',
   'reshare_orders',
   'reshare_order_lines',
   'reshare_order_sources',

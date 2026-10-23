@@ -3733,15 +3733,19 @@ export const reshareOrders = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     /** Assigned by the database (next_reshare_order_code) on insert. */
     code: text('code').notNull().default(''),
-    allocationDecisionId: uuid('allocation_decision_id')
-      .notNull()
-      .references(() => allocationResultDecisions.id, { onDelete: 'restrict' }),
-    allocationRunId: uuid('allocation_run_id')
-      .notNull()
-      .references(() => allocationRuns.id, { onDelete: 'restrict' }),
-    orderSessionId: uuid('order_session_id')
-      .notNull()
-      .references(() => orderSessions.id, { onDelete: 'restrict' }),
+    allocationDecisionId: uuid('allocation_decision_id').references(
+      () => allocationResultDecisions.id,
+      { onDelete: 'restrict' },
+    ),
+    allocationRunId: uuid('allocation_run_id').references(() => allocationRuns.id, {
+      onDelete: 'restrict',
+    }),
+    orderSessionId: uuid('order_session_id').references(() => orderSessions.id, {
+      onDelete: 'restrict',
+    }),
+    emergencyOrderId: uuid('emergency_order_id').references(() => emergencyPriorityOrders.id, {
+      onDelete: 'restrict',
+    }),
     storeId: uuid('store_id')
       .notNull()
       .references(() => stores.id, { onDelete: 'restrict' }),
@@ -3768,6 +3772,11 @@ export const reshareOrders = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    uniqueIndex('reshare_orders_emergency_uidx').on(table.emergencyOrderId),
+    check(
+      'reshare_orders_source_kind',
+      sql`(${table.origin} = 'emergency' AND ${table.emergencyOrderId} IS NOT NULL AND ${table.allocationDecisionId} IS NULL AND ${table.allocationRunId} IS NULL AND ${table.orderSessionId} IS NULL) OR (${table.origin} <> 'emergency' AND ${table.emergencyOrderId} IS NULL AND ${table.allocationDecisionId} IS NOT NULL AND ${table.allocationRunId} IS NOT NULL AND ${table.orderSessionId} IS NOT NULL)`,
+    ),
     uniqueIndex('reshare_orders_code_uidx').on(table.code),
     uniqueIndex('reshare_orders_decision_uidx').on(table.allocationDecisionId),
     uniqueIndex('reshare_orders_run_store_uidx').on(table.allocationRunId, table.storeId),
@@ -3781,7 +3790,10 @@ export const reshareOrders = pgTable(
     check('reshare_orders_code_format', sql`${table.code} ~ '^RE-[0-9]{6}$'`),
     check('reshare_orders_total_positive', sql`${table.totalQuantity} > 0`),
     check('reshare_orders_version_positive', sql`${table.version} > 0`),
-    check('reshare_orders_origin_valid', sql`${table.origin} IN ('acceptance', 'backfill')`),
+    check(
+      'reshare_orders_origin_valid',
+      sql`${table.origin} IN ('acceptance', 'backfill', 'emergency')`,
+    ),
     check(
       'reshare_orders_actor_role_valid',
       sql`${table.actorRole} IN ('store', 'wholesale', 'htkd', 'admin')`,
@@ -3849,9 +3861,9 @@ export const reshareOrderSources = pgTable(
     reservationId: uuid('reservation_id')
       .notNull()
       .references(() => reservations.id, { onDelete: 'restrict' }),
-    allocationLineId: uuid('allocation_line_id')
-      .notNull()
-      .references(() => allocationLines.id, { onDelete: 'restrict' }),
+    allocationLineId: uuid('allocation_line_id').references(() => allocationLines.id, {
+      onDelete: 'restrict',
+    }),
     storeId: uuid('store_id')
       .notNull()
       .references(() => stores.id, { onDelete: 'restrict' }),
@@ -4285,3 +4297,61 @@ export type StoreSortedStock = typeof storeSortedStocks.$inferSelect;
 export type StoreSortingEvent = typeof storeSortingEvents.$inferSelect;
 export type StoreTransfer = typeof storeTransfers.$inferSelect;
 export type NewStoreTransfer = typeof storeTransfers.$inferInsert;
+
+/** A command-approved emergency shipment, independent of order/allocation sessions. */
+export const emergencyPriorityOrders = pgTable(
+  'emergency_priority_orders',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    code: text('code')
+      .notNull()
+      .default(sql`'UK-' || lpad(nextval('emergency_priority_order_code_seq')::text, 8, '0')`),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    outboundRequestId: uuid('outbound_request_id')
+      .notNull()
+      .references(() => outboundRequests.id, { onDelete: 'restrict' }),
+    actorUserId: uuid('actor_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    actorName: text('actor_name').notNull(),
+    storeName: text('store_name').notNull(),
+    totalQuantity: integer('total_quantity').notNull(),
+    notes: text('notes').notNull().default(''),
+    reshareStatus: text('reshare_status').notNull().default('ORDERED'),
+    version: integer('version').notNull().default(1),
+    approvedAt: timestamp('approved_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('emergency_priority_orders_code_uidx').on(t.code),
+    uniqueIndex('emergency_priority_orders_outbound_uidx').on(t.outboundRequestId),
+    index('emergency_priority_orders_store_time_idx').on(t.storeId, t.approvedAt.desc(), t.id),
+    check(
+      'emergency_priority_orders_quantity',
+      sql`${t.totalQuantity} > 0 AND ${t.totalQuantity} <= 10000`,
+    ),
+    check('emergency_priority_orders_version', sql`${t.version} > 0`),
+    check(
+      'emergency_priority_orders_reshare_status',
+      sql`${t.reshareStatus} IN ('ORDERED','NOT_ORDERED')`,
+    ),
+  ],
+);
+export const emergencyPrioritySources = pgTable(
+  'emergency_priority_sources',
+  {
+    orderId: uuid('order_id')
+      .notNull()
+      .references(() => emergencyPriorityOrders.id, { onDelete: 'restrict' }),
+    reservationId: uuid('reservation_id')
+      .notNull()
+      .references(() => reservations.id, { onDelete: 'restrict' }),
+    kind: text('kind').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.orderId, t.reservationId] }),
+    uniqueIndex('emergency_priority_sources_reservation_uidx').on(t.reservationId),
+    check('emergency_priority_sources_kind', sql`${t.kind} IN ('held','additional')`),
+  ],
+);

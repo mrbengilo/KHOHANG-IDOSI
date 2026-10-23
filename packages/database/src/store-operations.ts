@@ -8,6 +8,7 @@ import { reconcileReceiptStoreWaitDocument } from './store-wait-documents.js';
 import {
   operationalSettingsVersions,
   allocationLines,
+  emergencyPriorityOrders,
   auditLogs,
   dailyPriorityOffers,
   htkdAssignments,
@@ -299,6 +300,11 @@ export async function finalizeStoreReceiptInTransaction(
       );
     }
     await assertShipmentMayBeReceived(tx, outbound);
+    const [emergency] = await tx
+      .select({ id: emergencyPriorityOrders.id })
+      .from(emergencyPriorityOrders)
+      .where(eq(emergencyPriorityOrders.outboundRequestId, receipt.outboundRequestId))
+      .limit(1);
     // Serialize with settings writes so the confirmed preview remains authoritative.
     const settings = await withAdvisoryLock(tx, 'operational-settings', 'current', async () => {
       const [row] = await tx
@@ -574,7 +580,7 @@ export async function finalizeStoreReceiptInTransaction(
             pricePerKgVnd: suppliedLine.pricePerKgVnd,
             goodsCostVnd: lineGoodsCostVnd,
             excessQuantity: excess?.bagWeightsKg.length ?? 0,
-            priorityQueuedQuantity: shortage,
+            priorityQueuedQuantity: emergency ? 0 : shortage,
             shortageReason: shortage > 0 ? receipt.discrepancyNote : null,
             updatedAt: now,
           })
@@ -915,6 +921,17 @@ export async function reconcileReceiptShortageWait(
     readonly shortageDeclaredAt?: Date | null;
   },
 ): Promise<void> {
+  // Emergency shortages remain on the receipt/check; they never become session demand.
+  const [emergency] = await tx
+    .select({ id: emergencyPriorityOrders.id })
+    .from(emergencyPriorityOrders)
+    .innerJoin(
+      outboundRequestLines,
+      eq(outboundRequestLines.outboundRequestId, emergencyPriorityOrders.outboundRequestId),
+    )
+    .where(eq(outboundRequestLines.id, input.outboundRequestLineId))
+    .limit(1);
+  if (emergency) return;
   const targetShortage = input.approvedQuantity - input.receivedQuantity;
   if (targetShortage === input.queuedQuantity) return;
 

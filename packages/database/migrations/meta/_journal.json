@@ -337,6 +337,13 @@
       "when": 1792130000000,
       "tag": "0047_receipt_discrepancy_finalization",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1792731653802,
+      "tag": "0048_emergency_priority_orders",
+      "breakpoints": true
     }
   ]
 }

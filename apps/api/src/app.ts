@@ -1,3 +1,15 @@
+import { priorityOrderPaths } from './priority-openapi.js';
+import {
+  PriorityContextSchema,
+  PriorityOrderInputSchema,
+  PriorityOrderQuerySchema,
+  PriorityOrderSchema,
+  PriorityOrderPageSchema,
+  PriorityAvailabilitySchema,
+  PriorityStatusInputSchema,
+  EntityIdSchema,
+} from '@idosi/contracts';
+import { PriorityOrderError } from '@idosi/database';
 import { InboundStatisticsQuerySchema } from '@idosi/contracts';
 import {
   CancelStoreWaitDocumentRequestSchema,
@@ -367,6 +379,18 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
           fieldErrors: zodFieldErrors(error),
         },
       });
+    }
+    if (error instanceof PriorityOrderError) {
+      return reply
+        .status(error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : 409)
+        .send({
+          error: {
+            code: error.code,
+            message: error.message,
+            requestId: request.id,
+            details: error.details,
+          },
+        });
     }
     if (error instanceof ApiError) {
       return reply.status(error.statusCode).send({
@@ -1589,6 +1613,86 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     return repository.listStoreReceiptSources(session.principal, query);
   });
 
+  app.get('/api/v1/priority-orders/context', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const query = PriorityOrderQuerySchema.parse(request.query);
+    reply.header('cache-control', 'no-store');
+    return {
+      data: PriorityContextSchema.parse(
+        await repository.priorityOrders.context(session.principal, query.storeId, query.page),
+      ),
+    };
+  });
+  app.get('/api/v1/priority-orders/availability', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const query = request.query as Record<string, unknown>;
+    const storeId = EntityIdSchema.parse(query.storeId),
+      productId = EntityIdSchema.parse(query.productId);
+    reply.header('cache-control', 'no-store');
+    return {
+      data: PriorityAvailabilitySchema.parse(
+        await repository.priorityOrders.availability(session.principal, storeId, productId),
+      ),
+    };
+  });
+  app.post('/api/v1/priority-orders/preview', async (request) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    return {
+      data: await repository.priorityOrders.preview(
+        session.principal,
+        PriorityOrderInputSchema.parse(request.body),
+      ),
+    };
+  });
+  app.post('/api/v1/priority-orders', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const result = await repository.priorityOrders.submit(
+      session.principal,
+      PriorityOrderInputSchema.parse(request.body),
+      headers['idempotency-key'],
+      request.id,
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return reply.code(201).send({ data: PriorityOrderSchema.parse(result.data) });
+  });
+  app.get('/api/v1/priority-orders', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    reply.header('cache-control', 'no-store');
+    return PriorityOrderPageSchema.parse(
+      await repository.priorityOrders.list(
+        session.principal,
+        PriorityOrderQuerySchema.parse(request.query),
+      ),
+    );
+  });
+  app.get('/api/v1/priority-orders/:id', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    const id = EntityIdSchema.parse((request.params as { id: unknown }).id);
+    reply.header('cache-control', 'no-store');
+    return {
+      data: PriorityOrderSchema.parse(await repository.priorityOrders.get(session.principal, id)),
+    };
+  });
+  app.put('/api/v1/priority-orders/:id/reshare-status', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, ['ADMIN', 'HTKD']);
+    const id = EntityIdSchema.parse((request.params as { id: unknown }).id);
+    const headers = IdempotencyHeadersSchema.parse(request.headers);
+    const result = await repository.priorityOrders.status(
+      session.principal,
+      id,
+      PriorityStatusInputSchema.parse(request.body),
+      headers['idempotency-key'],
+    );
+    reply.header('idempotency-replayed', String(result.replayed));
+    return { data: PriorityOrderSchema.parse(result.data) };
+  });
+
   app.get('/api/v1/held-allocations', async (request) => {
     const session = await authenticate(request, repository);
     const query = ListHeldAllocationsQuerySchema.parse(request.query);
@@ -2765,6 +2869,7 @@ function openApiDocument(): Record<string, unknown> {
       },
     },
     paths: {
+      ...priorityOrderPaths,
       '/health': { get: { summary: 'Liveness', responses: { '200': { description: 'Live' } } } },
       '/ready': {
         get: {

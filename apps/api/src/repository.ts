@@ -1,4 +1,13 @@
 import type {
+  PriorityAvailability,
+  PriorityContext,
+  PriorityOrder,
+  PriorityOrderInput,
+  PriorityOrderQuery,
+  PriorityOrderPage,
+  PriorityStatusInput,
+} from '@idosi/contracts';
+import type {
   CancelledStoreWaitDocument,
   CancelStoreWaitDocumentRequest,
   ListStoreWaitDocumentsQuery,
@@ -408,7 +417,38 @@ export interface SupplierReconciliationRepository {
   ): Promise<IdempotentResource<SupplierBatch>>;
 }
 
+export interface PriorityOrderRepository {
+  context(
+    actor: AuthenticatedPrincipal,
+    storeId?: string,
+    sourcePage?: number,
+  ): Promise<PriorityContext>;
+  availability(
+    actor: AuthenticatedPrincipal,
+    storeId: string,
+    productId: string,
+  ): Promise<PriorityAvailability>;
+  preview(
+    actor: AuthenticatedPrincipal,
+    input: PriorityOrderInput,
+  ): Promise<{ totalQuantity: number; products: PriorityAvailability[] }>;
+  submit(
+    actor: AuthenticatedPrincipal,
+    input: PriorityOrderInput,
+    key: string,
+    requestId: string,
+  ): Promise<IdempotentResource<PriorityOrder>>;
+  list(actor: AuthenticatedPrincipal, query: PriorityOrderQuery): Promise<PriorityOrderPage>;
+  get(actor: AuthenticatedPrincipal, id: string): Promise<PriorityOrder>;
+  status(
+    actor: AuthenticatedPrincipal,
+    id: string,
+    input: PriorityStatusInput,
+    key: string,
+  ): Promise<IdempotentResource<PriorityOrder>>;
+}
 export interface WarehouseRepository extends SupplierReconciliationRepository {
+  readonly priorityOrders: PriorityOrderRepository;
   ready(): Promise<boolean>;
   close(): Promise<void>;
 

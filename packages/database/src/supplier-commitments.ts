@@ -352,7 +352,7 @@ export async function loadSupplierProductFacts(
     const issuedOrders = (issuedByProduct.get(mapping.productId) ?? []).map(
       (row): SupplierIssuedOrderCommitment => {
         const linkedOrdered = (sourcesByLine.get(row.lineId) ?? []).reduce((total, source) => {
-          const linked = ordered.get(source.allocationLineId)?.ordered ?? 0;
+          const linked = ordered.get(source.allocationLineId ?? source.id)?.ordered ?? 0;
           return total + Math.min(source.quantity, Math.max(0, linked));
         }, 0);
         const orderedQuantity = Math.min(row.quantity - row.reflectedQuantity, linkedOrdered);

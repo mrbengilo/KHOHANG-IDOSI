@@ -764,7 +764,7 @@ export async function loadReshareOrderSummaries(
     .where(inArray(reshareOrders.allocationDecisionId, [...new Set(decisionIds)]));
   return new Map(
     rows.map((row) => [
-      row.decisionId,
+      row.decisionId!,
       {
         id: row.id,
         code: row.code,
