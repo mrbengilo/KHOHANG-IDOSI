@@ -59,6 +59,9 @@ for (const width of [1440, 390])
     await page.getByRole('button', { name: 'Tạo đơn ưu tiên khẩn cấp', exact: true }).click();
     await page.getByRole('combobox', { name: /^Cửa hàng/ }).selectOption(fx.storeA);
     await page.getByRole('checkbox').check();
+    const checkbox = await page.getByRole('checkbox').boundingBox();
+    expect(checkbox!.width).toBeLessThanOrEqual(24);
+    expect(checkbox!.height).toBeLessThanOrEqual(24);
     await page.getByRole('combobox', { name: /^Mặt hàng/ }).selectOption(zero);
     await expect(
       page.getByText('Tồn khả dụng = 0, không thể đặt mặt hàng này.', { exact: true }),
@@ -81,9 +84,8 @@ for (const width of [1440, 390])
         () => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1,
       ),
     ).toBe(true);
-    await page.screenshot({
+    await page.getByRole('region', { name: 'Soạn đơn ưu tiên khẩn cấp' }).screenshot({
       path: testInfo.outputPath(`priority-preview-${width}.png`),
-      fullPage: true,
     });
     const response = page.waitForResponse(
       (r) => r.request().method() === 'POST' && r.url().endsWith('/priority-orders'),
@@ -116,9 +118,8 @@ for (const width of [1440, 390])
       data: command.postDataJSON(),
     });
     expect(noKey.status()).toBe(400);
-    await page.screenshot({
+    await card.screenshot({
       path: testInfo.outputPath(`priority-result-${width}.png`),
-      fullPage: true,
     });
     const storeContext = await browser.newContext({ viewport: { width, height: 900 } }),
       store = await storeContext.newPage();

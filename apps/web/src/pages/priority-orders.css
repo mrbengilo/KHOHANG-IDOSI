@@ -45,6 +45,18 @@
   display: block;
   color: #475569;
 }
+.priority-source input[type='checkbox'] {
+  width: 20px;
+  height: 20px;
+  min-height: 20px;
+  padding: 0;
+  flex: 0 0 20px;
+  margin: 0;
+}
+.priority-source > span {
+  flex: 1;
+  min-width: 0;
+}
 .priority-add {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(80px, 1fr) auto;
