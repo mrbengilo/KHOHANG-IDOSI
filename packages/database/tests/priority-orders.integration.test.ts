@@ -280,8 +280,10 @@ pg('emergency priority: approve, issue and RE without allocation session', () =>
           .availableBags,
       ).toBe(0);
     } finally {
-      await db.update(products).set({ isActive: false }).where(inArray(products.id, productIds));
-      await db.update(stores).set({ isActive: false }).where(inArray(stores.id, storeIds));
+      // These catalog-only fixtures have no business references. Remove exactly their IDs:
+      // inactive records still appear in management pickers used by later live workflows.
+      await db.delete(products).where(inArray(products.id, productIds));
+      await db.delete(stores).where(inArray(stores.id, storeIds));
     }
   });
   it('database deferred guards rollback incomplete emergency order, sources and issue', async () => {
