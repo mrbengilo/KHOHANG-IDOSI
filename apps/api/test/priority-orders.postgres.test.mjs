@@ -134,6 +134,13 @@ test(
       assert.equal((await call('htkd', 'GET', base)).statusCode, 401);
       const spec = (await app.inject({ url: '/openapi.json' })).json();
       assert.ok(spec.paths[base].post);
+      for (const [path, operations] of Object.entries(spec.paths)) {
+        if (path.startsWith(base)) {
+          for (const operation of Object.values(operations)) {
+            assert.deepEqual(operation.security, [{ cookieSession: [] }]);
+          }
+        }
+      }
     } finally {
       await app.close();
     }

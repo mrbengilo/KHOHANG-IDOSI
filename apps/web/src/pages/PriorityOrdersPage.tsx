@@ -432,6 +432,12 @@ function PriorityForm({ accountId, onDone }: { accountId: string; onDone: () => 
   );
 }
 
+export function priorityDeliveryLabel(status: string) {
+  if (status === 'received') return 'Đã nhận hàng';
+  if (status === 'partially_received') return 'Đã nhận thiếu';
+  return 'Đã xuất kho · chờ cửa hàng nhận';
+}
+
 function PriorityCard({ order, manager }: { order: PriorityOrder; manager: boolean }) {
   const cache = useQueryClient();
   const [busy, setBusy] = useState(false);
@@ -478,8 +484,7 @@ function PriorityCard({ order, manager }: { order: PriorityOrder; manager: boole
         Đã duyệt bởi {order.actorName} · {new Date(order.approvedAt).toLocaleString('vi-VN')}
       </p>
       <p>
-        {order.status === 'received' ? 'Đã nhận hàng' : 'Đã xuất kho · chờ cửa hàng nhận'} · Tổng{' '}
-        {order.totalQuantity} bao
+        {priorityDeliveryLabel(order.status)} · Tổng {order.totalQuantity} bao
       </p>
       <ul>
         {order.lines.map((l) => (

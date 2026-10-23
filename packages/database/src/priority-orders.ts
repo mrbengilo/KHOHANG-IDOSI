@@ -10,7 +10,7 @@ import {
   type PriorityStatusInput,
   type PriorityAvailability,
 } from '@idosi/contracts';
-import { and, eq, inArray, isNull, sql, desc, count } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql, desc, count, lte } from 'drizzle-orm';
 import type { Database } from './client.js';
 import { STOCK_JOBS_LOCK } from './allocation-decisions.js';
 import { SHIPPABLE_DECISION_STATUSES } from './allocation-decision-gate.js';
@@ -102,8 +102,7 @@ async function available(tx: Transaction, ids?: string[]): Promise<PriorityAvail
         ids ? inArray(products.id, ids) : undefined,
       ),
     )
-    .orderBy(products.name)
-    .limit(1000);
+    .orderBy(products.name);
   const balances = await tx
     .select({
       product_id: warehouseBalances.productId,
@@ -201,8 +200,7 @@ export async function getPriorityContext(
         .select({ id: stores.id, name: stores.name })
         .from(stores)
         .where(and(eq(stores.isActive, true), isNull(stores.deletedAt)))
-        .orderBy(stores.name)
-        .limit(1000);
+        .orderBy(stores.name);
       if (!storeId)
         return {
           stores: storeRows,
@@ -603,22 +601,31 @@ async function readOrders(tx: Reader, ids: string[]): Promise<PriorityOrder[]> {
     .innerJoin(reshareOrders, eq(reshareOrders.id, reshareOrderSources.reshareOrderId))
     .where(inArray(sources.orderId, ids))
     .orderBy(products.name, reservations.id);
-  const allHistory = await tx
+  const rankedHistory = tx
     .select({
+      id: auditLogs.id,
       orderId: auditLogs.entityId,
       action: auditLogs.action,
       createdAt: auditLogs.createdAt,
       metadata: auditLogs.metadata,
+      rank: sql<number>`row_number() over (partition by ${auditLogs.entityId} order by ${auditLogs.createdAt} desc, ${auditLogs.id} desc)`.as(
+        'history_rank',
+      ),
     })
     .from(auditLogs)
     .where(
       and(eq(auditLogs.entityType, 'emergency_priority_order'), inArray(auditLogs.entityId, ids)),
     )
-    .orderBy(desc(auditLogs.createdAt));
+    .as('priority_history');
+  const allHistory = await tx
+    .select()
+    .from(rankedHistory)
+    .where(lte(rankedHistory.rank, 100))
+    .orderBy(desc(rankedHistory.createdAt), desc(rankedHistory.id));
   return headers.map((row) => {
     const id = row.order.id;
     const sourceRows = allSources.filter((r) => r.orderId === id);
-    const history = allHistory.filter((h) => h.orderId === id).slice(0, 100);
+    const history = allHistory.filter((h) => h.orderId === id);
     const lines = new Map<
       string,
       { productId: string; name: string; held: number; additional: number; total: number }
@@ -748,21 +755,23 @@ export async function updatePriorityReshareStatus(
       if (!order) throw new PriorityOrderError('NOT_FOUND', 'Không tìm thấy đơn.');
       if (order.version !== input.expectedVersion)
         throw new PriorityOrderError('CONFLICT', 'Trạng thái đã thay đổi, vui lòng tải lại.');
-      await tx
-        .update(orders)
-        .set({ reshareStatus: input.status, version: order.version + 1 })
-        .where(eq(orders.id, id));
-      await tx.insert(auditLogs).values({
-        actorUserId: userId,
-        actorRole: actor.role,
-        actorStoreId: order.storeId,
-        action: 'RESHARE_ORDER_STATUS_UPDATED',
-        entityType: 'emergency_priority_order',
-        entityId: id,
-        before: { status: order.reshareStatus },
-        after: { status: input.status },
-        metadata: { actorName: actor.displayName },
-      });
+      if (input.status !== order.reshareStatus) {
+        await tx
+          .update(orders)
+          .set({ reshareStatus: input.status, version: order.version + 1 })
+          .where(eq(orders.id, id));
+        await tx.insert(auditLogs).values({
+          actorUserId: userId,
+          actorRole: actor.role,
+          actorStoreId: order.storeId,
+          action: 'RESHARE_ORDER_STATUS_UPDATED',
+          entityType: 'emergency_priority_order',
+          entityId: id,
+          before: { status: order.reshareStatus },
+          after: { status: input.status },
+          metadata: { actorName: actor.displayName },
+        });
+      }
       const data = await readOrder(tx, id);
       if (!data) throw new Error('Missing order');
       return {

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { stockHint } from '../../pages/PriorityOrdersPage';
+import { stockHint, priorityDeliveryLabel } from '../../pages/PriorityOrdersPage';
 const stock = {
   productId: 'p',
   name: 'Nữ',
@@ -25,4 +25,9 @@ it('reports zero, overstock, invalid input and pending without silently clamping
       1,
     ),
   ).toContain('không thể đặt');
+});
+it('distinguishes finalized short receipt from a shipment still awaiting receipt', () => {
+  expect(priorityDeliveryLabel('partially_received')).toBe('Đã nhận thiếu');
+  expect(priorityDeliveryLabel('received')).toBe('Đã nhận hàng');
+  expect(priorityDeliveryLabel('dispatched')).toContain('chờ cửa hàng nhận');
 });

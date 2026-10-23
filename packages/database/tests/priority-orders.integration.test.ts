@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { eq, sql, inArray } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   db,
@@ -20,6 +20,8 @@ import {
   getPriorityAvailability,
   allocationResultDecisions,
   stores,
+  products,
+  auditLogs,
 } from '../src/index.js';
 import { createSupplierFixture, mapProduct, observe } from './fixtures/supplier.js';
 import {
@@ -112,6 +114,7 @@ pg('emergency priority: approve, issue and RE without allocation session', () =>
       ],
     });
     expect(await balanceOf(female)).toEqual({ onHand: 0, reserved: 0 });
+    expect((await getPriorityOrder(db, fx.adminId, data.id)).status).toBe('partially_received');
   });
   it('overstock rolls back, exact stock succeeds, same key replays, changed payload conflicts, locked user cannot replay', async () => {
     const { fx, female, input } = await fixture();
@@ -201,6 +204,15 @@ pg('emergency priority: approve, issue and RE without allocation session', () =>
     );
     expect(changed.data.reshareStatus).toBe('NOT_ORDERED');
     expect(changed.data.history).toHaveLength(2);
+    const same = await updatePriorityReshareStatus(
+      db,
+      fx.otherHtkdId,
+      data.id,
+      { expectedVersion: changed.data.version, status: 'NOT_ORDERED' },
+      randomUUID(),
+    );
+    expect(same.data.version).toBe(changed.data.version);
+    expect(same.data.history).toEqual(changed.data.history);
     await expect(
       updatePriorityReshareStatus(
         db,
@@ -210,6 +222,67 @@ pg('emergency priority: approve, issue and RE without allocation session', () =>
         randomUUID(),
       ),
     ).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+  it('returns the latest 100 audit events per order in deterministic order', async () => {
+    const { fx, input } = await fixture();
+    const { data } = await submitPriorityOrder(db, fx.adminId, input, randomUUID());
+    const time = Date.now();
+    await db.insert(auditLogs).values(
+      Array.from({ length: 105 }, (_, index) => ({
+        actorUserId: fx.adminId,
+        actorRole: 'admin' as const,
+        action: 'TEST_HISTORY',
+        entityType: 'emergency_priority_order',
+        entityId: data.id,
+        metadata: { actorName: `Editor ${index}` },
+        createdAt: new Date(time + index + 1000),
+      })),
+    );
+    const detail = await getPriorityOrder(db, fx.adminId, data.id);
+    const list = await listPriorityOrders(db, fx.adminId, {
+      storeId: fx.storeA,
+      page: 1,
+      pageSize: 20,
+    });
+    expect(detail.history).toHaveLength(100);
+    expect(detail.history[0]!.actorName).toBe('Editor 104');
+    expect(detail.history[99]!.actorName).toBe('Editor 5');
+    expect(list.data[0]!.history).toEqual(detail.history);
+  });
+  it('does not silently truncate selectable stores or products after 1000 options', async () => {
+    const fx = await createSupplierFixture();
+    const tag = randomUUID();
+    const [baseStore] = await db.select().from(stores).where(eq(stores.id, fx.storeA));
+    const storeIds = Array.from({ length: 1001 }, () => randomUUID());
+    const productIds = Array.from({ length: 1001 }, () => randomUUID());
+    try {
+      await db.insert(stores).values(
+        storeIds.map((id, i) => ({
+          id,
+          code: `OPTION-${tag}-${i}`,
+          name: `zzzz option ${tag} ${i}`,
+          groupId: baseStore!.groupId,
+        })),
+      );
+      await db.insert(products).values(
+        productIds.map((id, i) => ({
+          id,
+          sku: `OPTION-${tag}-${i}`,
+          slug: `option-${tag}-${i}`,
+          name: `zzzz option ${tag} ${i}`,
+        })),
+      );
+      const context = await getPriorityContext(db, fx.adminId, fx.storeA);
+      expect(storeIds.every((id) => context.stores.some((s) => s.id === id))).toBe(true);
+      expect(productIds.every((id) => context.products.some((p) => p.productId === id))).toBe(true);
+      expect(
+        (await getPriorityAvailability(db, fx.adminId, storeIds[1000]!, productIds[1000]!))
+          .availableBags,
+      ).toBe(0);
+    } finally {
+      await db.update(products).set({ isActive: false }).where(inArray(products.id, productIds));
+      await db.update(stores).set({ isActive: false }).where(inArray(stores.id, storeIds));
+    }
   });
   it('database deferred guards rollback incomplete emergency order, sources and issue', async () => {
     const { fx, input, female } = await fixture();

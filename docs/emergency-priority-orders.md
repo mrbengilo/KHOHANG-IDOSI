@@ -26,6 +26,8 @@ Phiếu xuất được dispatch ngay bằng danh tính đơn UK. Cửa hàng kh
 
 Đọc đơn: ADMIN/HTKD mọi cửa hàng; STORE đúng cửa hàng; WHOLESALE các cửa hàng sỉ đang hoạt động. Tài khoản bị khóa bị từ chối cả replay. Giao diện chế độ demo báo không khả dụng, không giả vờ cấp hàng trong memory adapter.
 
+Danh mục chọn trả đủ cửa hàng và SKU hoạt động, không cắt ngầm ở 1.000 mục. Danh sách đơn/nguồn vẫn phân trang; lịch sử trả 100 sự kiện gần nhất mỗi đơn, giới hạn ngay trong SQL. Cập nhật trạng thái Reshare về đúng trạng thái hiện tại không tăng version và không tạo lịch sử thay đổi giả. Phiếu nhận đã chốt thiếu hiển thị “Đã nhận thiếu”.
+
 ## API và file chính
 
 API `/api/v1/priority-orders`: context, availability, preview, POST submit, GET list/detail, PUT `:id/reshare-status`; mô tả tại `/openapi.json`. Contracts ở `packages/contracts/src/priority-orders.ts`, transaction ở `packages/database/src/priority-orders.ts`, routing/adapters ở `apps/api/src`, UI ở `apps/web/src/pages/PriorityOrdersPage.tsx` và `features/priority-orders`. Trang Reshare dẫn tới danh sách RE của đơn UK; trang nhận hàng có tag UK.

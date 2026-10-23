@@ -52,6 +52,7 @@ const body = { required: true, content: { 'application/json': { schema: input } 
 export const priorityOrderPaths = {
   '/api/v1/priority-orders/context': {
     get: {
+      security: [{ cookieSession: [] }],
       summary:
         'ADMIN/HTKD: active stores, paged held sources, product availability and read-only wait references',
       parameters: [
@@ -69,6 +70,7 @@ export const priorityOrderPaths = {
   },
   '/api/v1/priority-orders/availability': {
     get: {
+      security: [{ cookieSession: [] }],
       summary: 'ADMIN/HTKD: current available and maximum additional bags for one SKU',
       parameters: [
         { ...store, required: true },
@@ -85,6 +87,7 @@ export const priorityOrderPaths = {
   },
   '/api/v1/priority-orders/preview': {
     post: {
+      security: [{ cookieSession: [] }],
       summary: 'Read-only server validation, does not reserve stock',
       requestBody: body,
       responses: {
@@ -95,6 +98,7 @@ export const priorityOrderPaths = {
   },
   '/api/v1/priority-orders': {
     get: {
+      security: [{ cookieSession: [] }],
       summary: 'Scoped emergency orders including source RE codes, status and history',
       parameters: [
         store,
@@ -111,6 +115,7 @@ export const priorityOrderPaths = {
       },
     },
     post: {
+      security: [{ cookieSession: [] }],
       summary: 'ADMIN/HTKD: approve, issue, create RE and dispatch atomically',
       parameters: [key],
       requestBody: body,
@@ -125,6 +130,7 @@ export const priorityOrderPaths = {
   },
   '/api/v1/priority-orders/{id}': {
     get: {
+      security: [{ cookieSession: [] }],
       summary: 'Read one scoped emergency order',
       parameters: [id],
       responses: {
@@ -136,6 +142,7 @@ export const priorityOrderPaths = {
   },
   '/api/v1/priority-orders/{id}/reshare-status': {
     put: {
+      security: [{ cookieSession: [] }],
       summary: 'ADMIN/HTKD: audited, versioned Reshare ordering status; never reverses stock',
       parameters: [id, key],
       requestBody: {
