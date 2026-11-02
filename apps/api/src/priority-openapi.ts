@@ -21,11 +21,15 @@ const input = {
   type: 'object',
   additionalProperties: false,
   required: ['storeId', 'sources', 'additionalLines'],
+  anyOf: [
+    { properties: { sources: { minItems: 1 } } },
+    { properties: { additionalLines: { minItems: 1 } } },
+  ],
   properties: {
     storeId: uuid,
     sources: {
       type: 'array',
-      minItems: 1,
+      minItems: 0,
       maxItems: 100,
       items: {
         type: 'object',
@@ -36,7 +40,7 @@ const input = {
     },
     additionalLines: {
       type: 'array',
-      minItems: 1,
+      minItems: 0,
       maxItems: 100,
       items: {
         type: 'object',
@@ -122,7 +126,7 @@ export const priorityOrderPaths = {
       responses: {
         '201': {
           description:
-            'Committed PriorityOrder envelope; Idempotency-Replayed header; issued old sources are not issued again',
+            'Committed PriorityOrder envelope; Idempotency-Replayed header; issued old sources are not issued again. If no new RE is needed: reshareId/reshareCode are null and reshareQuantity is 0; source RE codes remain available.',
         },
         ...errors,
       },

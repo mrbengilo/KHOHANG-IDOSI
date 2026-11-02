@@ -15,6 +15,7 @@ import { useSession } from '../lib/auth';
 import { ApiClientError, mockModeEnabled } from '../lib/api';
 import { useBeforeUnloadWhile } from '../lib/draft-guard';
 import { priorityApi } from '../features/priority-orders/api';
+import { PriorityProductPicker } from '../features/priority-orders/PriorityProductPicker';
 import './priority-orders.css';
 
 export function PriorityOrdersPage() {
@@ -48,7 +49,7 @@ function PriorityWorkspace({ accountId, manager }: { accountId: string; manager:
     <div className="priority-workspace">
       <PageHeader
         title="Đơn ưu tiên khẩn cấp"
-        description="Xử lý ngay hàng đã cấp đang giữ, kèm mặt hàng đặt thêm theo tồn khả dụng."
+        description="Tạo chuyến giao ngay từ hàng đã cấp hoặc đặt thêm theo tồn khả dụng của kho tổng."
       />
       {manager && (
         <Button onClick={() => setCreating(true)} disabled={creating}>
@@ -141,6 +142,8 @@ function PriorityForm({ accountId, onDone }: { accountId: string; onDone: () => 
   const context = useQuery({
     queryKey: ['priority-context', accountId, storeId, sourcePage],
     queryFn: () => priorityApi.context(storeId, sourcePage),
+    refetchInterval: storeId ? 15000 : false,
+    refetchOnWindowFocus: true,
     staleTime: 0,
   });
   const stock = useQuery({
@@ -148,6 +151,7 @@ function PriorityForm({ accountId, onDone }: { accountId: string; onDone: () => 
     queryFn: () => priorityApi.availability(storeId, productId),
     enabled: !!storeId && !!productId,
     refetchInterval: 15000,
+    refetchOnWindowFocus: true,
     staleTime: 0,
   });
   const lineStocks = useQuery({
@@ -156,6 +160,7 @@ function PriorityForm({ accountId, onDone }: { accountId: string; onDone: () => 
       Promise.all(additional.map((l) => priorityApi.availability(storeId, l.productId))),
     enabled: additional.length > 0,
     refetchInterval: 15000,
+    refetchOnWindowFocus: true,
     staleTime: 0,
   });
   const held = selected;
@@ -169,19 +174,19 @@ function PriorityForm({ accountId, onDone }: { accountId: string; onDone: () => 
     quantity > 0 &&
     quantity <= stock.data.maxAdditionalBags;
   const validLines =
-    additional.length > 0 &&
-    !lineStocks.isFetching &&
-    !lineStocks.isError &&
-    lineStocks.data?.length === additional.length &&
-    additional.every(
-      (l) =>
-        l.quantity <=
-        (lineStocks.data?.find((s) => s.productId === l.productId)?.maxAdditionalBags ?? 0),
-    );
+    additional.length === 0 ||
+    (!lineStocks.isFetching &&
+      !lineStocks.isError &&
+      lineStocks.data?.length === additional.length &&
+      additional.every(
+        (l) =>
+          l.quantity <=
+          (lineStocks.data?.find((s) => s.productId === l.productId)?.maxAdditionalBags ?? 0),
+      ));
   const invalid =
     busy ||
     !storeId ||
-    held.length === 0 ||
+    total === 0 ||
     held.length > 100 ||
     !validLines ||
     context.isFetching ||
@@ -250,7 +255,7 @@ function PriorityForm({ accountId, onDone }: { accountId: string; onDone: () => 
             <Button onClick={() => void context.refetch()}>Tải lại nguồn</Button>
           </p>
         )}
-        {storeId && context.data && !context.isFetching && (
+        {storeId && context.data && (
           <>
             <h3>Phiếu chờ đang hoạt động</h3>
             <p>Chỉ tham khảo — không đưa vào đơn ưu tiên này.</p>
@@ -260,7 +265,7 @@ function PriorityForm({ accountId, onDone }: { accountId: string; onDone: () => 
             </p>
             <h3>Đã cấp chờ giao</h3>
             {!context.data.sources.length && (
-              <p>Không có nguồn hàng đủ điều kiện đang giữ chờ giao.</p>
+              <p>Không có hàng đã cấp chờ giao. Bạn vẫn có thể đặt mặt hàng từ kho tổng.</p>
             )}
             {context.data.sources.map((s) => (
               <label className="priority-source" key={s.id}>
@@ -301,27 +306,19 @@ function PriorityForm({ accountId, onDone }: { accountId: string; onDone: () => 
               </Button>
             </nav>
             <h3>Đặt thêm mặt hàng</h3>
+            <p>Số bên cạnh mỗi mặt hàng là số bao khả dụng của kho tổng có thể đặt tối đa.</p>
             <div className="priority-add">
-              <label>
-                Mặt hàng
-                <select
-                  aria-label="Mặt hàng"
-                  value={productId}
-                  onChange={(e) => {
-                    setProductId(e.target.value);
-                    setQuantity(1);
-                  }}
-                >
-                  <option value="">Chọn mặt hàng</option>
-                  {context.data.products
-                    .filter((p) => !additional.some((l) => l.productId === p.productId))
-                    .map((p) => (
-                      <option value={p.productId} key={p.productId}>
-                        {p.name}
-                      </option>
-                    ))}
-                </select>
-              </label>
+              <PriorityProductPicker
+                value={productId}
+                products={context.data.products.filter(
+                  (p) => !additional.some((l) => l.productId === p.productId),
+                )}
+                disabled={context.isError}
+                onChange={(id) => {
+                  setProductId(id);
+                  setQuantity(1);
+                }}
+              />
               <label>
                 Số bao
                 <input
@@ -361,7 +358,7 @@ function PriorityForm({ accountId, onDone }: { accountId: string; onDone: () => 
                   <p>Đang kiểm tra tồn khả dụng…</p>
                 ) : (
                   <>
-                    <p>Tồn khả dụng: {stock.data?.availableBags ?? '…'} bao</p>
+                    <p>Tồn khả dụng: {stock.data?.maxAdditionalBags ?? '…'} bao</p>
                     <p>{stockHint(stock.data, quantity)}</p>
                   </>
                 )}
@@ -425,8 +422,8 @@ function PriorityForm({ accountId, onDone }: { accountId: string; onDone: () => 
         </Button>
       </div>
       <p>
-        Gửi thành công: duyệt ngay, ghi xuất kho, lập đơn Reshare và đưa toàn bộ hàng vào chuyến
-        giao.
+        Gửi thành công: duyệt và tạo chuyến giao ngay. Hàng chưa xuất được ghi xuất kho và lập RE;
+        hàng đã xuất giữ chứng từ cũ.
       </p>
     </section>
   );
@@ -493,9 +490,15 @@ function PriorityCard({ order, manager }: { order: PriorityOrder; manager: boole
           </li>
         ))}
       </ul>
+      {order.reshareCode ? (
+        <p>
+          RE lập ngay: <strong>{order.reshareCode}</strong> · {order.reshareQuantity} bao
+        </p>
+      ) : (
+        <p>Hàng đã xuất kho, sử dụng chứng từ RE nguồn; không lập RE mới.</p>
+      )}
       <p>
-        RE lập ngay: <strong>{order.reshareCode}</strong> · {order.reshareQuantity} bao ·{' '}
-        {order.reshareStatus === 'ORDERED' ? 'Đã đặt Reshare' : 'Chưa đặt Reshare'}
+        Trạng thái đặt: {order.reshareStatus === 'ORDERED' ? 'Đã đặt Reshare' : 'Chưa đặt Reshare'}
       </p>
       <p>Chứng từ nguồn: {[...new Set(order.sources.map((s) => s.reshareCode))].join(', ')}</p>
       {order.notes && <p>Ghi chú: {order.notes}</p>}
@@ -519,7 +522,7 @@ function PriorityCard({ order, manager }: { order: PriorityOrder; manager: boole
           {order.history.map((h, i) => (
             <li key={i}>
               {h.action === 'EMERGENCY_PRIORITY_ORDER_APPROVED'
-                ? 'Duyệt đơn khẩn cấp và lập RE'
+                ? 'Duyệt đơn khẩn cấp và tạo chuyến giao'
                 : 'Cập nhật trạng thái Reshare'}{' '}
               · {h.actorName} · {new Date(h.createdAt).toLocaleString('vi-VN')}
             </li>

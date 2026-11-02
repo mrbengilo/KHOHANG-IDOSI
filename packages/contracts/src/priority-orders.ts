@@ -7,16 +7,20 @@ export const PriorityOrderInputSchema = z
     storeId: EntityIdSchema,
     sources: z
       .array(z.object({ id: EntityIdSchema, revision: z.string().min(1).max(100) }).strict())
-      .min(1)
       .max(100),
     additionalLines: z
       .array(z.object({ productId: EntityIdSchema, quantity: Quantity }).strict())
-      .min(1)
       .max(100),
     notes: z.string().trim().max(500).default(''),
   })
   .strict()
   .superRefine((value, ctx) => {
+    if (value.sources.length === 0 && value.additionalLines.length === 0)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['sources'],
+        message: 'Chọn hàng đã cấp hoặc thêm mặt hàng để tạo đơn.',
+      });
     if (new Set(value.sources.map((s) => s.id)).size !== value.sources.length)
       ctx.addIssue({ code: 'custom', path: ['sources'], message: 'Nguồn hàng bị lặp.' });
     if (
@@ -87,9 +91,9 @@ export const PriorityOrderSchema = z
     version: z.number().int(),
     totalQuantity: Quantity,
     outboundRequestId: EntityIdSchema,
-    reshareId: EntityIdSchema,
-    reshareCode: z.string(),
-    reshareQuantity: Quantity,
+    reshareId: EntityIdSchema.nullable(),
+    reshareCode: z.string().nullable(),
+    reshareQuantity: z.number().int().min(0).max(10000),
     reshareStatus: z.enum(['ORDERED', 'NOT_ORDERED']),
     notes: z.string(),
     lines: z.array(
