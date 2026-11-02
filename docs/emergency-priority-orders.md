@@ -1,6 +1,10 @@
 # Đơn ưu tiên khẩn cấp
 
-ADMIN/HTKD chọn cửa hàng đang hoạt động, chọn nguồn đã xác nhận và đã cấp đang giữ chờ giao, thêm SKU theo tồn khả dụng rồi gửi. HTKD được chọn mọi cửa hàng trong riêng chức năng này. Quyền nhận hàng, xác nhận phân bổ và quản lý cửa hàng ở các chức năng khác giữ nguyên.
+ADMIN/HTKD chọn cửa hàng đang hoạt động, chọn nguồn đã xác nhận và đã cấp đang giữ chờ giao và/hoặc thêm SKU theo tồn khả dụng rồi gửi. HTKD được chọn mọi cửa hàng trong riêng chức năng này. Quyền nhận hàng, xác nhận phân bổ và quản lý cửa hàng ở các chức năng khác giữ nguyên.
+
+Cửa hàng không có phiếu chờ và không có hàng đã cấp chờ giao vẫn tạo được đơn chỉ gồm hàng đặt mới (`sources: []`). Cũng có thể chỉ chọn hàng đã cấp để tạo chuyến giao khẩn cấp (`additionalLines: []`), không bắt buộc đặt thêm. Hai mảng không được đồng thời rỗng. Chỉ những nguồn người dùng chủ động chọn mới được đưa vào đơn. Ví dụ cửa hàng có 2 bao nam và 2 bao nữ, chọn riêng nguồn 2 bao nam thì đơn giao đúng 2 bao nam, 2 bao nữ vẫn giữ chờ giao. Không tạo/sửa phiếu chờ để đáp ứng điều kiện tạo đơn.
+
+Ô “Chọn mặt hàng” có tìm kiếm và hiển thị duy nhất con số bao có thể đặt bên cạnh từng mặt hàng. Khi di chuột hoặc đưa tiêu điểm bàn phím vào dòng hàng, tooltip chỉ hiện con số này (ví dụ `3` = tối đa 3 bao, `0` = không thể chọn). Số này là `maxAdditionalBags` từ server: khả dụng kho tổng H−R sau giới hạn đối chiếu nguồn và giới hạn mỗi đơn; không phải tồn tại cửa hàng, tồn vật lý chưa trừ giữ hàng hoặc tổng hàng đã cấp. Mặt hàng có số 0 bị khóa chọn. Danh mục được kiểm lại mỗi 15 giây/khi trở lại cửa sổ; chọn hàng và gửi vẫn kiểm tồn lại. Bàn phím: mở danh sách bằng Enter/Space hoặc mũi tên, gõ để tìm, lên/xuống để chọn dòng, Enter để chọn và Escape để đóng. Mobile xem được số ngay trên dòng mà không cần hover.
 
 Màn hình `/priority-orders` hiển thị tồn ngay khi chọn SKU, kiểm lại mỗi 15 giây và khi trở lại cửa sổ. Số bao phải nguyên dương, không vượt giới hạn của SKU. Một SKU chỉ có một dòng đặt thêm. Tồn 0 hoặc lỗi kiểm tồn khóa thao tác thêm. Server vẫn kiểm lại trong transaction; không tự giảm lượng khách đã nhập. Nguồn được phân trang 50 dòng; tối đa 100 nguồn và 100 SKU mỗi đơn, tổng tối đa 10.000 bao.
 
@@ -12,6 +16,7 @@ Ví dụ 1 nam đã cấp đang giữ + 1 nữ đặt thêm = đơn 2 bao. Nếu
 - `emergency_priority_sources`: sở hữu độc quyền reservation đã chọn hoặc tạo thêm; khóa unique chặn hai đơn dùng một nguồn.
 - `reshare_orders.origin=emergency`: liên kết đơn UK; không cần session/run/decision giả. Nhánh allocation cũ vẫn bắt buộc đủ các liên kết cũ.
 - Nguồn issued cũ: không ghi xuất lại, không tạo RE lần hai. Đơn UK giữ liên kết về RE cũ.
+- Nếu toàn bộ nguồn chọn đã issued và không đặt thêm, không tạo RE mới/RE rỗng. DTO trả `reshareId=null`, `reshareCode=null`, `reshareQuantity=0`; `sources[].reshareCode` vẫn chỉ đúng chứng từ cũ. Giao diện ghi rõ sử dụng RE nguồn và không lập RE mới. Audit duyệt/chuyến giao vẫn có; không ghi sự kiện tạo RE giả.
 - Nguồn legacy active: xuất một lần, H và R cùng giảm đúng lượng đó.
 - Đặt thêm q: reserve R+q, sau đó issue H−q và R−q trong cùng transaction; sau commit lượng mới không còn nằm ở R.
 - Khả dụng là H−R cùng giới hạn supplier reconciliation. Nguồn cũ không được cộng trở lại khả dụng.
@@ -33,6 +38,10 @@ Danh mục chọn trả đủ cửa hàng và SKU hoạt động, không cắt n
 API `/api/v1/priority-orders`: context, availability, preview, POST submit, GET list/detail, PUT `:id/reshare-status`; mô tả tại `/openapi.json`. Contracts ở `packages/contracts/src/priority-orders.ts`, transaction ở `packages/database/src/priority-orders.ts`, routing/adapters ở `apps/api/src`, UI ở `apps/web/src/pages/PriorityOrdersPage.tsx` và `features/priority-orders`. Trang Reshare dẫn tới danh sách RE của đơn UK; trang nhận hàng có tag UK.
 
 Migration `0048_emergency_priority_orders.sql` thêm bảng/index, nới liên kết allocation cho RE emergency có constraint thay thế, bổ sung guard bất biến và sửa deferred issuance để kiểm trạng thái cuối transaction. Không backfill đoán nguồn cũ. Reset tooling phân loại hai bảng mới là dữ liệu nghiệp vụ; sequence UK không reset để tránh tái dùng mã.
+
+Migration `0049_emergency_held_only.sql` thay deferred completion guard: mỗi nguồn phải có RE issued chưa settle, đúng cửa hàng/mặt hàng/số lượng/chuyến giao; nguồn `additional` phải thuộc RE mới của chính đơn. Cho phép đơn không có RE mới khi toàn bộ nguồn đã có RE hợp lệ. Không thay bảng, không backfill, không cập nhật dữ liệu lịch sử. Writes của bản cũ vẫn hợp lệ trên guard mới. Sau khi có đơn chỉ dùng RE cũ, không rollback về code dùng inner join RE mới (sẽ bỏ sót đơn và báo tổng phân trang sai); ưu tiên forward-fix. Các tab mở từ bản trước cần tải lại để đọc DTO mới cho đơn không có RE mới.
+
+Structural fingerprint của công cụ reset được cập nhật từ catalog PostgreSQL 17 mới có đủ 50 migrations, vì fingerprint bao gồm định nghĩa trigger. Phạm vi purge/keep và quy trình reset giữ nguyên; deploy không chạy reset.
 
 ## Kiểm thử và phát hành
 

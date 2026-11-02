@@ -9,6 +9,7 @@ import {
   getPriorityOrder,
   listPriorityOrders,
   updatePriorityReshareStatus,
+  previewPriorityOrder,
   users,
   reservations,
   reshareOrders,
@@ -66,6 +67,174 @@ pg('emergency priority: approve, issue and RE without allocation session', () =>
       )
     ).rows;
   }
+  for (const legacy of [false, true])
+    it(`held-only: select 2 male bags, leave 2 female bags; ${legacy ? 'issue legacy once' : 'reuse issued RE without new issue'}`, async () => {
+      const fx = await createSupplierFixture();
+      const male = await createProduct('Nam chỉ hàng đã cấp');
+      const female = await createProduct('Nữ giữ nguyên');
+      await openingStock(male, 2);
+      await openingStock(female, 2);
+      const result = await publishPendingResult(fx, {
+        storeId: fx.storeA,
+        grants: [
+          { productId: male, quantity: 2 },
+          { productId: female, quantity: 2 },
+        ],
+        shipment: false,
+        ...(legacy ? { legacy: true } : {}),
+      });
+      if (!legacy) await respond(result.decisionId, fx.storeUserA, 'ACCEPT');
+      const context = await getPriorityContext(db, fx.adminId, fx.storeA);
+      const source = context.sources.find((s) => s.productId === male)!;
+      const femaleSource = context.sources.find((s) => s.productId === female)!;
+      const before = await sessions();
+      const reBefore = await db
+        .select()
+        .from(reshareOrders)
+        .where(eq(reshareOrders.storeId, fx.storeA));
+      const input = {
+        storeId: fx.storeA,
+        sources: [{ id: source.id, revision: source.revision }],
+        additionalLines: [],
+        notes: '',
+      };
+      const key = randomUUID();
+      expect(await previewPriorityOrder(db, fx.adminId, input)).toMatchObject({
+        totalQuantity: 2,
+        products: [],
+      });
+      const { data } = await submitPriorityOrder(db, fx.otherHtkdId, input, key);
+      expect(data).toMatchObject({
+        totalQuantity: 2,
+        reshareQuantity: legacy ? 2 : 0,
+        status: 'dispatched',
+      });
+      expect(data.reshareId === null).toBe(!legacy);
+      expect(data.reshareCode === null).toBe(!legacy);
+      expect(data.sources).toHaveLength(1);
+      expect(data.sources[0]!.kind).toBe('held');
+      expect(data.lines).toEqual([
+        expect.objectContaining({ productId: male, held: 2, additional: 0, total: 2 }),
+      ]);
+      const reAfter = await db
+        .select()
+        .from(reshareOrders)
+        .where(eq(reshareOrders.storeId, fx.storeA));
+      expect(reAfter).toHaveLength(reBefore.length + (legacy ? 1 : 0));
+      expect((await submitPriorityOrder(db, fx.otherHtkdId, input, key)).data).toEqual(data);
+      expect((await getPriorityOrder(db, fx.storeUserA, data.id)).id).toBe(data.id);
+      expect(
+        (await listPriorityOrders(db, fx.adminId, { storeId: fx.storeA, page: 1, pageSize: 20 }))
+          .data,
+      ).toHaveLength(1);
+      expect(await balanceOf(male)).toEqual({ onHand: 0, reserved: 0 });
+      expect(await balanceOf(female)).toEqual(
+        legacy ? { onHand: 2, reserved: 2 } : { onHand: 0, reserved: 0 },
+      );
+      expect((await getPriorityContext(db, fx.adminId, fx.storeA)).sources).toEqual([femaleSource]);
+      expect(await sessions()).toEqual(before);
+      await receive(fx, {
+        outboundId: data.outboundRequestId,
+        storeId: fx.storeA,
+        storeUserId: fx.storeUserA,
+        lines: [{ productId: male, approvedQuantity: 2, receivedQuantity: 2 }],
+      });
+      expect(await balanceOf(male)).toEqual({ onHand: 0, reserved: 0 });
+      expect(await ledgerTotals(male)).toEqual(await balanceOf(male));
+      expect((await getPriorityContext(db, fx.adminId, fx.storeA)).sources).toEqual([femaleSource]);
+      expect(await sessions()).toEqual(before);
+    });
+  it('held-only racing the same issued source dispatches once and creates no extra RE', async () => {
+    const { fx, input } = await fixture();
+    const before = await db
+      .select()
+      .from(reshareOrders)
+      .where(eq(reshareOrders.storeId, fx.storeA));
+    const command = { ...input, additionalLines: [] };
+    const results = await Promise.allSettled([
+      submitPriorityOrder(db, fx.adminId, command, randomUUID()),
+      submitPriorityOrder(db, fx.otherHtkdId, command, randomUUID()),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
+    expect(
+      await db.select().from(reshareOrders).where(eq(reshareOrders.storeId, fx.storeA)),
+    ).toEqual(before);
+  });
+  it('new store without held goods or wait documents can order, replay and receive new goods only', async () => {
+    const fx = await createSupplierFixture();
+    const productId = await createProduct('Khẩn chỉ đặt mới');
+    await openingStock(productId, 3);
+    const context = await getPriorityContext(db, fx.otherHtkdId, fx.storeA);
+    expect(context.sources).toEqual([]);
+    expect(context.waitDocuments).toEqual([]);
+    expect(context.products.find((p) => p.productId === productId)).toMatchObject({
+      maxAdditionalBags: 3,
+      orderable: true,
+    });
+    const input = {
+      storeId: fx.storeA,
+      sources: [],
+      additionalLines: [{ productId, quantity: 3 }],
+      notes: '',
+    };
+    const before = await sessions();
+    expect(await previewPriorityOrder(db, fx.otherHtkdId, input)).toMatchObject({
+      totalQuantity: 3,
+    });
+    await expect(
+      submitPriorityOrder(
+        db,
+        fx.adminId,
+        {
+          ...input,
+          additionalLines: [{ productId, quantity: 4 }],
+        },
+        randomUUID(),
+      ),
+    ).rejects.toMatchObject({ code: 'INSUFFICIENT_STOCK' });
+    expect(await balanceOf(productId)).toEqual({ onHand: 3, reserved: 0 });
+    const key = randomUUID();
+    const { data } = await submitPriorityOrder(db, fx.otherHtkdId, input, key);
+    expect(data).toMatchObject({ totalQuantity: 3, reshareQuantity: 3, status: 'dispatched' });
+    expect(data.lines).toEqual([
+      {
+        productId,
+        name: context.products.find((p) => p.productId === productId)!.name,
+        held: 0,
+        additional: 3,
+        total: 3,
+      },
+    ]);
+    expect(data.sources).toHaveLength(1);
+    expect(data.sources[0]!.kind).toBe('additional');
+    expect((await submitPriorityOrder(db, fx.otherHtkdId, input, key)).data).toEqual(data);
+    expect(await balanceOf(productId)).toEqual({ onHand: 0, reserved: 0 });
+    expect(await ledgerTotals(productId)).toEqual(await balanceOf(productId));
+    expect(await sessions()).toEqual(before);
+    await receive(fx, {
+      outboundId: data.outboundRequestId,
+      storeId: fx.storeA,
+      storeUserId: fx.storeUserA,
+      lines: [{ productId, approvedQuantity: 3, receivedQuantity: 3 }],
+    });
+    expect(await balanceOf(productId)).toEqual({ onHand: 0, reserved: 0 });
+    expect(await sessions()).toEqual(before);
+  });
+  it('empty source selection leaves existing held goods untouched and new-only orders cannot oversell', async () => {
+    const { fx, male, female, input } = await fixture();
+    const command = { ...input, sources: [] };
+    const results = await Promise.allSettled([
+      submitPriorityOrder(db, fx.adminId, command, randomUUID()),
+      submitPriorityOrder(db, fx.otherHtkdId, { ...command, storeId: fx.storeB }, randomUUID()),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
+    expect((await getPriorityContext(db, fx.adminId, fx.storeA)).sources).toHaveLength(1);
+    expect(await balanceOf(male)).toEqual({ onHand: 0, reserved: 0 });
+    expect(await balanceOf(female)).toEqual({ onHand: 0, reserved: 0 });
+    expect(await ledgerTotals(female)).toEqual(await balanceOf(female));
+  });
   it('issued male + one female commits 2 bags, RE only one new bag; no session or wait mutation; receipt does not issue twice', async () => {
     const { fx, male, female, input } = await fixture();
     const before = await sessions();
@@ -286,37 +455,39 @@ pg('emergency priority: approve, issue and RE without allocation session', () =>
       await db.delete(stores).where(inArray(stores.id, storeIds));
     }
   });
-  it('database deferred guards rollback incomplete emergency order, sources and issue', async () => {
-    const { fx, input, female } = await fixture();
-    // A failing audit insert occurs after issuance; trigger scoped to this fixture actor only.
-    const suffix = randomUUID().replaceAll('-', '');
-    await db.execute(
-      sql.raw(
-        `CREATE FUNCTION fail_emergency_${suffix}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.actor_user_id='${fx.adminId}' AND NEW.action='EMERGENCY_PRIORITY_ORDER_APPROVED' THEN RAISE EXCEPTION 'injected failure'; END IF; RETURN NEW; END; $$; CREATE TRIGGER fail_emergency_${suffix} BEFORE INSERT ON audit_logs FOR EACH ROW EXECUTE FUNCTION fail_emergency_${suffix}();`,
-      ),
-    );
-    try {
-      await expect(submitPriorityOrder(db, fx.adminId, input, randomUUID())).rejects.toThrow();
-      expect(await balanceOf(female)).toEqual({ onHand: 1, reserved: 0 });
-      expect((await getPriorityContext(db, fx.adminId, fx.storeA)).sources).toHaveLength(1);
-      expect(
-        await db.select().from(reshareOrders).where(eq(reshareOrders.actorUserId, fx.adminId)),
-      ).toHaveLength(0);
-      expect(
-        await db
-          .select()
-          .from(outboundRequests)
-          .where(eq(outboundRequests.requestedByUserId, fx.adminId)),
-      ).toHaveLength(0);
-    } finally {
+  for (const heldOnly of [false, true])
+    it(`audit failure rolls back emergency order, sources and issue (held-only=${heldOnly})`, async () => {
+      const { fx, input, female } = await fixture();
+      if (heldOnly) input.additionalLines = [];
+      // A failing audit insert occurs after issuance; trigger scoped to this fixture actor only.
+      const suffix = randomUUID().replaceAll('-', '');
       await db.execute(
         sql.raw(
-          `DROP TRIGGER fail_emergency_${suffix} ON audit_logs; DROP FUNCTION fail_emergency_${suffix}();`,
+          `CREATE FUNCTION fail_emergency_${suffix}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.actor_user_id='${fx.adminId}' AND NEW.action='EMERGENCY_PRIORITY_ORDER_APPROVED' THEN RAISE EXCEPTION 'injected failure'; END IF; RETURN NEW; END; $$; CREATE TRIGGER fail_emergency_${suffix} BEFORE INSERT ON audit_logs FOR EACH ROW EXECUTE FUNCTION fail_emergency_${suffix}();`,
         ),
       );
-    }
-    await submitPriorityOrder(db, fx.adminId, input, randomUUID());
-  });
+      try {
+        await expect(submitPriorityOrder(db, fx.adminId, input, randomUUID())).rejects.toThrow();
+        expect(await balanceOf(female)).toEqual({ onHand: 1, reserved: 0 });
+        expect((await getPriorityContext(db, fx.adminId, fx.storeA)).sources).toHaveLength(1);
+        expect(
+          await db.select().from(reshareOrders).where(eq(reshareOrders.actorUserId, fx.adminId)),
+        ).toHaveLength(0);
+        expect(
+          await db
+            .select()
+            .from(outboundRequests)
+            .where(eq(outboundRequests.requestedByUserId, fx.adminId)),
+        ).toHaveLength(0);
+      } finally {
+        await db.execute(
+          sql.raw(
+            `DROP TRIGGER fail_emergency_${suffix} ON audit_logs; DROP FUNCTION fail_emergency_${suffix}();`,
+          ),
+        );
+      }
+      await submitPriorityOrder(db, fx.adminId, input, randomUUID());
+    });
   it('different stores racing the last bag cannot oversell; losing source is still held', async () => {
     const a = await fixture(),
       b = await fixture();

@@ -63,6 +63,107 @@
   align-items: end;
   gap: 12px;
 }
+.priority-picker {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.priority-picker button,
+.priority-picker input {
+  font: inherit;
+  min-height: 44px;
+}
+.priority-picker-trigger {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+  padding: 10px;
+  border: 1px solid #9aa8b8;
+  border-radius: 8px;
+  background: #fff;
+  color: #172033;
+  cursor: pointer;
+}
+.priority-picker-menu {
+  position: absolute;
+  top: 100%;
+  inset-inline: 0;
+  z-index: 5;
+  padding: 8px;
+  border: 1px solid #9aa8b8;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 24px #17203326;
+}
+.priority-picker-menu > input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #9aa8b8;
+  border-radius: 6px;
+}
+.priority-picker [role='listbox'] {
+  max-height: 260px;
+  overflow-y: auto;
+  margin-top: 6px;
+}
+.priority-picker-row {
+  position: relative;
+}
+.priority-picker [role='option'] {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px;
+  border: 0;
+  border-radius: 6px;
+  text-align: left;
+  background: #fff;
+  color: #172033;
+  cursor: pointer;
+}
+.priority-picker [role='option']:disabled {
+  color: #64748b;
+  background: #f1f5f9;
+  cursor: not-allowed;
+}
+.priority-picker-row:hover [role='option']:not(:disabled),
+.priority-picker [role='option']:focus-visible,
+.priority-picker [role='option'][aria-selected='true'] {
+  background: #e8f0ff;
+}
+.priority-picker button:focus-visible,
+.priority-picker input:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: -2px;
+}
+.priority-picker-stock {
+  flex: 0 0 auto;
+  min-width: 24px;
+  text-align: center;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.priority-picker-tooltip {
+  display: none;
+  position: absolute;
+  right: 44px;
+  top: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  color: #fff;
+  background: #172033;
+  pointer-events: none;
+}
+.priority-picker-row:hover .priority-picker-tooltip,
+.priority-picker-row:focus-within .priority-picker-tooltip {
+  display: block;
+}
 .priority-added,
 .priority-actions,
 .priority-workspace nav {

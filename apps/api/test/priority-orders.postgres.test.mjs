@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
-import { db, stores, users, sessions, products, storeGroups } from '@idosi/database';
+import {
+  db,
+  stores,
+  users,
+  sessions,
+  products,
+  storeGroups,
+  withTransaction,
+  applyWarehouseMovement,
+} from '@idosi/database';
 import { eq } from 'drizzle-orm';
 import { createApi } from '../dist/app.js';
 import { PostgresWarehouseRepository } from '../dist/postgres-repository.js';
@@ -97,6 +106,30 @@ test(
         );
         assert.equal((await call(role, 'POST', base, input, randomUUID())).statusCode, 409);
         assert.equal((await call(role, 'POST', `${base}/preview`, input)).statusCode, 409);
+        const fresh = { ...input, sources: [] };
+        const shortage = await call(role, 'POST', base, fresh, randomUUID());
+        assert.equal(shortage.statusCode, 409);
+        assert.equal(shortage.json().error.code, 'INSUFFICIENT_STOCK');
+        await withTransaction(db, (tx) =>
+          applyWarehouseMovement(tx, {
+            productId: product.id,
+            eventType: 'adjustment',
+            onHandDelta: 1,
+            reservedDelta: 0,
+            sourceType: 'test',
+            sourceId: randomUUID(),
+            actorUserId: accounts[role].id,
+          }),
+        );
+        const key = randomUUID();
+        const created = await call(role, 'POST', base, fresh, key);
+        assert.equal(created.statusCode, 201, created.body);
+        assert.equal(created.json().data.totalQuantity, 1);
+        assert.equal(created.json().data.sources[0].kind, 'additional');
+        assert.equal(
+          (await call(role, 'POST', base, fresh, key)).headers['idempotency-replayed'],
+          'true',
+        );
         assert.equal((await call(role, 'GET', `${base}/${randomUUID()}`)).statusCode, 404);
       }
       for (const role of ['store', 'wholesale']) {
@@ -134,6 +167,11 @@ test(
       assert.equal((await call('htkd', 'GET', base)).statusCode, 401);
       const spec = (await app.inject({ url: '/openapi.json' })).json();
       assert.ok(spec.paths[base].post);
+      assert.equal(
+        spec.paths[base].post.requestBody.content['application/json'].schema.properties.sources
+          .minItems,
+        0,
+      );
       for (const [path, operations] of Object.entries(spec.paths)) {
         if (path.startsWith(base)) {
           for (const operation of Object.values(operations)) {

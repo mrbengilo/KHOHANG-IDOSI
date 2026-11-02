@@ -452,72 +452,77 @@ export async function submitPriorityOrder(
           .insert(sources)
           .values(allHolds.map((h) => ({ orderId: id, reservationId: h.id, kind: h.kind })));
         const toIssue = allHolds.filter((h) => h.status === 'active');
-        const [re] = await tx
-          .insert(reshareOrders)
-          .values({
-            emergencyOrderId: id,
-            storeId: store.id,
-            origin: 'emergency',
-            storeNameSnapshot: store.name,
-            sessionCodeSnapshot: order.code,
-            totalQuantity: toIssue.reduce((n, h) => n + h.quantity, 0),
-            acceptedAt: now,
-            orderedAt: now,
-            actorUserId: userId,
-            actorRole: actor.role,
-            requestId,
-          })
-          .returning();
-        if (!re) throw new Error('Missing RE');
-        await tx
-          .update(reservations)
-          .set({ status: 'issued', updatedAt: now })
-          .where(
-            inArray(
-              reservations.id,
-              toIssue.map((h) => h.id),
-            ),
-          );
-        for (const productId of [...new Set(toIssue.map((h) => h.productId))].sort()) {
-          const rows = toIssue.filter((h) => h.productId === productId),
-            quantity = rows.reduce((n, h) => n + h.quantity, 0);
-          const [product] = await tx.select().from(products).where(eq(products.id, productId));
-          if (!product) throw new Error('Missing product');
-          const movement = await applyWarehouseMovement(tx, {
-            productId,
-            eventType: 'outbound',
-            onHandDelta: -quantity,
-            reservedDelta: -quantity,
-            sourceType: 'reshare_order',
-            sourceId: re.id,
-            actorUserId: userId,
-            occurredAt: now,
-            reason: `Xuất theo đơn ${re.code}`,
-            metadata: { emergencyPriorityOrderId: id, storeId: store.id },
-          });
-          const [reLine] = await tx
-            .insert(reshareOrderLines)
+        let re: typeof reshareOrders.$inferSelect | undefined;
+        // Issued held goods already have an RE. A held-only shipment must not create an empty RE.
+        if (toIssue.length) {
+          [re] = await tx
+            .insert(reshareOrders)
             .values({
-              reshareOrderId: re.id,
-              productId,
-              productNameSnapshot: product.name,
-              productSkuSnapshot: product.sku,
-              quantity,
-              issueLedgerEntryId: movement.ledgerEntryId,
+              emergencyOrderId: id,
+              storeId: store.id,
+              origin: 'emergency',
+              storeNameSnapshot: store.name,
+              sessionCodeSnapshot: order.code,
+              totalQuantity: toIssue.reduce((n, h) => n + h.quantity, 0),
+              acceptedAt: now,
+              orderedAt: now,
+              actorUserId: userId,
+              actorRole: actor.role,
+              requestId,
             })
             .returning();
-          if (!reLine) throw new Error('Missing RE line');
-          await tx.insert(reshareOrderSources).values(
-            rows.map((h) => ({
-              reshareOrderId: re.id,
-              reshareOrderLineId: reLine.id,
-              reservationId: h.id,
-              allocationLineId: h.allocationLineId,
-              storeId: store.id,
+          if (!re) throw new Error('Missing RE');
+          const issuedRe = re;
+          await tx
+            .update(reservations)
+            .set({ status: 'issued', updatedAt: now })
+            .where(
+              inArray(
+                reservations.id,
+                toIssue.map((h) => h.id),
+              ),
+            );
+          for (const productId of [...new Set(toIssue.map((h) => h.productId))].sort()) {
+            const rows = toIssue.filter((h) => h.productId === productId),
+              quantity = rows.reduce((n, h) => n + h.quantity, 0);
+            const [product] = await tx.select().from(products).where(eq(products.id, productId));
+            if (!product) throw new Error('Missing product');
+            const movement = await applyWarehouseMovement(tx, {
               productId,
-              quantity: h.quantity,
-            })),
-          );
+              eventType: 'outbound',
+              onHandDelta: -quantity,
+              reservedDelta: -quantity,
+              sourceType: 'reshare_order',
+              sourceId: re.id,
+              actorUserId: userId,
+              occurredAt: now,
+              reason: `Xuất theo đơn ${re.code}`,
+              metadata: { emergencyPriorityOrderId: id, storeId: store.id },
+            });
+            const [reLine] = await tx
+              .insert(reshareOrderLines)
+              .values({
+                reshareOrderId: issuedRe.id,
+                productId,
+                productNameSnapshot: product.name,
+                productSkuSnapshot: product.sku,
+                quantity,
+                issueLedgerEntryId: movement.ledgerEntryId,
+              })
+              .returning();
+            if (!reLine) throw new Error('Missing RE line');
+            await tx.insert(reshareOrderSources).values(
+              rows.map((h) => ({
+                reshareOrderId: issuedRe.id,
+                reshareOrderLineId: reLine.id,
+                reservationId: h.id,
+                allocationLineId: h.allocationLineId,
+                storeId: store.id,
+                productId,
+                quantity: h.quantity,
+              })),
+            );
+          }
         }
         await dispatchWarehouseOutboundInTransaction(tx, {
           outboundRequestId: outboundId,
@@ -538,23 +543,31 @@ export async function submitPriorityOrder(
             after: {
               code: order.code,
               totalQuantity: total,
-              reshareCode: re.code,
+              reshareCode: re?.code ?? null,
               sources: allHolds.map((h) => ({ id: h.id, quantity: h.quantity, kind: h.kind })),
               additionalLines: input.additionalLines,
             },
             metadata: { actorName: actor.displayName },
           },
-          {
-            actorUserId: userId,
-            actorRole: actor.role,
-            actorStoreId: store.id,
-            action: 'RESHARE_ORDER_CREATED',
-            entityType: 'reshare_order',
-            entityId: re.id,
-            requestId,
-            after: { code: re.code, totalQuantity: re.totalQuantity, emergencyPriorityOrderId: id },
-            metadata: { actorName: actor.displayName, trigger: 'emergency-priority-order' },
-          },
+          ...(re
+            ? [
+                {
+                  actorUserId: userId,
+                  actorRole: actor.role,
+                  actorStoreId: store.id,
+                  action: 'RESHARE_ORDER_CREATED',
+                  entityType: 'reshare_order',
+                  entityId: re.id,
+                  requestId,
+                  after: {
+                    code: re.code,
+                    totalQuantity: re.totalQuantity,
+                    emergencyPriorityOrderId: id,
+                  },
+                  metadata: { actorName: actor.displayName, trigger: 'emergency-priority-order' },
+                },
+              ]
+            : []),
         ]);
         const data = await readOrder(tx, id);
         if (!data) throw new Error('Missing submitted order');
@@ -583,7 +596,7 @@ async function readOrders(tx: Reader, ids: string[]): Promise<PriorityOrder[]> {
     .select({ order: orders, outbound: outboundRequests, re: reshareOrders })
     .from(orders)
     .innerJoin(outboundRequests, eq(outboundRequests.id, orders.outboundRequestId))
-    .innerJoin(reshareOrders, eq(reshareOrders.emergencyOrderId, orders.id))
+    .leftJoin(reshareOrders, eq(reshareOrders.emergencyOrderId, orders.id))
     .where(inArray(orders.id, ids))
     .orderBy(desc(orders.approvedAt), desc(orders.id));
   const allSources = await tx
@@ -656,9 +669,9 @@ async function readOrders(tx: Reader, ids: string[]): Promise<PriorityOrder[]> {
       version: row.order.version,
       totalQuantity: row.order.totalQuantity,
       outboundRequestId: row.outbound.id,
-      reshareId: row.re.id,
-      reshareCode: row.re.code,
-      reshareQuantity: row.re.totalQuantity,
+      reshareId: row.re?.id ?? null,
+      reshareCode: row.re?.code ?? null,
+      reshareQuantity: row.re?.totalQuantity ?? 0,
       reshareStatus: row.order.reshareStatus,
       notes: row.order.notes,
       lines: [...lines.values()],

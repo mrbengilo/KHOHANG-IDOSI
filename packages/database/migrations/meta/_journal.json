@@ -344,6 +344,13 @@
       "when": 1792731653802,
       "tag": "0048_emergency_priority_orders",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1793598000000,
+      "tag": "0049_emergency_held_only",
+      "breakpoints": true
     }
   ]
 }

@@ -446,7 +446,8 @@ describe('initial migration invariants', () => {
 
     expect(sqlTables).toEqual([...requiredTables].sort());
     expect(snapshotTables).toEqual([...requiredTables].sort());
-    expect(journal.entries).toHaveLength(49);
+    expect(journal.entries).toHaveLength(50);
+    expect(journal.entries[49]).toMatchObject({ tag: '0049_emergency_held_only' });
     expect(journal.entries[48]).toMatchObject({ tag: '0048_emergency_priority_orders' });
     expect(journal.entries[47]).toMatchObject({
       tag: '0047_receipt_discrepancy_finalization',
