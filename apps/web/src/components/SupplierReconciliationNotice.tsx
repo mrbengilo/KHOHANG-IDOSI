@@ -51,11 +51,12 @@ export function SupplierReconciliationNotice() {
     data.data.map((row) => [row.productId, row.revision]),
   ]);
   const dismiss = (targets = data.data) => {
-    // Keep only live revisions: a later excess receipt must raise a fresh alert.
-    const live = new Set(data.data.map((row) => `${row.productId}:${row.revision}`));
+    // An absent SKU may still be blocked outside the endpoint's bounded window.
+    // Replace only the target SKUs' old revisions; a new revision still alerts.
+    const targetProducts = new Set(targets.map((row) => row.productId));
     const next = [
       ...new Set([
-        ...dismissed.filter((key) => live.has(key)),
+        ...dismissed.filter((key) => !targetProducts.has(key.split(':')[0] ?? '')),
         ...targets.map((row) => `${row.productId}:${row.revision}`),
       ]),
     ];

@@ -160,6 +160,44 @@ test('the source queue remains visible when some blocked SKUs were not listed', 
   ).toBeVisible();
 });
 
+test('dismissed source alerts survive leaving and returning to the bounded queue', async ({
+  page,
+}) => {
+  await mockApi(page, 'ADMIN');
+  await page.clock.install();
+  let offset = 0;
+  let revision = 1;
+  await page.route('**/api/v1/supplier-reconciliation/alerts', (route) =>
+    route.fulfill({
+      json: {
+        data: Array.from({ length: 50 }, (_, index) => ({
+          productId: id(501 + offset + index),
+          productName: `Mặt hàng ${1 + offset + index}`,
+          revision,
+          reason: 'Nhận thiếu',
+        })),
+        totalItems: 51,
+      },
+    }),
+  );
+  await page.goto('/supplier-reconciliation?tab=orders');
+  const alert = page.getByRole('alertdialog');
+  await alert.getByRole('button', { name: 'Tắt thông báo', exact: true }).click();
+  offset = 1;
+  await page.clock.fastForward(5_100);
+  await expect(alert).toBeVisible();
+  await alert.getByRole('button', { name: 'Tắt thông báo', exact: true }).click();
+  offset = 0;
+  await page.clock.fastForward(5_100);
+  await expect(alert).toHaveCount(0);
+  await expect(page.locator('.supplier-source-warning')).toContainText('Còn 1 mặt hàng');
+  await page.reload();
+  await expect(alert).toHaveCount(0);
+  revision = 2;
+  await page.clock.fastForward(5_100);
+  await expect(alert).toBeVisible();
+});
+
 for (const outcome of ['success', 'error'] as const) {
   test(`pending observation blocks tab changes until ${outcome} feedback`, async ({ page }) => {
     await mockApi(page, 'ADMIN', 0, true);
