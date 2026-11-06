@@ -285,6 +285,27 @@ export async function finalizeStoreReceiptInTransaction(
     }
 
     await assertReviewerMayAccessStore(tx, input.reviewedByUserId, receipt.storeId);
+    // New submissions already raised source attention atomically. Finalizing the same declared
+    // discrepancy must not re-block a source that C has since reconciled. Legacy submissions
+    // lack this immutable, receipt-version-specific evidence and still raise attention here.
+    const [submissionAudit] = await tx
+      .select({ after: auditLogs.after })
+      .from(auditLogs)
+      .where(
+        and(
+          eq(auditLogs.entityType, 'store_receipt'),
+          eq(auditLogs.entityId, receipt.id),
+          eq(auditLogs.action, 'STORE_RECEIPT_SUBMITTED'),
+          sql`${auditLogs.after}->>'version' = ${String(receipt.version)}`,
+        ),
+      )
+      .limit(1);
+    const recordedSourceIds = submissionAudit?.after?.sourceReconciliationProductIds;
+    const sourcesFlaggedAtSubmission = new Set(
+      Array.isArray(recordedSourceIds)
+        ? recordedSourceIds.filter((value): value is string => typeof value === 'string')
+        : [],
+    );
     const [outbound] = await tx
       .select({
         allocationRunId: outboundRequests.allocationRunId,
@@ -545,7 +566,7 @@ export async function finalizeStoreReceiptInTransaction(
           shortageDeclaredAt: persistedLine.updatedAt,
         });
         await settleReservations(tx, activeReservations, persistedLine.receivedQuantity, now);
-        if (shortage > 0)
+        if (shortage > 0 && !sourcesFlaggedAtSubmission.has(persistedLine.productId))
           await flagReceiptSourceDiscrepancies(tx, receipt.receiptNumber, [persistedLine], []);
 
         const excess = excessItems.get(persistedLine.productId);
@@ -571,6 +592,7 @@ export async function finalizeStoreReceiptInTransaction(
             actorUserId: input.reviewedByUserId,
             now,
             inventoryBagIds,
+            sourceAlreadyFlagged: sourcesFlaggedAtSubmission.has(persistedLine.productId),
           });
           assertVnd(lineGoodsCostVnd, 'line goods cost');
         }
@@ -624,6 +646,7 @@ export async function finalizeStoreReceiptInTransaction(
           actorUserId: input.reviewedByUserId,
           now,
           inventoryBagIds,
+          sourceAlreadyFlagged: sourcesFlaggedAtSubmission.has(excess.productId),
         });
         await tx
           .update(storeReceiptLines)
@@ -1429,6 +1452,7 @@ async function bookReceiptExcess(
     readonly actorUserId: string;
     readonly now: Date;
     readonly inventoryBagIds: string[];
+    readonly sourceAlreadyFlagged: boolean;
   },
 ): Promise<bigint> {
   const quantity = input.excess.bagWeightsKg.length;
@@ -1438,11 +1462,12 @@ async function bookReceiptExcess(
   if (supplierReconciled) {
     // The extra bags came from Reshare's stock, not A's: A must not deduct them here and again
     // when C observes B. Store stock is booked as usual; new allocations of the SKU wait for C.
-    await flagSupplierProductForReconciliation(
-      tx,
-      input.line.productId,
-      `Cửa hàng nhận dư ${quantity} bao ngoài phân bổ (phiếu ${input.receipt.id}); cần đối chiếu lại tồn Reshare.`,
-    );
+    if (!input.sourceAlreadyFlagged)
+      await flagSupplierProductForReconciliation(
+        tx,
+        input.line.productId,
+        `Cửa hàng nhận dư ${quantity} bao ngoài phân bổ (phiếu ${input.receipt.id}); cần đối chiếu lại tồn Reshare.`,
+      );
     await tx.insert(auditLogs).values({
       actorUserId: input.actorUserId,
       actorStoreId: input.receipt.storeId,

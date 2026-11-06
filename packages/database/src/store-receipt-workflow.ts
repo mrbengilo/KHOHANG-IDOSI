@@ -598,7 +598,7 @@ export async function submitStoreReceiptInTransaction(
             .where(eq(storeReceiptLines.id, persistedLine.id));
         }
 
-        await flagReceiptSourceDiscrepancies(
+        const sourceReconciliationProductIds = await flagReceiptSourceDiscrepancies(
           tx,
           receipt.receiptNumber,
           input.lines,
@@ -655,6 +655,7 @@ export async function submitStoreReceiptInTransaction(
           after: {
             status: result.status,
             version: result.version,
+            sourceReconciliationProductIds: [...sourceReconciliationProductIds],
             discrepancyNote,
             unexpectedItems: (input.unexpectedItems ?? []).map((item) => ({ ...item })),
             lines: input.lines.map((line) => ({

@@ -12,7 +12,7 @@ export async function flagReceiptSourceDiscrepancies(
     readonly receivedQuantity: number;
   }[],
   unexpected: readonly { readonly productId: string; readonly quantity: number }[],
-): Promise<void> {
+): Promise<readonly string[]> {
   const reasons = new Map<string, string>();
   const wrongProduct =
     unexpected.some((item) => !lines.some((line) => line.productId === item.productId)) &&
@@ -31,11 +31,12 @@ export async function flagReceiptSourceDiscrepancies(
       `${receiptCode}: ${wrongProduct ? 'nhận sai mặt hàng, ' : ''}nhận dư ${item.quantity} bao ngoài phiếu. Cần đối chiếu lại tồn Reshare.`,
     );
   }
-  if (!reasons.size) return;
+  if (!reasons.size) return [];
   const mapped = await loadSupplierMappedProductIds(tx, [...reasons.keys()]);
   for (const productId of [...mapped].sort()) {
     await withAdvisoryLock(tx, 'warehouse-balance', productId, () =>
       flagSupplierProductForReconciliation(tx, productId, reasons.get(productId)!),
     );
   }
+  return [...mapped].sort();
 }

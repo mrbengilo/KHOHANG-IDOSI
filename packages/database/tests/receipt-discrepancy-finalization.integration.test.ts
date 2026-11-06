@@ -256,6 +256,61 @@ describePostgres('finalizing a receipt with a declared discrepancy', () => {
     await expectLedgerConsistent(product);
   });
 
+  it('does not re-block an already reconciled shortage/excess when HTKD finalizes the same submission', async () => {
+    const expected = await reconciledProduct('Expected source after early observation', 10);
+    const actual = await reconciledProduct('Actual source after early observation', 10);
+    const receipt = await submittedReceipt({
+      product: expected,
+      granted: 2,
+      received: 1,
+      excess: [{ productId: actual, quantity: 1 }],
+    });
+    await expectSourceBlocked(expected, /nhận thiếu/);
+    await expectSourceBlocked(actual, /nhận dư/);
+    await observe(
+      fx,
+      [
+        { productId: expected, observedQuantity: 10 },
+        { productId: actual, observedQuantity: 10 },
+      ],
+      { attest: true },
+    );
+    const before = await db
+      .select()
+      .from(supplierSourceProducts)
+      .where(eq(supplierSourceProducts.productId, actual));
+    await finalize(receipt.finalizeInput);
+    for (const product of [expected, actual]) {
+      const [mapping] = await db
+        .select()
+        .from(supplierSourceProducts)
+        .where(eq(supplierSourceProducts.productId, product));
+      expect(mapping?.status).toBe('active');
+    }
+    const [after] = await db
+      .select()
+      .from(supplierSourceProducts)
+      .where(eq(supplierSourceProducts.productId, actual));
+    expect(after?.revision).toBe(before[0]?.revision);
+    await expectLedgerConsistent(expected);
+    await expectLedgerConsistent(actual);
+  });
+
+  it('keeps the finalization safeguard for legacy submissions without source-attention evidence', async () => {
+    const product = await reconciledProduct('Legacy shortage source', 10);
+    const receipt = await submittedReceipt({ product, granted: 2, received: 1 });
+    await observe(fx, [{ productId: product, observedQuantity: 10 }], { attest: true });
+    // Old pending receipts have no submission audit carrying the new source-id evidence.
+    const legacyVersion = receipt.finalizeInput.expectedVersion + 1;
+    await db
+      .update(storeReceipts)
+      .set({ version: legacyVersion })
+      .where(eq(storeReceipts.id, receipt.receiptId));
+    await finalize({ ...receipt.finalizeInput, expectedVersion: legacyVersion });
+    await expectSourceBlocked(product, /nhận thiếu/);
+    await expectLedgerConsistent(product);
+  });
+
   it('still deducts excess of an unreconciled SKU from A exactly once', async () => {
     const kids = await createProduct('Trẻ em');
     const shoes = await createProduct('Giày dép');

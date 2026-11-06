@@ -63,6 +63,17 @@ for (const alertRole of ['ADMIN', 'HTKD'] as const) {
         exact: true,
       }),
     ).toBeVisible();
+    const total = page.getByLabel(
+      `Tổng số bao Reshare đang cho đặt của ${summaryRow.productName}`,
+      { exact: true },
+    );
+    await total.fill('28');
+    revision = 3;
+    await page.clock.fastForward(5_100);
+    await expect(alert).toBeVisible();
+    await alert.getByRole('button', { name: 'Tắt thông báo', exact: true }).click();
+    await expect(total).toHaveValue('28');
+    await total.fill('');
     active = false;
     await page.getByRole('button', { name: 'Đóng', exact: true }).click();
     await page.getByRole('tab', { name: 'Đơn đặt Reshare', exact: true }).click();

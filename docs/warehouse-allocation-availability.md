@@ -25,6 +25,10 @@ Khi cửa hàng gửi phiếu **nhận dư, nhận thiếu hoặc nhận sai m�
 liên quan chuyển sang cần đối chiếu trong cùng transaction. Sai mặt hàng đánh dấu cả
 mặt hàng bị thiếu theo phiếu và mặt hàng nhận dư thực tế. Chốt phiếu vẫn bảo vệ trường
 hợp legacy chưa được đánh dấu; quy tắc xuất/nhập, kiểm thiếu và tạo nhu cầu chờ không đổi.
+Audit gửi phiếu ghi các SKU đã đánh dấu theo đúng version phiếu. Chốt chính phiên bản
+đó không đánh dấu lại nếu người quản lý đã đối chiếu trong thời gian chờ HTKD chốt;
+phiếu legacy không có bằng chứng này vẫn được kiểm tra/đánh dấu lúc chốt. Bằng chứng
+ghi nhận hàng dư cho trigger finalization luôn được giữ dù nguồn đã được đối chiếu.
 
 Admin/HTKD đang mở hệ thống nhận hộp cảnh báo lớn ở giữa màn hình trong vòng khoảng
 5 giây, hoặc khi quay lại tab. Endpoint chú ý chỉ đọc mapping, tên sản phẩm và revision
@@ -32,8 +36,9 @@ Admin/HTKD đang mở hệ thống nhận hộp cảnh báo lớn ở giữa mà
 Cửa hàng/quầy sỉ bị từ chối tại server. Bấm tên mặt hàng mở biểu mẫu bằng ID mặt hàng,
 không suy ra đối tượng từ tên. **Tắt thông báo** chỉ ghi nhớ revision đã xem theo tài
 khoản/vai trò trong tab; không bỏ chặn nguồn. Sai lệch mới tăng revision và hiện lại.
-Trong màn đang đối chiếu, hộp được ẩn để không che biểu mẫu. Đối chiếu xong làm mất
-mặt hàng khỏi hàng đợi chú ý. Lỗi tải không được hiểu là nguồn đã mở lại.
+Cảnh báo mới cũng hiện khi đang ở màn đối chiếu; tắt cảnh báo không làm mất số đang
+nhập trong biểu mẫu. Đối chiếu xong làm mất mặt hàng khỏi hàng đợi chú ý. Lỗi tải không
+được hiểu là nguồn đã mở lại.
 
 Khôi phục vận hành: kiểm tra tổng Reshare hiện cho đặt, mở **Cập nhật tồn Reshare**,
 xem trước và xác nhận đúng các RE đã được trừ trong tổng vừa kiểm tra. Chỉ đối chiếu

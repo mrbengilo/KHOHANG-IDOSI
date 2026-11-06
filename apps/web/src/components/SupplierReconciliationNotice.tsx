@@ -5,7 +5,7 @@ import {
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle } from 'lucide-react';
 import { useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { request } from '../lib/api';
 import { useSession } from '../lib/auth';
 import { useDialogAccessibility } from '../lib/use-dialog-accessibility';
@@ -14,7 +14,6 @@ import './supplier-reconciliation-notice.css';
 
 export function SupplierReconciliationNotice() {
   const principal = useSession().data?.principal;
-  const location = useLocation();
   const navigate = useNavigate();
   const storageKey = `idosi-source-alerts:${principal?.accountId}:${principal?.role}`;
   const [dismissed, setDismissed] = useState<string[]>(() => {
@@ -40,12 +39,8 @@ export function SupplierReconciliationNotice() {
     retry: false,
   });
   const data = alerts.data;
-  const reviewing =
-    location.pathname === '/supplier-reconciliation' &&
-    new URLSearchParams(location.search).get('tab') === 'reconcile';
   if (
     !data?.totalItems ||
-    reviewing ||
     data.data.every((row) => dismissed.includes(`${row.productId}:${row.revision}`))
   )
     return null;
