@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 
 test('default reporting periods stay stable across the Vietnam month boundary', async ({
   page,

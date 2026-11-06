@@ -6,7 +6,8 @@ export interface OrderableProduct {
   readonly name: string;
 }
 
-export const OUT_OF_STOCK_NOTE = 'Kho tổng đã hết hàng (tồn = 0), chưa thể đặt.';
+export const OUT_OF_STOCK_NOTE =
+  'Kho tổng chưa có hàng có thể cấp, chưa thể đặt. Xem tồn kho tổng để kiểm tra nguồn.';
 
 /**
  * Inserts an active product holding `bags` free central-warehouse bags (opening balance).

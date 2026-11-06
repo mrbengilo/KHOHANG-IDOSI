@@ -1,5 +1,9 @@
 # Chặn đặt mặt hàng kho tổng hết hàng (tồn = 0)
 
+Cập nhật: số đặt được hiện dùng `allocatableBags = min(H − R, trần nguồn Reshare)`.
+Nguồn cần đối chiếu chặn đặt mới dù sổ còn số dương; xem
+`warehouse-allocation-availability.md`. Đặt hàng vẫn không giữ hàng, phần vượt tồn vẫn chờ.
+
 ## Invariant
 
 - **Cũ:** phiếu đặt thường nhận mọi mặt hàng đang hoạt động, không xét tồn kho tổng; phần chưa cấp

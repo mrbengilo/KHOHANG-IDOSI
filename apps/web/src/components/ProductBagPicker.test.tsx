@@ -53,7 +53,10 @@ describe('ProductBagPicker stock feedback', () => {
     expect(html.match(/bag-picker__item--unavailable/g)).toHaveLength(1);
     const noted = render({
       unavailableIds: new Set(['dress']),
-      messages: { dress: 'Kho tổng đã hết hàng (tồn = 0), chưa thể đặt.' },
+      messages: {
+        dress:
+          'Kho tổng chưa có hàng có thể cấp, chưa thể đặt. Xem tồn kho tổng để kiểm tra nguồn.',
+      },
     });
     expect(noted).toContain('class="bag-picker__message"');
     expect(noted).not.toContain('role="alert"');

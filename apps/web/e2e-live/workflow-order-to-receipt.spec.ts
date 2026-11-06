@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './test';
 import {
   operationalSettingsVersions,
   applyWarehouseMovement,

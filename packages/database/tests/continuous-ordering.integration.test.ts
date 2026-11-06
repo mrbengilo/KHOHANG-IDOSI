@@ -18,6 +18,11 @@ import {
   transitionOrderSession,
   OrderSessionConflictError,
   withSerializableTransaction,
+  supplierSources,
+  supplierSourceProducts,
+  previewSupplierStockObservation,
+  confirmSupplierStockObservation,
+  flagSupplierProductForReconciliation,
 } from '../src/index.js';
 import {
   countOrderingQuota,
@@ -270,6 +275,57 @@ describePostgres('24/7 ordering and allocation-completion quota', () => {
       .from(orderRequestItems)
       .where(eq(orderRequestItems.orderRequestId, accepted.value.id));
     expect(items).toHaveLength(3);
+  });
+
+  it('refuses a source awaiting reconciliation even when its ledger still has 28 free bags', async () => {
+    const { admin, store } = await createFixture();
+    const blocked = await createProduct('BLOCKED', 28);
+    const [source] = await db
+      .insert(supplierSources)
+      .values({
+        code: `BL-${randomUUID().slice(0, 8).toUpperCase()}`,
+        name: 'Blocked ordering source',
+        createdByUserId: admin.id,
+      })
+      .returning();
+    await db.insert(supplierSourceProducts).values({
+      sourceId: source!.id,
+      productId: blocked.id,
+      createdByUserId: admin.id,
+    });
+    const observation = {
+      actorUserId: admin.id,
+      sourceId: source!.id,
+      observedAt: new Date(),
+      lines: [{ productId: blocked.id, observedQuantity: 28 }],
+      eventCoverage: [],
+      attestUnlinkedAsNotOrdered: true,
+    };
+    const preview = await previewSupplierStockObservation(db, observation);
+    await confirmSupplierStockObservation(db, {
+      ...observation,
+      expectedRevision: preview.revision,
+      idempotencyKey: randomUUID(),
+      requestHash: randomUUID(),
+    });
+    await db.transaction((tx) =>
+      flagSupplierProductForReconciliation(tx, blocked.id, 'Receipt excess'),
+    );
+    const context = await prepareOrderingContext(db, admin.id, store.id, randomUUID());
+    sessionIds.add(context.session.id);
+    await expect(
+      submitOrderRequest(db, {
+        orderSessionId: context.session.id,
+        storeId: store.id,
+        requestedByUserId: admin.id,
+        items: [{ productId: blocked.id, quantity: 1 }],
+        idempotencyKey: randomUUID(),
+        requestHash: randomUUID(),
+      }),
+    ).rejects.toBeInstanceOf(ProductOutOfStockError);
+    expect(
+      await db.select().from(orderRequests).where(eq(orderRequests.storeId, store.id)),
+    ).toHaveLength(0);
   });
 
   it('gives a cancelled request slot back to the store', async () => {

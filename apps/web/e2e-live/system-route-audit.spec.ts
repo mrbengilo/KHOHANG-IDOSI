@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
-import { expect, test, type Page, type Response } from '@playwright/test';
+import { expect, test, type Page, type Response } from './test';
 import { routeAccessPolicies, canAccessRoute, canShowNavigation } from '../src/lib/access';
 import { tableHeadingIssues } from './table-heading-typography';
 

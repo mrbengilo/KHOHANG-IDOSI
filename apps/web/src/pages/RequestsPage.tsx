@@ -399,7 +399,7 @@ function ProductionRequestsPage({ role, storeKind }: AppOutletContext) {
     if (emptyLines.length > 0) {
       setNotice({
         kind: 'error',
-        message: `Kho tổng đã hết hàng (tồn = 0): ${emptyLines
+        message: `Kho tổng chưa có hàng có thể cấp: ${emptyLines
           .map((line) => productNameById.get(line.productId) ?? line.productId)
           .join(', ')}. Bỏ chọn mặt hàng này để gửi phiếu.`,
       });

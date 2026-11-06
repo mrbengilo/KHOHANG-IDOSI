@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 import { tabApi } from './tab-api';
 
 test('sales workspace groups source products and month/store filters preserve scope', async ({

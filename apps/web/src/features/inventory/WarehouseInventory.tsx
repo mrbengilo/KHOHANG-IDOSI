@@ -115,9 +115,10 @@ function WarehouseStock({
     <section className="panel warehouse-stock-panel" aria-label="Tồn kho tổng theo mặt hàng">
       <h2>Tồn kho hiện tại theo mặt hàng</h2>
       <p>
-        Đang có tại kho là số bao còn có thể cấp phân bổ. Đang giữ phiếu chờ là tổng nhu cầu còn chờ
-        ưu tiên/phân bổ của các cửa hàng, chưa phải hàng đã giữ trong kho và không trừ thêm vào
-        lượng có thể cấp.
+        Có thể phân bổ là số bao được phép cấp mới sau khi kiểm tra tồn kho và nguồn Reshare. Mặt
+        hàng cần đối chiếu nguồn sẽ tạm chặn cấp mới dù sổ kho còn hàng. Đang giữ phiếu chờ là tổng
+        nhu cầu còn chờ ưu tiên/phân bổ của các cửa hàng, chưa phải hàng đã giữ trong kho và không
+        trừ thêm vào lượng có thể cấp.
       </p>
       {!readOnly ? (
         <p className="supplier-inventory-note">
@@ -174,7 +175,7 @@ function WarehouseStock({
                     STT
                   </th>
                   <th data-primary-column>Mặt hàng</th>
-                  <th>Đang có tại kho</th>
+                  <th>Có thể phân bổ</th>
                   <th title="Kết quả phân bổ chờ xác nhận, hàng cấp một phần giữ để giao cùng đơn kế tiếp">
                     Đang giữ chờ giao chung
                   </th>
@@ -196,11 +197,23 @@ function WarehouseStock({
                     <td data-primary-column data-label="Mặt hàng">
                       <strong>{row.productName}</strong>
                     </td>
-                    <td data-label="Đang có tại kho">
-                      <strong className="warehouse-stock-available">
-                        {formatInteger(row.availableBags)} bao
+                    <td data-label="Có thể phân bổ" className="warehouse-allocation-stock">
+                      <strong
+                        className={
+                          row.allocationBlockedReason
+                            ? 'warehouse-stock-blocked'
+                            : 'warehouse-stock-available'
+                        }
+                      >
+                        {formatInteger(row.allocatableBags ?? row.availableBags)} bao
                       </strong>
                       <small>tồn thực {formatInteger(row.onHandBags)}</small>
+                      {row.allocationBlockedReason ? (
+                        <small className="warehouse-allocation-blocked" role="status">
+                          <strong>Tạm chặn cấp mới</strong>
+                          {row.allocationBlockedReason}
+                        </small>
+                      ) : null}
                     </td>
                     <td data-label="Đang giữ chờ giao chung">
                       {formatInteger(row.sharedDeliveryHoldBags)} bao

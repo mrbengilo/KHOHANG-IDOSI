@@ -4,6 +4,7 @@ import { assertShipmentMayBeReceived } from './allocation-decision-gate.js';
 import type { Database } from './client.js';
 import { withIdempotency, type IdempotencyResult } from './idempotency.js';
 import { reconcileReceiptStoreWaitDocument } from './store-wait-documents.js';
+import { flagReceiptSourceDiscrepancies } from './receipt-source-reconciliation.js';
 import {
   emergencyPriorityOrders,
   auditLogs,
@@ -415,6 +416,7 @@ export async function submitStoreReceiptInTransaction(
     const [receipt] = await tx
       .select({
         id: storeReceipts.id,
+        receiptNumber: storeReceipts.receiptNumber,
         storeId: storeReceipts.storeId,
         status: storeReceipts.status,
         version: storeReceipts.version,
@@ -596,6 +598,12 @@ export async function submitStoreReceiptInTransaction(
             .where(eq(storeReceiptLines.id, persistedLine.id));
         }
 
+        await flagReceiptSourceDiscrepancies(
+          tx,
+          receipt.receiptNumber,
+          input.lines,
+          input.unexpectedItems ?? [],
+        );
         const [submitted] = await tx
           .update(storeReceipts)
           .set({

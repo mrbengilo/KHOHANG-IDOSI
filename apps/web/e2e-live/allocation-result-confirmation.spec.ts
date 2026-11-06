@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './test';
 import {
   applyWarehouseMovement,
   createDatabase,
@@ -44,7 +44,7 @@ test('a store confirms results or moves them back to waiting; state survives rel
       .returning();
     const assertWaitingDemand = async (quantity: number) => {
       const response = await tabApi(page).get(
-        `${api}/warehouse-inventory?projection=waiting-demand-v2&search=${product!.sku}`,
+        `${api}/warehouse-inventory?projection=allocatable-stock-v3&search=${product!.sku}`,
       );
       expect(response.status()).toBe(200);
       expect((await response.json()).data[0].waitingDemandBags).toBe(quantity);

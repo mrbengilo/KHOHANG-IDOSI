@@ -74,11 +74,8 @@ import {
 } from './store-operations.js';
 import { withAdvisoryLock, type Transaction } from './transaction.js';
 import { loadSupplierMappedProductIds } from './supplier-commitments.js';
-import {
-  applyWarehouseMovement,
-  flagSupplierProductForReconciliation,
-  WarehouseBalanceViolationError,
-} from './warehouse.js';
+import { flagReceiptSourceDiscrepancies } from './receipt-source-reconciliation.js';
+import { applyWarehouseMovement, WarehouseBalanceViolationError } from './warehouse.js';
 
 type DatabaseStatus = typeof storeReceiptAdjustments.$inferSelect.status;
 type ReturnStatus = typeof storeReceiptReturns.$inferSelect.status;
@@ -1238,6 +1235,27 @@ async function apply(
         })),
       );
     }
+    if (line.actualProductId !== line.recordedProductId) {
+      await flagReceiptSourceDiscrepancies(
+        tx,
+        adjustment.code,
+        [{ productId: line.recordedProductId, approvedQuantity: 1, receivedQuantity: 0 }],
+        [{ productId: line.actualProductId, quantity: 1 }],
+      );
+    } else if (line.shortageQuantity > 0 && line.approvedProductId) {
+      await flagReceiptSourceDiscrepancies(
+        tx,
+        adjustment.code,
+        [
+          {
+            productId: line.approvedProductId,
+            approvedQuantity: line.shortageQuantity,
+            receivedQuantity: 0,
+          },
+        ],
+        [],
+      );
+    }
     if (!keep) {
       const [created] = await tx
         .insert(storeReceiptReturns)
@@ -1572,11 +1590,7 @@ async function correctWarehouseMispick(
   const reconciled = await loadSupplierMappedProductIds(tx, [line.actualProductId]);
   for (const movement of movements) {
     if (movement.sourceType === LINE_SOURCE && reconciled.has(movement.productId)) {
-      await flagSupplierProductForReconciliation(
-        tx,
-        movement.productId,
-        `Kho giao nhầm theo ${adjustment.code}; cần đối chiếu lại tồn Reshare.`,
-      );
+      // Both the expected and actual source SKUs are flagged together by the caller.
       continue;
     }
     try {

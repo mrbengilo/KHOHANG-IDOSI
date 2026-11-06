@@ -15,6 +15,7 @@ import {
   type JsonObject,
 } from './schema.js';
 import { withAdvisoryLock, type Transaction } from './transaction.js';
+import { loadSupplierAllocationCaps } from './supplier-commitments.js';
 
 export interface CreateOrderRequestItemInput {
   readonly productId: string;
@@ -413,8 +414,8 @@ async function assertNoActiveWaitTickets(
 
 /**
  * A product the central warehouse has run out of cannot be ordered: the "Đang có tại kho" figure
- * every role reads (on-hand − reserved, which for Reshare-reconciled products is the free source
- * F) must be above zero. Submission reserves nothing, so this is a gate on the current figure,
+ * every role reads (on-hand − reserved, capped by the supplier's current allocatable source)
+ * must be above zero. Submission reserves nothing, so this is a gate on the current figure,
  * read without locking the balance rows that allocation and inbound writers hold.
  */
 async function assertProductsInWarehouseStock(
@@ -434,8 +435,13 @@ async function assertProductsInWarehouseStock(
     .leftJoin(warehouseBalances, eq(warehouseBalances.productId, products.id))
     .where(inArray(products.id, [...productIds]));
 
+  const supplierCaps = await loadSupplierAllocationCaps(tx, productIds);
   const outOfStock = rows
-    .filter((row) => row.availableQuantity <= 0)
+    .filter(
+      (row) =>
+        Math.min(row.availableQuantity, supplierCaps.get(row.productId) ?? row.availableQuantity) <=
+        0,
+    )
     .map(({ productId, productName }) => ({ productId, productName }))
     .sort((left, right) => left.productId.localeCompare(right.productId));
   if (outOfStock.length > 0) {

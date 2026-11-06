@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './test';
 import {
   createDatabase,
   products,
@@ -194,7 +194,7 @@ test('HTKD sees all assigned priority offers, reads central stock and cancels th
       await db.select().from(warehouseBalances).where(eq(warehouseBalances.productId, product!.id))
     )[0]!;
     const apiStock = await tabApi(htkdPage!).get(
-      `${api}/warehouse-inventory?projection=waiting-demand-v2&search=${product!.sku}`,
+      `${api}/warehouse-inventory?projection=allocatable-stock-v3&search=${product!.sku}`,
     );
     expect(apiStock.status()).toBe(200);
     const beforeCancelStock = (await apiStock.json()).data[0];
@@ -262,7 +262,7 @@ test('HTKD sees all assigned priority offers, reads central stock and cancels th
     expect((await empty.json()).data).toEqual([]);
     // Store accounts read the same central stock read-only; managing it stays Admin-only.
     const storeStock = await tabApi(storePage!).get(
-      `${api}/warehouse-inventory?projection=waiting-demand-v2&search=${product!.sku}`,
+      `${api}/warehouse-inventory?projection=allocatable-stock-v3&search=${product!.sku}`,
     );
     expect(storeStock.status()).toBe(200);
     expect((await storeStock.json()).data[0].waitingDemandBags).toBe(6);

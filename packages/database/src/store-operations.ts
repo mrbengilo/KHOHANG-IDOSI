@@ -31,6 +31,7 @@ import {
 import { livePriorityOfferCondition } from './priority-offer-state.js';
 import { withAdvisoryLock, type Transaction } from './transaction.js';
 import { loadSupplierMappedProductIds } from './supplier-commitments.js';
+import { flagReceiptSourceDiscrepancies } from './receipt-source-reconciliation.js';
 import {
   applyWarehouseMovement,
   flagSupplierProductForReconciliation,
@@ -544,6 +545,8 @@ export async function finalizeStoreReceiptInTransaction(
           shortageDeclaredAt: persistedLine.updatedAt,
         });
         await settleReservations(tx, activeReservations, persistedLine.receivedQuantity, now);
+        if (shortage > 0)
+          await flagReceiptSourceDiscrepancies(tx, receipt.receiptNumber, [persistedLine], []);
 
         const excess = excessItems.get(persistedLine.productId);
         excessItems.delete(persistedLine.productId);

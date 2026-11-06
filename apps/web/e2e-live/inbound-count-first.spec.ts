@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 
 test('warehouse accepts three bags without a weight field and generates its receipt number', async ({
   page,

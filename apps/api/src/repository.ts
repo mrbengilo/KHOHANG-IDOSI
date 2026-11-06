@@ -38,6 +38,7 @@ import type {
   SupplierObservationRequest,
   SupplierReconciliationQuery,
   SupplierReconciliationResponse,
+  SupplierReconciliationAlertsResponse,
   SupplierSource,
   AllocationDecision,
   AllocationDecisionDetail,
@@ -283,7 +284,7 @@ export function productOutOfStock(
   const names = products.map((product) => product.productName).join(', ');
   return new ApiError(
     'INSUFFICIENT_STOCK',
-    `Mặt hàng ${names} ở kho tổng đang hết hàng (tồn = 0), chưa thể đặt. Bỏ chọn mặt hàng này để gửi phiếu.`,
+    `Mặt hàng ${names} ở kho tổng chưa có hàng có thể cấp (tồn khả dụng = 0 hoặc nguồn Reshare đang chặn). Xem tồn kho tổng để kiểm tra nguồn; bỏ chọn mặt hàng này để gửi phiếu.`,
     409,
     { productIds: products.map((product) => product.productId) },
   );
@@ -448,6 +449,9 @@ export interface PriorityOrderRepository {
   ): Promise<IdempotentResource<PriorityOrder>>;
 }
 export interface WarehouseRepository extends SupplierReconciliationRepository {
+  listSupplierReconciliationAlerts(
+    actor: AuthenticatedPrincipal,
+  ): Promise<SupplierReconciliationAlertsResponse>;
   readonly priorityOrders: PriorityOrderRepository;
   ready(): Promise<boolean>;
   close(): Promise<void>;

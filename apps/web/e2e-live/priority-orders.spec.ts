@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from './test';
 import { eq } from 'drizzle-orm';
 import { db, users, sessions, closeDatabase } from '@idosi/database';
 import { createSupplierFixture } from '../../../packages/database/tests/fixtures/supplier';

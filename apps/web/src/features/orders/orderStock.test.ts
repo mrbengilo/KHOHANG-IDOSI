@@ -34,7 +34,9 @@ describe('order stock check when a product is picked', () => {
   it('blocks a product whose central-warehouse stock is zero with the out-of-stock note', async () => {
     const check = await checkOrderStock(productId, 'Quần jean', async () => 0);
     expect(check).toEqual({ kind: 'out-of-stock', message: OUT_OF_STOCK_NOTE });
-    expect(OUT_OF_STOCK_NOTE).toBe('Kho tổng đã hết hàng (tồn = 0), chưa thể đặt.');
+    expect(OUT_OF_STOCK_NOTE).toBe(
+      'Kho tổng chưa có hàng có thể cấp, chưa thể đặt. Xem tồn kho tổng để kiểm tra nguồn.',
+    );
   });
 
   it('greys out products at zero or missing from the stock list, never before it loads', () => {
@@ -82,7 +84,7 @@ describe('order stock check when a product is picked', () => {
     const url = String(fetch.mock.calls[0]?.[0]);
     expect(url).toContain('/warehouse-inventory?');
     expect(url).toContain(`productId=${productId}`);
-    expect(url).toContain('projection=waiting-demand-v2');
+    expect(url).toContain('projection=allocatable-stock-v3');
   });
 
   it('reads every product of the central warehouse into an availability map', async () => {
@@ -98,6 +100,6 @@ describe('order stock check when a product is picked', () => {
     vi.stubGlobal('fetch', fetch);
     const stock = await listWarehouseAvailableBags();
     expect(stock.get(productId)).toBe(0);
-    expect(String(fetch.mock.calls[0]?.[0])).toContain('projection=waiting-demand-v2');
+    expect(String(fetch.mock.calls[0]?.[0])).toContain('projection=allocatable-stock-v3');
   });
 });

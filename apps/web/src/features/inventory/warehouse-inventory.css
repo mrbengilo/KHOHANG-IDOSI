@@ -23,6 +23,18 @@
   color: var(--success);
   font-size: 15px;
 }
+.warehouse-stock-blocked,
+.warehouse-stock-table .warehouse-allocation-blocked {
+  color: var(--warning, #9a3412);
+}
+.warehouse-stock-table .warehouse-allocation-stock {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 20rem;
+}
+.warehouse-allocation-blocked strong {
+  display: block;
+}
 .warehouse-stock-table td small {
   color: var(--text-secondary);
   font-weight: 500;

@@ -1,0 +1,84 @@
+.supplier-source-alert-backdrop {
+  z-index: 1100;
+}
+.supplier-source-alert {
+  width: min(720px, calc(100vw - 24px));
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  border: 3px solid #dc2626;
+  border-radius: 18px;
+  background: #fff7ed;
+  color: #7c2d12;
+  box-shadow: 0 24px 80px #0006;
+  padding: clamp(20px, 4vw, 36px);
+}
+.supplier-source-alert > svg {
+  display: block;
+  margin-inline: auto;
+  color: #b91c1c;
+}
+.supplier-source-alert h2 {
+  margin-block: 16px;
+  text-align: center;
+  color: #991b1b;
+  font-size: clamp(23px, 3vw, 32px);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.supplier-source-alert p {
+  font-size: 17px;
+  line-height: 1.5;
+}
+.supplier-source-alert ul {
+  padding: 0;
+  list-style: none;
+  max-height: 36dvh;
+  overflow-y: auto;
+}
+.supplier-source-alert li {
+  margin-block: 10px;
+}
+.supplier-source-alert li button {
+  display: block;
+  width: 100%;
+  padding: 12px 14px;
+  text-align: left;
+  background: #fff;
+  border: 1px solid #fdba74;
+  border-radius: 10px;
+  overflow-wrap: anywhere;
+  color: inherit;
+  cursor: pointer;
+}
+.supplier-source-alert li button:hover {
+  background: #ffedd5;
+}
+.supplier-source-alert li button:focus-visible {
+  outline: 3px solid #991b1b;
+  outline-offset: 3px;
+}
+.supplier-source-alert li strong {
+  display: block;
+  font-size: 21px;
+  color: #991b1b;
+}
+.supplier-source-alert li span {
+  display: block;
+  margin-top: 5px;
+  font-size: 15px;
+  line-height: 1.4;
+}
+.supplier-source-alert-link {
+  text-decoration: underline;
+  font-weight: 700;
+}
+.supplier-source-alert .dialog__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.supplier-source-alert .button {
+  min-height: 48px;
+  white-space: normal;
+  flex: 1 1 210px;
+}

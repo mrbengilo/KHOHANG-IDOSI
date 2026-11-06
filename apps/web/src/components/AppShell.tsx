@@ -28,6 +28,7 @@ import { DashboardSkeleton } from './Skeleton';
 import { RouteContentNavigation } from './RouteContentNavigation';
 import { AllocationResultNotice } from './AllocationResultNotice';
 import { PriorityOfferNotice } from './PriorityOfferNotice';
+import { SupplierReconciliationNotice } from './SupplierReconciliationNotice';
 import { ApiClientError, getStoreKind, logout, mockModeEnabled } from '../lib/api';
 import { canAccessRoute, canShowNavigation } from '../lib/access';
 import { clearAuthenticatedSession, useSession } from '../lib/auth';
@@ -407,6 +408,9 @@ export function AppShell() {
             tabIndex={-1}
             type="button"
           />
+        ) : null}
+        {!mockModeEnabled && (role === 'ADMIN' || role === 'HTKD') ? (
+          <SupplierReconciliationNotice key={`${session?.principal.accountId}:${role}`} />
         ) : null}
         <main className="app-main" key={location.pathname}>
           <PriorityOfferNotice role={role} />

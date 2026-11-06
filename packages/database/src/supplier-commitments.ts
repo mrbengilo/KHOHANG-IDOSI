@@ -186,15 +186,14 @@ export async function loadSupplierProductFacts(
   tx: Transaction,
   productIds?: readonly string[],
 ): Promise<Map<string, SupplierProductFacts>> {
+  if (productIds?.length === 0) return new Map();
   const mappings = await tx
     .select()
     .from(supplierSourceProducts)
     .where(
       productIds === undefined
         ? undefined
-        : productIds.length === 0
-          ? sql`false`
-          : inArray(supplierSourceProducts.productId, [...productIds]),
+        : inArray(supplierSourceProducts.productId, [...productIds]),
     )
     .orderBy(asc(supplierSourceProducts.productId));
   if (mappings.length === 0) return new Map();
@@ -443,12 +442,33 @@ export function supplierRevisionToken(facts: Iterable<SupplierProductFacts>): st
  * Worker seam: the most a new allocation (or a new priority offer) may take per mapped SKU.
  * Unmapped SKUs are absent and keep the ledger rule. Read-only; it never writes the ledger.
  */
-export async function loadSupplierAllocationCaps(tx: Transaction): Promise<Map<string, number>> {
-  const facts = await loadSupplierProductFacts(tx);
+export function supplierAllocationAvailability(fact: SupplierProductFacts): {
+  readonly allocatableBags: number;
+  readonly allocationBlockedReason: string | null;
+} {
+  const allocatableBags = fact.integrityIssues.length > 0 ? 0 : fact.position.allocatableQuantity;
+  const allocationBlockedReason =
+    fact.integrityIssues.length > 0
+      ? 'Nguồn Reshare cần kiểm tra lại dữ liệu cam kết trước khi cấp mới.'
+      : fact.baseline === null
+        ? 'Chưa xác nhận tồn Reshare ban đầu; chưa thể cấp mới.'
+        : fact.position.state === 'NEEDS_RECONCILIATION'
+          ? 'Cần đối chiếu lại tồn Reshare sau biến động hàng; đang tạm chặn cấp mới.'
+          : fact.position.shortfallQuantity > 0
+            ? 'Nguồn Reshare đang thiếu so với hàng đã cam kết; chưa thể cấp mới.'
+            : null;
+  return { allocatableBags, allocationBlockedReason };
+}
+
+export async function loadSupplierAllocationCaps(
+  tx: Transaction,
+  productIds?: readonly string[],
+): Promise<Map<string, number>> {
+  const facts = await loadSupplierProductFacts(tx, productIds);
   return new Map(
     [...facts.values()].map((fact) => [
       fact.mapping.productId,
-      fact.integrityIssues.length > 0 ? 0 : fact.position.allocatableQuantity,
+      supplierAllocationAvailability(fact).allocatableBags,
     ]),
   );
 }

@@ -154,6 +154,7 @@ export const SupplierReconciliationFilterSchema = z.enum([
 export type SupplierReconciliationFilter = z.infer<typeof SupplierReconciliationFilterSchema>;
 
 export const SupplierReconciliationQuerySchema = PaginationQuerySchema.extend({
+  productId: EntityIdSchema.optional(),
   sourceId: EntityIdSchema.optional(),
   search: z.string().trim().max(120).optional(),
   filter: SupplierReconciliationFilterSchema.default('ALL'),
@@ -195,6 +196,28 @@ export const SupplierReconciliationResponseSchema = z
   })
   .strict();
 export type SupplierReconciliationResponse = z.infer<typeof SupplierReconciliationResponseSchema>;
+
+/** Bounded attention queue; full review stays in the paginated source workspace. */
+export const SupplierReconciliationAlertsResponseSchema = z
+  .object({
+    data: z
+      .array(
+        z
+          .object({
+            productId: EntityIdSchema,
+            productName: z.string(),
+            revision: z.number().int().positive(),
+            reason: z.string().nullable(),
+          })
+          .strict(),
+      )
+      .max(50),
+    totalItems: UnitQuantitySchema,
+  })
+  .strict();
+export type SupplierReconciliationAlertsResponse = z.infer<
+  typeof SupplierReconciliationAlertsResponseSchema
+>;
 
 // ---------------------------------------------------------------------------------------------
 // Observation preview / confirm

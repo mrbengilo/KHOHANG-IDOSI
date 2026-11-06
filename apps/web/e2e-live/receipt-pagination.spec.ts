@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { writeFile } from 'node:fs/promises';
-import { test, expect } from '@playwright/test';
+import { test, expect } from './test';
 import {
   createDatabase,
   users,

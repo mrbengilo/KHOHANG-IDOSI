@@ -7,6 +7,7 @@ import {
   createDatabase,
   createSupplierSource,
   dailyPriorityOffers,
+  flagSupplierProductForReconciliation,
   orderRequestItems,
   orderRequests,
   orderSessions,
@@ -233,5 +234,18 @@ describePostgres('09:00 allocation of Reshare-reconciled SKUs', () => {
       .from(dailyPriorityOffers)
       .where(eq(dailyPriorityOffers.productId, productId));
     expect(offers).toEqual([]);
+  });
+
+  it('keeps 28 ledger bags blocked after excess receipt and grants again after a fresh observation', async () => {
+    const productId = await product();
+    await observe(productId, 28, new Date(Date.now() - 600_000));
+    await db.transaction((tx) =>
+      flagSupplierProductForReconciliation(tx, productId, 'Receipt excess'),
+    );
+    expect(await available(productId)).toBe(28);
+    expect(await runSession(productId, 3)).toBe(0);
+    await observe(productId, 28, new Date(Date.now() - 60_000));
+    expect(await runSession(productId, 3)).toBe(6);
+    expect(await available(productId)).toBe(22);
   });
 });

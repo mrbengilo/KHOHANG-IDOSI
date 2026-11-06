@@ -71,7 +71,7 @@ import { ApiClientError, mapWithConcurrency, PAGE_FETCH_CONCURRENCY } from '../.
 export async function loadWarehouseInventory(page: number, search: string, signal?: AbortSignal) {
   try {
     const response = await request(
-      `/warehouse-inventory?${new URLSearchParams({ page: String(page), pageSize: '20', search, projection: 'waiting-demand-v2' })}`,
+      `/warehouse-inventory?${new URLSearchParams({ page: String(page), pageSize: '20', search, projection: 'allocatable-stock-v3' })}`,
       { signal: signal ?? null },
     );
     const parsed = WarehouseInventoryResponseSchema.safeParse(response);

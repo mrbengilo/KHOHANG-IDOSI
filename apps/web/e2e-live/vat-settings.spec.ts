@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 import { tabApi } from './tab-api';
 
 const api = 'http://127.0.0.1:3100/api/v1';

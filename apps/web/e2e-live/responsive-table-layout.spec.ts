@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { expect, test, type APIRequestContext, type Page } from './test';
 import { canAccessRoute, routeAccessPolicies } from '../src/lib/access';
 import type { Role, StoreKind } from '../src/lib/types';
 import {

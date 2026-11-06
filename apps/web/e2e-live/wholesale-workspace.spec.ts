@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 import { tabApi } from './tab-api';
 
 const apiOrigin = 'http://127.0.0.1:3100';

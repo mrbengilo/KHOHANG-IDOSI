@@ -106,6 +106,9 @@ export function SupplierReconciliationPage() {
         ) : tab === 'reconcile' ? (
           <DraftScope onDirtyChange={setDirty}>
             <ReconciliationWorkspace
+              key={params.get('reconcileProduct') ?? 'all'}
+              initialProductId={params.get('reconcileProduct') ?? undefined}
+              initialSearch={params.get('search') ?? ''}
               accountId={`${role}:${accountId}`}
               onConfirmingChange={setConfirming}
               onOpenSettings={() => setTab('settings')}
