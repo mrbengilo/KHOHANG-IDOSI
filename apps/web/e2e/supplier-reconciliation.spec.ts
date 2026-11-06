@@ -160,6 +160,48 @@ test('the source queue remains visible when some blocked SKUs were not listed', 
   ).toBeVisible();
 });
 
+test('cancelling a dirty-form switch preserves both the draft and the source alert', async ({
+  page,
+}) => {
+  await mockApi(page, 'ADMIN', 0, true);
+  await page.clock.install();
+  let active = false;
+  await page.route('**/api/v1/supplier-reconciliation/alerts', (route) =>
+    route.fulfill({
+      json: {
+        data: active
+          ? [{ productId: id(502), productName: 'Mặt hàng 2', revision: 2, reason: 'Nhận sai' }]
+          : [],
+        totalItems: active ? 1 : 0,
+      },
+    }),
+  );
+  await page.goto('/supplier-reconciliation?tab=reconcile');
+  await page
+    .locator('.supplier-summary tbody tr')
+    .first()
+    .getByRole('button', { name: 'Đối chiếu', exact: true })
+    .click();
+  const total = page.getByLabel('Tổng số bao Reshare đang cho đặt của Mặt hàng 1', {
+    exact: true,
+  });
+  await total.fill('28');
+  active = true;
+  await page.clock.fastForward(5_100);
+  const alert = page.getByRole('alertdialog');
+  await expect(alert).toBeVisible();
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await alert.getByRole('button', { name: /^Mặt hàng 2/ }).click();
+  await expect(page).not.toHaveURL(/reconcileProduct=/);
+  await expect(total).toHaveValue('28');
+  await expect(page.locator('.supplier-source-warning')).toContainText('Mặt hàng 2');
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('tab', { name: 'Đơn đặt Reshare', exact: true }).click();
+  await expect(alert).toBeVisible();
+  await alert.getByRole('button', { name: 'Tắt thông báo', exact: true }).click();
+  await expect(alert).toHaveCount(0);
+});
+
 test('dismissed source alerts survive leaving and returning to the bounded queue', async ({
   page,
 }) => {

@@ -68,7 +68,6 @@ export function SupplierReconciliationNotice() {
     }
   };
   const review = (product?: SupplierReconciliationAlertsResponse['data'][number]) => {
-    if (product) dismiss([product]);
     setViewingQueue(signature);
     const params = new URLSearchParams({ tab: 'reconcile' });
     if (product) {
@@ -84,7 +83,7 @@ export function SupplierReconciliationNotice() {
     if (!unreviewed.length && unlisted <= 0) return null;
     return (
       <aside className="supplier-source-warning" role="alert">
-        <strong>Còn {unreviewed.length + unlisted} mặt hàng cần đối chiếu chưa được xem.</strong>
+        <strong>Còn {unreviewed.length + unlisted} mặt hàng cần đối chiếu.</strong>
         {unreviewed.map((row) => (
           <Button key={row.productId} onClick={() => review(row)} tone="secondary">
             Đối chiếu {row.productName}
@@ -92,6 +91,11 @@ export function SupplierReconciliationNotice() {
         ))}
         {unlisted > 0 ? (
           <Button onClick={() => review()}>Xem toàn bộ mặt hàng cần đối chiếu</Button>
+        ) : null}
+        {unreviewed.length > 0 ? (
+          <Button tone="secondary" onClick={() => dismiss()}>
+            Tắt thông báo
+          </Button>
         ) : null}
       </aside>
     );
