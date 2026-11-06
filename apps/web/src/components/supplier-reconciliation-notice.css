@@ -82,3 +82,26 @@
   white-space: normal;
   flex: 1 1 210px;
 }
+.supplier-source-warning {
+  position: fixed;
+  z-index: 1050;
+  right: 16px;
+  bottom: 24px;
+  width: min(640px, calc(100vw - 32px));
+  max-height: 30dvh;
+  overflow-y: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  padding: 18px;
+  border: 2px solid #dc2626;
+  border-radius: 12px;
+  background: #fff7ed;
+  color: #991b1b;
+  box-shadow: 0 8px 32px #0003;
+}
+.supplier-source-warning strong {
+  flex-basis: 100%;
+  font-size: 19px;
+}

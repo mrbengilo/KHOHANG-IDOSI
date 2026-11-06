@@ -36,6 +36,12 @@ Admin/HTKD đang mở hệ thống nhận hộp cảnh báo lớn ở giữa mà
 Cửa hàng/quầy sỉ bị từ chối tại server. Bấm tên mặt hàng mở biểu mẫu bằng ID mặt hàng,
 không suy ra đối tượng từ tên. **Tắt thông báo** chỉ ghi nhớ revision đã xem theo tài
 khoản/vai trò trong tab; không bỏ chặn nguồn. Sai lệch mới tăng revision và hiện lại.
+Xem một SKU không tắt cảnh báo của SKU khác. Khi đang xem biểu mẫu, các SKU chưa xem
+còn được nhắc riêng; ra khỏi màn đối chiếu vẫn hiện lại. Phần vượt giới hạn 50 dòng
+không bị coi là đã xem và có nút mở đầy đủ. Mặt hàng chưa có baseline mà đã phát sinh
+sai lệch cũng nằm trong hàng đợi (guard tăng revision nhưng giữ `pending_baseline`).
+Cấu hình nguồn mới ở revision 1 không bị coi là một sai lệch nhận hàng.
+Các tham số mở biểu mẫu được xóa sau khi nhận, không tự mở lại khi chuyển tab rồi quay lại.
 Cảnh báo mới cũng hiện khi đang ở màn đối chiếu; tắt cảnh báo không làm mất số đang
 nhập trong biểu mẫu. Đối chiếu xong làm mất mặt hàng khỏi hàng đợi chú ý. Lỗi tải không
 được hiểu là nguồn đã mở lại.

@@ -54,10 +54,11 @@ for (const alertRole of ['ADMIN', 'HTKD'] as const) {
     await page.clock.fastForward(5_100);
     await expect(alert).toBeVisible();
     await alert.getByRole('button', { name: /^Mặt hàng 1/ }).click();
-    await expect(page).toHaveURL(new RegExp(`reconcileProduct=${productId}`));
+    await expect(page).toHaveURL(/tab=reconcile/);
     await expect(
       page.getByRole('heading', { name: 'Cập nhật tổng tồn Reshare', exact: true }),
     ).toBeVisible();
+    await expect(page).not.toHaveURL(/reconcileProduct=/);
     await expect(
       page.getByLabel(`Tổng số bao Reshare đang cho đặt của ${summaryRow.productName}`, {
         exact: true,
@@ -75,10 +76,18 @@ for (const alertRole of ['ADMIN', 'HTKD'] as const) {
     await expect(total).toHaveValue('28');
     await total.fill('');
     active = false;
+    page.once('dialog', (dialog) => dialog.accept());
     await page.getByRole('button', { name: 'Đóng', exact: true }).click();
+    await expect(
+      page.getByRole('heading', { name: 'Cập nhật tổng tồn Reshare', exact: true }),
+    ).toHaveCount(0);
     await page.getByRole('tab', { name: 'Đơn đặt Reshare', exact: true }).click();
     await page.clock.fastForward(5_100);
     await expect(alert).toHaveCount(0);
+    await page.getByRole('tab', { name: 'Cập nhật tồn Reshare', exact: true }).click();
+    await expect(
+      page.getByRole('heading', { name: 'Cập nhật tổng tồn Reshare', exact: true }),
+    ).toHaveCount(0);
   });
 }
 
@@ -94,6 +103,61 @@ test('store accounts never request the Admin/HTKD source alert queue', async ({ 
   ).toBeVisible();
   expect(requests).toBe(0);
   await expect(page.getByRole('alertdialog')).toHaveCount(0);
+});
+
+test('reviewing one SKU keeps other unresolved source alerts visible', async ({ page }) => {
+  await mockApi(page, 'ADMIN');
+  await page.route('**/api/v1/supplier-reconciliation/alerts', (route) =>
+    route.fulfill({
+      json: {
+        data: [
+          { productId, productName: 'Mặt hàng 1', revision: 1, reason: 'Nhận thiếu' },
+          { productId: id(502), productName: 'Mặt hàng 2', revision: 1, reason: 'Nhận dư' },
+        ],
+        totalItems: 2,
+      },
+    }),
+  );
+  await page.goto('/supplier-reconciliation?tab=orders');
+  await page
+    .getByRole('alertdialog')
+    .getByRole('button', { name: /^Mặt hàng 1/ })
+    .click();
+  await expect(
+    page.getByRole('heading', { name: 'Cập nhật tổng tồn Reshare', exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('.supplier-source-warning')).toContainText('Mặt hàng 2');
+  await page.getByRole('button', { name: 'Đóng', exact: true }).click();
+  await page.getByRole('tab', { name: 'Đơn đặt Reshare', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toBeVisible();
+  await page
+    .getByRole('alertdialog')
+    .getByRole('button', { name: 'Tắt thông báo', exact: true })
+    .click();
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+});
+
+test('the source queue remains visible when some blocked SKUs were not listed', async ({
+  page,
+}) => {
+  await mockApi(page, 'HTKD');
+  await page.route('**/api/v1/supplier-reconciliation/alerts', (route) =>
+    route.fulfill({
+      json: {
+        data: [{ productId, productName: 'Mặt hàng 1', revision: 1, reason: 'Nhận dư' }],
+        totalItems: 2,
+      },
+    }),
+  );
+  await page.goto('/supplier-reconciliation?tab=orders');
+  await page
+    .getByRole('alertdialog')
+    .getByRole('button', { name: 'Tắt thông báo', exact: true })
+    .click();
+  await expect(page.locator('.supplier-source-warning')).toContainText('Còn 1 mặt hàng');
+  await expect(
+    page.getByRole('button', { name: 'Xem toàn bộ mặt hàng cần đối chiếu', exact: true }),
+  ).toBeVisible();
 });
 
 for (const outcome of ['success', 'error'] as const) {

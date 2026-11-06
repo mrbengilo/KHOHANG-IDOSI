@@ -5,7 +5,7 @@ import {
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle } from 'lucide-react';
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { request } from '../lib/api';
 import { useSession } from '../lib/auth';
 import { useDialogAccessibility } from '../lib/use-dialog-accessibility';
@@ -15,6 +15,8 @@ import './supplier-reconciliation-notice.css';
 export function SupplierReconciliationNotice() {
   const principal = useSession().data?.principal;
   const navigate = useNavigate();
+  const location = useLocation();
+  const [viewingQueue, setViewingQueue] = useState('');
   const storageKey = `idosi-source-alerts:${principal?.accountId}:${principal?.role}`;
   const [dismissed, setDismissed] = useState<string[]>(() => {
     try {
@@ -39,14 +41,24 @@ export function SupplierReconciliationNotice() {
     retry: false,
   });
   const data = alerts.data;
-  if (
-    !data?.totalItems ||
-    data.data.every((row) => dismissed.includes(`${row.productId}:${row.revision}`))
-  )
-    return null;
-  const dismiss = () => {
+  if (!data?.totalItems) return null;
+  const unreviewed = data.data.filter(
+    (row) => !dismissed.includes(`${row.productId}:${row.revision}`),
+  );
+  const unlisted = data.totalItems - data.data.length;
+  const signature = JSON.stringify([
+    data.totalItems,
+    data.data.map((row) => [row.productId, row.revision]),
+  ]);
+  const dismiss = (targets = data.data) => {
     // Keep only live revisions: a later excess receipt must raise a fresh alert.
-    const next = data.data.map((row) => `${row.productId}:${row.revision}`);
+    const live = new Set(data.data.map((row) => `${row.productId}:${row.revision}`));
+    const next = [
+      ...new Set([
+        ...dismissed.filter((key) => live.has(key)),
+        ...targets.map((row) => `${row.productId}:${row.revision}`),
+      ]),
+    ];
     setDismissed(next);
     try {
       sessionStorage.setItem(storageKey, JSON.stringify(next));
@@ -55,7 +67,8 @@ export function SupplierReconciliationNotice() {
     }
   };
   const review = (product?: SupplierReconciliationAlertsResponse['data'][number]) => {
-    dismiss();
+    if (product) dismiss([product]);
+    setViewingQueue(signature);
     const params = new URLSearchParams({ tab: 'reconcile' });
     if (product) {
       params.set('reconcileProduct', product.productId);
@@ -63,7 +76,26 @@ export function SupplierReconciliationNotice() {
     }
     navigate(`/supplier-reconciliation?${params}`);
   };
-  return <SourceAlertDialog data={data} onReview={review} onClose={dismiss} />;
+  const reviewing =
+    location.pathname === '/supplier-reconciliation' &&
+    new URLSearchParams(location.search).get('tab') === 'reconcile';
+  if ((reviewing && viewingQueue === signature) || unreviewed.length === 0) {
+    if (!unreviewed.length && unlisted <= 0) return null;
+    return (
+      <aside className="supplier-source-warning" role="alert">
+        <strong>Còn {unreviewed.length + unlisted} mặt hàng cần đối chiếu chưa được xem.</strong>
+        {unreviewed.map((row) => (
+          <Button key={row.productId} onClick={() => review(row)} tone="secondary">
+            Đối chiếu {row.productName}
+          </Button>
+        ))}
+        {unlisted > 0 ? (
+          <Button onClick={() => review()}>Xem toàn bộ mặt hàng cần đối chiếu</Button>
+        ) : null}
+      </aside>
+    );
+  }
+  return <SourceAlertDialog data={data} onReview={review} onClose={() => dismiss()} />;
 }
 
 function SourceAlertDialog({

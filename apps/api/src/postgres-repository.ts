@@ -441,6 +441,7 @@ import {
   desc,
   eq,
   gte,
+  gt,
   ilike,
   inArray,
   isNotNull,
@@ -511,7 +512,15 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
   public async listSupplierReconciliationAlerts(actor: AuthenticatedPrincipal) {
     if (!isReshareManager(actor)) throw forbidden();
     const filter = and(
-      eq(supplierSourceProducts.status, 'needs_reconciliation'),
+      or(
+        eq(supplierSourceProducts.status, 'needs_reconciliation'),
+        // Revision 1 is a newly mapped SKU. Before its first observation, source guards
+        // preserve pending_baseline but advance the revision when a discrepancy occurs.
+        and(
+          eq(supplierSourceProducts.status, 'pending_baseline'),
+          gt(supplierSourceProducts.revision, 1),
+        ),
+      ),
       isNull(products.deletedAt),
     );
     return db.transaction(
@@ -526,7 +535,9 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
             productId: products.id,
             productName: products.name,
             revision: supplierSourceProducts.revision,
-            reason: supplierSourceProducts.blockReason,
+            reason: sql<
+              string | null
+            >`case when ${supplierSourceProducts.status} = 'pending_baseline' then 'Có sai lệch hoặc biến động hàng trước lần đối chiếu Reshare đầu tiên; cần cập nhật tồn nguồn.' else ${supplierSourceProducts.blockReason} end`,
           })
           .from(supplierSourceProducts)
           .innerJoin(products, eq(products.id, supplierSourceProducts.productId))

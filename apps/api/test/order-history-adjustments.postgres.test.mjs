@@ -277,6 +277,24 @@ test(
       0,
       'baseline is required despite positive ledger',
     );
+    const initialQueue = await app.inject({
+      method: 'GET',
+      url: '/api/v1/supplier-reconciliation/alerts',
+      headers: await login(f.admin),
+    });
+    assert.ok(!initialQueue.json().data.some((row) => row.productId === f.product.id));
+    await db.transaction((tx) =>
+      flagSupplierProductForReconciliation(tx, f.product.id, 'Receipt discrepancy before baseline'),
+    );
+    const pendingQueue = await app.inject({
+      method: 'GET',
+      url: '/api/v1/supplier-reconciliation/alerts',
+      headers: await login(f.htkd),
+    });
+    assert.ok(
+      pendingQueue.json().data.some((row) => row.productId === f.product.id),
+      'a discrepancy before baseline must be visible',
+    );
     await observe();
     assert.equal((await read(f.admin)).allocatableBags, 28);
     await db.transaction((tx) =>
