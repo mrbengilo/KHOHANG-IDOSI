@@ -103,12 +103,16 @@ test('all registered route guards, sidebar clicks and reachable layouts across f
           // Real menu interaction from the previous screen, including a scrolled document.
           await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
           await page.locator(`.sidebar a[href="${route}"]`).click();
+          // Lazy route chunks replace the keyed main after the URL changes. Settle
+          // that navigation before inspecting its shell, as we do for tab navigation.
+          await page.waitForLoadState('networkidle');
           await expect(page.locator(`.sidebar a[href="${route}"]`)).toHaveAttribute(
             'aria-current',
             'page',
           );
         } else {
           await page.goto(`http://127.0.0.1:4174${route}`);
+          await page.waitForLoadState('networkidle');
         }
         await expect(page.locator('.app-main'), `${role} ${route} application shell`).toBeVisible();
         if (!allowed) {
@@ -126,8 +130,6 @@ test('all registered route guards, sidebar clicks and reachable layouts across f
         }
         await expect(page.locator('.page-header')).toBeVisible();
         await expect(page.locator('.page-header h1')).toBeInViewport();
-        // A settled render is needed before inspecting real table boxes, including lazy pages.
-        await page.waitForLoadState('networkidle');
         const tabs = await page.getByRole('tab').allTextContents();
         const tableChecks = [];
         const initialErrorCount = testInfo.errors.length;
