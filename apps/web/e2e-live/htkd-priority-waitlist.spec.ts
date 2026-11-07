@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { expect, test, type Page } from './test';
+import { expect, livePage, test, type Page } from './test';
 import {
   createDatabase,
   products,
@@ -41,7 +41,9 @@ test('HTKD sees all assigned priority offers, reads central stock and cancels th
     browser.newContext(),
     browser.newContext(),
   ]);
-  const [htkdPage, storePage, adminPage] = await Promise.all(contexts.map((c) => c.newPage()));
+  const [htkdPage, storePage, adminPage] = await Promise.all(
+    contexts.map((c) => livePage(c.newPage())),
+  );
   let sessionId: string | undefined;
   try {
     expect((await request.post(`${api}/auth/login`, { data: admin })).status()).toBe(200);

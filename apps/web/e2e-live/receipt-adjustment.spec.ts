@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { expect, test, type Page } from './test';
+import { expect, livePage, test, type Page } from './test';
 import {
   createDatabase,
   products,
@@ -269,7 +269,7 @@ test('admin tab lists every store document; applying shows "Đã xử lý" to HT
   ]);
   try {
     const [adminPage, htkdPage, storePage] = await Promise.all(
-      contexts.map((context) => context.newPage()),
+      contexts.map((context) => livePage(context.newPage())),
     );
     const token = randomUUID().slice(0, 8);
     const storeName = `Cửa hàng đồng bộ ${token}`;

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { expect, test } from './test';
+import { expect, livePage, test } from './test';
 import { tabApi } from './tab-api';
 
 const apiOrigin = 'http://127.0.0.1:3100';
@@ -11,7 +11,7 @@ test('wholesale desk can load its overview, order form and receiving workspace',
   page,
   context,
 }) => {
-  const adminPage = await context.newPage();
+  const adminPage = await livePage(context.newPage());
   await adminPage.goto('/login');
   await adminPage.getByLabel('Tên đăng nhập').fill(adminUsername);
   await adminPage.getByLabel('Mật khẩu', { exact: true }).fill(adminPassword);

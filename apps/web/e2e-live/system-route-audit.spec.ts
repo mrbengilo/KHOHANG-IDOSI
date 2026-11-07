@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
-import { expect, test, type Page, type Response } from './test';
+import { expect, livePage, test, type Page, type Response } from './test';
 import { routeAccessPolicies, canAccessRoute, canShowNavigation } from '../src/lib/access';
 import { tableHeadingIssues } from './table-heading-typography';
 
@@ -82,7 +82,7 @@ test('all registered route guards, sidebar clicks and reachable layouts across f
   try {
     for (const { role, credentials, storeKind } of identities) {
       const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-      const page = await context.newPage();
+      const page = await livePage(context.newPage());
       const errors: string[] = [];
       page.on('pageerror', (error) => errors.push(error.message));
       await signIn(page, credentials);
