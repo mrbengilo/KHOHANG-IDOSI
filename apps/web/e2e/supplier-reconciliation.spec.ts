@@ -125,6 +125,15 @@ test('source alert failures stay visible, retry explicitly and retain the last k
     const failure = page.locator('.supplier-source-load-failure');
     await expect(failure).toContainText('Chưa tải được cảnh báo tồn Reshare');
     await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    const menu = page.getByRole('button', { name: 'Mở menu', exact: true });
+    if (await menu.isVisible()) {
+      await menu.click();
+      await page
+        .locator('.sidebar')
+        .getByRole('button', { name: 'Đóng menu', exact: true })
+        .click();
+      await expect(failure).toBeVisible();
+    }
     await page.clock.fastForward(5_100);
     await expect(failure).toBeVisible();
     mode = 'blocked';

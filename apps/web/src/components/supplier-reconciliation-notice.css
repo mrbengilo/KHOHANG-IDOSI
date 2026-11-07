@@ -107,9 +107,9 @@
 }
 .supplier-source-load-failure {
   position: fixed;
-  z-index: 1050;
+  z-index: 15;
   right: 16px;
-  top: 16px;
+  top: 68px;
   width: min(420px, calc(100vw - 32px));
   max-height: 30dvh;
   overflow-y: auto;
