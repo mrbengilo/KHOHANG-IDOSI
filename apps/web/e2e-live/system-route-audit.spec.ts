@@ -110,7 +110,7 @@ test('all registered route guards, sidebar clicks and reachable layouts across f
         } else {
           await page.goto(`http://127.0.0.1:4174${route}`);
         }
-        await expect(page.locator('.app-main')).toBeVisible();
+        await expect(page.locator('.app-main'), `${role} ${route} application shell`).toBeVisible();
         if (!allowed) {
           await expect(page).toHaveURL('http://127.0.0.1:4174/');
           observations.push({

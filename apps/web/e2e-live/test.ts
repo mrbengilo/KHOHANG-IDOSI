@@ -7,7 +7,8 @@ export * from '@playwright/test';
 export async function livePage(created: Page | Promise<Page>): Promise<Page> {
   const page = await created;
   await page.addLocatorHandler(
-    page.getByRole('alertdialog', { name: 'CẦN ĐỐI CHIẾU TỒN RESHARE NGAY' }),
+    // This runs before every action/assertion. Avoid an ARIA walk of large route DOMs.
+    page.locator('.supplier-source-alert[role="alertdialog"]'),
     async (dialog) => {
       await dialog.getByRole('button', { name: 'Tắt thông báo', exact: true }).click();
     },
