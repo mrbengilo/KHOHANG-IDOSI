@@ -105,3 +105,21 @@
   flex-basis: 100%;
   font-size: 19px;
 }
+.supplier-source-load-failure {
+  position: fixed;
+  z-index: 1050;
+  right: 16px;
+  top: 16px;
+  width: min(420px, calc(100vw - 32px));
+  max-height: 30dvh;
+  overflow-y: auto;
+  padding: 16px;
+  border: 2px solid #b45309;
+  border-radius: 12px;
+  background: #fffbeb;
+  color: #92400e;
+  box-shadow: 0 8px 32px #0003;
+}
+.supplier-source-load-failure p {
+  margin-block: 8px;
+}

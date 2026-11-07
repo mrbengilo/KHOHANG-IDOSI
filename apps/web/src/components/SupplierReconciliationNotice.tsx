@@ -4,7 +4,7 @@ import {
 } from '@idosi/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { request } from '../lib/api';
 import { useSession } from '../lib/auth';
@@ -17,6 +17,7 @@ export function SupplierReconciliationNotice() {
   const navigate = useNavigate();
   const location = useLocation();
   const [viewingQueue, setViewingQueue] = useState('');
+  const [loadFailed, setLoadFailed] = useState(false);
   const storageKey = `idosi-source-alerts:${principal?.accountId}:${principal?.role}`;
   const [dismissed, setDismissed] = useState<string[]>(() => {
     try {
@@ -40,8 +41,27 @@ export function SupplierReconciliationNotice() {
     refetchOnWindowFocus: 'always',
     retry: false,
   });
+  useEffect(() => {
+    if (alerts.isError) setLoadFailed(true);
+    else if (alerts.isSuccess) setLoadFailed(false);
+  }, [alerts.isError, alerts.isSuccess]);
   const data = alerts.data;
-  if (!data?.totalItems) return null;
+  const loadFailure =
+    alerts.isError || loadFailed ? (
+      <aside className="supplier-source-load-failure" role="status">
+        <strong>Chưa tải được cảnh báo tồn Reshare</strong>
+        <p>Danh sách mặt hàng cần đối chiếu chưa được cập nhật. Vui lòng thử tải lại.</p>
+        <Button
+          disabled={alerts.isFetching}
+          aria-busy={alerts.isFetching}
+          onClick={() => void alerts.refetch()}
+          tone="secondary"
+        >
+          {alerts.isFetching ? 'Đang tải lại cảnh báo…' : 'Thử tải lại cảnh báo'}
+        </Button>
+      </aside>
+    ) : null;
+  if (!data?.totalItems) return loadFailure;
   const unreviewed = data.data.filter(
     (row) => !dismissed.includes(`${row.productId}:${row.revision}`),
   );
@@ -80,27 +100,35 @@ export function SupplierReconciliationNotice() {
     location.pathname === '/supplier-reconciliation' &&
     new URLSearchParams(location.search).get('tab') === 'reconcile';
   if ((reviewing && viewingQueue === signature) || unreviewed.length === 0) {
-    if (!unreviewed.length && unlisted <= 0) return null;
+    if (!unreviewed.length && unlisted <= 0) return loadFailure;
     return (
-      <aside className="supplier-source-warning" role="alert">
-        <strong>Còn {unreviewed.length + unlisted} mặt hàng cần đối chiếu.</strong>
-        {unreviewed.map((row) => (
-          <Button key={row.productId} onClick={() => review(row)} tone="secondary">
-            Đối chiếu {row.productName}
-          </Button>
-        ))}
-        {unlisted > 0 ? (
-          <Button onClick={() => review()}>Xem toàn bộ mặt hàng cần đối chiếu</Button>
-        ) : null}
-        {unreviewed.length > 0 ? (
-          <Button tone="secondary" onClick={() => dismiss()}>
-            Tắt thông báo
-          </Button>
-        ) : null}
-      </aside>
+      <>
+        {loadFailure}
+        <aside className="supplier-source-warning" role="alert">
+          <strong>Còn {unreviewed.length + unlisted} mặt hàng cần đối chiếu.</strong>
+          {unreviewed.map((row) => (
+            <Button key={row.productId} onClick={() => review(row)} tone="secondary">
+              Đối chiếu {row.productName}
+            </Button>
+          ))}
+          {unlisted > 0 ? (
+            <Button onClick={() => review()}>Xem toàn bộ mặt hàng cần đối chiếu</Button>
+          ) : null}
+          {unreviewed.length > 0 ? (
+            <Button tone="secondary" onClick={() => dismiss()}>
+              Tắt thông báo
+            </Button>
+          ) : null}
+        </aside>
+      </>
     );
   }
-  return <SourceAlertDialog data={data} onReview={review} onClose={() => dismiss()} />;
+  return (
+    <>
+      {loadFailure}
+      <SourceAlertDialog data={data} onReview={review} onClose={() => dismiss()} />
+    </>
+  );
 }
 
 function SourceAlertDialog({

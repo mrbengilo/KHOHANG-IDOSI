@@ -44,8 +44,9 @@ sai lệch cũng nằm trong hàng đợi (guard tăng revision nhưng giữ `pe
 Cấu hình nguồn mới ở revision 1 không bị coi là một sai lệch nhận hàng.
 Các tham số mở biểu mẫu được xóa sau khi nhận, không tự mở lại khi chuyển tab rồi quay lại.
 Cảnh báo mới cũng hiện khi đang ở màn đối chiếu; tắt cảnh báo không làm mất số đang
-nhập trong biểu mẫu. Đối chiếu xong làm mất mặt hàng khỏi hàng đợi chú ý. Lỗi tải không
-được hiểu là nguồn đã mở lại.
+nhập trong biểu mẫu. Đối chiếu xong làm mất mặt hàng khỏi hàng đợi chú ý. Lỗi tải hiện
+thông báo riêng và nút thử lại với trạng thái đang tải; giữ danh sách đã tải thành công
+gần nhất nếu có. Lỗi tải không được hiểu là hàng đợi rỗng hoặc nguồn đã mở lại.
 
 Khôi phục vận hành: kiểm tra tổng Reshare hiện cho đặt, mở **Cập nhật tồn Reshare**,
 xem trước và xác nhận đúng các RE đã được trừ trong tổng vừa kiểm tra. Chỉ đối chiếu

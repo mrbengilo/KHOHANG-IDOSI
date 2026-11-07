@@ -91,6 +91,65 @@ for (const alertRole of ['ADMIN', 'HTKD'] as const) {
   });
 }
 
+test('source alert failures stay visible, retry explicitly and retain the last known queue', async ({
+  page,
+}) => {
+  await mockApi(page, 'ADMIN');
+  await page.clock.install();
+  let mode: 'error' | 'blocked' | 'empty' = 'error';
+  let release!: () => void;
+  const recovery = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route('**/api/v1/supplier-reconciliation/alerts', async (route) => {
+    if (mode === 'error') {
+      await route.fulfill({
+        status: 503,
+        json: { error: { code: 'UNAVAILABLE', message: 'Unavailable', requestId: 'alert-error' } },
+      });
+      return;
+    }
+    if (mode === 'blocked') await recovery;
+    await route.fulfill({
+      json: {
+        data:
+          mode === 'blocked'
+            ? [{ productId, productName: 'Mặt hàng 1', revision: 1, reason: 'Nhận thiếu' }]
+            : [],
+        totalItems: mode === 'blocked' ? 1 : 0,
+      },
+    });
+  });
+  try {
+    await page.goto('/supplier-reconciliation?tab=orders');
+    const failure = page.locator('.supplier-source-load-failure');
+    await expect(failure).toContainText('Chưa tải được cảnh báo tồn Reshare');
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    await page.clock.fastForward(5_100);
+    await expect(failure).toBeVisible();
+    mode = 'blocked';
+    const retry = failure.getByRole('button', { name: 'Thử tải lại cảnh báo', exact: true });
+    await retry.click();
+    await expect(failure.getByRole('button')).toBeDisabled();
+    release();
+    const alert = page.getByRole('alertdialog');
+    await expect(alert).toContainText('Mặt hàng 1');
+    await expect(failure).toHaveCount(0);
+    mode = 'error';
+    await page.clock.fastForward(5_100);
+    await expect(failure).toBeVisible();
+    await expect(alert).toContainText('Mặt hàng 1');
+    await alert.getByRole('button', { name: 'Tắt thông báo', exact: true }).click();
+    await expect(failure).toBeVisible();
+    mode = 'empty';
+    await page.clock.fastForward(5_100);
+    await expect(failure).toHaveCount(0);
+    await expect(alert).toHaveCount(0);
+  } finally {
+    release();
+  }
+});
+
 test('store accounts never request the Admin/HTKD source alert queue', async ({ page }) => {
   await mockApi(page, 'STORE');
   let requests = 0;
@@ -591,6 +650,7 @@ async function mockApi(
     const path = url.pathname.replace(/^\/api\/v1/, '');
     const json = (data: unknown, status = 200) => route.fulfill({ status, json: data });
     if (path === '/auth/session') return json({ data: sessionFor(role) });
+    if (path === '/supplier-reconciliation/alerts') return json({ data: [], totalItems: 0 });
     if (path === '/stores')
       return json({
         data: [
