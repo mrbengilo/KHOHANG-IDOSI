@@ -2,6 +2,312 @@ import { expect, test, type Page, type Request } from '@playwright/test';
 
 import { layoutAdminSession } from './layout-fixtures';
 
+for (const alertRole of ['ADMIN', 'HTKD'] as const) {
+  test(`${alertRole} sees a central source alert, can dismiss it, and opens the affected product`, async ({
+    page,
+  }, testInfo) => {
+    await mockApi(page, alertRole);
+    await page.clock.install();
+    let revision = 1;
+    let active = true;
+    await page.route('**/api/v1/supplier-reconciliation/alerts', (route) =>
+      route.fulfill({
+        json: {
+          data: active
+            ? [
+                {
+                  productId,
+                  productName: 'Mặt hàng 1',
+                  revision,
+                  reason:
+                    'PNH-TEST: nhận dư, nhận thiếu hoặc nhận sai mặt hàng. Cần đối chiếu lại tồn Reshare.',
+                },
+              ]
+            : [],
+          totalItems: active ? 1 : 0,
+        },
+      }),
+    );
+    await page.goto('/supplier-reconciliation?tab=orders');
+    const alert = page.getByRole('alertdialog', { name: 'CẦN ĐỐI CHIẾU TỒN RESHARE NGAY' });
+    await expect(alert).toBeVisible();
+    await expect(alert.getByRole('button', { name: 'Đối chiếu ngay', exact: true })).toBeFocused();
+    for (const width of [360, 390, 768, 1366, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      const box = await alert.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      if (alertRole === 'ADMIN' && [390, 1440].includes(width))
+        await page.screenshot({ path: testInfo.outputPath(`source-alert-${width}.png`) });
+    }
+    await alert.getByRole('button', { name: 'Tắt thông báo', exact: true }).click();
+    await expect(alert).toHaveCount(0);
+    await page.clock.fastForward(5_100);
+    await expect(alert).toHaveCount(0);
+    await page.reload();
+    await expect(alert).toHaveCount(0);
+    revision = 2;
+    await page.clock.fastForward(5_100);
+    await expect(alert).toBeVisible();
+    await alert.getByRole('button', { name: /^Mặt hàng 1/ }).click();
+    await expect(page).toHaveURL(/tab=reconcile/);
+    await expect(
+      page.getByRole('heading', { name: 'Cập nhật tổng tồn Reshare', exact: true }),
+    ).toBeVisible();
+    await expect(page).not.toHaveURL(/reconcileProduct=/);
+    await expect(
+      page.getByLabel(`Tổng số bao Reshare đang cho đặt của ${summaryRow.productName}`, {
+        exact: true,
+      }),
+    ).toBeVisible();
+    const total = page.getByLabel(
+      `Tổng số bao Reshare đang cho đặt của ${summaryRow.productName}`,
+      { exact: true },
+    );
+    await total.fill('28');
+    revision = 3;
+    await page.clock.fastForward(5_100);
+    await expect(alert).toBeVisible();
+    await alert.getByRole('button', { name: 'Tắt thông báo', exact: true }).click();
+    await expect(total).toHaveValue('28');
+    await total.fill('');
+    active = false;
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.getByRole('button', { name: 'Đóng', exact: true }).click();
+    await expect(
+      page.getByRole('heading', { name: 'Cập nhật tổng tồn Reshare', exact: true }),
+    ).toHaveCount(0);
+    await page.getByRole('tab', { name: 'Đơn đặt Reshare', exact: true }).click();
+    await page.clock.fastForward(5_100);
+    await expect(alert).toHaveCount(0);
+    await page.getByRole('tab', { name: 'Cập nhật tồn Reshare', exact: true }).click();
+    await expect(
+      page.getByRole('heading', { name: 'Cập nhật tổng tồn Reshare', exact: true }),
+    ).toHaveCount(0);
+  });
+}
+
+test('source alert failures stay visible, retry explicitly and retain the last known queue', async ({
+  page,
+}) => {
+  await mockApi(page, 'ADMIN');
+  await page.clock.install();
+  let mode: 'error' | 'blocked' | 'empty' = 'error';
+  let release!: () => void;
+  const recovery = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route('**/api/v1/supplier-reconciliation/alerts', async (route) => {
+    if (mode === 'error') {
+      await route.fulfill({
+        status: 503,
+        json: { error: { code: 'UNAVAILABLE', message: 'Unavailable', requestId: 'alert-error' } },
+      });
+      return;
+    }
+    if (mode === 'blocked') await recovery;
+    await route.fulfill({
+      json: {
+        data:
+          mode === 'blocked'
+            ? [{ productId, productName: 'Mặt hàng 1', revision: 1, reason: 'Nhận thiếu' }]
+            : [],
+        totalItems: mode === 'blocked' ? 1 : 0,
+      },
+    });
+  });
+  try {
+    await page.goto('/supplier-reconciliation?tab=orders');
+    const failure = page.locator('.supplier-source-load-failure');
+    await expect(failure).toContainText('Chưa tải được cảnh báo tồn Reshare');
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    const menu = page.getByRole('button', { name: 'Mở menu', exact: true });
+    if (await menu.isVisible()) {
+      await menu.click();
+      await page
+        .locator('.sidebar')
+        .getByRole('button', { name: 'Đóng menu', exact: true })
+        .click();
+      await expect(failure).toBeVisible();
+    }
+    await page.clock.fastForward(5_100);
+    await expect(failure).toBeVisible();
+    mode = 'blocked';
+    const retry = failure.getByRole('button', { name: 'Thử tải lại cảnh báo', exact: true });
+    await retry.click();
+    await expect(failure.getByRole('button')).toBeDisabled();
+    release();
+    const alert = page.getByRole('alertdialog');
+    await expect(alert).toContainText('Mặt hàng 1');
+    await expect(failure).toHaveCount(0);
+    mode = 'error';
+    await page.clock.fastForward(5_100);
+    await expect(failure).toBeVisible();
+    await expect(alert).toContainText('Mặt hàng 1');
+    await alert.getByRole('button', { name: 'Tắt thông báo', exact: true }).click();
+    await expect(failure).toBeVisible();
+    mode = 'empty';
+    await page.clock.fastForward(5_100);
+    await expect(failure).toHaveCount(0);
+    await expect(alert).toHaveCount(0);
+  } finally {
+    release();
+  }
+});
+
+test('store accounts never request the Admin/HTKD source alert queue', async ({ page }) => {
+  await mockApi(page, 'STORE');
+  let requests = 0;
+  page.on('request', (request) => {
+    if (request.url().endsWith('/supplier-reconciliation/alerts')) requests++;
+  });
+  await page.goto('/supplier-reconciliation');
+  await expect(
+    page.getByRole('heading', { name: 'Đơn đặt và tồn Reshare', exact: true }),
+  ).toBeVisible();
+  expect(requests).toBe(0);
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+});
+
+test('reviewing one SKU keeps other unresolved source alerts visible', async ({ page }) => {
+  await mockApi(page, 'ADMIN');
+  await page.route('**/api/v1/supplier-reconciliation/alerts', (route) =>
+    route.fulfill({
+      json: {
+        data: [
+          { productId, productName: 'Mặt hàng 1', revision: 1, reason: 'Nhận thiếu' },
+          { productId: id(502), productName: 'Mặt hàng 2', revision: 1, reason: 'Nhận dư' },
+        ],
+        totalItems: 2,
+      },
+    }),
+  );
+  await page.goto('/supplier-reconciliation?tab=orders');
+  await page
+    .getByRole('alertdialog')
+    .getByRole('button', { name: /^Mặt hàng 1/ })
+    .click();
+  await expect(
+    page.getByRole('heading', { name: 'Cập nhật tổng tồn Reshare', exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('.supplier-source-warning')).toContainText('Mặt hàng 2');
+  await page.getByRole('button', { name: 'Đóng', exact: true }).click();
+  await page.getByRole('tab', { name: 'Đơn đặt Reshare', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toBeVisible();
+  await page
+    .getByRole('alertdialog')
+    .getByRole('button', { name: 'Tắt thông báo', exact: true })
+    .click();
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+});
+
+test('the source queue remains visible when some blocked SKUs were not listed', async ({
+  page,
+}) => {
+  await mockApi(page, 'HTKD');
+  await page.route('**/api/v1/supplier-reconciliation/alerts', (route) =>
+    route.fulfill({
+      json: {
+        data: [{ productId, productName: 'Mặt hàng 1', revision: 1, reason: 'Nhận dư' }],
+        totalItems: 2,
+      },
+    }),
+  );
+  await page.goto('/supplier-reconciliation?tab=orders');
+  await page
+    .getByRole('alertdialog')
+    .getByRole('button', { name: 'Tắt thông báo', exact: true })
+    .click();
+  await expect(page.locator('.supplier-source-warning')).toContainText('Còn 1 mặt hàng');
+  await expect(
+    page.getByRole('button', { name: 'Xem toàn bộ mặt hàng cần đối chiếu', exact: true }),
+  ).toBeVisible();
+});
+
+test('cancelling a dirty-form switch preserves both the draft and the source alert', async ({
+  page,
+}) => {
+  await mockApi(page, 'ADMIN', 0, true);
+  await page.clock.install();
+  let active = false;
+  await page.route('**/api/v1/supplier-reconciliation/alerts', (route) =>
+    route.fulfill({
+      json: {
+        data: active
+          ? [{ productId: id(502), productName: 'Mặt hàng 2', revision: 2, reason: 'Nhận sai' }]
+          : [],
+        totalItems: active ? 1 : 0,
+      },
+    }),
+  );
+  await page.goto('/supplier-reconciliation?tab=reconcile');
+  await page
+    .locator('.supplier-summary tbody tr')
+    .first()
+    .getByRole('button', { name: 'Đối chiếu', exact: true })
+    .click();
+  const total = page.getByLabel('Tổng số bao Reshare đang cho đặt của Mặt hàng 1', {
+    exact: true,
+  });
+  await total.fill('28');
+  active = true;
+  await page.clock.fastForward(5_100);
+  const alert = page.getByRole('alertdialog');
+  await expect(alert).toBeVisible();
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await alert.getByRole('button', { name: /^Mặt hàng 2/ }).click();
+  await expect(page).not.toHaveURL(/reconcileProduct=/);
+  await expect(total).toHaveValue('28');
+  await expect(page.locator('.supplier-source-warning')).toContainText('Mặt hàng 2');
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('tab', { name: 'Đơn đặt Reshare', exact: true }).click();
+  await expect(alert).toBeVisible();
+  await alert.getByRole('button', { name: 'Tắt thông báo', exact: true }).click();
+  await expect(alert).toHaveCount(0);
+});
+
+test('dismissed source alerts survive leaving and returning to the bounded queue', async ({
+  page,
+}) => {
+  await mockApi(page, 'ADMIN');
+  await page.clock.install();
+  let offset = 0;
+  let revision = 1;
+  await page.route('**/api/v1/supplier-reconciliation/alerts', (route) =>
+    route.fulfill({
+      json: {
+        data: Array.from({ length: 50 }, (_, index) => ({
+          productId: id(501 + offset + index),
+          productName: `Mặt hàng ${1 + offset + index}`,
+          revision,
+          reason: 'Nhận thiếu',
+        })),
+        totalItems: 51,
+      },
+    }),
+  );
+  await page.goto('/supplier-reconciliation?tab=orders');
+  const alert = page.getByRole('alertdialog');
+  await alert.getByRole('button', { name: 'Tắt thông báo', exact: true }).click();
+  offset = 1;
+  await page.clock.fastForward(5_100);
+  await expect(alert).toBeVisible();
+  await alert.getByRole('button', { name: 'Tắt thông báo', exact: true }).click();
+  offset = 0;
+  await page.clock.fastForward(5_100);
+  await expect(alert).toHaveCount(0);
+  await expect(page.locator('.supplier-source-warning')).toContainText('Còn 1 mặt hàng');
+  await page.reload();
+  await expect(alert).toHaveCount(0);
+  revision = 2;
+  await page.clock.fastForward(5_100);
+  await expect(alert).toBeVisible();
+});
+
 for (const outcome of ['success', 'error'] as const) {
   test(`pending observation blocks tab changes until ${outcome} feedback`, async ({ page }) => {
     await mockApi(page, 'ADMIN', 0, true);
@@ -353,6 +659,7 @@ async function mockApi(
     const path = url.pathname.replace(/^\/api\/v1/, '');
     const json = (data: unknown, status = 200) => route.fulfill({ status, json: data });
     if (path === '/auth/session') return json({ data: sessionFor(role) });
+    if (path === '/supplier-reconciliation/alerts') return json({ data: [], totalItems: 0 });
     if (path === '/stores')
       return json({
         data: [

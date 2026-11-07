@@ -291,7 +291,7 @@ test('warehouse stock shows available, both holds, total dispatched and the acti
   await expect(table.locator('tbody tr')).toHaveCount(24);
   for (const header of [
     'Mặt hàng',
-    'Đang có tại kho',
+    'Có thể phân bổ',
     'Đang giữ chờ giao chung',
     'Đang giữ phiếu chờ',
     'Tổng đã xuất',

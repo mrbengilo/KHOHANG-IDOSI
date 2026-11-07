@@ -72,6 +72,7 @@ Các invariant sau là bắt buộc, trừ khi task mới thay đổi rõ ràng 
 - Audit quan trọng phải bất biến; không xóa cứng chứng từ đã phát sinh giao dịch.
 - Tiền VND không dùng floating point. Khối lượng phải dùng kiểu decimal có độ chính xác xác định.
 - Số tồn hiện tại phải đối soát được với sổ phát sinh kho.
+- Phiếu nhận dư/thiếu/sai khi gửi phải đánh dấu các mặt hàng Reshare liên quan cần đối chiếu; sai mặt hàng gồm cả SKU theo phiếu và SKU thực nhận. Admin/HTKD nhận cảnh báo lớn ở giữa màn hình, bấm mặt hàng để mở đúng biểu mẫu hoặc tắt cảnh báo theo revision trong tab; tắt không gỡ chặn nguồn, sai lệch mới hiện lại. Xem `docs/warehouse-allocation-availability.md`.
 - Mặt hàng đã bật đối chiếu Reshare (kho B): không nhập cộng dồn hay điều chỉnh tồn thủ công; C nhập **tổng** tồn B đang cho đặt, khả dụng = max(0, B_eff − U) với U là phần A đã giữ/cấp nhưng chưa được B ghi nhận; ghi nhận đơn B không làm tăng khả dụng; thiếu nguồn D hiển thị riêng và chặn cấp mới. Chi tiết: `docs/supplier-stock-reconciliation.md`.
 
 Nếu task thay đổi một invariant, phải:

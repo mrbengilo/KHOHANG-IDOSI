@@ -37,6 +37,7 @@ import { request } from '../../lib/api';
  * cache filled under one account or role is never shown to another one.
  */
 export const SUPPLIER_QUERY_ROOTS = [
+  'supplier-reconciliation-alerts',
   'supplier-reconciliation',
   'supplier-commitments',
   'supplier-orders',
@@ -91,6 +92,7 @@ export async function loadSupplierReconciliation(
     readonly search: string;
     readonly filter: SupplierReconciliationFilter;
     readonly sourceId?: string;
+    readonly productId?: string;
   },
   signal?: AbortSignal,
 ) {

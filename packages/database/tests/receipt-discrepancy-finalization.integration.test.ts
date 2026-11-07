@@ -58,6 +58,15 @@ describePostgres('finalizing a receipt with a declared discrepancy', () => {
     expect((await balanceOf(productId)).reserved).toBe(await activeHeld(productId));
   }
 
+  async function expectSourceBlocked(productId: string, reason: RegExp) {
+    const [mapping] = await db
+      .select()
+      .from(supplierSourceProducts)
+      .where(eq(supplierSourceProducts.productId, productId));
+    expect(mapping?.status).toBe('needs_reconciliation');
+    expect(mapping?.blockReason).toMatch(reason);
+  }
+
   /** A reconciled SKU: mapped to the Reshare source with a confirmed baseline. */
   async function reconciledProduct(name: string, stock: number) {
     const product = await createProduct(name);
@@ -176,6 +185,8 @@ describePostgres('finalizing a receipt with a declared discrepancy', () => {
       ],
     });
 
+    await expectSourceBlocked(coat, /nhận dư/);
+    await expectSourceBlocked(blanket, /nhận dư/);
     await finalize(receipt.finalizeInput);
 
     const finalized = await receiptOf(receipt.receiptId);
@@ -215,6 +226,8 @@ describePostgres('finalizing a receipt with a declared discrepancy', () => {
       excess: [{ productId: jeans, quantity: 1 }],
     });
 
+    await expectSourceBlocked(dress, /nhận sai mặt hàng.*nhận thiếu/);
+    await expectSourceBlocked(jeans, /nhận sai mặt hàng.*nhận dư/);
     await finalize(receipt.finalizeInput);
 
     expect((await receiptOf(receipt.receiptId)).status).toBe('finalized');
@@ -229,6 +242,73 @@ describePostgres('finalizing a receipt with a declared discrepancy', () => {
     expect(await balanceOf(jeans)).toEqual({ onHand: 10, reserved: 0 });
     await expectLedgerConsistent(dress);
     await expectLedgerConsistent(jeans);
+  });
+
+  it('a shortage alone raises source attention on submission and idempotent finalization does not duplicate stock', async () => {
+    const product = await reconciledProduct('Shortage source notice', 10);
+    const receipt = await submittedReceipt({ product, granted: 2, received: 1 });
+    await expectSourceBlocked(product, /nhận thiếu 1 bao/);
+    const key = randomUUID();
+    const input = { ...receipt.finalizeInput, idempotencyKey: key, requestHash: key };
+    await finalizeStoreReceipt(db, input);
+    await finalizeStoreReceipt(db, input);
+    await expectSourceBlocked(product, /nhận thiếu/);
+    await expectLedgerConsistent(product);
+  });
+
+  it('does not re-block an already reconciled shortage/excess when HTKD finalizes the same submission', async () => {
+    const expected = await reconciledProduct('Expected source after early observation', 10);
+    const actual = await reconciledProduct('Actual source after early observation', 10);
+    const receipt = await submittedReceipt({
+      product: expected,
+      granted: 2,
+      received: 1,
+      excess: [{ productId: actual, quantity: 1 }],
+    });
+    await expectSourceBlocked(expected, /nhận thiếu/);
+    await expectSourceBlocked(actual, /nhận dư/);
+    await observe(
+      fx,
+      [
+        { productId: expected, observedQuantity: 10 },
+        { productId: actual, observedQuantity: 10 },
+      ],
+      { attest: true },
+    );
+    const before = await db
+      .select()
+      .from(supplierSourceProducts)
+      .where(eq(supplierSourceProducts.productId, actual));
+    await finalize(receipt.finalizeInput);
+    for (const product of [expected, actual]) {
+      const [mapping] = await db
+        .select()
+        .from(supplierSourceProducts)
+        .where(eq(supplierSourceProducts.productId, product));
+      expect(mapping?.status).toBe('active');
+    }
+    const [after] = await db
+      .select()
+      .from(supplierSourceProducts)
+      .where(eq(supplierSourceProducts.productId, actual));
+    expect(after?.revision).toBe(before[0]?.revision);
+    await expectLedgerConsistent(expected);
+    await expectLedgerConsistent(actual);
+  });
+
+  it('keeps the finalization safeguard for legacy submissions without source-attention evidence', async () => {
+    const product = await reconciledProduct('Legacy shortage source', 10);
+    const receipt = await submittedReceipt({ product, granted: 2, received: 1 });
+    await observe(fx, [{ productId: product, observedQuantity: 10 }], { attest: true });
+    // Old pending receipts have no submission audit carrying the new source-id evidence.
+    const legacyVersion = receipt.finalizeInput.expectedVersion + 1;
+    await db
+      .update(storeReceipts)
+      .set({ version: legacyVersion })
+      .where(eq(storeReceipts.id, receipt.receiptId));
+    await finalize({ ...receipt.finalizeInput, expectedVersion: legacyVersion });
+    await expectSourceBlocked(product, /nhận thiếu/);
+    await expectLedgerConsistent(product);
   });
 
   it('still deducts excess of an unreconciled SKU from A exactly once', async () => {

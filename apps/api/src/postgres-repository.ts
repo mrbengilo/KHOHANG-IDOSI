@@ -6,6 +6,8 @@ import {
   listPriorityOrders,
   getPriorityOrder,
   updatePriorityReshareStatus,
+  loadSupplierProductFacts,
+  supplierAllocationAvailability,
 } from '@idosi/database';
 import type { PriorityOrderRepository } from './repository.js';
 import { UpdateReshareOrderStatusResponseSchema as ReshareStatusResponseSchema } from '@idosi/contracts';
@@ -439,6 +441,7 @@ import {
   desc,
   eq,
   gte,
+  gt,
   ilike,
   inArray,
   isNotNull,
@@ -506,6 +509,46 @@ function waitDocumentSnapshotDto(snapshot: SessionWaitDocumentSnapshot | null) {
 const SESSION_LAST_SEEN_RESOLUTION_MS = 60_000;
 
 export class PostgresWarehouseRepository implements WarehouseRepository {
+  public async listSupplierReconciliationAlerts(actor: AuthenticatedPrincipal) {
+    if (!isReshareManager(actor)) throw forbidden();
+    const filter = and(
+      or(
+        eq(supplierSourceProducts.status, 'needs_reconciliation'),
+        // Revision 1 is a newly mapped SKU. Before its first observation, source guards
+        // preserve pending_baseline but advance the revision when a discrepancy occurs.
+        and(
+          eq(supplierSourceProducts.status, 'pending_baseline'),
+          gt(supplierSourceProducts.revision, 1),
+        ),
+      ),
+      isNull(products.deletedAt),
+    );
+    return db.transaction(
+      async (tx) => {
+        const [total] = await tx
+          .select({ value: count() })
+          .from(supplierSourceProducts)
+          .innerJoin(products, eq(products.id, supplierSourceProducts.productId))
+          .where(filter);
+        const data = await tx
+          .select({
+            productId: products.id,
+            productName: products.name,
+            revision: supplierSourceProducts.revision,
+            reason: sql<
+              string | null
+            >`case when ${supplierSourceProducts.status} = 'pending_baseline' then 'Có sai lệch hoặc biến động hàng trước lần đối chiếu Reshare đầu tiên; cần cập nhật tồn nguồn.' else ${supplierSourceProducts.blockReason} end`,
+          })
+          .from(supplierSourceProducts)
+          .innerJoin(products, eq(products.id, supplierSourceProducts.productId))
+          .where(filter)
+          .orderBy(desc(supplierSourceProducts.updatedAt), asc(supplierSourceProducts.id))
+          .limit(50);
+        return { data, totalItems: total?.value ?? 0 };
+      },
+      { isolationLevel: 'repeatable read', accessMode: 'read only' },
+    );
+  }
   public readonly priorityOrders: PriorityOrderRepository = {
     context: (actor, storeId, page) => getPriorityContext(db, actor.accountId, storeId, page),
     availability: (actor, storeId, productId) =>
@@ -582,11 +625,24 @@ export class PostgresWarehouseRepository implements WarehouseRepository {
           .orderBy(asc(products.displayOrder), asc(products.sku))
           .limit(query.pageSize)
           .offset((query.page - 1) * query.pageSize);
+        const supplierFacts = await loadSupplierProductFacts(
+          tx,
+          rows.filter((row) => row.reshareReconciled).map((row) => row.productId),
+        );
         return {
-          data: rows.map((row) => ({
-            ...row,
-            sharedDeliveryHoldBags: row.reservedBags - row.waitTicketHoldBags,
-          })),
+          data: rows.map((row) => {
+            const fact = supplierFacts.get(row.productId);
+            const availability = fact ? supplierAllocationAvailability(fact) : null;
+            return {
+              ...row,
+              allocatableBags: Math.max(
+                0,
+                Math.min(row.availableBags, availability?.allocatableBags ?? row.availableBags),
+              ),
+              allocationBlockedReason: availability?.allocationBlockedReason ?? null,
+              sharedDeliveryHoldBags: row.reservedBags - row.waitTicketHoldBags,
+            };
+          }),
           pagination: pagination(query.page, query.pageSize, total?.count ?? 0),
         };
       },

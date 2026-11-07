@@ -551,10 +551,10 @@ export async function listStoreOrderHistory(
 export async function listWarehouseAvailableBags(): Promise<ReadonlyMap<string, number>> {
   const rows = await listAllPages(
     '/warehouse-inventory',
-    new URLSearchParams({ projection: 'waiting-demand-v2' }),
+    new URLSearchParams({ projection: 'allocatable-stock-v3' }),
     (payload) => WarehouseInventoryResponseSchema.parse(payload),
   );
-  return new Map(rows.map((row) => [row.productId, row.availableBags]));
+  return new Map(rows.map((row) => [row.productId, row.allocatableBags ?? row.availableBags]));
 }
 
 /**
@@ -563,12 +563,12 @@ export async function listWarehouseAvailableBags(): Promise<ReadonlyMap<string, 
  */
 export async function loadWarehouseAvailableBags(productId: string): Promise<number> {
   const payload = await request(
-    `/warehouse-inventory?${new URLSearchParams({ productId, page: '1', pageSize: '1', projection: 'waiting-demand-v2' })}`,
+    `/warehouse-inventory?${new URLSearchParams({ productId, page: '1', pageSize: '1', projection: 'allocatable-stock-v3' })}`,
   );
   const row = WarehouseInventoryResponseSchema.parse(payload).data.find(
     (candidate) => candidate.productId === productId,
   );
-  return row?.availableBags ?? 0;
+  return row?.allocatableBags ?? row?.availableBags ?? 0;
 }
 
 export async function submitStoreOrderRequest(

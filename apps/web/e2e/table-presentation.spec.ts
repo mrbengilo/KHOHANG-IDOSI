@@ -149,7 +149,7 @@ for (const role of ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE'])
     await mock(page, role);
     await page.route('**/api/v1/warehouse-inventory?*', async (route) => {
       const url = new URL(route.request().url());
-      expect(url.searchParams.get('projection')).toBe('waiting-demand-v2');
+      expect(url.searchParams.get('projection')).toBe('allocatable-stock-v3');
       const current = Number(url.searchParams.get('page'));
       return route.fulfill({
         json: {
@@ -158,16 +158,19 @@ for (const role of ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE'])
               productId: layoutProducts[0]!.id,
               productName: 'Đồ nam',
               sku: 'DEMAND-TEST',
-              onHandBags: 0,
+              onHandBags: 28,
               reservedBags: 0,
               waitTicketHoldBags: 0,
               waitingDemandBags: 8,
               sharedDeliveryHoldBags: 0,
-              availableBags: 0,
+              availableBags: 28,
+              allocatableBags: 0,
+              allocationBlockedReason:
+                'Cần đối chiếu lại tồn Reshare sau biến động hàng; đang tạm chặn cấp mới.',
               dispatchedBags: 0,
               balanceVersion: 0,
               productActive: true,
-              reshareReconciled: false,
+              reshareReconciled: true,
             },
           ],
           pagination: { page: current, pageSize: 20, totalItems: 21, totalPages: 2 },
@@ -178,7 +181,15 @@ for (const role of ['ADMIN', 'HTKD', 'STORE', 'WHOLESALE'])
     const table = page.locator('.warehouse-stock-table');
     await expect(table.locator('tbody .table-index')).toHaveText('21');
     await expect(table.locator('td[data-label="Đang giữ phiếu chờ"]')).toHaveText('8 bao');
-    await expect(table.locator('td[data-label="Đang có tại kho"]')).toContainText('0 bao');
+    await expect(table.locator('td[data-label="Có thể phân bổ"]')).toContainText('0 bao');
+    await expect(table.locator('td[data-label="Có thể phân bổ"]')).toContainText('tồn thực 28');
+    await expect(table.getByRole('status')).toContainText('Tạm chặn cấp mới');
+    for (const width of [360, 390, 768, 1366, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+    }
     await page.getByLabel('Tìm mặt hàng kho tổng').fill('Đồ nam');
     await page.getByRole('button', { name: 'Tìm kiếm', exact: true }).click();
     await expect(table.locator('tbody .table-index')).toHaveText('1');

@@ -8,6 +8,7 @@ import {
   PriorityAvailabilitySchema,
   PriorityStatusInputSchema,
   EntityIdSchema,
+  SupplierReconciliationAlertsResponseSchema,
 } from '@idosi/contracts';
 import { PriorityOrderError } from '@idosi/database';
 import { InboundStatisticsQuerySchema } from '@idosi/contracts';
@@ -1128,10 +1129,10 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
     const query = WarehouseInventoryQuerySchema.parse(request.query);
     // Old bundles validate strict rows and label physical holds as waiting demand. Fail visibly
     // instead of changing that meaning or returning an extra field they cannot parse.
-    if (query.projection !== 'waiting-demand-v2') {
+    if (query.projection !== 'allocatable-stock-v3') {
       throw new ApiError(
         'CONFLICT',
-        'Bảng tồn kho đã đổi phiên bản. Hãy tải lại trang để xem nhu cầu còn chờ chính xác.',
+        'Bảng tồn kho đã đổi phiên bản. Hãy tải lại trang để xem số có thể phân bổ và trạng thái nguồn chính xác.',
         409,
       );
     }
@@ -1256,6 +1257,15 @@ export async function createApi(options: CreateApiOptions = {}): Promise<Fastify
         session.principal,
         SupplierReconciliationQuerySchema.parse(request.query),
       ),
+    );
+  });
+
+  app.get('/api/v1/supplier-reconciliation/alerts', async (request, reply) => {
+    const session = await authenticate(request, repository);
+    requireRole(session.principal, RESHARE_MANAGER_ROLES);
+    reply.header('cache-control', 'no-store');
+    return SupplierReconciliationAlertsResponseSchema.parse(
+      await repository.listSupplierReconciliationAlerts(session.principal),
     );
   });
 
@@ -2847,6 +2857,8 @@ function openApiDocument(): Record<string, unknown> {
                   ),
                   productActive: { type: 'boolean' },
                   reshareReconciled: { type: 'boolean' },
+                  allocatableBags: { type: 'integer', minimum: 0 },
+                  allocationBlockedReason: { type: ['string', 'null'] },
                 },
               },
             },
@@ -3318,7 +3330,7 @@ function openApiDocument(): Record<string, unknown> {
               name: 'projection',
               in: 'query',
               required: true,
-              schema: { type: 'string', enum: ['waiting-demand-v2'] },
+              schema: { type: 'string', enum: ['allocatable-stock-v3'] },
               description: 'Explicit demand projection; older tabs receive 409 and must reload.',
             },
             { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 } },
@@ -3798,6 +3810,18 @@ function openApiDocument(): Record<string, unknown> {
               description:
                 'ADMIN/HTKD puts SKUs under Reshare reconciliation (legacy inbound/adjustment refused)',
             },
+          },
+        },
+      },
+      '/api/v1/supplier-reconciliation/alerts': {
+        get: {
+          security: cookieSecurity,
+          responses: {
+            '200': {
+              description:
+                'Up to 50 source blocks with product, reason, revision and totalItems; Admin/HTKD only, no-store.',
+            },
+            '403': { description: 'Store and wholesale accounts cannot read source alerts.' },
           },
         },
       },

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, livePage, type Page } from './test';
 import { eq } from 'drizzle-orm';
 import { db, users, sessions, closeDatabase } from '@idosi/database';
 import { createSupplierFixture } from '../../../packages/database/tests/fixtures/supplier';
@@ -132,7 +132,7 @@ for (const width of [1440, 390])
       path: testInfo.outputPath(`priority-result-${width}.png`),
     });
     const storeContext = await browser.newContext({ viewport: { width, height: 900 } }),
-      store = await storeContext.newPage();
+      store = await livePage(storeContext.newPage());
     try {
       await authenticate(store, fx.storeUserA);
       await store.goto('/priority-orders');

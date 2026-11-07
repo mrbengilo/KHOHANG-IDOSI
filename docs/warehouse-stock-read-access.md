@@ -16,16 +16,16 @@ hàng, giá vốn hay chứng từ, nên không lộ dữ liệu cửa hàng kh�
 
 ## Cột của bảng tồn hiện tại
 
-| Cột                     | Trường API                                          | Ý nghĩa                                                                                                                                                                                     |
-| ----------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Mặt hàng                | `productName`                                       | Chỉ tên, không hiện mã (SKU vẫn có trong API và ô tìm kiếm).                                                                                                                                |
-| Đang có tại kho         | `availableBags` (số chính), `onHandBags` (dòng phụ) | Khả dụng để cấp phân bổ `H − R`; dòng phụ là tồn thực `H`.                                                                                                                                  |
-| Đang giữ chờ giao chung | `sharedDeliveryHoldBags`                            | Phần `R` giữ cho dòng phân bổ đã cấp còn trong kho: kết quả chờ xác nhận, hàng cấp một phần/ưu tiên giữ để giao cùng đơn thường kế tiếp.                                                    |
-| Đang giữ phiếu chờ      | `waitingDemandBags`                                 | Tổng `remaining_quantity` của PC active, chưa xóa, còn số lượng, theo productId trên mọi cửa hàng. Đây là nhu cầu chưa được cấp, độc lập với H/R và không cộng thêm hold hoặc hàng pending. |
-| Tổng đã xuất            | `dispatchedBags`                                    | Lũy kế bút toán `outbound` của sổ kho tổng (xuất theo RE, quyết toán phiếu nhận legacy, nhận dư). Chuyến giao không đổi `H` nên không đếm lại.                                              |
-| Thao tác (chỉ Admin)    | `reshareReconciled`                                 | Mặt hàng nguồn Reshare: nút “Cập nhật tồn Reshare” mở đối chiếu tồn Reshare; mặt hàng khác: “Điều chỉnh tồn”.                                                                               |
+| Cột                     | Trường API                                            | Ý nghĩa                                                                                                                                                                                     |
+| ----------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mặt hàng                | `productName`                                         | Chỉ tên, không hiện mã (SKU vẫn có trong API và ô tìm kiếm).                                                                                                                                |
+| Có thể phân bổ          | `allocatableBags` (số chính), `onHandBags` (dòng phụ) | `H − R` sau giới hạn nguồn Reshare; hiện cảnh báo và lý do khi nguồn bị chặn. `availableBags` vẫn là số dư sổ `H − R`.                                                                      |
+| Đang giữ chờ giao chung | `sharedDeliveryHoldBags`                              | Phần `R` giữ cho dòng phân bổ đã cấp còn trong kho: kết quả chờ xác nhận, hàng cấp một phần/ưu tiên giữ để giao cùng đơn thường kế tiếp.                                                    |
+| Đang giữ phiếu chờ      | `waitingDemandBags`                                   | Tổng `remaining_quantity` của PC active, chưa xóa, còn số lượng, theo productId trên mọi cửa hàng. Đây là nhu cầu chưa được cấp, độc lập với H/R và không cộng thêm hold hoặc hàng pending. |
+| Tổng đã xuất            | `dispatchedBags`                                      | Lũy kế bút toán `outbound` của sổ kho tổng (xuất theo RE, quyết toán phiếu nhận legacy, nhận dư). Chuyến giao không đổi `H` nên không đếm lại.                                              |
+| Thao tác (chỉ Admin)    | `reshareReconciled`                                   | Mặt hàng nguồn Reshare: nút “Cập nhật tồn Reshare” mở đối chiếu tồn Reshare; mặt hàng khác: “Điều chỉnh tồn”.                                                                               |
 
-Tham số tùy chọn `productId` trả đúng một dòng (màn đặt hàng đọc lại tồn khi tick, xem `order-warehouse-stock-gate.md`). Bảng có STT đầu tiên theo pagination mặt hàng thực. API yêu cầu `projection=waiting-demand-v2`;
+Tham số tùy chọn `productId` trả đúng một dòng (màn đặt hàng đọc lại tồn khi tick, xem `order-warehouse-stock-gate.md`). Bảng có STT đầu tiên theo pagination mặt hàng thực. API yêu cầu `projection=allocatable-stock-v3`;
 tab cũ nhận 409 yêu cầu tải lại. Bundle mới kiểm tra response nghiêm ngặt và báo lỗi phiên bản
 khi rollback về API cũ, không biến trường thiếu thành 0. Xem `table-presentation-waiting-demand.md`.
 

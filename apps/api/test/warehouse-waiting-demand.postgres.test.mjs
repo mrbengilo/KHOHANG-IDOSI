@@ -34,7 +34,7 @@ postgres('warehouse remaining demand projection on PostgreSQL', () => {
   async function read(f, role = 'admin', extra = '') {
     const response = await app.inject({
       method: 'GET',
-      url: `/api/v1/warehouse-inventory?projection=waiting-demand-v2&search=${f.prefix}${extra}`,
+      url: `/api/v1/warehouse-inventory?projection=allocatable-stock-v3&search=${f.prefix}${extra}`,
       headers: f.headers[role],
     });
     assert.equal(response.statusCode, 200, response.body);
@@ -158,7 +158,7 @@ postgres('warehouse remaining demand projection on PostgreSQL', () => {
     await db.update(users).set({ status: 'locked' }).where(eq(users.id, f.userIds.store));
     const locked = await app.inject({
       method: 'GET',
-      url: '/api/v1/warehouse-inventory?projection=waiting-demand-v2',
+      url: '/api/v1/warehouse-inventory?projection=allocatable-stock-v3',
       headers: f.headers.store,
     });
     assert.ok([401, 403].includes(locked.statusCode));

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './test';
 import { tabApi } from './tab-api';
 
 test('Admin selects products and persists exactly the selected bags in the warehouse', async ({

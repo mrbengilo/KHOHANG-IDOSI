@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 import { createProductWithStock, OUT_OF_STOCK_NOTE } from './ordering-stock';
 
 test('HTKD sees assigned stores, selects bags inline and persists two ordinary requests', async ({

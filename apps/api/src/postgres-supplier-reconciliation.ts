@@ -148,6 +148,7 @@ export async function getPostgresSupplierReconciliation(
 ): Promise<SupplierReconciliationResponse> {
   requireReshareManager(actor);
   const result = await listSupplierReconciliationSummary(db, {
+    ...(query.productId ? { productId: query.productId } : {}),
     ...(query.sourceId ? { sourceId: query.sourceId } : {}),
     ...(query.search ? { search: query.search } : {}),
     filter: query.filter,

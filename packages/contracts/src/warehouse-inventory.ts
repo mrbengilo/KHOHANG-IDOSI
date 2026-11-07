@@ -10,7 +10,7 @@ export const WarehouseInventoryQuerySchema = PaginationQuerySchema.extend({
   search: z.string().trim().max(120).optional(),
   /** One product's row, e.g. the stock check when a product is picked for an order. */
   productId: EntityIdSchema.optional(),
-  projection: z.literal('waiting-demand-v2').optional(),
+  projection: z.enum(['waiting-demand-v2', 'allocatable-stock-v3']).optional(),
 }).strict();
 export type WarehouseInventoryQuery = z.infer<typeof WarehouseInventoryQuerySchema>;
 export const WarehouseInventoryRowSchema = z
@@ -29,8 +29,11 @@ export const WarehouseInventoryRowSchema = z
     /** Unallocated live wait-ticket demand across stores; independent of physical stock. */
     waitingDemandBags: UnitQuantitySchema,
     sharedDeliveryHoldBags: UnitQuantitySchema,
-    /** Free to allocate: onHandBags − reservedBags. */
+    /** Unreserved ledger stock: onHandBags − reservedBags, before supplier safety limits. */
     availableBags: UnitQuantitySchema,
+    /** Current stock that may be allocated, using the same supplier limits as the worker. */
+    allocatableBags: UnitQuantitySchema.optional(),
+    allocationBlockedReason: z.string().nullable().optional(),
     /** Cumulative bags booked out of the central warehouse (ledger outbound entries). */
     dispatchedBags: UnitQuantitySchema,
     /** Optimistic version of the balance row; 0 before the product's first movement. */

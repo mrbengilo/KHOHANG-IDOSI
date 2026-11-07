@@ -396,6 +396,10 @@ interface MemoryReshareOrder {
 
 /** Deterministic in-memory adapter for inject tests and local demos. Never used by default in production. */
 export class MemoryWarehouseRepository implements WarehouseRepository {
+  public async listSupplierReconciliationAlerts(actor: AuthenticatedPrincipal) {
+    if (!isReshareManager(actor)) throw forbidden();
+    return { data: [], totalItems: 0 };
+  }
   // Inventory issuance must use PostgreSQL; the demo adapter never simulates a successful issue.
   public readonly priorityOrders: PriorityOrderRepository = {
     context: async () => {
@@ -571,6 +575,8 @@ export class MemoryWarehouseRepository implements WarehouseRepository {
         waitingDemandBags: waitingByProduct.get(product.id) ?? 0,
         sharedDeliveryHoldBags: reservedBags,
         availableBags: onHandBags - reservedBags,
+        allocatableBags: onHandBags - reservedBags,
+        allocationBlockedReason: null,
         dispatchedBags: [...this.dispatchedOutbounds.values()]
           .flatMap((outbound) => outbound.lines)
           .filter((line) => line.productId === product.id)

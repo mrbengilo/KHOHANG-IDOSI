@@ -20,6 +20,9 @@ export const layoutProducts = Array.from({ length: 24 }, (_, index) => ({
 }));
 
 export async function mockLayoutData(page: Page) {
+  await page.route('**/api/v1/supplier-reconciliation/alerts', (route) =>
+    route.fulfill({ json: { data: [], totalItems: 0 } }),
+  );
   await page.route('**/api/v1/products?*', (route) =>
     route.fulfill({ json: { data: layoutProducts, pagination: pagination(24) } }),
   );

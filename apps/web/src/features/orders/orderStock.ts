@@ -5,7 +5,8 @@ export type OrderStockCheck =
   | { readonly kind: 'out-of-stock' | 'error'; readonly message: string };
 
 /** Note shown under a product the central warehouse has run out of. */
-export const OUT_OF_STOCK_NOTE = 'Kho tổng đã hết hàng (tồn = 0), chưa thể đặt.';
+export const OUT_OF_STOCK_NOTE =
+  'Kho tổng chưa có hàng có thể cấp, chưa thể đặt. Xem tồn kho tổng để kiểm tra nguồn.';
 
 /** A product is orderable only while the central warehouse has free bags; unknown counts as 0. */
 export function isOutOfStock(

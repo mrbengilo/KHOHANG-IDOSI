@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 import { createDatabase } from '@idosi/database';
 import { createInboundStatisticsFixture } from '../../../packages/database/tests/fixtures/inbound-statistics';
 import { tabApi } from './tab-api';

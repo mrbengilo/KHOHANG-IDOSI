@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, livePage, test, type Page } from './test';
 import {
   createDatabase,
   products,
@@ -110,7 +110,7 @@ test('production opening locks a stale discrepancy form and retains opening hist
       .from(storeInventoryBags)
       .where(eq(storeInventoryBags.storeId, store.id))
       .orderBy(storeInventoryBags.displayCode);
-    const tab = await page.context().newPage();
+    const tab = await livePage(page.context().newPage());
     await login(tab, storeLogin);
     await tab.emulateMedia({ reducedMotion: 'reduce' });
     await tab.goto('/open-bag');

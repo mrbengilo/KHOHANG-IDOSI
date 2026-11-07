@@ -4,6 +4,11 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { seedReferenceData } from '../src/reference-seed.js';
+import {
+  createSupplierFixture,
+  mapProduct,
+  observe as observeSource,
+} from './fixtures/supplier.js';
 
 import {
   operationalSettingsVersions,
@@ -62,6 +67,7 @@ import {
   users,
   waitTickets,
   warehouseBalances,
+  supplierSourceProducts,
   warehouseShortageChecks,
   withSerializableTransaction,
   type ReceiptAdjustmentTransitionInput,
@@ -85,6 +91,28 @@ interface Fixture {
 describePostgres('post-finalization receipt discrepancy adjustments', () => {
   const sessionIds: string[] = [];
   let adminId = '';
+
+  it.each(['source_misclassification', 'warehouse_mispick'] as const)(
+    'a verified %s flags both reconciled source SKUs for a fresh observation',
+    async (cause) => {
+      const receipt = await createFinalizedReceipt();
+      const source = await createSupplierFixture();
+      for (const productId of [receipt.dressId, receipt.jeansId]) {
+        await mapProduct(source, productId);
+        await observeSource(source, [{ productId, observedQuantity: 10 }], { attest: true });
+      }
+      const adjustment = await report(receipt, [receipt.bags[0]!], 'keep');
+      await verify(receipt, adjustment, 0, { pricePerKgVnd: 40_000n, cause });
+      for (const productId of [receipt.dressId, receipt.jeansId]) {
+        const [mapping] = await db
+          .select()
+          .from(supplierSourceProducts)
+          .where(eq(supplierSourceProducts.productId, productId));
+        expect(mapping?.status).toBe('needs_reconciliation');
+        expect(mapping?.blockReason).toMatch(/nhận sai mặt hàng/);
+      }
+    },
+  );
 
   beforeAll(async () => {
     let [admin] = await db

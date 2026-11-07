@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 import { tabApi } from './tab-api';
 
 test('admin warehouse inventory reconciles with PostgreSQL balances and remains responsive', async ({

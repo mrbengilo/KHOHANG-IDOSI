@@ -47,8 +47,11 @@ const rows: InboundAggregate[] = [
   },
 ];
 const timestamp = '2026-09-15T00:00:00.000Z';
-const mockAdminSession = (page: Page) =>
-  page.route('**/api/v1/auth/session', (route) =>
+const mockAdminSession = async (page: Page) => {
+  await page.route('**/api/v1/supplier-reconciliation/alerts', (route) =>
+    route.fulfill({ json: { data: [], totalItems: 0 } }),
+  );
+  await page.route('**/api/v1/auth/session', (route) =>
     route.fulfill({
       json: {
         data: {
@@ -69,6 +72,7 @@ const mockAdminSession = (page: Page) =>
       },
     }),
   );
+};
 test('Admin filters, source breakdown, charts, retry and responsive tables', async ({
   page,
 }, testInfo) => {

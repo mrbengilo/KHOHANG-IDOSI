@@ -1040,6 +1040,7 @@ export async function listSupplierReconciliationSummary(
   database: Database,
   input: {
     readonly sourceId?: string;
+    readonly productId?: string;
     readonly search?: string;
     readonly filter: SupplierSummaryFilter;
     readonly page: number;
@@ -1049,6 +1050,7 @@ export async function listSupplierReconciliationSummary(
   return database.transaction(
     async (tx) => {
       const conditions: SQL[] = [isNull(products.deletedAt)];
+      if (input.productId) conditions.push(eq(products.id, input.productId));
       if (input.sourceId) conditions.push(eq(supplierSourceProducts.sourceId, input.sourceId));
       if (input.search) {
         conditions.push(

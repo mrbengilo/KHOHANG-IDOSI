@@ -1496,7 +1496,7 @@ describe('KHOHANG-IDOSI API', () => {
       assert.equal(rejected.statusCode, 409, rejected.body);
       assert.equal(rejected.json().error.code, 'INSUFFICIENT_STOCK');
       assert.deepEqual(rejected.json().error.details.productIds, [empty.id]);
-      assert.match(rejected.json().error.message, new RegExp(`${empty.name}.*tồn = 0`));
+      assert.match(rejected.json().error.message, new RegExp(`${empty.name}.*tồn khả dụng = 0`));
     }
     const listed = await app.inject({
       method: 'GET',
@@ -3959,7 +3959,7 @@ describe('KHOHANG-IDOSI API', () => {
   });
 
   test('warehouse inventory is readable by HTKD, store and wholesale accounts and reconciles on-hand, reserved and dispatched bags', async () => {
-    const url = '/api/v1/warehouse-inventory?projection=waiting-demand-v2&pageSize=100';
+    const url = '/api/v1/warehouse-inventory?projection=allocatable-stock-v3&pageSize=100';
     assert.equal((await app.inject({ method: 'GET', url })).statusCode, 401);
     const headers = { cookie: cookieOf(await login('admin')) };
     const result = await app.inject({ method: 'GET', url, headers });
@@ -4058,7 +4058,7 @@ describe('KHOHANG-IDOSI API', () => {
     const page = (
       await app.inject({
         method: 'GET',
-        url: '/api/v1/warehouse-inventory?projection=waiting-demand-v2&pageSize=1&page=2',
+        url: '/api/v1/warehouse-inventory?projection=allocatable-stock-v3&pageSize=1&page=2',
         headers,
       })
     ).json();
@@ -4067,7 +4067,7 @@ describe('KHOHANG-IDOSI API', () => {
     const empty = (
       await app.inject({
         method: 'GET',
-        url: '/api/v1/warehouse-inventory?projection=waiting-demand-v2&search=nonexistent-product-xyz',
+        url: '/api/v1/warehouse-inventory?projection=allocatable-stock-v3&search=nonexistent-product-xyz',
         headers,
       })
     ).json();
@@ -4410,7 +4410,7 @@ describe('KHOHANG-IDOSI API', () => {
   async function warehouseRow(cookie, productId) {
     const response = await app.inject({
       method: 'GET',
-      url: `/api/v1/warehouse-inventory?projection=waiting-demand-v2&productId=${productId}`,
+      url: `/api/v1/warehouse-inventory?projection=allocatable-stock-v3&productId=${productId}`,
       headers: { cookie },
     });
     assert.equal(response.statusCode, 200, response.body);

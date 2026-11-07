@@ -9,6 +9,9 @@ import {
 } from '@idosi/contracts';
 import {
   applyWarehouseMovement,
+  confirmSupplierStockObservation,
+  previewSupplierStockObservation,
+  flagSupplierProductForReconciliation,
   dailyPriorityOffers,
   db,
   htkdAssignments,
@@ -216,6 +219,144 @@ test('order history is ADMIN-wide, HTKD-scoped and store-own only', { skip }, as
 });
 
 test(
+  'warehouse exposes blocked source stock separately and reopens only after reconciliation',
+  { skip },
+  async () => {
+    const f = await fixture();
+    await db.transaction((tx) =>
+      applyWarehouseMovement(tx, {
+        productId: f.product.id,
+        eventType: 'opening_balance',
+        onHandDelta: 28,
+        reservedDelta: 0,
+        sourceType: 'api_allocation_stock_test',
+        sourceId: randomUUID(),
+      }),
+    );
+    const [source] = await db
+      .insert(supplierSources)
+      .values({
+        code: `CAP-${randomUUID().slice(0, 8).toUpperCase()}`,
+        name: 'Allocation stock test',
+        createdByUserId: f.admin.id,
+      })
+      .returning();
+    await db.insert(supplierSourceProducts).values({
+      sourceId: source.id,
+      productId: f.product.id,
+      createdByUserId: f.admin.id,
+    });
+    const observe = async () => {
+      const input = {
+        actorUserId: f.admin.id,
+        sourceId: source.id,
+        observedAt: new Date(),
+        lines: [{ productId: f.product.id, observedQuantity: 28 }],
+        eventCoverage: [],
+        attestUnlinkedAsNotOrdered: true,
+      };
+      const preview = await previewSupplierStockObservation(db, input);
+      await confirmSupplierStockObservation(db, {
+        ...input,
+        expectedRevision: preview.revision,
+        idempotencyKey: randomUUID(),
+        requestHash: randomUUID(),
+      });
+    };
+    const read = async (user) => {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/warehouse-inventory?projection=allocatable-stock-v3&productId=${f.product.id}`,
+        headers: await login(user),
+      });
+      assert.equal(response.statusCode, 200, response.body);
+      return WarehouseInventoryResponseSchema.parse(response.json()).data[0];
+    };
+    assert.equal(
+      (await read(f.admin)).allocatableBags,
+      0,
+      'baseline is required despite positive ledger',
+    );
+    const initialQueue = await app.inject({
+      method: 'GET',
+      url: '/api/v1/supplier-reconciliation/alerts',
+      headers: await login(f.admin),
+    });
+    assert.ok(!initialQueue.json().data.some((row) => row.productId === f.product.id));
+    await db.transaction((tx) =>
+      flagSupplierProductForReconciliation(tx, f.product.id, 'Receipt discrepancy before baseline'),
+    );
+    const pendingQueue = await app.inject({
+      method: 'GET',
+      url: '/api/v1/supplier-reconciliation/alerts',
+      headers: await login(f.htkd),
+    });
+    assert.ok(
+      pendingQueue.json().data.some((row) => row.productId === f.product.id),
+      'a discrepancy before baseline must be visible',
+    );
+    await observe();
+    assert.equal((await read(f.admin)).allocatableBags, 28);
+    await db.transaction((tx) =>
+      flagSupplierProductForReconciliation(
+        tx,
+        f.product.id,
+        'Receipt excess needs a new observation',
+      ),
+    );
+    for (const user of [f.admin, f.htkd]) {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/supplier-reconciliation/alerts',
+        headers: await login(user),
+      });
+      assert.equal(response.statusCode, 200, response.body);
+      assert.equal(response.headers['cache-control'], 'no-store');
+      assert.ok(response.json().data.some((row) => row.productId === f.product.id));
+      const product = await app.inject({
+        method: 'GET',
+        url: `/api/v1/supplier-reconciliation?productId=${f.product.id}`,
+        headers: await login(user),
+      });
+      assert.equal(product.statusCode, 200, product.body);
+      assert.deepEqual(
+        product.json().data.map((row) => row.productId),
+        [f.product.id],
+      );
+    }
+    const denied = await app.inject({
+      method: 'GET',
+      url: '/api/v1/supplier-reconciliation/alerts',
+      headers: await login(f.storeUser),
+    });
+    assert.equal(denied.statusCode, 403);
+    for (const user of [f.admin, f.htkd, f.storeUser]) {
+      const row = await read(user);
+      assert.equal(row.availableBags, 28);
+      assert.equal(row.allocatableBags, 0);
+      assert.match(row.allocationBlockedReason, /đối chiếu lại tồn Reshare/);
+      assert.equal(row.waitingDemandBags, 0);
+    }
+    await observe();
+    const row = await read(f.admin);
+    assert.equal(row.allocatableBags, 28);
+    assert.equal(row.allocationBlockedReason, null);
+    const cleared = await app.inject({
+      method: 'GET',
+      url: '/api/v1/supplier-reconciliation/alerts',
+      headers: await login(f.admin),
+    });
+    assert.ok(!cleared.json().data.some((row) => row.productId === f.product.id));
+    const oldBundle = await app.inject({
+      method: 'GET',
+      url: '/api/v1/warehouse-inventory?projection=waiting-demand-v2',
+      headers: await login(f.admin),
+    });
+    assert.equal(oldBundle.statusCode, 409, 'old tabs must reload instead of mislabelling stock');
+  },
+);
+
+test(
   'warehouse inventory splits held stock and counts ledger outbound as dispatched',
   { skip },
   async () => {
@@ -291,7 +432,7 @@ test(
         (
           await app.inject({
             method: 'GET',
-            url: `/api/v1/warehouse-inventory?projection=waiting-demand-v2&search=${encodeURIComponent(f.product.sku)}`,
+            url: `/api/v1/warehouse-inventory?projection=allocatable-stock-v3&search=${encodeURIComponent(f.product.sku)}`,
             headers: await login(f.admin),
           })
         ).json(),
@@ -352,7 +493,7 @@ test(
       const adminHeaders = await login(f.admin);
       const inventory = await app.inject({
         method: 'GET',
-        url: `/api/v1/warehouse-inventory?projection=waiting-demand-v2&search=${encodeURIComponent(f.product.sku)}`,
+        url: `/api/v1/warehouse-inventory?projection=allocatable-stock-v3&search=${encodeURIComponent(f.product.sku)}`,
         headers: adminHeaders,
       });
       const row = WarehouseInventoryResponseSchema.parse(inventory.json()).data[0];
@@ -372,7 +513,7 @@ test(
       for (const user of [f.htkd, f.storeUser, wholesaleUser]) {
         const read = await app.inject({
           method: 'GET',
-          url: `/api/v1/warehouse-inventory?projection=waiting-demand-v2&search=${encodeURIComponent(f.product.sku)}`,
+          url: `/api/v1/warehouse-inventory?projection=allocatable-stock-v3&search=${encodeURIComponent(f.product.sku)}`,
           headers: await login(user),
         });
         assert.equal(read.statusCode, 200, `${user.role}: ${read.body}`);

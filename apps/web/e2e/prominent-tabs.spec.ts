@@ -114,6 +114,8 @@ async function mockApi(page: Page, role: Role, options: { shortage?: boolean } =
     }
     const json = (data: unknown) => route.fulfill({ json: data });
     if (path === '/auth/session') return json({ data: sessionFor(role) });
+    if (path === '/supplier-reconciliation/alerts' && (role === 'ADMIN' || role === 'HTKD'))
+      return json({ data: [], totalItems: 0 });
     if (path === '/stores')
       return json({ data: stores, pagination: { ...emptyPage, pageSize: 100, totalItems: 2 } });
     if (path === '/admin/worker-status')

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 
 test('records bounded read latency under single and four-reader concurrency', async ({
   request,
@@ -17,7 +17,7 @@ test('records bounded read latency under single and four-reader concurrency', as
   ).toBe(200);
   const samples = [];
   for (const path of [
-    '/warehouse-inventory?projection=waiting-demand-v2',
+    '/warehouse-inventory?projection=allocatable-stock-v3',
     '/order-requests?pageSize=50',
     '/store-receipts?pageSize=50',
   ]) {

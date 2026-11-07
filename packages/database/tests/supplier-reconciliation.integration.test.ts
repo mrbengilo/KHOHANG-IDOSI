@@ -571,7 +571,11 @@ describePostgres('Reshare supplier reconciliation (PostgreSQL)', () => {
       observedAt: minutesAgo(10),
     });
     const granted = await grant(fx, { storeId: fx.storeA, productId: product, quantity: 3 });
-    await order(fx, { reservationId: granted.reservationId, quantity: 3, externalRef: 'B-T26' });
+    const sourceOrder = await order(fx, {
+      reservationId: granted.reservationId,
+      quantity: 3,
+      externalRef: 'B-T26',
+    });
     expect(await balanceOf(product)).toMatchObject({ onHand: 5, reserved: 3, available: 2 });
 
     // Shipment of the accepted result, then the store declares 2 of 3 received.
@@ -643,7 +647,8 @@ describePostgres('Reshare supplier reconciliation (PostgreSQL)', () => {
     // T26: received bags leave on-hand and reserved once; B is not deducted again; the missing
     // bag stays held in a shortage check. Free stock is unchanged.
     expect(await balanceOf(product)).toMatchObject({ onHand: 3, reserved: 1, available: 2 });
-    expect(await statusOf(product)).toBe('active');
+    expect(await statusOf(product)).toBe('needs_reconciliation');
+    expect(await caps(product)).toBe(0);
 
     // T27: resolving the shortage as "found" releases the hold without creating free stock.
     const [check] = await db
@@ -661,6 +666,10 @@ describePostgres('Reshare supplier reconciliation (PostgreSQL)', () => {
       requestHash: 'found',
     });
     expect(await balanceOf(product)).toMatchObject({ onHand: 2, reserved: 0, available: 2 });
+    expect(await statusOf(product)).toBe('needs_reconciliation');
+    await observe(fx, [{ productId: product, observedQuantity: 2 }], {
+      coverage: [{ eventId: sourceOrder.batch.events[0]!.id, included: true }],
+    });
     expect(await statusOf(product)).toBe('active');
     expect(await ledgerTotals(product)).toEqual({ onHand: 2, reserved: 0 });
   });

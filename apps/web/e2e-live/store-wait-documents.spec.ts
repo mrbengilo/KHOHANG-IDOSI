@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 import {
   allocationLines,
   allocationRuns,
@@ -113,7 +113,7 @@ test('a store reads its wait document, history and results; B → C → D throug
     await signIn(page, storeLogin);
     const assertDemand = async (expected: number[]) => {
       const response = await tabApi(page).get(
-        `${api}/warehouse-inventory?projection=waiting-demand-v2&search=${token}`,
+        `${api}/warehouse-inventory?projection=allocatable-stock-v3&search=${token}`,
       );
       expect(response.status()).toBe(200);
       const rows = (await response.json()).data;
@@ -277,7 +277,7 @@ test('live warehouse and two PCT documents agree on 3 + 5 = 8 without stock', as
       sql`select sum(remaining_quantity)::integer as demand from wait_tickets where product_id=${product!.id} and status='active' and deleted_at is null and remaining_quantity>0`,
     );
     const response = await request.get(
-      `${api}/warehouse-inventory?projection=waiting-demand-v2&search=${sku}`,
+      `${api}/warehouse-inventory?projection=allocatable-stock-v3&search=${sku}`,
     );
     expect(response.status()).toBe(200);
     const row = (await response.json()).data[0];

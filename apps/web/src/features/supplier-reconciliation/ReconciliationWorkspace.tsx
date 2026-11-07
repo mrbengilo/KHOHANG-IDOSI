@@ -31,14 +31,20 @@ export function ReconciliationWorkspace({
   accountId,
   onOpenSettings,
   onConfirmingChange,
+  initialProductId,
+  initialSearch = '',
+  onDeepLinkConsumed,
 }: {
   readonly accountId: string;
   readonly onOpenSettings: () => void;
   readonly onConfirmingChange: (confirming: boolean) => void;
+  readonly initialProductId?: string | undefined;
+  readonly initialSearch?: string;
+  readonly onDeepLinkConsumed?: () => void;
 }) {
   const [page, setPage] = useState(1);
-  const [search, setSearch] = useState('');
-  const [draftSearch, setDraftSearch] = useState('');
+  const [search, setSearch] = useState(initialSearch.slice(0, 120));
+  const [draftSearch, setDraftSearch] = useState(initialSearch.slice(0, 120));
   const [filter, setFilter] = useState<SupplierReconciliationFilter>('ALL');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [selected, setSelected] = useState<Map<string, ObservationTarget>>(new Map());
@@ -106,6 +112,39 @@ export function ReconciliationWorkspace({
     retry: false,
   });
   useEffect(() => setPage(1), [search, filter]);
+  const deepLinkTarget = useQuery({
+    queryKey: ['supplier-reconciliation', accountId, 'alert-product', initialProductId],
+    queryFn: ({ signal }) =>
+      loadSupplierReconciliation(
+        { page: 1, search: '', filter: 'ALL', productId: initialProductId! },
+        signal,
+      ),
+    enabled: Boolean(initialProductId),
+    retry: false,
+  });
+  const openedDeepLink = useRef<string | null>(null);
+  useEffect(() => {
+    if (!initialProductId) {
+      openedDeepLink.current = null;
+      return;
+    }
+    if (openedDeepLink.current === initialProductId || formState.current.confirming) return;
+    const row = deepLinkTarget.data?.data.find((item) => item.productId === initialProductId);
+    if (!row) return;
+    openedDeepLink.current = initialProductId;
+    if (
+      formState.current.dirty &&
+      !window.confirm(
+        'Bỏ bản nháp đối chiếu hiện tại để mở mặt hàng khác? Chọn Hủy để giữ bản nháp.',
+      )
+    ) {
+      onDeepLinkConsumed?.();
+      return;
+    }
+    setFormTargets([targetOf(row)]);
+    setNavigation((value) => value + 1);
+    onDeepLinkConsumed?.();
+  }, [initialProductId, deepLinkTarget.data, onDeepLinkConsumed]);
 
   const toggle = (row: SupplierReconciliationRow, checked: boolean) =>
     setSelected((current) => {

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { expect, livePage, test, type APIRequestContext, type Page } from './test';
 import { canAccessRoute, routeAccessPolicies } from '../src/lib/access';
 import type { Role, StoreKind } from '../src/lib/types';
 import {
@@ -215,7 +215,7 @@ test('tables are centred, content-sized, left aligned and never scroll sideways 
   }[] = [];
   for (const identity of identities) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-    const page = await context.newPage();
+    const page = await livePage(context.newPage());
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
     await signIn(page, identity.credentials);
